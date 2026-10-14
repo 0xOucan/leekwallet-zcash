@@ -12,10 +12,10 @@ python3 ~/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32s3 merge_bi
     --fill-flash-size 4MB 0x0 $B/bootloader.bin 0x8000 $B/partitions.bin \
     0x10000 $B/firmware.bin >/dev/null
 
-timeout 300 qemu-system-xtensa -nographic -machine esp32s3 \
+timeout 900 qemu-system-xtensa -nographic -machine esp32s3 \
     -drive file=$B/qemu-flash.bin,if=mtd,format=raw > $B/qemu.log 2>&1 &
 QPID=$!
-for _ in $(seq 300); do grep -q "ZSPIKE done" $B/qemu.log 2>/dev/null && break; sleep 1; done
+for _ in $(seq 900); do grep -q "ZSPIKE done" $B/qemu.log 2>/dev/null && break; sleep 1; done
 kill $QPID 2>/dev/null || true
 grep ZSPIKE $B/qemu.log | grep -v "=" || true
 
