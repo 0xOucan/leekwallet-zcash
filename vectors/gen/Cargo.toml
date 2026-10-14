@@ -1,0 +1,20 @@
+[package]
+name = "vectors-gen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "LeekWallet Zcash: generate reference test vectors from librustzcash"
+
+# Path dependencies on the reference checkout of librustzcash, commit
+# 16f0723c385957cecc32b4f0c71bb411053b708b (2026-10-14). The generated
+# vectors are committed, so this only matters when regenerating them.
+[dependencies]
+zcash_keys = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_keys", features = ["orchard", "transparent-inputs", "test-dependencies"] }
+zcash_protocol = { path = "../../../referencialeekwallet/zec references/librustzcash/components/zcash_protocol" }
+zcash_transparent = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_transparent", features = ["transparent-inputs"] }
+orchard = { version = "0.16", default-features = false, features = ["std"] }
+zip32 = "0.3"
+bip39 = { version = "2", features = ["std"] }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
