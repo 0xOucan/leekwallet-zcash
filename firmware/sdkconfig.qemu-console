@@ -21,3 +21,9 @@ CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=n
 CONFIG_ESP_CONSOLE_USB_CDC=n
 CONFIG_ESP_CONSOLE_UART_NUM=0
+
+# Espressif QEMU does not emulate the octal PSRAM (espressif/qemu#129), and a
+# build that expects PSRAM aborts at boot without it. QEMU runs internal-RAM
+# only; the signer fits there for small PCZTs (≈28 KB heap, measured).
+CONFIG_SPIRAM=n
+CONFIG_ESP32S3_SPIRAM_SUPPORT=n
