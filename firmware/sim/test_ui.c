@@ -29,15 +29,11 @@ bool fake_protocol_rx_enabled(void);
 #include "mnemonic-entry.h"
 #include "text-entry.h"
 #include "blind-signing.h"
-#include "eth-tx.h"
-#include "sha3.h"
 #include "memzero.h"
 #include "leek-wallet.h"
 #include "session.h"
 #include "qr-out.h"
 #include "airgap.h"
-#include "eip4527-encode.h"
-#include "ur-decoder.h"
 #include "ur-encoder.h"
 
 /* Test hooks from ui.c and pin.c (compiled with -DLEEK_HOST_TEST). */
@@ -50,11 +46,8 @@ void        fake_button_hold(button_id_t id);
 void        fake_button_release(void);
 void        ui__service_host_lock_for_test(void);
 void        ui__service_qr_out_for_test(void);
-void        ui__service_airgap_for_test(void);
 void        ui__scan_feed_for_test(const char *ur);
 const char *ui__scan_status_for_test(void);
-void        fake_protocol_airgap_answer(TxSignResult rc);
-int         fake_protocol_airgap_calls(void);
 const char *ui__master_xfp_for_test(void);
 uint32_t    ui__account_for_test(void);
 bool        ui__wallet_info_pass_shown_for_test(void);
@@ -74,6 +67,7 @@ int         ui__lock_timeout_choice_for_test(void);
 int         ui__lock_timeout_stored_choice_for_test(void);
 
 void fake_input_reset(void);
+static void settings_goto(const char *label);
 
 /* The 12-word phrase fake_wallet hands out; a real BIP39 test vector. */
 static const char *PHRASE_12 =
@@ -568,75 +562,115 @@ static void test_harness_sees_the_screen(void)
 
 
 /* ============================================================================
- * An error is not an address (AUDIT S8a, T7)
+ * An error is not an identifier (AUDIT S8a, T7)
  * ============================================================================ */
 
-/* The failure this guards against is subtle by design. The address renderer
- * slices its buffer at fixed offsets, so a short error string parked in that
- * buffer draws as one short line over two blank ones - which reads as a
- * truncated address, not as a failure. The QR screen then encoded the same
- * buffer, so a failure message could be offered to a camera as somewhere to
- * send money. */
+/* The failure this guards against is subtle by design: an error string drawn
+ * where an identifier goes reads as a truncated identifier, not as a failure.
+ * The wallet screen keeps the two apart, so a derivation that fails says so in
+ * words and draws nothing fingerprint-shaped. */
 
-static void test_failed_derivation_is_not_shown_as_an_address(void)
+static void test_failed_derivation_is_not_shown_as_an_identifier(void)
 {
-    printf("== a failed derivation says Error, not something address-shaped (S8a)\n");
+    printf("== a failed derivation says Error, not something identifier-shaped (S8a)\n");
     boot_unlocked_with_seed();
 
     fake_wallet_fail_derivation(true);
     go(SCREEN_WALLET_INFO);
 
     CHECK_SCREEN(fake_oled_contains("Error"), "the screen does not say anything failed");
-    CHECK_SCREEN(fake_oled_contains("Addr failed"), "the reason is missing");
-    CHECK_SCREEN(!fake_oled_contains("0x"), "something address-shaped was drawn anyway");
+    CHECK_SCREEN(fake_oled_contains("No fingerprint"), "the reason is missing");
+    CHECK_SCREEN(!fake_oled_contains("XFP"), "something fingerprint-shaped was drawn anyway");
+    CHECK_SCREEN(!fake_oled_contains("coming soon"),
+                 "the failure screen looks like the working one");
+    fake_wallet_fail_derivation(false);
 }
 
-static void test_qr_refuses_to_encode_an_error(void)
-{
-    printf("== the QR screen will not encode a failure message (S8a)\n");
-    boot_unlocked_with_seed();
-
-    fake_wallet_fail_derivation(true);
-    go(SCREEN_WALLET_INFO);
-    go(SCREEN_QR_CODE);
-
-    /* The old guard listed the error strings it knew about, so each new one
-     * silently became a QR code. Assert on what was encoded, not on which
-     * message was current. */
-    const char *encoded = fake_oled_qr_data();
-    CHECK_SCREEN(encoded == NULL || encoded[0] == '\0',
-                 "a QR code was drawn for \"%s\"", encoded ? encoded : "");
-    CHECK_SCREEN(fake_oled_contains("No address"), "the QR screen did not explain itself");
-}
-
-static void test_qr_still_works_for_a_real_address(void)
-{
-    printf("== a real address still reaches the QR screen\n");
-    boot_unlocked_with_seed();
-
-    go(SCREEN_WALLET_INFO);
-    CHECK_SCREEN(fake_oled_contains("QR"), "the QR option is missing for a valid address");
-
-    go(SCREEN_QR_CODE);
-    const char *encoded = fake_oled_qr_data();
-    CHECK(encoded != NULL && strlen(encoded) == 42 && encoded[0] == '0' && encoded[1] == 'x',
-          "encoded \"%s\" instead of a 42-character address", encoded ? encoded : "(none)");
-}
-
-static void test_passphrase_confirmation_needs_an_address(void)
+static void test_passphrase_confirmation_needs_a_fingerprint(void)
 {
     printf("== passphrase confirmation refuses to confirm nothing (S8a)\n");
     boot_unlocked_with_seed();
 
-    /* This screen asks the user to recognise an address. With no address there
-     * is nothing to recognise, and the old code drew blank lines under "Match
-     * your record" - an invitation to accept a wallet that never derived. */
+    /* This screen asks the user to recognise a fingerprint. With none there
+     * is nothing to recognise, and a blank row under "Match your record" is
+     * an invitation to accept a wallet that never derived. */
     fake_wallet_fail_derivation(true);
     go(SCREEN_PASSPHRASE_CONFIRM);
 
     CHECK_SCREEN(!fake_oled_contains("Match your record"),
                  "the user was asked to match a record against nothing");
     CHECK_SCREEN(fake_oled_contains("Error"), "the failure is not stated");
+    fake_wallet_fail_derivation(false);
+}
+
+/* ============================================================================
+ * Roadmap 1.1 - the old chain screens are gone, and nothing leads nowhere
+ * ============================================================================ */
+
+static void test_the_wallet_screen_says_zcash_is_coming(void)
+{
+    printf("== the wallet screen names the seed and says Zcash is coming\n");
+    boot_unlocked_with_seed();
+
+    go(SCREEN_MAIN_MENU);
+    CHECK_SCREEN(fake_oled_contains("Wallet Info"),
+                 "the main menu does not offer Wallet Info");
+    CHECK_SCREEN(!fake_oled_contains("View Address"),
+                 "the main menu still offers an address view");
+
+    go(SCREEN_WALLET_INFO);
+    CHECK_SCREEN(fake_oled_contains("Zcash: coming soon"),
+                 "the wallet screen does not say what is missing");
+    CHECK_SCREEN(fake_oled_contains("XFP"), "no fingerprint on the wallet screen");
+    CHECK_SCREEN(fake_oled_row_contains(0, "W1/1"),
+                 "the title does not name the wallet (\"%s\")", fake_oled_row(0));
+    CHECK_SCREEN(!fake_oled_contains("0x"), "something address-shaped was drawn");
+
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not leave the wallet screen");
+}
+
+static bool select_menu_item(const char *label)
+{
+    for (int i = 0; i < 12; i++) {
+        char want[24];
+        snprintf(want, sizeof want, "> %s", label);
+        if (fake_oled_contains(want)) {
+            return true;
+        }
+        press(BUTTON_DOWN);
+    }
+    return false;
+}
+
+static void test_show_address_is_a_placeholder(void)
+{
+    printf("== Show Address is a placeholder that leads back home\n");
+    boot_unlocked_with_seed();
+    go(SCREEN_MAIN_MENU);
+
+    CHECK(select_menu_item("Show Address"), "Show Address is not on the main menu");
+    /* No camera on the host board, and Scan must not pretend otherwise. */
+    go(SCREEN_MAIN_MENU);
+    CHECK(!select_menu_item("Scan"), "Scan is offered on a board with no camera");
+
+    go(SCREEN_MAIN_MENU);
+    select_menu_item("Show Address");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS, "the menu did not open it");
+    CHECK_SCREEN(fake_oled_contains("Zcash: coming soon"),
+                 "the placeholder does not say what is missing");
+
+    /* Nothing leaves the device from here, whatever is pressed. */
+    press(BUTTON_ACCEPT);
+    press(BUTTON_UP);
+    press(BUTTON_DOWN);
+    idle_pump();
+    CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS, "the placeholder went somewhere");
+    CHECK(fake_oled_qr_data()[0] == '\0', "a QR appeared on the placeholder");
+
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not return to the menu");
 }
 
 /* ============================================================================
@@ -982,9 +1016,9 @@ static void test_dice_and_taps_compose(void)
  * T39b - the master fingerprint is on screen
  * ============================================================================ */
 
-static void test_xfp_is_shown_with_the_address(void)
+static void test_xfp_is_shown_on_the_wallet_screen(void)
 {
-    printf("== the wallet screen names the seed, not just an address (T39b)\n");
+    printf("== the wallet screen names the seed (T39b)\n");
     boot_unlocked_with_seed();
     CHECK(wallet_unlock("1234", 4) == WALLET_OK, "setup: vault would not unlock");
 
@@ -998,8 +1032,10 @@ static void test_xfp_is_shown_with_the_address(void)
     snprintf(expect, sizeof(expect), "XFP %08lX", (unsigned long)fp);
     CHECK_SCREEN(fake_oled_contains(expect), "the screen does not show %s", expect);
 
-    /* It identifies the seed, so scrolling accounts must not change it. */
-    press(BUTTON_UP);
+    /* It identifies the seed, so changing account must not change it. */
+    settings_goto("Account");
+    press(BUTTON_ACCEPT);
+    go(SCREEN_WALLET_INFO);
     CHECK_SCREEN(fake_oled_contains(expect),
                  "the fingerprint changed when the account did");
 }
@@ -1040,13 +1076,13 @@ static void test_xfp_is_absent_when_it_cannot_be_derived(void)
     boot_unlocked_with_seed();
     CHECK(wallet_unlock("1234", 4) == WALLET_OK, "setup: vault would not unlock");
 
-    /* Only the fingerprint fails: the address is still real, so this is the
+    /* Only the fingerprint fails: the wallet itself is fine, so this is the
      * case where an "XFP --------" placeholder would sit next to genuine data
      * and be read as genuine too. */
     fake_wallet_fail_fingerprint(true);
 
     go(SCREEN_WALLET_INFO);
-    CHECK_SCREEN(fake_oled_contains("0x01"), "setup: the address failed too");
+    CHECK_SCREEN(fake_oled_row_contains(0, "W1/1"), "setup: the wallet is not shown");
     CHECK_SCREEN(!fake_oled_contains("XFP"), "a fingerprint was drawn without one");
 
     fake_wallet_fail_fingerprint(false);
@@ -1191,160 +1227,6 @@ static void test_change_pin_catches_a_mismatch(void)
     CHECK(pin_verify("1234"), "the PIN changed despite the mismatch");
 }
 
-/* A personal_sign confirmation must show the whole message, because the
- * signature covers the whole message. Anything the screen leaves out is
- * something the user approved without reading. */
-static void test_message_confirmation_shows_all_of_it(void)
-{
-    printf("== the message screen renders the entire message, then the source\n");
-    boot_unlocked_with_seed();
-
-    const char *message = "Sign in to LeekWallet as user 42 on 2026-08-13 ok";
-    HDPath msg_path = HDPATH_ETH_DEFAULT;
-    msg_path.address_index = 3;
-    ui_request_sign_message(message, strlen(message), &msg_path,
-                            "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    /* Twenty characters a row, so a 48-character message spans three of them
-     * and every one has to be on screen. */
-    CHECK_SCREEN(fake_oled_contains("Sign in to LeekWalle"), "first row missing");
-    CHECK_SCREEN(fake_oled_contains("t as user 42 on 2026"), "second row missing");
-    CHECK_SCREEN(fake_oled_contains("-08-13 ok"), "the tail of the message is missing");
-    CHECK_SCREEN(fake_oled_contains("Sign msg?"),
-                 "the screen does not say it is signing a message");
-
-    /* And the source address, on its own page, as for a transaction (T47). */
-    press(BUTTON_DOWN);
-    CHECK_SCREEN(fake_oled_contains("From"), "no source page");
-    CHECK_SCREEN(fake_oled_contains("0x0100aaaaaaaabb"),
-                 "the source address is not on the source page");
-
-    /* Approval only after every page has been seen, and only then. */
-    press(BUTTON_ACCEPT);
-    CHECK(ui_sign_outcome() == SIGN_APPROVED, "approving both pages did not approve");
-    ui_sign_clear();
-}
-
-/* A typed-data confirmation has to answer three questions the fields alone do
- * not: which contract will honour this, on which chain, and is the amount a
- * number or an infinity. A Permit costs no gas and leaves no trace on chain,
- * which is exactly what makes it comfortable to approve without reading. */
-static void test_typed_data_confirmation_names_the_contract_and_the_amount(void)
-{
-    printf("== the typed-data screen shows the domain, then each field (T12b)\n");
-    boot_unlocked_with_seed();
-
-    Eip712Render render;
-    memset(&render, 0, sizeof(render));
-    snprintf(render.primary_type, sizeof(render.primary_type), "Permit");
-    snprintf(render.domain_name, sizeof(render.domain_name), "USD Coin");
-    render.has_domain_name = true;
-    render.chain_id = 1;
-    render.has_chain_id = true;
-    /* USDC. */
-    static const uint8_t usdc[20] = {
-        0xa0,0xb8,0x69,0x91,0xc6,0x21,0x8b,0x36,0xc1,0xd1,
-        0x9d,0x4a,0x2e,0x9e,0xb0,0xce,0x36,0x06,0xeb,0x48
-    };
-    memcpy(render.verifying_contract, usdc, 20);
-    render.has_verifying_contract = true;
-
-    snprintf(render.fields[0].label, sizeof(render.fields[0].label), "spender");
-    render.fields[0].is_address = true;
-    snprintf(render.fields[0].value, sizeof(render.fields[0].value),
-             "0x1111111254EEB25477B68fb85Ed929f73A960582");
-    snprintf(render.fields[1].label, sizeof(render.fields[1].label), "value");
-    render.fields[1].unlimited = true;
-    snprintf(render.fields[2].label, sizeof(render.fields[2].label), "deadline");
-    render.fields[2].is_deadline = true;
-    snprintf(render.fields[2].value, sizeof(render.fields[2].value), "1893456000");
-    render.field_count = 3;
-
-    uint8_t digest[32];
-    memset(digest, 0xab, sizeof(digest));
-
-    HDPath path = HDPATH_ETH_DEFAULT;
-    ui_request_sign_typed_data(&render, digest, false, &path,
-                               "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    CHECK_SCREEN(fake_oled_contains("Sign data?"),
-                 "the header does not say this is typed data");
-    CHECK_SCREEN(fake_oled_contains("Permit"), "the struct is not named");
-    /* The domain page, before any field. A Permit whose fields all read
-     * correctly against the wrong contract drains the wrong token. */
-    CHECK_SCREEN(fake_oled_contains("Contract"), "the domain page names no contract");
-    CHECK_SCREEN(fake_oled_contains("0xA0b86991c6218b"),
-                 "the verifying contract is not on the domain page");
-    CHECK_SCREEN(fake_oled_contains("Ethereum"), "the chain is not on the domain page");
-
-    press(BUTTON_DOWN);
-    CHECK_SCREEN(fake_oled_contains("spender"), "no spender page");
-    CHECK_SCREEN(fake_oled_contains("0x1111111254EEB2"),
-                 "the spender address is not shown");
-
-    press(BUTTON_DOWN);
-    /* The word, not seventy-eight digits. Same wording as the ERC-20 approve
-     * screen, because it is the same thing being agreed to. */
-    CHECK_SCREEN(fake_oled_contains("UNLIMITED amount"),
-                 "an infinite allowance is not named as one");
-
-    press(BUTTON_DOWN);
-    CHECK_SCREEN(fake_oled_contains("1893456000"), "the deadline value is missing");
-    CHECK_SCREEN(fake_oled_contains("valid until"),
-                 "the deadline is not labelled as one");
-
-    press(BUTTON_DOWN);
-    CHECK_SCREEN(fake_oled_contains("From"), "no source page");
-    CHECK_SCREEN(fake_oled_contains("Typed data sig"),
-                 "the source page does not say a signature moves nothing by itself");
-
-    press(BUTTON_ACCEPT);
-    CHECK(ui_sign_outcome() == SIGN_APPROVED, "paging through every page did not approve");
-    ui_sign_clear();
-}
-
-/* The blind form of the same screen. It must not look like the one above: the
- * warning leads, and the digest replaces a field list that would read as
- * complete when it is not. */
-static void test_blind_typed_data_leads_with_the_warning(void)
-{
-    printf("== an unshowable structure gets a warning and a digest, not a field list\n");
-    boot_unlocked_with_seed();
-
-    Eip712Render render;
-    memset(&render, 0, sizeof(render));
-    snprintf(render.primary_type, sizeof(render.primary_type), "Wide");
-    render.chain_id = 1;
-    render.has_chain_id = true;
-
-    uint8_t digest[32];
-    for (int i = 0; i < 32; i++) digest[i] = (uint8_t)i;
-
-    HDPath path = HDPATH_ETH_DEFAULT;
-    ui_request_sign_typed_data(&render, digest, true, &path,
-                               "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    CHECK_SCREEN(fake_oled_contains("!BLIND SIGN!"),
-                 "a blind typed-data request is not marked as blind");
-    CHECK_SCREEN(fake_oled_contains("UNREADABLE DATA"), "no warning page");
-
-    press(BUTTON_DOWN);
-    press(BUTTON_DOWN);
-    CHECK_SCREEN(fake_oled_contains("keccak256:"), "the digest page is missing");
-    /* All 64 characters, four rows of sixteen, never a prefix: a truncated
-     * hash is trivially forged, and checking it against a second source is the
-     * only thing a blind approval has going for it. */
-    CHECK_SCREEN(fake_oled_contains("0001020304050607"), "digest row 1 missing");
-    CHECK_SCREEN(fake_oled_contains("08090a0b0c0d0e0f"), "digest row 2 missing");
-    CHECK_SCREEN(fake_oled_contains("1011121314151617"), "digest row 3 missing");
-    CHECK_SCREEN(fake_oled_contains("18191a1b1c1d1e1f"),
-                 "the last quarter of the digest is missing");
-    ui_sign_clear();
-}
-
 /* ------------------------------------------------- blind signing (T16) */
 
 /* Walk the settings list until `label` is the selected row. The list scrolls
@@ -1428,250 +1310,6 @@ static void test_blind_signing_takes_a_deliberate_act(void)
     press(BUTTON_CANCEL);
 }
 
-/* Aqua's ship, on the device's own screen.
- *
- * The one page this test exists for is the maker. The registry files a
- * position under msg.sender and hashes the strategy without it, so "whose
- * position is this" is a claim the strategy makes and nothing on chain checks.
- * The host refuses a mismatch (packages/apps/aqua/src/strategy.ts), but a
- * refusal that only exists on the host is a refusal a compromised host can
- * skip, so the address has to be legible here, in full, beside the one the
- * device will actually sign with.
- */
-static void test_an_aqua_ship_shows_its_maker_and_every_leg(void)
-{
-    printf("== an Aqua ship draws its maker, its hash and each leg\n");
-    boot_unlocked_with_seed();
-
-    static const uint8_t APP[20] = {
-        0x22, 0x8e, 0x82, 0x83, 0x1a, 0xfa, 0xc5, 0xdd, 0x9e, 0xbd,
-        0xe3, 0x48, 0x9e, 0x9e, 0x18, 0xae, 0x9c, 0x7b, 0xcb, 0xf4,
-    };
-    static const uint8_t MAKER[20] = {
-        0x39, 0xd2, 0xba, 0xe5, 0xea, 0xed, 0xa9, 0x28, 0x35, 0x35,
-        0xdd, 0xc9, 0x8f, 0x19, 0x91, 0xc8, 0x1e, 0xd5, 0xcd, 0x7e,
-    };
-    static const uint8_t TOKEN[20] = {
-        0xd8, 0xdA, 0x6B, 0xF2, 0x69, 0x64, 0xaF, 0x9D, 0x7e, 0xEd,
-        0x9e, 0x03, 0xE5, 0x34, 0x15, 0xD3, 0x7a, 0xA9, 0x60, 0x45,
-    };
-
-    /* The strategy, as abi.encode of a dynamic tuple whose first field is the
-     * maker -- the shape every Aqua deployment observed on chain uses, and the
-     * only one the decoder will accept. */
-    uint8_t strategy[96];
-    memset(strategy, 0, sizeof(strategy));
-    strategy[31] = 0x20;
-    memcpy(strategy + 32 + 12, MAKER, 20);
-    strategy[95] = 0x07;
-
-    EthTx tx;
-    memset(&tx, 0, sizeof(tx));
-    tx.chain_id = 11155111;      /* Sepolia, where Aqua is actually deployed */
-    tx.has_to = true;
-    memset(tx.to, 0x11, sizeof(tx.to));
-    eth_quantity_set_u64(&tx.value, 0);
-
-    /* Canonical calldata, laid out the way solc would. */
-    size_t off_s = 4 * 32;
-    size_t off_t = off_s + 32 + sizeof(strategy);
-    size_t off_a = off_t + 32 + 32;
-    size_t len   = 4 + off_a + 32 + 32;
-    CHECK(len <= ETH_MAX_DATA, "the ship probe does not fit ETH_MAX_DATA");
-    memset(tx.data, 0, len);
-    {
-        uint8_t sel[32];
-        const char *sig = "ship(address,bytes,address[],uint256[])";
-        keccak_256((const uint8_t *)sig, strlen(sig), sel);
-        memcpy(tx.data, sel, 4);
-    }
-    uint8_t *args = tx.data + 4;
-    memcpy(args + 12, APP, 20);
-    /* Two bytes, big-endian: off_t is 256 and a one-byte write would silently
-     * store zero -- which is exactly the kind of encoding the decoder refuses,
-     * so the test would have passed for the wrong reason. */
-    args[62] = (uint8_t)(off_s >> 8);   args[63] = (uint8_t)off_s;
-    args[94] = (uint8_t)(off_t >> 8);   args[95] = (uint8_t)off_t;
-    args[126] = (uint8_t)(off_a >> 8);  args[127] = (uint8_t)off_a;
-    args[off_s + 31] = (uint8_t)sizeof(strategy);
-    memcpy(args + off_s + 32, strategy, sizeof(strategy));
-    args[off_t + 31] = 1;
-    args[off_a + 31] = 1;
-    memcpy(args + off_t + 32 + 12, TOKEN, 20);
-    args[off_a + 32 + 31] = 0x64;             /* 100 raw units */
-    tx.data_length = len;
-
-    char maker_hex[43], token_hex[43];
-    CHECK(eth_format_address(MAKER, maker_hex, sizeof(maker_hex)), "maker format");
-    CHECK(eth_format_address(TOKEN, token_hex, sizeof(token_hex)), "token format");
-    char maker_head[17], token_head[17];
-    snprintf(maker_head, sizeof(maker_head), "%.16s", maker_hex);
-    snprintf(token_head, sizeof(token_head), "%.16s", token_hex);
-
-    char expect_hash[65];
-    {
-        uint8_t digest[32];
-        keccak_256(strategy, sizeof(strategy), digest);
-        for (int i = 0; i < 32; i++) {
-            snprintf(expect_hash + i * 2, 3, "%02x", digest[i]);
-        }
-    }
-
-    HDPath sign_at = HDPATH_ETH_DEFAULT;
-    ui_request_sign(&tx, &sign_at, "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    /* Not blind: the whole point of the decoder is that this call is read. */
-    CHECK_SCREEN(!fake_oled_row_contains(0, "BLIND"),
-                 "a decoded ship was drawn as a blind signature (\"%s\")",
-                 fake_oled_row(0));
-
-    bool saw_ship = false, saw_pull = false, saw_maker = false;
-    bool saw_token = false, saw_amount = false, saw_hash = false;
-    bool saw_must_match = false, saw_from = false;
-
-    for (int page = 0; page < 9; page++) {
-        if (fake_oled_contains("SHIP to Aqua"))   saw_ship = true;
-        if (fake_oled_contains("PULL"))           saw_pull = true;
-        if (fake_oled_contains(maker_head))       saw_maker = true;
-        if (fake_oled_contains("Must match From")) saw_must_match = true;
-        if (fake_oled_contains(token_head))       saw_token = true;
-        /* The amount has a page of its own, headed and labelled: a token
-         * address and a 78-digit uint256 cannot share a screen, and this
-         * device wraps rather than truncates. Matching the heading and the
-         * unit as well as the figure stops a stray "100" inside an address
-         * passing for the amount. */
-        if (fake_oled_contains("Provide, token 1") && fake_oled_contains("raw units")
-            && fake_oled_contains("100")) {
-            saw_amount = true;
-        }
-        if (fake_oled_contains("0x0100aaaaaaaabb")) saw_from = true;
-        if (fake_oled_contains("Strategy hash")) {
-            char joined[65] = "";
-            for (int row = 0; row < FAKE_OLED_ROWS; row++) {
-                const char *text = fake_oled_row(row);
-                if (strlen(text) == 16 && strspn(text, "0123456789abcdef") == 16) {
-                    strncat(joined, text, sizeof(joined) - strlen(joined) - 1);
-                }
-            }
-            saw_hash = (strcmp(joined, expect_hash) == 0);
-            CHECK_SCREEN(saw_hash, "strategy hash is %s, expected %s",
-                         joined, expect_hash);
-        }
-        press(BUTTON_DOWN);
-    }
-
-    CHECK_SCREEN(saw_ship, "the ship page never named the action");
-    CHECK_SCREEN(saw_pull, "the screen never says Aqua pulls from this wallet");
-    CHECK_SCREEN(saw_maker, "the strategy's maker never appeared");
-    CHECK_SCREEN(saw_must_match, "the maker page does not say it must match From");
-    CHECK_SCREEN(saw_token, "the leg's token never appeared");
-    CHECK_SCREEN(saw_amount, "the leg's amount never appeared");
-    CHECK(saw_hash, "the strategy hash was never shown");
-    CHECK_SCREEN(saw_from, "the signing address never appeared (T47)");
-
-    press(BUTTON_ACCEPT);
-    CHECK(ui_sign_outcome() == SIGN_APPROVED, "a fully paged ship could not be approved");
-    ui_sign_clear();
-}
-
-/* The confirmation for a call the device cannot read: visibly different, and
- * honest about exactly how little it knows. */
-static void test_blind_confirmation_is_marked_and_shows_the_digest(void)
-{
-    printf("== a blind confirmation names itself and shows the calldata hash\n");
-    boot_unlocked_with_seed();
-
-    EthTx tx;
-    memset(&tx, 0, sizeof(tx));
-    tx.chain_id = 1;
-    tx.has_to = true;
-    memset(tx.to, 0x5A, sizeof(tx.to));
-    eth_quantity_set_u64(&tx.value, 0);
-
-    static const uint8_t data[36] = { 0xde, 0xad, 0xbe, 0xef };
-    memcpy(tx.data, data, sizeof(data));
-    tx.data_length = sizeof(data);
-
-    /* The checksummed form the device will draw, computed the same way it
-     * does: a hand-written expectation would be asserting the case rules of
-     * EIP-55 rather than what is on screen. */
-    char to_hex[43];
-    CHECK(eth_format_address(tx.to, to_hex, sizeof(to_hex)), "could not format `to`");
-    char to_head[17];
-    snprintf(to_head, sizeof(to_head), "%.16s", to_hex);
-
-    HDPath sign_at = HDPATH_ETH_DEFAULT;
-    ui_request_sign(&tx, &sign_at, "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    /* Distinct from a normal confirmation at a glance, on every page. */
-    CHECK_SCREEN(fake_oled_row_contains(0, "BLIND"),
-                 "the header does not mark this as blind (\"%s\")", fake_oled_row(0));
-    CHECK_SCREEN(fake_oled_contains("UNKNOWN CALL"),
-                 "the first page does not say the call is unknown");
-    CHECK_SCREEN(fake_oled_contains("cannot read"),
-                 "the device does not say it cannot read the call");
-
-    /* Approving without paging is not approval, and that rule must not be
-     * looser here of all places. */
-    press(BUTTON_ACCEPT);
-    CHECK(ui_sign_outcome() == SIGN_PENDING,
-          "a blind call was approved without seeing every page");
-
-    /* Everything the device honestly knows, page by page. */
-    bool saw_to = false, saw_chain = false, saw_len = false, saw_from = false;
-    char expect_hex[65];
-    {
-        uint8_t digest[32];
-        keccak_256(data, sizeof(data), digest);
-        for (int i = 0; i < 32; i++) {
-            snprintf(expect_hex + i * 2, 3, "%02x", digest[i]);
-        }
-    }
-    bool saw_hash = false;
-
-    for (int page = 0; page < 6; page++) {
-        if (fake_oled_contains(to_head))              saw_to = true;
-        if (fake_oled_contains("Ethereum"))           saw_chain = true;
-        if (fake_oled_contains("36 bytes"))           saw_len = true;
-        if (fake_oled_contains("0x0100aaaaaaaabb"))   saw_from = true;
-        /* The digest, in full and in four rows of sixteen. A truncated hash
-         * is forgeable, so a prefix would be worse than none. */
-        if (fake_oled_contains("keccak256:")) {
-            char joined[65] = "";
-            for (int row = 0; row < FAKE_OLED_ROWS; row++) {
-                const char *text = fake_oled_row(row);
-                if (strlen(text) == 16 && strspn(text, "0123456789abcdef") == 16) {
-                    strncat(joined, text, sizeof(joined) - strlen(joined) - 1);
-                }
-            }
-            saw_hash = (strcmp(joined, expect_hex) == 0);
-            CHECK_SCREEN(saw_hash, "calldata digest is %s, expected %s",
-                         joined, expect_hex);
-        }
-        press(BUTTON_DOWN);
-    }
-
-    CHECK_SCREEN(saw_to, "the recipient never appeared");
-    CHECK_SCREEN(saw_chain, "the chain never appeared");
-    CHECK_SCREEN(saw_len, "the calldata length never appeared");
-    CHECK_SCREEN(saw_from, "the signing address never appeared (T47)");
-    CHECK(saw_hash, "the calldata digest was never shown");
-
-    press(BUTTON_ACCEPT);
-    CHECK(ui_sign_outcome() == SIGN_APPROVED,
-          "a fully paged blind call could not be approved");
-    ui_sign_clear();
-
-    /* And refusing works from the first page, without paging. */
-    ui_request_sign(&tx, &sign_at, "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-    press(BUTTON_CANCEL);
-    CHECK(ui_sign_outcome() == SIGN_REJECTED, "CANCEL did not reject a blind call");
-    ui_sign_clear();
-}
-
 /* Locking takes the channel with it.
  *
  * The encrypted session used to survive a lock: the wallet closed, the host
@@ -1715,290 +1353,61 @@ static void test_locking_closes_the_channel(void)
 /* An approval nobody answered has to leave the screen.
  *
  * wait_for_user()'s 120 s deadline answers the host and calls ui_sign_clear(),
- * which zeroes the request and nothing else. So the device sat on a
- * confirmation screen rendering a *wiped* transaction and still taking
- * buttons: pressing SIGN advanced to the result screen and reported the
- * transaction approved, seconds after the host had been told no.
- *
- * Found on hardware while reproducing H-1. Nothing was exploitable -- the
- * outcome is no longer read by then -- but a device whose one guarantee is
- * "what you see is what you sign" must not tell a user it signed something it
- * did not.
+ * which resets the outcome and nothing else. A question left on the glass
+ * after the host has been told no would still take presses, and the device
+ * must never appear to accept something nothing is waiting for. Found on
+ * hardware while reproducing H-1, on the signing screen; the host passphrase
+ * question shares wait_for_user() and the same gap.
  */
 static void test_an_expired_approval_leaves_the_screen(void)
 {
     printf("== an approval nobody answered comes off the screen\n");
     boot_unlocked_with_seed();
 
-    EthTx tx;
-    memset(&tx, 0, sizeof(tx));
-    tx.chain_id = 1;
-    memset(tx.to, 0xab, sizeof(tx.to));
-
-    HDPath sign_at = HDPATH_ETH_DEFAULT;
-    ui_request_sign(&tx, &sign_at, "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
+    ui_request_passphrase_confirm(0x1234ABCDu);
+    go(SCREEN_HOST_PASSPHRASE_CONFIRM);
+    CHECK(ui_user_is_answering(), "the passphrase question does not count as one");
 
     /* The protocol task gives up: answers the host, clears the request. */
     ui_sign_clear();
     ui_sign_expire();
     ui__service_sign_expiry_for_test();
     ui_render();
-
-    CHECK(ui_get_screen() != SCREEN_SIGN_CONFIRM,
-          "an expired request left the confirmation screen up, still taking presses");
-    CHECK(ui_get_screen() == SCREEN_SIGN_RESULT,
-          "an expired request did not land on the result screen");
-
-    /* And it says what happened, rather than borrowing the wording for a
-     * refusal -- "you said no" and "you said nothing" are different facts. */
-    CHECK_SCREEN(fake_oled_contains("Expired"),
-                 "the device does not say the request expired");
-    CHECK_SCREEN(!fake_oled_contains("Signed"),
-                 "an expired request claimed a signature");
-    CHECK_SCREEN(!fake_oled_contains("Approved"),
-                 "an expired request claimed an approval");
-
-    /* The same expiry on the host-passphrase question, which shares
-     * wait_for_user() and had the same gap. */
-    ui_request_passphrase_confirm("0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_HOST_PASSPHRASE_CONFIRM);
-    ui_sign_clear();
-    ui_sign_expire();
-    ui__service_sign_expiry_for_test();
-    ui_render();
     CHECK(ui_get_screen() != SCREEN_HOST_PASSPHRASE_CONFIRM,
           "an expired passphrase question left its confirmation screen up");
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "the expiry recorded an answer");
 }
 
-/* A decodable call must not borrow the blind wording: "unknown" on a screen
- * that did understand the call would teach the user to ignore it. */
-static void test_a_decoded_call_is_not_marked_blind(void)
-{
-    printf("== a call the device did decode is not dressed as a blind one\n");
-    boot_unlocked_with_seed();
-
-    EthTx tx;
-    memset(&tx, 0, sizeof(tx));
-    tx.chain_id = 1;
-    tx.has_to = true;
-    memset(tx.to, 0x5A, sizeof(tx.to));
-
-    /* setApprovalForAll(operator, true) - the widest approval there is, and
-     * the one that has to read as such. */
-    memset(tx.data, 0, 68);
-    tx.data[0] = 0xa2; tx.data[1] = 0x2c; tx.data[2] = 0xb4; tx.data[3] = 0x65;
-    memset(tx.data + 16, 0x77, 20);
-    tx.data[67] = 1;
-    tx.data_length = 68;
-
-    char op_hex[43];
-    uint8_t op[20];
-    memset(op, 0x77, sizeof(op));
-    CHECK(eth_format_address(op, op_hex, sizeof(op_hex)), "could not format operator");
-    char op_head[17];
-    snprintf(op_head, sizeof(op_head), "%.16s", op_hex);
-
-    HDPath sign_at = HDPATH_ETH_DEFAULT;
-    ui_request_sign(&tx, &sign_at, "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    CHECK_SCREEN(!fake_oled_row_contains(0, "BLIND"),
-                 "a decoded call is marked blind (\"%s\")", fake_oled_row(0));
-    CHECK_SCREEN(fake_oled_contains("APPROVE ALL"),
-                 "setApprovalForAll is not described as approving everything");
-
-    bool saw_operator = false;
-    for (int page = 0; page < 4; page++) {
-        if (fake_oled_contains("Operator") && fake_oled_contains(op_head)) {
-            saw_operator = true;
-        }
-        press(BUTTON_DOWN);
-    }
-    CHECK_SCREEN(saw_operator, "the operator being approved was never named");
-    ui_sign_clear();
-}
-
-/* A call from the signature table (T12c): every declared argument gets a page,
- * and the screen says what a verified signature does and does not prove.
- *
- * Aave's supply() is the case that prompted the work - the device refused it
- * while signing the two approvals that made it dangerous - so it is the case
- * the screen is tested against. */
-static void test_a_generic_call_shows_every_argument(void)
-{
-    printf("== a table call names its function and pages every argument\n");
-    boot_unlocked_with_seed();
-
-    EthTx tx;
-    memset(&tx, 0, sizeof(tx));
-    tx.chain_id = 1;
-    tx.has_to = true;
-    memset(tx.to, 0x5A, sizeof(tx.to));
-
-    /* Hashed here rather than typed: a hand-copied selector would encode
-     * cleanly and this test would then be asserting against the wrong call. */
-    const char *sig = "supply(address,uint256,address,uint16)";
-    uint8_t selector[32];
-    keccak_256((const uint8_t *)sig, strlen(sig), selector);
-
-    uint8_t asset[20], behalf[20];
-    memset(asset, 0x11, sizeof(asset));
-    memset(behalf, 0x22, sizeof(behalf));
-
-    memset(tx.data, 0, 132);
-    memcpy(tx.data, selector, 4);
-    memcpy(tx.data + 4 + 12, asset, 20);
-    tx.data[4 + 63] = 0x2A;                    /* amount = 42 */
-    memcpy(tx.data + 4 + 64 + 12, behalf, 20);
-    tx.data_length = 132;
-
-    char to_hex[43], asset_hex[43], behalf_hex[43];
-    CHECK(eth_format_address(tx.to, to_hex, sizeof(to_hex)), "format contract");
-    char to_head[17];
-    snprintf(to_head, sizeof(to_head), "%.16s", to_hex);
-    CHECK(eth_format_address(asset, asset_hex, sizeof(asset_hex)), "format asset");
-    CHECK(eth_format_address(behalf, behalf_hex, sizeof(behalf_hex)), "format behalf");
-    char asset_head[17], behalf_head[17];
-    snprintf(asset_head, sizeof(asset_head), "%.16s", asset_hex);
-    snprintf(behalf_head, sizeof(behalf_head), "%.16s", behalf_hex);
-
-    HDPath sign_at = HDPATH_ETH_DEFAULT;
-    ui_request_sign(&tx, &sign_at, "0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    /* Decoded, so not dressed as blind - and named, on the first page. */
-    CHECK_SCREEN(!fake_oled_row_contains(0, "BLIND"),
-                 "a table call is marked blind (\"%s\")", fake_oled_row(0));
-    CHECK_SCREEN(fake_oled_contains("supply"), "the function is not named");
-    /* The limit, in the same breath as the name: this proves what the call is
-     * CALLED, never what it does. */
-    CHECK_SCREEN(fake_oled_contains("Not what it does"),
-                 "the screen does not state what a verified name proves");
-
-    bool saw_asset = false, saw_amount = false, saw_behalf = false;
-    bool saw_referral = false, saw_contract = false, saw_from = false;
-    for (int page = 0; page < 8; page++) {
-        if (fake_oled_contains("asset") && fake_oled_contains(asset_head)) {
-            saw_asset = true;
-        }
-        if (fake_oled_contains("amount") && fake_oled_contains("42") &&
-            fake_oled_contains("raw units")) {
-            saw_amount = true;
-        }
-        if (fake_oled_contains("onBehalfOf") && fake_oled_contains(behalf_head)) {
-            saw_behalf = true;
-        }
-        if (fake_oled_contains("referral") && fake_oled_contains("0")) {
-            saw_referral = true;
-        }
-        /* The contract stays visible: a name proves nothing about who runs
-         * the code, and this address is the only thing that identifies it. */
-        if (fake_oled_contains("Contract") && fake_oled_contains(to_head)) {
-            saw_contract = true;
-        }
-        if (fake_oled_contains("0x0100aaaaaaaabb")) saw_from = true;
-        press(BUTTON_DOWN);
-    }
-
-    CHECK_SCREEN(saw_asset, "the asset argument never appeared");
-    CHECK_SCREEN(saw_amount, "the amount never appeared in raw units");
-    CHECK_SCREEN(saw_behalf, "onBehalfOf never appeared");
-    CHECK_SCREEN(saw_referral, "the referral code never appeared");
-    CHECK_SCREEN(saw_contract, "the contract address never appeared");
-    CHECK_SCREEN(saw_from, "the signing address never appeared (T47)");
-
-    press(BUTTON_ACCEPT);
-    CHECK(ui_sign_outcome() == SIGN_APPROVED,
-          "a fully paged table call could not be approved");
-    ui_sign_clear();
-}
-
-/* The host-entry passphrase path (PROTOCOL.md 5): the address is the whole
- * defence, and saying no has to be a real answer rather than a delay. */
+/* The host-entry passphrase path (PROTOCOL.md 5): the fingerprint is the
+ * whole defence, and saying no has to be a real answer rather than a delay. */
 static void test_host_passphrase_confirmation(void)
 {
-    printf("== a host-supplied passphrase is confirmed against its address\n");
+    printf("== a host-supplied passphrase is confirmed against its fingerprint\n");
     boot_unlocked_with_seed();
     CHECK(wallet_unlock("1234", 4) == WALLET_OK, "setup: vault would not unlock");
 
-    ui_request_passphrase_confirm("0x0100aaaaaaaabbbbbbbbccccccccddddddddeeee");
+    ui_request_passphrase_confirm(0x1234ABCDu);
+    CHECK(ui_user_is_answering(), "a pending question does not count as one");
     go(SCREEN_HOST_PASSPHRASE_CONFIRM);
 
-    CHECK_SCREEN(fake_oled_contains("0x0100aaaaaaaabb"),
-                 "the wallet's address is not on screen");
+    CHECK_SCREEN(fake_oled_contains("XFP 1234ABCD"),
+                 "the resulting seed's fingerprint is not on screen");
     /* The user has to know this came from the host, which is the weaker path. */
     CHECK_SCREEN(fake_oled_contains("host"),
                  "the screen does not say the passphrase came from the app");
-    /* The address is one account; the fingerprint is the seed the host's
-     * passphrase produced, which is the thing that is either yours or not. */
-    CHECK_SCREEN(fake_oled_contains("XFP"),
-                 "the host confirmation does not name the resulting seed");
     CHECK(ui_sign_outcome() == SIGN_PENDING, "the prompt answered itself");
 
     press(BUTTON_CANCEL);
     CHECK(ui_sign_outcome() == SIGN_REJECTED, "CANCEL did not reject");
+    CHECK(ui_get_screen() == SCREEN_WALLET_INFO, "a rejection did not land on the wallet");
     ui_sign_clear();
 
-    /* With no address there is nothing to recognise, so there is nothing to
-     * accept: a blank confirmation is worse than none. */
-    ui_request_passphrase_confirm("");
+    ui_request_passphrase_confirm(0x00000001u);
     go(SCREEN_HOST_PASSPHRASE_CONFIRM);
+    CHECK_SCREEN(fake_oled_contains("XFP 00000001"),
+                 "a small fingerprint is not shown at full width");
     press(BUTTON_ACCEPT);
-    CHECK(ui_sign_outcome() == SIGN_REJECTED,
-          "an empty address was confirmable anyway");
-    ui_sign_clear();
-}
-
-
-/* The acknowledgement after signing (reported on hardware).
- *
- * ui_sign_report() is called from the PROTOCOL task the moment
- * wallet_sign_hash_at_path() returns, and on the WalletConnect path there is
- * no button press afterwards - approval was the last one. The UI task only
- * repaints inside `if (ui_needs_render())`, so without an invalidate the
- * "Signing..." frame drawn on entry stayed the last frame drawn and the
- * two-second auto-dismiss moved on to the address list. The device signed and
- * never said so.
- *
- * The whole test is therefore about idle_pump(): render unconditionally and it
- * passes against the broken code, which is how this was verified green once
- * already. */
-static void test_the_signed_acknowledgement_actually_appears(void)
-{
-    printf("== the result screen repaints itself when the signature lands\n");
-    boot_unlocked_with_seed();
-
-    /* Entering the screen before the signature exists - what the approval
-     * press does. */
-    go(SCREEN_SIGN_RESULT);
-    CHECK_SCREEN(fake_oled_contains("Signing"),
-                 "the result screen does not say it is working");
-    CHECK(!ui_needs_render(), "setup: the screen was left dirty");
-
-    /* The protocol task reports success. No press follows. */
-    ui_sign_report(true);
-    CHECK(ui_needs_render(),
-          "ui_sign_report did not mark the screen dirty - the UI task will "
-          "never repaint and the user will never see the acknowledgement");
-    idle_pump();
-
-    CHECK_SCREEN(fake_oled_contains("Signed"),
-                 "the screen never said the transaction was signed");
-    CHECK_SCREEN(!fake_oled_contains("Signing"),
-                 "the screen is still showing the in-progress frame");
-
-    /* A failure has to reach the screen the same way, and must not read as
-     * success: "nothing was sent" is the fact the user needs. */
-    ui_sign_clear();
-    go(SCREEN_SIGN_RESULT);
-    ui_sign_report(false);
-    CHECK(ui_needs_render(), "a failed signature did not mark the screen dirty");
-    idle_pump();
-    CHECK_SCREEN(fake_oled_contains("NOT signed"),
-                 "a failed signature was not reported");
-    CHECK_SCREEN(!fake_oled_contains("Handed to host"),
-                 "a failure claimed the signature went to the host");
+    CHECK(ui_sign_outcome() == SIGN_APPROVED, "ACCEPT did not approve");
     ui_sign_clear();
 }
 
@@ -2096,7 +1505,7 @@ static void test_autolock_drops_the_passphrase(void)
 
 static void test_switching_wallets_drops_the_passphrase(void)
 {
-    printf("== switching seeds drops the passphrase and the address with it\n");
+    printf("== switching seeds drops the passphrase and the fingerprint with it\n");
     boot_unlocked_with_seed();
     CHECK(fake_wallet_preload(PHRASE_12) == 2, "setup: need a second seed");
     CHECK(wallet_select_wallet(1) == WALLET_OK, "setup: could not select seed 1");
@@ -2116,24 +1525,24 @@ static void test_switching_wallets_drops_the_passphrase(void)
           "named, that looks empty");
     CHECK(ui_get_screen() == SCREEN_WALLET_INFO, "the switch did not show the wallet");
     CHECK_SCREEN(strcmp(fake_oled_row(2), with_pass) != 0,
-                 "the address did not change with the wallet");
+                 "the fingerprint did not change with the wallet");
 }
 
 /* The one that cannot be fixed by clearing state alone: the screen is ALREADY
- * showing an address and a fingerprint when the passphrase changes underneath
+ * showing a fingerprint when the passphrase changes underneath
  * it. Nothing presses a button, so nothing re-derives unless the UI task
  * notices. Every real trigger is another task - a host setPassphrase, a
  * host-rejected confirmation, a disconnect dropping a host passphrase. */
 static void test_a_passphrase_change_under_the_wallet_screen_re_derives(void)
 {
-    printf("== the wallet screen never shows an address from a passphrase that "
+    printf("== the wallet screen never shows a fingerprint from a passphrase that "
            "is no longer applied (T42)\n");
     boot_unlocked_with_seed();
     CHECK(wallet_unlock("1234", 4) == WALLET_OK, "setup: vault would not unlock");
 
     go(SCREEN_WALLET_INFO);
-    char base_addr[43];
-    snprintf(base_addr, sizeof(base_addr), "%s", fake_oled_row(2));
+    char base_row[43];
+    snprintf(base_row, sizeof(base_row), "%s", fake_oled_row(2));
     uint32_t base_fp = 0;
     CHECK(wallet_get_master_fingerprint(&base_fp) == WALLET_OK, "no base fingerprint");
 
@@ -2142,8 +1551,8 @@ static void test_a_passphrase_change_under_the_wallet_screen_re_derives(void)
     idle_pump();    /* notices, re-derives, marks dirty */
     idle_pump();    /* paints */
 
-    CHECK_SCREEN(strcmp(fake_oled_row(2), base_addr) != 0,
-                 "the screen still shows the base wallet's address after a "
+    CHECK_SCREEN(strcmp(fake_oled_row(2), base_row) != 0,
+                 "the screen still shows the base wallet's fingerprint after a "
                  "passphrase was applied");
     CHECK_SCREEN(fake_oled_row_contains(0, "P"),
                  "nothing on screen says a passphrase is applied (\"%s\")",
@@ -2160,9 +1569,9 @@ static void test_a_passphrase_change_under_the_wallet_screen_re_derives(void)
     idle_pump();
     idle_pump();
 
-    CHECK_SCREEN(strcmp(fake_oled_row(2), base_addr) == 0,
-                 "the screen kept an address derived from a passphrase that is "
-                 "gone - the user would read it off and never be paid");
+    CHECK_SCREEN(strcmp(fake_oled_row(2), base_row) == 0,
+                 "the screen kept a fingerprint derived from a passphrase that "
+                 "is gone");
     snprintf(expect, sizeof(expect), "XFP %08lX", (unsigned long)base_fp);
     CHECK_SCREEN(fake_oled_contains(expect), "the fingerprint stayed stale");
     CHECK(!ui__wallet_info_pass_shown_for_test(),
@@ -2215,31 +1624,22 @@ static void test_the_account_is_selectable_and_bounded(void)
           "full cycle)", (unsigned)ui__account_for_test());
 }
 
-static void test_the_wallet_screen_names_the_whole_path(void)
+static void test_the_wallet_screen_names_the_account(void)
 {
-    printf("== the wallet screen shows the derivation path, not just an index\n");
+    printf("== the wallet screen shows the account the device is on (T45)\n");
     boot_unlocked_with_seed();
 
     go(SCREEN_WALLET_INFO);
-    CHECK_SCREEN(fake_oled_contains("m/44'/60'/0'/0/0"),
-                 "no derivation path on the wallet screen");
-    char account0[43];
-    snprintf(account0, sizeof(account0), "%s", fake_oled_row(2));
-
-    /* Browse to address 1, then change account: the index must restart, because
-     * index 1 of account 0 and index 1 of account 1 are unrelated addresses. */
-    press(BUTTON_UP);
-    CHECK_SCREEN(fake_oled_contains("m/44'/60'/0'/0/1"), "the index is not in the path");
+    CHECK_SCREEN(fake_oled_row_contains(0, "acct 0"),
+                 "no account on the wallet screen (\"%s\")", fake_oled_row(0));
 
     settings_goto("Account");
     press(BUTTON_ACCEPT);
     go(SCREEN_WALLET_INFO);
 
-    CHECK_SCREEN(fake_oled_contains("m/44'/60'/1'/0/0"),
-                 "the path does not follow the account, or the index did not "
-                 "restart with it");
-    CHECK_SCREEN(strcmp(fake_oled_row(2), account0) != 0,
-                 "account 1 derives the same address as account 0");
+    CHECK_SCREEN(fake_oled_row_contains(0, "acct 1"),
+                 "the wallet screen does not follow the account (\"%s\")",
+                 fake_oled_row(0));
 }
 
 /* The selection is the analogue of active_idx, so it survives a reboot for the
@@ -2293,41 +1693,6 @@ static void test_a_wipe_resets_the_account(void)
     CHECK(ui__account_for_test() == 0, "the account selection survived a wipe");
 }
 
-/* T47 with the account level added. An index alone was already not enough to
- * know what was signing; two paths that differ only in their account are both
- * "addr 0", so the confirmation has to render the path. */
-static void test_the_signing_confirmation_shows_the_account(void)
-{
-    printf("== the signing confirmation names the full path, not the index (T45/T47)\n");
-    boot_unlocked_with_seed();
-
-    EthTx tx;
-    memset(&tx, 0, sizeof(tx));
-    tx.chain_id = 1;
-    tx.has_to = true;
-    memset(tx.to, 0x11, sizeof(tx.to));
-
-    HDPath path = HDPATH_ETH_DEFAULT;
-    path.account = 7;
-    path.address_index = 2;
-    ui_request_sign(&tx, &path, "0x0107020aaaaaabbbbbbbbccccccccddddddddeee");
-    go(SCREEN_SIGN_CONFIRM);
-
-    bool saw_path = false;
-    for (int page = 0; page < 6; page++) {
-        if (fake_oled_contains("m/44'/60'/7'/0/2")) {
-            saw_path = true;
-            break;
-        }
-        press(BUTTON_DOWN);
-    }
-    CHECK_SCREEN(saw_path,
-                 "the confirmation never showed the account it was signing "
-                 "from - a host moving accounts would be invisible");
-    ui_sign_clear();
-}
-
-
 /* ============================================================================
  * T42 - every lock path locks the same thing
  *
@@ -2371,7 +1736,7 @@ static void check_fully_locked(const char *path)
 }
 
 /* Put the device in the state the bug was reported from: unlocked, seed
- * loaded, a passphrase applied, and an address on screen derived from it. */
+ * loaded, a passphrase applied, and a fingerprint on screen derived from it. */
 static void unlocked_in_a_passphrase_wallet(void)
 {
     boot_unlocked_with_seed();
@@ -2702,18 +2067,14 @@ static void test_temp_seed_is_visible_on_screen(void)
     enter_temporary_seed();
     CHECK(wallet_has_temporary_mnemonic(), "the seed was not adopted");
     CHECK(ui_get_screen() == SCREEN_WALLET_INFO,
-          "the device did not land on the address screen");
+          "the device did not land on the wallet screen");
 
-    /* The address screen names the seed it derived from. "W1/1" here would be
-     * a lie about a wallet that is not the one being signed with. */
+    /* The wallet screen names the seed it derived from. "W1/1" here would be
+     * a lie about a wallet that is not the one in use. */
     CHECK_SCREEN(fake_oled_row_contains(0, "TEMP"),
-                 "the address screen reads \"%s\"", fake_oled_row(0));
+                 "the wallet screen reads \"%s\"", fake_oled_row(0));
     CHECK_SCREEN(!fake_oled_row_contains(0, "W1/1"),
-                 "the address screen claims a stored wallet");
-    /* A real, complete address off the typed seed - the mode has to be usable,
-     * not merely announced. */
-    CHECK_SCREEN(fake_oled_contains("0x"),
-                 "no address was derived from the temporary seed");
+                 "the wallet screen claims a stored wallet");
     CHECK_SCREEN(fake_oled_contains("XFP"),
                  "no fingerprint - the user cannot tell which seed this is");
 
@@ -2864,11 +2225,11 @@ static void test_temp_seed_autolock_is_scoped_to_the_mode(void)
           "a choice made during a temporary session was not stored");
 }
 
-/* The return path's screen. What it must do is small and easy to get wrong in
- * the ways test_the_signed_acknowledgement_actually_appears() documents: the
- * frames advance from the task loop, not from a button, so a missing
- * ui_invalidate() would freeze the animation on part 1 and every test that
- * calls ui_render() directly would still pass. */
+/* The return path's screen. Nothing shows a UR on it until Zcash signing
+ * lands, but the machinery is kept and checked: the frames advance from the
+ * task loop, not from a button, so a missing ui_invalidate() would freeze the
+ * animation on part 1 and every test that calls ui_render() directly would
+ * still pass. */
 static void test_qr_out_animates_and_leaves_cleanly(void)
 {
     printf("== an animated UR steps on its timer and BACK clears it\n");
@@ -2879,14 +2240,14 @@ static void test_qr_out_animates_and_leaves_cleanly(void)
     for (size_t i = 0; i < sizeof msg; i++) {
         msg[i] = (uint8_t)i;
     }
-    CHECK(ui_show_ur("eth-signature", msg, sizeof msg, SCREEN_MAIN_MENU),
+    CHECK(ui_show_ur("bytes", msg, sizeof msg, SCREEN_MAIN_MENU),
           "a 90-byte message could not be shown");
     idle_pump();
     CHECK(ui_get_screen() == SCREEN_QR_OUT, "the QR screen did not open");
 
     char first[400];
     snprintf(first, sizeof first, "%s", fake_oled_qr_data());
-    CHECK(strncmp(first, "UR:ETH-SIGNATURE/1-", 19) == 0,
+    CHECK(strncmp(first, "UR:BYTES/1-", 11) == 0,
           "the first frame is not an uppercase part 1: '%.40s'", first);
     /* v3 at scale 2 is the default: the first CAM-board pairing, at v6 x1,
        was never read by a laptop webcam, and the rendered framebuffer shows
@@ -2915,7 +2276,7 @@ static void test_qr_out_animates_and_leaves_cleanly(void)
     fake_clock_advance_us(400000);
     ui__service_qr_out_for_test();
     idle_pump();
-    CHECK(strncmp(fake_oled_qr_data(), "UR:ETH-SIGNATURE/2-", 19) == 0,
+    CHECK(strncmp(fake_oled_qr_data(), "UR:BYTES/2-", 11) == 0,
           "the animation did not advance on its own: '%.40s'", fake_oled_qr_data());
 
     CHECK(!fake_oled_qr_inverted(), "the default QR is drawn inverted");
@@ -2934,7 +2295,7 @@ static void test_qr_out_animates_and_leaves_cleanly(void)
           "DOWN did not wrap to plain v6");
     press(BUTTON_DOWN);
     CHECK(fake_oled_qr_version() == 10, "DOWN did not switch to version 10");
-    CHECK(strncmp(fake_oled_qr_data(), "UR:ETH-SIGNATURE/", 17) == 0,
+    CHECK(strncmp(fake_oled_qr_data(), "UR:BYTES/", 9) == 0,
           "version 10 frame is not a UR");
 
     press(BUTTON_CANCEL);
@@ -2948,143 +2309,9 @@ static void test_qr_out_animates_and_leaves_cleanly(void)
     CHECK(!ui_needs_render(), "the animation kept running after the screen closed");
 
     uint8_t big[QR_OUT_MAX_MESSAGE + 1] = {0};
-    CHECK(!ui_show_ur("eth-signature", big, sizeof big, SCREEN_MAIN_MENU),
+    CHECK(!ui_show_ur("bytes", big, sizeof big, SCREEN_MAIN_MENU),
           "an oversized message was accepted");
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "a refused UR still changed screen");
-}
-
-/* Read a UR off the QR screen the way a companion's camera would: frame by
- * frame, advancing the clock between them, until it assembles. */
-static bool read_qr_screen(char *type, uint8_t *out, size_t cap, size_t *out_len)
-{
-    static uint8_t frag[2048], mix[8 * 512];
-    static UrDecoder d;
-    ur_decoder_init(&d, frag, sizeof frag, mix, sizeof mix);
-    for (int i = 0; i < 60; i++) {
-        const char *f = fake_oled_qr_data();
-        if (ur_decoder_receive(&d, f, strlen(f)) == UR_PART_COMPLETE) {
-            size_t n = 0;
-            const uint8_t *m = ur_decoder_message(&d, &n);
-            if (n > cap) return false;
-            memcpy(out, m, n);
-            *out_len = n;
-            snprintf(type, UR_TYPE_MAX + 1, "%s", d.type);
-            return true;
-        }
-        fake_clock_advance_us(1000000);
-        ui__service_qr_out_for_test();
-        idle_pump();
-    }
-    return false;
-}
-
-static bool select_menu_item(const char *label)
-{
-    for (int i = 0; i < 12; i++) {
-        char want[24];
-        snprintf(want, sizeof want, "> %s", label);
-        if (fake_oled_contains(want)) {
-            return true;
-        }
-        press(BUTTON_DOWN);
-    }
-    return false;
-}
-
-static void test_show_address_says_what_it_shares_then_shares_it(void)
-{
-    printf("== Show address names the account and the cost, then sends that xpub\n");
-    boot_unlocked_with_seed();
-    go(SCREEN_MAIN_MENU);
-
-    CHECK(select_menu_item("Show Address"), "Show Address is not on the main menu");
-    /* No camera on the host board, and Scan must not pretend otherwise. */
-    go(SCREEN_MAIN_MENU);
-    CHECK(!select_menu_item("Scan"), "Scan is offered on a board with no camera");
-
-    go(SCREEN_MAIN_MENU);
-    select_menu_item("Show Address");
-    press(BUTTON_ACCEPT);
-    CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS, "the menu did not open it");
-    CHECK(fake_oled_contains("Account 0") && fake_oled_contains("m/44'/60'/0'"),
-          "the screen does not name the account it will share");
-    CHECK(fake_oled_contains("ALL addrs") && fake_oled_contains("Cannot spend"),
-          "the screen does not say what sharing an xpub means");
-
-    press(BUTTON_DOWN);
-    CHECK(fake_oled_contains("Account 1"), "DOWN did not move to account 1");
-    CHECK(fake_oled_qr_data()[0] == '\0', "a QR appeared before OK");
-
-    press(BUTTON_ACCEPT);
-    CHECK(fake_oled_contains("Deriving"), "OK did not say it had started");
-    idle_pump();   /* the deferred derivation, then its frame */
-    idle_pump();
-    CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK did not show the QR");
-
-    char type[UR_TYPE_MAX + 1] = {0};
-    uint8_t got[256];
-    size_t got_len = 0;
-    CHECK(read_qr_screen(type, got, sizeof got, &got_len), "the QR never assembled");
-    CHECK(strcmp(type, "crypto-hdkey") == 0, "the QR is a %s", type);
-
-    /* Byte for byte the key of account 1 - the one on screen, not the
-       device's own account 0. */
-    E4527AccountKey k;
-    memset(&k, 0, sizeof k);
-    k.account = 1;
-    wallet_get_account_key(1, k.key_data, k.chain_code, &k.parent_fingerprint,
-                           &k.master_fingerprint);
-    uint8_t want[E4527_HDKEY_MAX];
-    const size_t want_len = eip4527_encode_account_hdkey(&k, want, sizeof want);
-    CHECK(got_len == want_len && memcmp(got, want, want_len) == 0,
-          "the QR does not carry account 1's key");
-
-    press(BUTTON_CANCEL);
-    CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS, "BACK from the QR went elsewhere");
-    CHECK(qr_out_frame() == NULL, "the QR buffers outlived the screen");
-}
-
-static void test_a_suggestion_populates_but_never_answers(void)
-{
-    printf("== a scanned request may choose the account, never send it\n");
-    boot_unlocked_with_seed();
-    go(SCREEN_MAIN_MENU);
-
-    ui_suggest_show_address(7);
-    idle_pump();
-    CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS && fake_oled_contains("Account 7"),
-          "the suggestion did not populate the screen");
-
-    /* Time passes, every service runs: still nothing leaves the device. */
-    for (int i = 0; i < 20; i++) {
-        fake_clock_advance_us(1000000);
-        ui__service_qr_out_for_test();
-        ui__service_airgap_for_test();
-        idle_pump();
-    }
-    CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS, "the screen moved without a press");
-    CHECK(fake_oled_qr_data()[0] == '\0', "a QR was shown without the user's OK");
-
-    /* And the user can overrule it before answering. */
-    press(BUTTON_UP);
-    CHECK(fake_oled_contains("Account 6"), "the suggested account could not be changed");
-}
-
-/* A request the reader accepts, as bytes. The fake endpoint does not parse
- * the sign-data; what matters here is that the scanner assembled it, the
- * reader took it and the worker's answer reached the screen. */
-static size_t tiny_sign_request(uint8_t *out)
-{
-    static const uint8_t req[] = {
-        0xA4,
-        0x01, 0xD8, 0x25, 0x50, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,
-        0x02, 0x43, 0x02, 0xC1, 0x80,
-        0x03, 0x04,
-        0x05, 0xD9, 0x01, 0x30, 0xA1, 0x01, 0x8A,
-        0x18, 44, 0xF5, 0x18, 60, 0xF5, 0x00, 0xF5, 0x00, 0xF4, 0x00, 0xF4,
-    };
-    memcpy(out, req, sizeof req);
-    return sizeof req;
 }
 
 static void scan_it(const char *type, const uint8_t *cbor, size_t len)
@@ -3103,72 +2330,63 @@ static void scan_it(const char *type, const uint8_t *cbor, size_t len)
     }
 }
 
-static void test_scan_flows_into_signing_and_back_out_as_a_qr(void)
+/* The scanner keeps assembling, and refuses every complete UR until a Zcash
+ * type exists (airgap.h). Nothing scanned may move the screen. */
+static void test_scan_assembles_then_refuses_every_type(void)
 {
-    printf("== a scanned request goes to the signer and its answer to the panel\n");
+    printf("== the scanner assembles a UR and refuses it, for every type\n");
     boot_unlocked_with_seed();
     go(SCREEN_SCAN);
     CHECK(fake_oled_contains("Scan request"), "the scan screen did not draw");
 
-    uint8_t req[64];
-    const size_t n = tiny_sign_request(req);
-    fake_protocol_airgap_answer(TXSIGN_OK);
-    const int calls = fake_protocol_airgap_calls();
-    scan_it("eth-sign-request", req, n);
-    CHECK(fake_protocol_airgap_calls() == calls + 1,
-          "the assembled request did not reach the signer");
+    /* Not a UR at all. */
+    ui__scan_feed_for_test("HELLO");
+    CHECK(strcmp(ui__scan_status_for_test(), "Not a UR part") == 0,
+          "a non-UR read as \"%s\"", ui__scan_status_for_test());
 
-    ui__service_airgap_for_test();
-    idle_pump();
-    CHECK(ui_get_screen() == SCREEN_QR_OUT, "the signature was not shown");
-    char type[UR_TYPE_MAX + 1] = {0};
-    uint8_t got[256];
-    size_t got_len = 0;
-    CHECK(read_qr_screen(type, got, sizeof got, &got_len) &&
-          strcmp(type, "eth-signature") == 0, "the QR is not an eth-signature");
-    E4527Signature sig;
-    CHECK(eip4527_decode_signature(got, got_len, &sig, NULL) == E4527_OK &&
-          sig.request_id[0] == 1 && sig.request_id[15] == 16,
-          "the answer does not echo the request id");
-    press(BUTTON_CANCEL);
-    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK from the signature went elsewhere");
+    /* A multi-part message reports progress before it completes. */
+    uint8_t big[300];
+    for (size_t i = 0; i < sizeof big; i++) {
+        big[i] = (uint8_t)(i * 7);
+    }
+    static UrEncoder e;
+    ur_encoder_init(&e, "bytes", big, sizeof big, 40);
+    CHECK(e.seq_len > 1, "setup: the message is not multi-part");
+    char part[200];
+    ur_encoder_next_part(&e, part, sizeof part);
+    ur_to_upper(part);
+    ui__scan_feed_for_test(part);
+    CHECK(strstr(ui__scan_status_for_test(), "parts to go") != NULL,
+          "a first part did not report progress (\"%s\")", ui__scan_status_for_test());
 
-    /* A refusal comes back to the scanner with its reason on it. */
+    /* Complete, and refused. */
     go(SCREEN_SCAN);
-    fake_protocol_airgap_answer(TXSIGN_PATH_MISMATCH);
-    scan_it("eth-sign-request", req, n);
-    ui__service_airgap_for_test();
+    scan_it("bytes", big, sizeof big);
     idle_pump();
-    CHECK(ui_get_screen() == SCREEN_SCAN && fake_oled_contains("Not this wallet"),
-          "a refusal did not come back to the scanner with its reason");
-    fake_protocol_airgap_answer(TXSIGN_OK);
+    CHECK(ui_get_screen() == SCREEN_SCAN, "a complete UR moved the screen");
+    CHECK(strcmp(ui__scan_status_for_test(), "Not supported yet") == 0,
+          "a complete UR read as \"%s\"", ui__scan_status_for_test());
 
-    /* Anything but a sign request is named and not acted on. */
-    const int before = fake_protocol_airgap_calls();
-    const uint8_t hdkey[] = { 0xA1, 0x03, 0x41, 0x02 };
-    scan_it("crypto-hdkey", hdkey, sizeof hdkey);
+    /* The sign-request type LeekWallet accepted gets no special treatment. */
+    const uint8_t req[] = { 0xA1, 0x01, 0x41, 0x02 };
+    scan_it("eth-sign-request", req, sizeof req);
     idle_pump();
-    CHECK(fake_protocol_airgap_calls() == before && fake_oled_contains("Not a sign request"),
-          "a crypto-hdkey was acted on, or not named");
+    CHECK(ui_get_screen() == SCREEN_SCAN && fake_oled_contains("Not supported yet"),
+          "an old sign request was not refused like any other UR");
+
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not leave the scanner");
 }
 
 int main(void)
 {
-    test_show_address_says_what_it_shares_then_shares_it();
-    test_a_suggestion_populates_but_never_answers();
-    test_scan_flows_into_signing_and_back_out_as_a_qr();
+    test_the_wallet_screen_says_zcash_is_coming();
+    test_show_address_is_a_placeholder();
+    test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
     test_blind_signing_takes_a_deliberate_act();
-    test_blind_confirmation_is_marked_and_shows_the_digest();
-    test_an_aqua_ship_shows_its_maker_and_every_leg();
     test_locking_closes_the_channel();
     test_an_expired_approval_leaves_the_screen();
-    test_a_decoded_call_is_not_marked_blind();
-    test_a_generic_call_shows_every_argument();
-    test_message_confirmation_shows_all_of_it();
-    test_typed_data_confirmation_names_the_contract_and_the_amount();
-    test_blind_typed_data_leads_with_the_warning();
-    test_the_signed_acknowledgement_actually_appears();
     test_host_passphrase_confirmation();
     test_harness_sees_the_screen();
 
@@ -3185,10 +2403,8 @@ int main(void)
     test_pin_wrong_spends_an_attempt();
     test_pin_digits_do_not_outlive_the_screen();
 
-    test_failed_derivation_is_not_shown_as_an_address();
-    test_qr_refuses_to_encode_an_error();
-    test_qr_still_works_for_a_real_address();
-    test_passphrase_confirmation_needs_an_address();
+    test_failed_derivation_is_not_shown_as_an_identifier();
+    test_passphrase_confirmation_needs_a_fingerprint();
 
     test_settings_has_no_wifi_entry();
 
@@ -3198,7 +2414,7 @@ int main(void)
     test_dice_counts_are_arithmetic();
     test_dice_roll_never_creates_a_wallet();
     test_dice_and_taps_compose();
-    test_xfp_is_shown_with_the_address();
+    test_xfp_is_shown_on_the_wallet_screen();
     test_xfp_tells_passphrase_wallets_apart();
     test_xfp_is_absent_when_it_cannot_be_derived();
     test_entry_style_drives_both_selectors();
@@ -3214,10 +2430,9 @@ int main(void)
     test_a_passphrase_change_under_the_wallet_screen_re_derives();
 
     test_the_account_is_selectable_and_bounded();
-    test_the_wallet_screen_names_the_whole_path();
+    test_the_wallet_screen_names_the_account();
     test_the_account_survives_a_reboot();
     test_a_wipe_resets_the_account();
-    test_the_signing_confirmation_shows_the_account();
 
     test_a_tap_on_back_does_not_lock();
     test_the_hold_shows_progress();
@@ -3267,45 +2482,6 @@ int main(void)
          * created a wallet. */
         go(SCREEN_MAIN_MENU);
         CHECK(fake_protocol_rx_enabled(), "a second resume disturbed the link");
-    }
-
-    /* ---------------------------------------------------------------------
-     * A deadline reads as a date.
-     *
-     * The screen used to show "valid until (unix)" and ten raw digits, on the
-     * reasoning that a device with no clock cannot produce a date. It can: the
-     * date is a function of the number, and only "how far away" needs the
-     * present. It matters because a drainer's permit is far-future, and
-     * 2000000000 against 1787950000 is not a difference anyone reads off a
-     * 128x64 panel -- while 2033 against 2026 is.
-     */
-    printf("== a deadline is rendered as a date, not as seconds\n");
-    {
-        struct { const char *secs; int y, m, d; } ok[] = {
-            { "0",            1970,  1,  1 },   /* the epoch itself */
-            { "1735689600",   2025,  1,  1 },
-            { "1787950000",   2026,  8, 28 },   /* a plausible near deadline */
-            { "2000000000",   2033,  5, 18 },   /* the far-future one */
-            { "253402300799", 9999, 12, 31 },   /* the last day it will express */
-        };
-        for (size_t i = 0; i < sizeof(ok) / sizeof(ok[0]); i++) {
-            int y = 0, m = 0, d = 0;
-            CHECK(unix_to_civil_date(ok[i].secs, &y, &m, &d),
-                  "%s was refused", ok[i].secs);
-            CHECK(y == ok[i].y && m == ok[i].m && d == ok[i].d,
-                  "%s rendered as %04d-%02d-%02d, expected %04d-%02d-%02d",
-                  ok[i].secs, y, m, d, ok[i].y, ok[i].m, ok[i].d);
-        }
-
-        /* Refused rather than guessed at, so the caller falls back to the raw
-         * seconds instead of drawing a date nobody can justify. */
-        const char *bad[] = { "", "12x4", "-1", "99999999999999999999",
-                              "253402300800" /* one second past 9999 */ };
-        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-            int y = 0, m = 0, d = 0;
-            CHECK(!unix_to_civil_date(bad[i], &y, &m, &d),
-                  "\"%s\" was accepted as a date", bad[i]);
-        }
     }
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

@@ -48,72 +48,9 @@ MUTANTS = [
     ("src/transport.c", "        protocol_set_rx_enabled(false);     /* USB endpoint stops answering */",
      "        protocol_set_rx_enabled(true);", "cable stays live under BLE"),
 
-    # T12c: the self-verifying signature table. The first mutant is the whole
-    # security argument being switched off; the second is the tamper the design
-    # claims is impossible, applied directly to the table; the rest are the
-    # generic decoder losing one of its type checks. A table that matched
-    # loosely would be worse than no table, because every row of it reaches a
-    # confirmation screen that says the device understood the call.
-    ("src/eth-decode.c", "    bool ok = memcmp(digest, selector, 4) == 0;",
-     "    bool ok = true;", "any selector matches the first row"),
-    ("src/eth-decode.c", '{ "supply(address,uint256,address,uint16)", "asset,amount,onBehalfOf,referral",',
-     '{ "supply(address,uint256,address,uint32)", "asset,amount,onBehalfOf,referral",',
-     "a tampered signature string still decodes its call"),
-    ("src/eth-decode.c", '{ "approve(address,address,uint160,uint48)", "token,spender,amount,expiration",',
-     '{ "approve(address,address,uint256,uint48)", "token,spender,amount,expiration",',
-     "Permit2's amount read at the wrong width"),
-    ("src/eth-decode.c", "        if (len != 4 + (size_t)call.arg_count * 32) {",
-     "        if (len < 4 + (size_t)call.arg_count * 32) {",
-     "trailing bytes behind a table call"),
-    ("src/eth-decode.c",
-     "        case ETH_ARG_UINT:\n            for (size_t i = 0; i < 32 - used; i++) {",
-     "        case ETH_ARG_UINT:\n            for (size_t i = 0; i < 0; i++) {",
-     "a value wider than its declared type"),
-    ("src/eth-decode.c",
-     "            if (!word_matches_type(&call.args[i], data + call.args[i].offset)) {",
-     "            if (false) {", "arguments not checked against their types"),
-    ("src/eth-decode.c", "    unsigned bits = arg_bits(&call->args[i]);\n    if (bits < 64) {",
-     "    unsigned bits = arg_bits(&call->args[i]);\n    if (bits < 0) {",
-     "a narrow field flagged as an unlimited allowance"),
-    ("src/eth-decode.c", "    size_t top_byte = 32 - bits / 8;",
-     "    size_t top_byte = 0;",
-     "unlimited judged against 256 bits rather than the declared width"),
-    ("src/ui.c", '            oled_draw_string(6, 0, "Not what it does!");',
-     "            /* mutant: no limit stated */",
-     "the call screen implies a verified name proves behaviour"),
-    ("src/ui.c",
-     "            for (int a = 0; a < sign_call.arg_count && n < SIGN_MAX_PAGES - 2; a++) {",
-     "            for (int a = 0; a < 1 && n < SIGN_MAX_PAGES - 2; a++) {",
-     "only the first argument of a table call is shown"),
-
-    # The widened decodable set (T50) and the blind-signing hatch (T16). Each
-    # of these is the shape of a real mistake: a length check that stops being
-    # exact, an argument shape copied from the row above, a warning screen that
-    # accepts the first press, a gate that stops consulting the setting.
-    ("src/eth-decode.c", "    if (len != 4 + words * 32) {",
-     "    if (len < 4 + words * 32) {", "trailing bytes after a known selector"),
-    ("src/eth-decode.c", "    if (word[31] > 1) {", "    if (false) {",
-     "a bool that is neither 0 nor 1"),
-    ("src/eth-decode.c",
-     "static bool word_is_bool(const uint8_t word[32], bool *out)\n{\n    for (int i = 0; i < 31; i++) {",
-     "static bool word_is_bool(const uint8_t word[32], bool *out)\n{\n    for (int i = 0; i < 0; i++) {",
-     "dirty high bytes in a bool word"),
-    ("src/eth-decode.c", "      ETH_CALL_MINT,                ARGS_UINT           },",
-     "      ETH_CALL_MINT,                ARGS_ADDR_UINT      },",
-     "mint(uint256) read at the wrong arity"),
-    ("src/eth-decode.c", "call.unlimited = (known->kind == ETH_CALL_ERC20_APPROVE) &&",
-     "call.unlimited = (known->kind != ETH_CALL_UNKNOWN) &&",
-     "unlimited warning on calls that are not allowances"),
-    ("src/eth-decode.c", "if (!word_is_address(w0) || !word_is_address(w1)) goto done;",
-     "if (!word_is_address(w0)) goto done;",
-     "dirty padding on transferFrom's destination"),
-    ("src/eth-decode.c", "    if (!tx->has_to) {", "    if (false) {",
-     "contract creation reaches the decoder"),
-    ("src/protocol.c", "if (!(tx.has_to && blind_signing_enabled())) {",
-     "if (!blind_signing_enabled()) {",
-     "the hatch unlocks contract creation"),
-    ("src/protocol.c", "if (!(tx.has_to && blind_signing_enabled())) {", "if (false) {",
-     "undecodable calldata always allowed"),
+    # The blind-signing setting (T16). Nothing consults it until the Zcash
+    # signing path lands, but it is still stored, reported and switched on
+    # behind a warning, and each of those can still go wrong.
     ("src/protocol.c", "cbor_write_uint(&w, blind_signing_enabled() ? 1 : 0);",
      "cbor_write_uint(&w, 0);", "getFeatures hides the setting"),
     ("src/blind-signing.c", "        enabled = (stored == 1);", "        enabled = true;",
@@ -122,52 +59,6 @@ MUTANTS = [
      "    enabled = true;       /* the default", "blind signing defaults to on"),
     ("src/ui.c", "if (++blind_confirm_count >= BLIND_CONFIRM_PRESSES) {",
      "if (++blind_confirm_count >= 1) {", "one press enables blind signing"),
-    ("src/ui.c", "    sign_blind = (sign_call.kind == ETH_CALL_UNKNOWN);",
-     "    sign_blind = false;", "a blind confirmation looks like a normal one"),
-    ("src/ui.c", "            sign_page_kind[n++] = SIGN_PAGE_BLIND_DATA;",
-     "            /* mutant: no calldata digest */", "blind confirmation hides the calldata"),
-    ("src/ui.c", "            sign_page_kind[n++] = SIGN_PAGE_BLIND_WARN;",
-     "            /* mutant: no warning page */", "blind confirmation drops the warning"),
-
-    # EIP-712 (T12b). A wrong hash here is not a crash: it is a valid signature
-    # over a document nobody wrote, so every mutant below is one that a suite
-    # without known-answer vectors would sail past. The last four are the
-    # refusal split — which documents may be signed at all, and which of those
-    # the blind-signing hatch reaches.
-    ("src/eip712.c", "    preimage[0] = 0x19;", "    preimage[0] = 0x18;",
-     "the EIP-191 prefix byte is wrong"),
-    ("src/eip712.c", "    sort_types(c, deps, ndeps);", "    /* mutant: unsorted */",
-     "referenced types emitted in declaration order"),
-    ("src/eip712.c",
-     "    if (!append_fragment(c, t, out, out_size, &used)) return false;",
-     "    if (ndeps == 0 && !append_fragment(c, t, out, out_size, &used)) return false;",
-     "the primary type dropped from encodeType"),
-    ("src/eip712.c", "    if (bits < 64) {\n        return false;\n    }",
-     "    if (bits < 0) {\n        return false;\n    }",
-     "unlimited flagged on narrow fields"),
-    ("src/eip712.c", "    return (word[top_byte] & 0x80) != 0;", "    return false;",
-     "an infinite allowance reads as a number"),
-    ("src/eip712.c",
-     "        f->is_deadline = name_hints(name, \"deadline\") ||",
-     "        f->is_deadline = false || name_hints(name, \"zzzz\") ||",
-     "a deadline is not labelled as one"),
-    # Not a mutant of collect_refs' own array check: classify() rejects the
-    # same type a moment later and the document is refused either way, so
-    # flipping it is equivalent code. It stays in collect_refs because that is
-    # where the refusal is cheapest and clearest, not because a test needs it
-    # there; "arrays are unhashable" is covered by test_arrays_are_refused.
-    ("src/eip712.c", "    int spare_bits = 256 - bits;", "    int spare_bits = 0;",
-     "a value wider than its declared type is masked"),
-    ("src/eip712.c", "    if (col.overflow || render->field_count == 0) {",
-     "    if (false) {", "an unshowable document reports itself renderable"),
-    ("src/protocol.c", "        if (typed_result == EIP712_UNHASHABLE) {",
-     "        if (false) {", "a document with no computable digest is signed"),
-    ("src/protocol.c", "        if (typed_blind && !blind_signing_enabled()) {",
-     "        if (false) {", "unshowable typed data signed without the hatch"),
-    ("src/protocol.c",
-     "        ui_request_sign_typed_data(&typed, typed_digest, typed_blind,",
-     "        ui_request_sign_typed_data(&typed, typed_digest, false,",
-     "a blind typed-data confirmation looks like a normal one"),
 
     # Job 1: a reply must match the frame type of the request that caused it.
     # Each of these is the old, state-driven behaviour, or its mirror.
@@ -202,7 +93,6 @@ MUTANTS = [
      "    reply_encrypted = false;\n    warn_on_thin_stack();",
      "    reply_encrypted = true;\n    warn_on_thin_stack();",
      "every reply is encrypted regardless of the request"),
-
 
     # Job 3: the name bound is what keeps the radio advertising at all.
     ("src/ble-name.c", "    if (len == 0 || len > BLE_NAME_MAX_LEN) {",
@@ -256,23 +146,18 @@ MUTANTS = [
 
     # T39b: the fingerprint is what tells two passphrase wallets apart.
     ("src/ui.c",
-     '        set_address_error("Addr failed");\n    }\n\n    refresh_master_xfp();',
-     '        set_address_error("Addr failed");\n    }',
+     "            return;\n        }\n    }\n\n    wallet_info_refresh();\n}",
+     "            return;\n        }\n    }\n}",
      "the wallet screen shows no fingerprint"),
-    ("src/ui.c", "    if (master_xfp[0] == '\\0') {\n        return;\n    }",
-     "    if (false) {\n        return;\n    }",
-     "an underivable fingerprint renders as a placeholder"),
-    ("src/ui.c", '    draw_master_xfp(5, "XFP");',
+    # Not a mutant of draw_master_xfp's own empty check: every caller now
+    # tests master_xfp first and draws "No fingerprint" instead, so flipping
+    # it is equivalent code. test_ui asserts no placeholder is ever drawn.
+    ("src/ui.c", '    draw_master_xfp(3, "XFP");',
      "    /* mutant: no fingerprint */",
      "the passphrase confirmation drops the fingerprint"),
-    ("src/ui.c", '        draw_master_xfp(6, "Match XFP");',
-     '        oled_draw_string(6, 0, "Match your record");',
+    ("src/ui.c", '    oled_draw_string_centered(2, line);\n    oled_draw_string(4, 0, "Typed on host!");',
+     '    oled_draw_string(4, 0, "Typed on host!");',
      "the host passphrase confirmation drops the fingerprint"),
-
-    # Job 4: the acknowledgement has to mark the screen dirty itself.
-    ("src/ui.c", "     * within 100 ms regardless. */\n    ui_invalidate();",
-     "     * within 100 ms regardless. */",
-     "the Signed acknowledgement never repaints"),
 
     # SLIP-39. Every one of these is a way to produce shares that look right
     # and are not recoverable by another implementation -- the failure mode a
@@ -328,14 +213,14 @@ MUTANTS = [
      "    if (create_generate_pending) {",
      "a generation request outlives the screen that made it"),
 
-    # T42: a passphrase applied or dropped by another task must not leave an
-    # address and a fingerprint on screen that the device would not re-derive.
+    # T42: a passphrase applied or dropped by another task must not leave a
+    # fingerprint on screen that the device would not re-derive.
     ("src/ui.c",
      "    if (current_screen == SCREEN_WALLET_INFO &&\n        wallet_has_passphrase() != wallet_info_passphrase_shown) {",
      "    if (false) {",
-     "the wallet screen keeps an address from a passphrase that is gone"),
-    ("src/ui.c", '(unsigned)address_index, wallet_has_passphrase() ? " P" : "");',
-     '(unsigned)address_index, "");',
+     "the wallet screen keeps a fingerprint from a passphrase that is gone"),
+    ("src/ui.c", '(unsigned)status.wallet_count,\n                 (unsigned)hd_account, wallet_has_passphrase() ? " P" : "");',
+     '(unsigned)status.wallet_count,\n                 (unsigned)hd_account, "");',
      "nothing on screen says a passphrase is applied"),
     ("src/ui.c",
      "    lock_device();\n    ui_set_screen(SCREEN_PIN_UNLOCK);\n    return true;",
@@ -352,28 +237,10 @@ MUTANTS = [
      "    /* mutant: nobody is told */",
      "session teardown notifies nothing"),
 
-    # T45: the account level, on the wire and on the screens.
-    ("src/protocol.c", "            if (component == 2) {", "            if (false) {",
-     "the account in a requested path is ignored"),
-    ("src/protocol.c",
-     "    return path->account <= 0x7FFFFFFFu && path->address_index <= 0x7FFFFFFFu;",
-     "    return true;", "a path level past the hardened range is accepted"),
-    ("src/protocol.c", "        ui_request_sign(&tx, &sign_path, from_addr.hex);",
-     "        HDPath mutant_path = HDPATH_ETH_DEFAULT;\n        ui_request_sign(&tx, &mutant_path, from_addr.hex);",
-     "the confirmation is shown a different path than the one signed"),
-    ("src/ui.c", "    hd_account = account % HD_ACCOUNT_COUNT;\n    address_index = 0;",
-     "    hd_account = account;\n    address_index = 0;",
+    # T45: the account level on the screens.
+    ("src/ui.c", "    hd_account = account % HD_ACCOUNT_COUNT;",
+     "    hd_account = account;",
      "the account selector runs past its bound"),
-    ("src/ui.c", "    hd_account = account % HD_ACCOUNT_COUNT;\n    address_index = 0;",
-     "    hd_account = account % HD_ACCOUNT_COUNT;",
-     "the address index survives an account change"),
-    ("src/ui.c", "        oled_draw_string_centered(1, path_str);",
-     "        /* mutant: no path on the wallet screen */",
-     "the wallet screen does not name its derivation path"),
-    ("src/ui.c",
-     "            format_hd_path(line, sizeof(line), &sign_path_shown);\n            oled_draw_string(5, 0, line);",
-     "            /* mutant: no path on the confirmation */",
-     "the signing confirmation hides the account it signs from"),
     ("src/ui.c", "    nvs_set_u8(nvs, UI_KEY_ACCOUNT, (uint8_t)hd_account);",
      "    nvs_set_u8(nvs, UI_KEY_ACCOUNT, 0);",
      "the account selection is not persisted"),
@@ -401,8 +268,8 @@ MUTANTS = [
      "a fingerprint survives the lock that dropped its passphrase"),
 ]
 
-BINARIES = ["test_protocol", "test_ble_chunk", "test_ui", "test_eth_decode",
-            "test_eip712", "test_text_entry", "test_slip39"]
+BINARIES = ["test_protocol", "test_ble_chunk", "test_ui", "test_text_entry",
+            "test_slip39"]
 
 # Which suites even compile the mutated file. A suite that does not link it
 # cannot notice the mutant, so building it proves nothing and costs a rebuild;
@@ -410,11 +277,6 @@ BINARIES = ["test_protocol", "test_ble_chunk", "test_ui", "test_eth_decode",
 SUITES_FOR = {
     "src/text-entry.c": ["test_text_entry", "test_ui"],
     "src/ui.c":         ["test_ui"],
-    "src/eth-decode.c": ["test_eth_decode", "test_ui", "test_protocol"],
-    # The vectors live in test_eip712; the command that uses them in
-    # test_protocol. A hashing mutant has to be caught by the first and a
-    # refusal mutant by the second, so both run.
-    "src/eip712.c":     ["test_eip712", "test_protocol", "test_ui"],
     "src/ble-chunk.c":  ["test_ble_chunk", "test_ui", "test_protocol"],
     "src/slip39-backup.c": ["test_slip39"],
     # session.c is linked by both endpoint suites; the protocol one is what

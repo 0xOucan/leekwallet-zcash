@@ -24,8 +24,6 @@
 #include "bip39.h"
 #include "curves.h"
 #include "ecdsa.h"
-#include "sha3.h"
-#include <strings.h>
 
 void wallet__reset_static_state_for_test(void);
 
@@ -46,10 +44,13 @@ static const char *TEMPORARY =
 
 #define PIN "482913"
 
-/* m/44'/60'/0'/0/0. Addresses are asked for by path here, as the screens do:
- * wallet_get_eth_address() reads whatever node a previous wallet_select_path()
- * left behind, which is not a question about this feature. */
-static const HDPath ETH0 = HDPATH_ETH_DEFAULT;
+/* m/44'/133'/0'/0/0, the Zcash transparent path. Keys are asked for by path
+ * here: wallet_get_public_key() reads whatever node a previous
+ * wallet_select_path() left behind, which is not a question about this
+ * feature. */
+static const HDPath KEY0 = {
+    .purpose = 44, .coin_type = 133, .account = 0, .change = 0, .address_index = 0
+};
 
 static void fresh_device(void)
 {
@@ -123,12 +124,13 @@ static bool anything_about_it_is_in_flash(const char *phrase)
 
 static bool derived_material_is_in_flash(void)
 {
-    EthAddress addr;
+    PublicKey key;
     uint32_t fp = 0;
     bool found = false;
 
-    if (wallet_get_address_at_path(&ETH0, &addr) == WALLET_OK) {
-        found = found || fake_nvs_contains_bytes(addr.hex, strlen(addr.hex));
+    if (wallet_get_public_key_at_path(&KEY0, &key) == WALLET_OK) {
+        /* The x coordinate: what any address format is built from. */
+        found = found || fake_nvs_contains_bytes(key.data + 1, 32);
     }
     if (wallet_get_master_fingerprint(&fp) == WALLET_OK) {
         found = found || fake_nvs_contains_bytes(&fp, sizeof(fp));
@@ -157,20 +159,18 @@ static void test_nothing_reaches_storage(void)
     CHECK(!anything_about_it_is_in_flash(TEMPORARY),
           "something that identifies the temporary seed is in flash");
     CHECK(!derived_material_is_in_flash(),
-          "an address or fingerprint derived from the temporary seed is in "
+          "a public key or fingerprint derived from the temporary seed is in "
           "flash - either would confirm a guess at the seed");
 
-    /* Deriving and signing must not write either: the interesting leak is the
-     * one that happens on use, not on entry. */
+    /* Deriving must not write either: the interesting leak is the one that
+     * happens on use, not on entry. */
     const int writes_after_entry = fake_nvs_write_count();
-    EthAddress addr;
-    CHECK(wallet_get_address_at_path(&ETH0, &addr) == WALLET_OK,
-          "no address off the temporary seed");
-    uint8_t digest[32];
-    memset(digest, 0xAB, sizeof(digest));
-    EthSignature sig;
-    CHECK(wallet_sign_hash_at_path(&ETH0, digest, &sig) == WALLET_OK,
-          "could not sign with the temporary seed");
+    PublicKey key;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &key) == WALLET_OK,
+          "no key off the temporary seed");
+    uint32_t fp = 0;
+    CHECK(wallet_get_master_fingerprint(&fp) == WALLET_OK,
+          "no fingerprint off the temporary seed");
     CHECK(fake_nvs_write_count() == writes_after_entry,
           "using the temporary seed wrote %d entries to flash",
           fake_nvs_write_count() - writes_after_entry);
@@ -227,9 +227,9 @@ static void test_every_clearing_path(void)
     CHECK(wallet_use_temporary_mnemonic(TEMPORARY) == WALLET_OK, "not adopted");
     wallet_lock();
     check_cleared("lock");
-    EthAddress addr;
-    CHECK(wallet_get_address_at_path(&ETH0, &addr) != WALLET_OK,
-          "lock: the locked device still derives addresses");
+    PublicKey key;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &key) != WALLET_OK,
+          "lock: the locked device still derives keys");
 
     /* Wallet switch, with the vault still open: the state this feature refuses
      * to have is two seeds live at once. */
@@ -269,24 +269,24 @@ static void test_it_is_a_different_wallet(void)
     printf("== the device really derives from the typed seed, not the stored one\n");
     device_with_a_stored_wallet();
 
-    EthAddress stored_addr;
-    CHECK(wallet_get_address_at_path(&ETH0, &stored_addr) == WALLET_OK, "no stored address");
+    PublicKey stored_key;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &stored_key) == WALLET_OK, "no stored key");
 
     CHECK(wallet_use_temporary_mnemonic(TEMPORARY) == WALLET_OK, "not adopted");
-    EthAddress temp_addr;
-    CHECK(wallet_get_address_at_path(&ETH0, &temp_addr) == WALLET_OK, "no temporary address");
+    PublicKey temp_key;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &temp_key) == WALLET_OK, "no temporary key");
 
-    CHECK(strcmp(stored_addr.hex, temp_addr.hex) != 0,
-          "the temporary seed derives the stored wallet's address (%s) - the "
-          "typed phrase is not the one being used", temp_addr.hex);
+    CHECK(memcmp(stored_key.data, temp_key.data, sizeof(temp_key.data)) != 0,
+          "the temporary seed derives the stored wallet's key - the typed "
+          "phrase is not the one being used");
 
     /* The passphrase applies on top of it exactly as it does to a stored seed,
      * so the two secrets keep behaving as one lifetime rather than two. */
     CHECK(wallet_set_passphrase("hidden", 6) == WALLET_OK, "no passphrase");
-    EthAddress hidden;
-    CHECK(wallet_get_address_at_path(&ETH0, &hidden) == WALLET_OK,
-          "no address with a passphrase");
-    CHECK(strcmp(hidden.hex, temp_addr.hex) != 0,
+    PublicKey hidden;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &hidden) == WALLET_OK,
+          "no key with a passphrase");
+    CHECK(memcmp(hidden.data, temp_key.data, sizeof(hidden.data)) != 0,
           "the passphrase did not change the temporary wallet");
     CHECK(!anything_about_it_is_in_flash(TEMPORARY),
           "a passphrase over a temporary seed put something in flash");
@@ -365,16 +365,16 @@ static void test_a_passphrase_applies_to_a_temporary_seed(void)
     CHECK(wallet_use_temporary_mnemonic(TEMPORARY) == WALLET_OK,
           "the temporary seed was refused");
 
-    EthAddress bare;
-    CHECK(wallet_get_address_at_path(&ETH0, &bare) == WALLET_OK,
-          "no address without a passphrase");
+    PublicKey bare;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &bare) == WALLET_OK,
+          "no key without a passphrase");
 
     CHECK(wallet_set_passphrase("hunter2", 7) == WALLET_OK,
           "the passphrase was refused on a temporary seed");
 
-    EthAddress with;
-    CHECK(wallet_get_address_at_path(&ETH0, &with) == WALLET_OK,
-          "no address with a passphrase");
+    PublicKey with;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &with) == WALLET_OK,
+          "no key with a passphrase");
     CHECK(memcmp(&bare, &with, sizeof(bare)) != 0,
           "the passphrase did not change the derivation");
 
@@ -383,87 +383,60 @@ static void test_a_passphrase_applies_to_a_temporary_seed(void)
           "the temporary seed reached flash once a passphrase was set");
     CHECK(!fake_nvs_contains_bytes("hunter2", 7),
           "the passphrase reached flash");
-    CHECK(!fake_nvs_contains_bytes(&with, sizeof(with)),
-          "the passphrase-derived address reached flash");
+    CHECK(!fake_nvs_contains_bytes(with.data + 1, 32),
+          "the passphrase-derived key reached flash");
 }
 
-/* wallet_get_account_key() is what the QR handshake exports, and a companion
- * will derive every receive address from it. So the one property that
- * matters is that those addresses are the ones this device signs with: here
- * the child keys are derived from the exported xpub alone, the way a watcher
- * does, and compared with wallet_get_address_at_path(). The parent
- * fingerprint is checked against an independent derivation from the seed. */
-static void test_the_exported_account_key_is_this_wallets(void)
+/* The key the vault derives at a path is the one BIP32 says that seed has
+ * there. Checked against an independent trezor-crypto derivation straight
+ * from the seed, at the Zcash transparent path and at a second account, so a
+ * vault that derived from the wrong seed, the wrong path or the wrong
+ * hardening would show up here before any address format is built on it. */
+static void test_the_derived_key_is_this_wallets(void)
 {
-    printf("== the exported account xpub derives the addresses the device signs with\n");
+    printf("== the vault derives the BIP32 key this seed has at the path\n");
     device_with_a_stored_wallet();
 
     uint8_t seed[64];
     mnemonic_to_seed(STORED, "", seed, NULL);
-    HDNode m;
-    hdnode_from_seed(seed, 64, SECP256K1_NAME, &m);
-    hdnode_private_ckd_prime(&m, 44);
-    hdnode_private_ckd_prime(&m, 60);
-    hdnode_fill_public_key(&m);
-    const uint32_t want_parent = hdnode_fingerprint(&m);
-    memzero(&m, sizeof m);
-    memzero(seed, sizeof seed);
 
     static const uint32_t ACCOUNTS[] = { 0, 3 };
     for (size_t a = 0; a < 2; a++) {
-        uint8_t pub[33], cc[32];
-        uint32_t parent = 0, master = 0, xfp = 0;
-        CHECK(wallet_get_account_key(ACCOUNTS[a], pub, cc, &parent, &master) == WALLET_OK,
-              "no account key for %u", ACCOUNTS[a]);
-        CHECK(wallet_get_master_fingerprint(&xfp) == WALLET_OK && xfp == master,
-              "the key's origin fingerprint is not the device's XFP");
-        CHECK(parent == want_parent, "parent fingerprint 0x%08x, want 0x%08x",
-              parent, want_parent);
-
         for (uint32_t i = 0; i < 3; i += 2) {
-            HDNode w;
-            memset(&w, 0, sizeof w);
-            w.depth = 3;
-            memcpy(w.public_key, pub, 33);
-            memcpy(w.chain_code, cc, 32);
-            w.curve = get_curve_by_name(SECP256K1_NAME);
-            CHECK(hdnode_public_ckd(&w, 0) == 1 && hdnode_public_ckd(&w, i) == 1,
-                  "public derivation failed");
-            /* From the public key alone - trezor's pubkeyhash helper reads
-               the private key, which a watcher does not have. */
-            uint8_t full[65], digest[32];
-            CHECK(ecdsa_uncompress_pubkey(w.curve->params, w.public_key, full) == 1,
-                  "the exported key is not on the curve");
-            keccak_256(full + 1, 64, digest);
-            const uint8_t *h = digest + 12;
-            char watcher[43];
-            snprintf(watcher, sizeof watcher, "0x");
-            for (int k = 0; k < 20; k++) {
-                snprintf(watcher + 2 + k * 2, 3, "%02x", h[k]);
-            }
-            HDPath p = HDPATH_ETH_DEFAULT;
+            HDNode n;
+            hdnode_from_seed(seed, 64, SECP256K1_NAME, &n);
+            hdnode_private_ckd_prime(&n, 44);
+            hdnode_private_ckd_prime(&n, 133);
+            hdnode_private_ckd_prime(&n, ACCOUNTS[a]);
+            hdnode_private_ckd(&n, 0);
+            hdnode_private_ckd(&n, i);
+            hdnode_fill_public_key(&n);
+            uint8_t want[65];
+            CHECK(ecdsa_uncompress_pubkey(n.curve->params, n.public_key, want) == 1,
+                  "the reference key is not on the curve");
+            memzero(&n, sizeof n);
+
+            HDPath p = KEY0;
             p.account = ACCOUNTS[a];
             p.address_index = i;
-            EthAddress dev;
-            CHECK(wallet_get_address_at_path(&p, &dev) == WALLET_OK, "no address");
-            CHECK(strcasecmp(dev.hex, watcher) == 0,
-                  "account %u index %u: the xpub derives %s, the device signs as %s",
-                  ACCOUNTS[a], i, watcher, dev.hex);
+            PublicKey dev;
+            CHECK(wallet_get_public_key_at_path(&p, &dev) == WALLET_OK, "no key");
+            CHECK(memcmp(dev.data, want, sizeof(want)) == 0,
+                  "account %u index %u: the vault derives a different key",
+                  (unsigned)ACCOUNTS[a], (unsigned)i);
         }
     }
+    memzero(seed, sizeof seed);
 
-    uint8_t pub[33], cc[32];
-    uint32_t parent, master;
-    CHECK(wallet_get_account_key(0x80000000u, pub, cc, &parent, &master) != WALLET_OK,
-          "an already-hardened account was accepted");
     wallet_lock();
-    CHECK(wallet_get_account_key(0, pub, cc, &parent, &master) == WALLET_ERROR_LOCKED,
-          "a locked wallet exported a key");
+    PublicKey locked;
+    CHECK(wallet_get_public_key_at_path(&KEY0, &locked) == WALLET_ERROR_LOCKED,
+          "a locked wallet derived a key");
 }
 
 int main(void)
 {
-    test_the_exported_account_key_is_this_wallets();
+    test_the_derived_key_is_this_wallets();
     test_the_flash_scan_can_fail();
     test_nothing_reaches_storage();
     test_a_reboot_loses_it();

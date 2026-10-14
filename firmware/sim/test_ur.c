@@ -203,8 +203,8 @@ static void test_multipart_is_detected(void)
 
 
 /*
- * The mock leg for the wire format, same reasoning as $(VECTORS) and
- * $(ETH_DECODE_VECTORS) in sim/Makefile: what src/ur.c actually produces,
+ * The mock leg for the wire format, same reasoning as $(VECTORS) in
+ * sim/Makefile: what src/ur.c actually produces,
  * written down for the TypeScript mirror to replay.
  *
  * Regenerated rather than checked in and trusted. A corpus recorded from an

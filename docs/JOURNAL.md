@@ -65,6 +65,37 @@ the whole check.
   refusals (foreign spend, tampered value, tampered recipient, tampered
   user_address, truncated, bad magic, NU6.2 branch id).
 
+### 1.1 Remove Ethereum — done
+Branch `phase1-strip-eth`.
+- **Removed:** `eth-decode`, `eth-tx`, `eth-tx-rlp`, `eip712`, `eip4527` and
+  `eip4527-encode`, along with their sim suites, asan/conformance targets
+  and mutants.
+  - Protocol: `getAddress`, `signTransaction`, `signMessage` and
+    `signTypedData`, plus the air gap sign path.
+  - UI: the ETH review pages, the result screen, the address browser and
+    QR, and the crypto-hdkey export.
+  - Vault: the ETH address, the `wallet_sign_*` calls and the m/44'/60'
+    account key.
+  - Build: `-DUSE_ETHEREUM`/`-DUSE_KECCAK` in platformio.ini and the sim.
+    trezor-crypto still forces both in its own options.h and CMakeLists.
+- **Kept:** vault, PIN, passphrase, temp seed, BIP39/BIP32/secp256k1, the
+  generic protocol commands, UR/QR/camera/BLE, and the blind-signing module.
+  - getFeatures now reports `chain: "zcash"`.
+  - setPassphrase confirms and returns the seed fingerprint.
+  - Wallet Info and Show Address say "Zcash: coming soon".
+  - Scan assembles URs and refuses every type until zcash-pczt (Phase 5).
+- **Tests:** `make -C sim test` passes all 29 suites, and asan and fuzz are
+  clean.
+- **Builds:** esp32s3, esp32s3cam and esp32s3-qemu build.
+
+| esp32s3 | Before (main 50a454d) | After | Change |
+|---|---|---|---|
+| RAM | 74,120 B | 67,120 B | −7,000 B |
+| Flash | 1,160,429 B | 1,118,397 B | −42,032 B |
+
+- **Not done:** `app/` still speaks the ETH protocol and no longer matches
+  the firmware. Board boot is pending (no board on hand).
+
 ### 1.3 Account derivation (Rust): done
 `zs_account_derive`: ZIP 32 seed fingerprint, Orchard FVK and receiver, and
 the Orchard + P2PKH UFVK and UA. The transparent half is supplied by

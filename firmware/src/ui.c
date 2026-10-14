@@ -21,10 +21,7 @@
 #include "entropy.h"
 #include "session.h"
 #include "text-entry.h"
-#include "eth-tx.h"
-#include "eth-decode.h"
 #include "blind-signing.h"
-#include "sha3.h"
 #include "device-wipe.h"
 #include "transport.h"
 #include "protocol.h"
@@ -36,7 +33,6 @@
 #include "board.h"
 #include "camera.h"
 #include "viewfinder.h"
-#include "eip4527-encode.h"
 #include "esp_random.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -156,23 +152,12 @@ static void screen_passphrase_confirm_enter(void);
 static void screen_passphrase_confirm_render(void);
 static void screen_passphrase_confirm_on_button(button_id_t btn);
 
-static void screen_sign_result_enter(void);
-static void screen_sign_result_render(void);
-static void screen_sign_result_on_button(button_id_t btn);
-
-static void screen_sign_confirm_enter(void);
-static void screen_sign_confirm_render(void);
-static void screen_sign_confirm_on_button(button_id_t btn);
-
 /* Secret-clearing exit hooks (AUDIT S5); defined with the buffers they own. */
 static void forget_mnemonic_unless_needed(screen_id_t next);
 static void forget_mnemonic_entry(screen_id_t next);
 static void forget_pin_entry(screen_id_t next);
 static void forget_passphrase_entry(screen_id_t next);
 
-static void screen_qr_code_enter(void);
-static void screen_qr_code_render(void);
-static void screen_qr_code_on_button(button_id_t btn);
 static void screen_show_address_render(void);
 static void screen_show_address_on_button(button_id_t btn);
 static void screen_scan_enter(void);
@@ -183,13 +168,6 @@ static void screen_qr_out_render(void);
 static void screen_qr_out_on_button(button_id_t btn);
 static void screen_qr_out_enter(void);
 static void screen_qr_out_exit(screen_id_t next);
-
-static const screen_t screen_sign_result = {
-    .enter = screen_sign_result_enter,
-    .render = screen_sign_result_render,
-    .on_button = screen_sign_result_on_button,
-    .exit = NULL
-};
 
 /* Built-in screen definitions */
 static const screen_t screen_boot = {
@@ -351,20 +329,6 @@ static const screen_t screen_passphrase_confirm = {
     .exit = NULL
 };
 
-static const screen_t screen_sign_confirm = {
-    .enter = screen_sign_confirm_enter,
-    .render = screen_sign_confirm_render,
-    .on_button = screen_sign_confirm_on_button,
-    .exit = NULL
-};
-
-static const screen_t screen_qr_code = {
-    .enter = screen_qr_code_enter,
-    .render = screen_qr_code_render,
-    .on_button = screen_qr_code_on_button,
-    .exit = NULL
-};
-
 static const screen_t screen_show_address = {
     .enter = NULL,
     .render = screen_show_address_render,
@@ -499,7 +463,9 @@ typedef enum {
     MENU_END_TEMP,
     /* The air gap (RESEARCH-AIRGAP-VAULT.md sections 35-37). Show address is
      * on every board: it needs nothing but the panel. Scan needs a camera and
-     * is simply absent without one, rather than present and apologising. */
+     * is simply absent without one, rather than present and apologising.
+     * Both are placeholders until Zcash lands: Show Address says so, and Scan
+     * assembles a UR and then refuses it (airgap.h). */
     MENU_SHOW_ADDRESS,
     MENU_SCAN,
     MENU_SETTINGS,
@@ -515,7 +481,7 @@ static int menu_selection = 0;
 static const char *menu_action_label(MenuAction a)
 {
     switch (a) {
-        case MENU_VIEW_ADDRESS:  return "View Address";
+        case MENU_VIEW_ADDRESS:  return "Wallet Info";
         case MENU_SELECT_WALLET: return "Select Wallet";
         case MENU_NEW_WALLET:    return "New Wallet";
         case MENU_IMPORT_WALLET: return "Import Wallet";
@@ -586,54 +552,19 @@ static void menu_rebuild(void)
  * Wallet State
  * ============================================================================ */
 
-static EthAddress eth_address;
-
-/* Which address of the active wallet is shown: m/44'/60'/0'/0/<index>.
- * Ten is arbitrary but covers ordinary use; the derivation itself is unbounded
- * and the limit exists only to keep UP/DOWN a short cycle. */
-#define ADDRESS_INDEX_COUNT 10
-static uint32_t address_index = 0;
-
-/* Which account of the active seed everything on this device derives from
- * (T45): m/44'/60'/<hd_account>'/0/<address_index>.
+/* Which BIP44 account of the active seed the device's own screens are on
+ * (T45): m/44'/<coin>'/<hd_account>'.
  *
- * Why this is persisted and address_index is not, even though both are
- * selections rather than secrets. The address index is browsing: the user
- * walks it to find a receiving address and the walk has no meaning tomorrow.
- * The account is *which identity is in use* — the same role active_idx plays
- * for seeds — and a device that silently reverts to account 0 after a reboot
- * shows a different address for the same wallet, which reads as funds having
- * vanished. So the account persists like active_idx, and the index restarts
- * at 0 whenever the wallet or the account changes, because it indexes into
- * something that just changed underneath it.
+ * Persisted, because the account is *which identity is in use* — the same
+ * role active_idx plays for seeds — and a device that silently reverts to
+ * account 0 after a reboot shows a different wallet for the same seed, which
+ * reads as funds having vanished. Nothing derives at it yet: the old
+ * address browser that did is gone, and the Zcash one is a later phase.
  *
  * Bounded by HD_ACCOUNT_COUNT on this device's own screens; see ui.h for why
  * the bound is a UI bound and not a derivation one. */
 static uint32_t hd_account = 0;
 
-/* The path everything on the device browses at. Built in one place so the
- * address screen, the QR screen and the account selector cannot drift into
- * deriving from three different paths — which is the failure mode T47 was
- * about, one level up. */
-static HDPath hd_path_at(uint32_t index)
-{
-    HDPath path = HDPATH_ETH_DEFAULT;
-    path.account = hd_account;
-    path.address_index = index;
-    return path;
-}
-
-/* "m/44'/60'/0'/0/0" — 16 characters at the defaults, and the display is 21
- * columns wide, so the ordinary case is never truncated. A host-chosen account
- * or index large enough to overflow that would be truncated by snprintf, which
- * is why the caller renders it on a row of its own with nothing after it. */
-static void format_hd_path(char *out, size_t size, const HDPath *path)
-{
-    snprintf(out, size, "m/%u'/%u'/%u'/%u/%u",
-             (unsigned)path->purpose, (unsigned)path->coin_type,
-             (unsigned)path->account, (unsigned)path->change,
-             (unsigned)path->address_index);
-}
 static char mnemonic_buffer[256];
 static int mnemonic_word_count = 0;
 
@@ -965,7 +896,6 @@ uint32_t ui_hd_account(void)
 static void hd_account_set(uint32_t account)
 {
     hd_account = account % HD_ACCOUNT_COUNT;
-    address_index = 0;
 
     nvs_handle_t nvs;
     if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) {
@@ -982,14 +912,14 @@ static void hd_account_set(uint32_t account)
  * it; the reasoning about what it is for is with refresh_master_xfp(). */
 static char master_xfp[9] = {0};
 
-/* Whether a passphrase was applied when the address and fingerprint currently
- * on the wallet screen were derived (T42).
+/* Whether a passphrase was applied when the fingerprint currently on the
+ * wallet screen was derived (T42).
  *
  * The screen derives on entry and then sits there. A host can set or clear a
  * passphrase over the wire, and a lock can drop one, while it sits — leaving
- * an address and an XFP that belong to a wallet that is no longer selected.
- * That is the stale-passphrase failure in its most direct form: the user reads
- * a receive address off a screen the device would no longer produce. So the
+ * an XFP that belongs to a wallet that is no longer selected. That is the
+ * stale-passphrase failure in its most direct form: the user reads an
+ * identifier off a screen the device would no longer produce. So the
  * derived-at state is recorded here and checked by ui_poll_deferred(). */
 static bool wallet_info_passphrase_shown = false;
 
@@ -1018,9 +948,8 @@ static bool wallet_info_passphrase_shown = false;
  *     a quieter form: the next screen to draw it would vouch for a wallet the
  *     device can no longer derive.
  *
- * What survives is what a lock is not for: which wallet, which account, which
- * address index. All three are selections, not secrets, and all three are
- * already in NVS. */
+ * What survives is what a lock is not for: which wallet and which account.
+ * Both are selections, not secrets, and both are already in NVS. */
 static void lock_device(void)
 {
     pin_lock();
@@ -1107,8 +1036,8 @@ static bool lock_check_timeout(void)
     }
 
     ESP_LOGI(TAG, "Auto-lock after %u s idle", (unsigned)seconds);
-    /* address_index, the account and the active wallet survive deliberately;
-     * everything else lock_device() drops. */
+    /* The account and the active wallet survive deliberately; everything
+     * else lock_device() drops. */
     lock_device();
     ui_set_screen(SCREEN_PIN_UNLOCK);
     return true;
@@ -1122,10 +1051,7 @@ typedef enum {
     SET_IMPORT_WALLET,
     SET_PASSPHRASE,
     /* Next to the passphrase deliberately (T45). Both answer the same question
-     * — "which wallet am I in?" — and neither is browsing, which is why the
-     * account is not a fifth thing for UP/DOWN to mean on the address screen.
-     * All four buttons there already do something, and stealing one would cost
-     * either the QR code or address browsing to save a menu entry. */
+     * — "which wallet am I in?" — and the wallet screen shows the result. */
     SET_ACCOUNT,
     SET_BRIGHTNESS,
     SET_AUTOLOCK,
@@ -1778,7 +1704,7 @@ static void screen_main_menu_render(void)
     oled_clear();
     menu_rebuild();
 
-    /* Show which wallet is active, so "View Address" is not a mystery box. */
+    /* Show which wallet is active, so "Wallet Info" is not a mystery box. */
     WalletStatus status = wallet_get_status();
     char header[22];
     if (wallet_has_temporary_mnemonic()) {
@@ -1863,9 +1789,7 @@ static void screen_main_menu_on_button(button_id_t btn)
                     ui_set_screen(SCREEN_PIN_UNLOCK);
                     break;
                 case MENU_SHOW_ADDRESS:
-                    /* The account the device's own screens are on, which is
-                     * the one the user most likely means. */
-                    ui_suggest_show_address(hd_account);
+                    ui_set_screen(SCREEN_SHOW_ADDRESS);
                     break;
                 case MENU_SCAN:
                     ui_set_screen(SCREEN_SCAN);
@@ -1899,22 +1823,12 @@ static void screen_main_menu_on_button(button_id_t btn)
 }
 
 /* ============================================================================
- * Wallet Info Screen (View Address)
+ * Wallet Info Screen
+ *
+ * Which seed is active, whether a passphrase is on it, and its fingerprint.
+ * LeekWallet put an address here; there is no Zcash address to show
+ * until a later phase, so the screen says that instead of drawing nothing.
  * ============================================================================ */
-
-/* Why this is a separate field rather than a message parked in
- * `eth_address.hex` (AUDIT S8a, T7).
- *
- * The address renderer slices its buffer at fixed offsets 0/16/30. An error
- * string written there renders as a short first line over two blank ones -
- * which at a glance is a truncated address, not a failure. Worse, the QR
- * screen encoded whatever was in that field, so "Addr failed" was offered to
- * a camera as a receive address.
- *
- * An address and an explanation of why there is no address are different
- * things and are now stored as different things. `address_valid()` is the
- * single gate every consumer asks. */
-static char address_error[24] = {0};
 
 /* ------------------------------------------------------------ XFP (T39b)
  *
@@ -1952,34 +1866,36 @@ static void draw_master_xfp(int row, const char *prefix)
     oled_draw_string_centered(row, line);
 }
 
-static void set_address_error(const char *message)
-{
-    memzero(&eth_address, sizeof(eth_address));
-    snprintf(address_error, sizeof(address_error), "%s", message);
-}
+/* Why the screen has nothing to show, or "" when it has a fingerprint. Kept
+ * apart from master_xfp so an error can never be drawn where an identifier
+ * goes (AUDIT S8a, T7). */
+static char wallet_info_error[24] = {0};
 
-/* A real, complete address - never an error, never a partial derivation. */
-static bool address_valid(void)
+/* Re-read the fingerprint and the passphrase state it was read under. Always
+ * together: an XFP from before a passphrase change beside a marker from after
+ * it would be worse than showing no fingerprint at all. */
+static void wallet_info_refresh(void)
 {
-    return address_error[0] == '\0' && strlen(eth_address.hex) == 42;
+    refresh_master_xfp();
+    wallet_info_passphrase_shown = wallet_has_passphrase();
 }
 
 static void screen_wallet_info_enter(void)
 {
     ESP_LOGI(TAG, "Wallet info screen");
 
-    memset(&eth_address, 0, sizeof(eth_address));
-    address_error[0] = '\0';
+    wallet_info_error[0] = '\0';
+    master_xfp[0] = '\0';
 
     if (!ensure_wallet_unlocked()) {
-        set_address_error("Unlock failed");
+        snprintf(wallet_info_error, sizeof(wallet_info_error), "Unlock failed");
         return;
     }
 
     WalletStatus status = wallet_get_status();
     const bool temp = wallet_has_temporary_mnemonic();
     if (status.wallet_count == 0 && !temp) {
-        set_address_error("No wallet");
+        snprintf(wallet_info_error, sizeof(wallet_info_error), "No wallet");
         return;
     }
 
@@ -1987,33 +1903,18 @@ static void screen_wallet_info_enter(void)
      *
      * Not in temporary mode: the active index is 0 there by design, and
      * "helpfully" selecting wallet 1 would load a stored seed over the one the
-     * user typed - silently deriving addresses off the wrong wallet, which is
-     * the exact failure this screen's title row exists to make impossible. */
+     * user typed - silently showing the wrong wallet, which is the exact
+     * failure this screen's title row exists to make impossible. */
     if (!temp && status.active_wallet_index == 0) {
         WalletError err = wallet_select_wallet(1);
         if (err != WALLET_OK) {
             ESP_LOGE(TAG, "Failed to select wallet: %d", err);
-            set_address_error("Select failed");
+            snprintf(wallet_info_error, sizeof(wallet_info_error), "Select failed");
             return;
         }
     }
 
-    /* m/44'/60'/0'/0/<address_index>, under the derivation lock.
-     *
-     * This runs on entering the wallet screen, which is exactly where the UI
-     * lands after approving a transaction - so an unlocked select here
-     * re-derives to the *browsing* index while the protocol task is signing,
-     * and the device signs with a key the confirmation screen never named. */
-    HDPath eth_path = hd_path_at(address_index);
-
-    WalletError err = wallet_get_address_at_path(&eth_path, &eth_address);
-    if (err != WALLET_OK) {
-        ESP_LOGE(TAG, "Failed to get address: %d", err);
-        set_address_error("Addr failed");
-    }
-
-    refresh_master_xfp();
-    wallet_info_passphrase_shown = wallet_has_passphrase();
+    wallet_info_refresh();
 }
 
 static void screen_wallet_info_render(void)
@@ -2024,130 +1925,45 @@ static void screen_wallet_info_render(void)
     const bool temp = wallet_has_temporary_mnemonic();
     char title[22];
     /* Which seed, and whether a passphrase is on it. The passphrase marker is
-     * on the title row rather than buried because a passphrase changes every
-     * address on this screen and leaves no other visible trace (T42) - the
-     * XFP below says the seed changed, but only to someone who recorded it. */
+     * on the title row rather than buried because a passphrase changes the
+     * wallet and leaves no other visible trace (T42) - the XFP below says the
+     * seed changed, but only to someone who recorded it. */
     if (temp) {
         /* "TEMP" where the wallet number goes, because there is no wallet
-         * number: this address came off a seed no slot holds. It is the same
-         * row the passphrase marker uses and for the same reason - the address
-         * below it is indistinguishable from a stored wallet's, and the user
-         * is about to hand it to someone. */
-        snprintf(title, sizeof(title), "TEMP  addr %u%s",
-                 (unsigned)address_index, wallet_has_passphrase() ? " P" : "");
+         * number: this seed is held by no slot. */
+        snprintf(title, sizeof(title), "TEMP  acct %u%s",
+                 (unsigned)hd_account, wallet_has_passphrase() ? " P" : "");
     } else {
-        snprintf(title, sizeof(title), "W%u/%u  addr %u%s",
+        snprintf(title, sizeof(title), "W%u/%u  acct %u%s",
                  (unsigned)status.active_wallet_index, (unsigned)status.wallet_count,
-                 (unsigned)address_index, wallet_has_passphrase() ? " P" : "");
+                 (unsigned)hd_account, wallet_has_passphrase() ? " P" : "");
     }
     oled_draw_string_centered(0, title);
-
-    /* The full derivation path, on its own row (T45).
-     *
-     * With the account level selectable, "addr 3" no longer identifies an
-     * address: the same index under another account is a different wallet
-     * entirely. The path is the only text on this screen that says which one,
-     * and it is the same string the signing confirmation shows, so the two can
-     * be compared by eye. */
-    if (status.wallet_count > 0 || temp) {
-        char path_str[24];
-        HDPath shown = hd_path_at(address_index);
-        format_hd_path(path_str, sizeof(path_str), &shown);
-        oled_draw_string_centered(1, path_str);
-    }
 
     if (status.wallet_count == 0 && !temp) {
         oled_draw_string_centered(3, "No wallet");
         oled_draw_string_centered(4, "Create one first");
-    } else if (!address_valid()) {
-        /* Say plainly that there is no address, rather than drawing something
-         * address-shaped. The word "Error" is what distinguishes this from a
-         * short address at a glance. */
+    } else if (wallet_info_error[0] || master_xfp[0] == '\0') {
+        /* Say plainly that there is nothing to show, rather than drawing
+         * something identifier-shaped. */
         oled_draw_string_centered(2, "Error");
-        oled_draw_string_centered(4, address_error[0] ? address_error : "No address");
+        oled_draw_string_centered(4, wallet_info_error[0] ? wallet_info_error
+                                                          : "No fingerprint");
     } else {
-        /* Display address in 3 lines (42 chars total) */
-        /* Line 1: 0x + 14 chars = 16 chars */
-        char line1[17], line2[17], line3[17];
-
-        strncpy(line1, eth_address.hex, 16);
-        line1[16] = '\0';
-
-        strncpy(line2, eth_address.hex + 16, 14);
-        line2[14] = '\0';
-
-        strncpy(line3, eth_address.hex + 30, 12);
-        line3[12] = '\0';
-
-        oled_draw_string_centered(2, line1);
-        oled_draw_string_centered(3, line2);
-        oled_draw_string_centered(4, line3);
-
-        /* Which seed this address came off. The address alone cannot say
-         * whether a passphrase is applied, and the wrong one looks exactly
-         * like the right one until funds fail to appear. */
-        draw_master_xfp(6, "XFP");
+        /* Which seed this is. The fingerprint is the one identifier that
+         * does not depend on a chain, and the one a wrong passphrase changes. */
+        draw_master_xfp(2, "XFP");
+        oled_draw_string_centered(4, "Zcash: coming soon");
     }
 
-    /* Offering QR for something that is not an address invites the user to
-     * scan a failure message. */
-    oled_draw_string(7, 0, address_valid() ? "UP DN BCK   QR" : "UP DN BCK");
-}
-
-/* Re-derive the displayed address for the current index. */
-static void wallet_info_refresh_address(void)
-{
-    memset(&eth_address, 0, sizeof(eth_address));
-
-    HDPath eth_path = hd_path_at(address_index);
-
-    address_error[0] = '\0';
-
-    if (wallet_get_address_at_path(&eth_path, &eth_address) != WALLET_OK) {
-        ESP_LOGE(TAG, "Failed to derive address %u", (unsigned)address_index);
-        set_address_error("Derive failed");
-    }
-
-    /* Refreshed together, always. The fingerprint names the seed the address
-     * came off, so an address re-derived under a new passphrase beside an XFP
-     * from the old one would be worse than showing no fingerprint at all. */
-    refresh_master_xfp();
-    wallet_info_passphrase_shown = wallet_has_passphrase();
+    oled_draw_string(7, 0, "BACK");
 }
 
 static void screen_wallet_info_on_button(button_id_t btn)
 {
-    WalletStatus status = wallet_get_status();
-
-    switch (btn) {
-        case BUTTON_UP:
-            if (status.wallet_count > 0) {
-                address_index = (address_index + 1) % ADDRESS_INDEX_COUNT;
-                wallet_info_refresh_address();
-            }
-            break;
-
-        case BUTTON_DOWN:
-            if (status.wallet_count > 0) {
-                address_index = (address_index + ADDRESS_INDEX_COUNT - 1)
-                                % ADDRESS_INDEX_COUNT;
-                wallet_info_refresh_address();
-            }
-            break;
-
-        case BUTTON_CANCEL:
-            ui_set_screen(SCREEN_MAIN_MENU);
-            break;
-
-        case BUTTON_ACCEPT:
-            /* Go to QR code display */
-            ui_set_screen(SCREEN_QR_CODE);
-            break;
-
-        default:
-            break;
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_MAIN_MENU);
     }
-
     ui_invalidate();
 }
 
@@ -2493,7 +2309,6 @@ static void screen_wallet_select_on_button(button_id_t btn)
         case BUTTON_ACCEPT:
             if (status.wallet_count > 0) {
                 wallet_select_wallet(wallet_list_selection + 1);
-                address_index = 0;   /* a different seed, start from its first address */
                 /* The ACCOUNT is deliberately kept. Every seed has an account
                  * 3, so unlike the passphrase there is nothing seed-specific
                  * being carried across - and the wallet screen names the full
@@ -2943,13 +2758,8 @@ static void wifi_test_toggle(void)
 static void usb_hid_test(void)
 {
 #ifdef CONFIG_TINYUSB_ENABLED
-    ESP_LOGI(TAG, "USB HID test - typing address...");
-    if (address_valid()) {
-        ESP_LOGI(TAG, "Address: %s", eth_address.hex);
-        /* TinyUSB HID would type the address here */
-    } else {
-        ESP_LOGW(TAG, "No address available");
-    }
+    /* It typed an address; there is no Zcash one yet. */
+    ESP_LOGW(TAG, "USB HID test - nothing to type yet");
 #else
     ESP_LOGW(TAG, "TinyUSB not enabled in sdkconfig");
     ESP_LOGI(TAG, "To enable: CONFIG_TINYUSB_ENABLED=y");
@@ -3114,8 +2924,8 @@ static void screen_settings_on_button(button_id_t btn)
                     /* Cycles, like Brightness and Auto-lock. Ten presses to
                      * cross the range is acceptable for something changed
                      * rarely, and it costs no extra screen; the wallet screen
-                     * shows the resulting path in full, which is where the
-                     * change is actually confirmed. */
+                     * shows the resulting account, which is where the change
+                     * is actually confirmed. */
                     hd_account_set(hd_account + 1);
                     ESP_LOGI(TAG, "Account %u selected", (unsigned)hd_account);
                     break;
@@ -3306,124 +3116,37 @@ static void service_qr_out(void)
 /* ============================================================================
  * Show Address Screen
  *
- * The handshake (RESEARCH-AIRGAP-VAULT.md sections 36-37): the account-level
- * xpub as a ur:crypto-hdkey, because on this panel it is one frame and it lets
- * the companion derive every receive address without another visit. The
- * screen's job is to say that plainly before anything is shown - once the QR
- * is up there is no room for words.
- *
- * Whoever opened it chose the starting account; the user chooses the answer.
+ * A placeholder. LeekWallet exported an account xpub here as a
+ * ur:crypto-hdkey; the Zcash equivalent (a UFVK or a transparent address)
+ * belongs to a later phase. The menu entry stays so the menu does not change
+ * shape again when it arrives, and it says so rather than leading nowhere.
  * ============================================================================ */
-
-static uint32_t show_account;
-static bool     show_pending;          /* OK pressed; derive after the repaint */
-static char     show_error[22];
-
-void ui_suggest_show_address(uint32_t account)
-{
-    /* A suggestion outside the hardened range cannot be an account at all;
-       start from the device's own instead of refusing to open. */
-    show_account = (account < 0x80000000u) ? account : hd_account;
-    show_pending = false;
-    show_error[0] = '\0';
-    ui_set_screen(SCREEN_SHOW_ADDRESS);
-}
 
 static void screen_show_address_render(void)
 {
-    char line[22];
     oled_clear();
-    oled_draw_string_centered(0, "Share account");
-    snprintf(line, sizeof line, "< Account %lu >", (unsigned long)show_account);
-    oled_draw_string_centered(1, line);
-    snprintf(line, sizeof line, "m/44'/60'/%lu'", (unsigned long)show_account);
-    oled_draw_string_centered(2, line);
-
-    if (show_pending) {
-        oled_draw_string_centered(5, "Deriving...");
-        return;
-    }
-    if (show_error[0]) {
-        oled_draw_string_centered(5, show_error);
-    } else {
-        /* What leaves the device, in the words that matter: a watcher can see
-           every address in this account, and nothing can be spent with it. */
-        oled_draw_string(3, 0, "Sends the xpub: the");
-        oled_draw_string(4, 0, "app sees ALL addrs");
-        oled_draw_string(5, 0, "in it. Cannot spend.");
-    }
-    oled_draw_string(7, 0, "BACK            SHOW");
+    oled_draw_string_centered(0, "Show Address");
+    oled_draw_string_centered(3, "Zcash: coming soon");
+    oled_draw_string(7, 0, "BACK");
 }
 
 static void screen_show_address_on_button(button_id_t btn)
 {
-    if (show_pending) {
-        ui_invalidate();
-        return;     /* the derivation is already queued */
-    }
-    switch (btn) {
-        case BUTTON_UP:
-            show_account = (show_account + HD_ACCOUNT_COUNT - 1) % HD_ACCOUNT_COUNT;
-            show_error[0] = '\0';
-            break;
-        case BUTTON_DOWN:
-            show_account = (show_account + 1) % HD_ACCOUNT_COUNT;
-            show_error[0] = '\0';
-            break;
-        case BUTTON_ACCEPT:
-            /* Not derived here: BIP32 on a cold seed cache is PBKDF2 first,
-               and the button handler must not block. ui_poll_deferred() does
-               it once "Deriving..." is on the panel. */
-            show_pending = true;
-            break;
-        case BUTTON_CANCEL:
-            ui_set_screen(SCREEN_MAIN_MENU);
-            return;
-        default:
-            break;
-    }
-    ui_invalidate();
-}
-
-/* The deferred half of OK. Derives on the UI task, as the address screen
- * already does, into local buffers that are zeroed before returning; only the
- * encoded public key survives, inside qr-out.c. */
-static void show_address_run(void)
-{
-    show_pending = false;
-
-    E4527AccountKey key;
-    memset(&key, 0, sizeof key);
-    key.account = show_account;
-    /* The same gate every address screen goes through before deriving. */
-    if (!ensure_wallet_unlocked() ||
-        wallet_get_account_key(show_account, key.key_data, key.chain_code,
-                               &key.parent_fingerprint,
-                               &key.master_fingerprint) != WALLET_OK) {
-        memzero(&key, sizeof key);
-        snprintf(show_error, sizeof show_error, "Derive failed");
-        ui_invalidate();
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_MAIN_MENU);
         return;
     }
-
-    uint8_t cbor[E4527_HDKEY_MAX];
-    const size_t n = eip4527_encode_account_hdkey(&key, cbor, sizeof cbor);
-    memzero(&key, sizeof key);
-    if (n == 0 || !ui_show_ur("crypto-hdkey", cbor, n, SCREEN_SHOW_ADDRESS)) {
-        snprintf(show_error, sizeof show_error, "Cannot show it");
-        ui_invalidate();
-    }
-    memzero(cbor, sizeof cbor);
+    ui_invalidate();
 }
 
 /* ============================================================================
  * Scan Screen
  *
- * The camera loop's host. Frames arrive from camera.c, each decoded symbol is
- * fed to the UR assembler, and a complete eth-sign-request is
- * handed to the airgap worker - which then asks the user on SCREEN_SIGN_CONFIRM
- * exactly as a USB request would. Nothing on this screen reads the request's
- * contents out loud; the confirmation draws what the device decoded.
+ * The camera loop's host. Frames arrive from camera.c and each decoded symbol
+ * is fed to the UR assembler. No UR type is accepted yet (airgap.h): a
+ * complete message is refused and the screen says so. Phase 5 hands a
+ * zcash-pczt to a confirmation from here. Nothing on this screen reads a
+ * scanned message's contents out loud.
  * ============================================================================ */
 
 static char scan_status[22];
@@ -3463,16 +3186,7 @@ static void scan_handle(const char *ur, size_t len)
             snprintf(scan_status, sizeof scan_status, "Not a UR part");
             break;
         case AIRGAP_SCAN_WRONG_TYPE:
-            snprintf(scan_status, sizeof scan_status, "Not a sign request");
-            break;
-        case AIRGAP_SCAN_BAD_REQUEST:
-            snprintf(scan_status, sizeof scan_status, "Request unreadable");
-            break;
-        case AIRGAP_SCAN_BUSY:
-            snprintf(scan_status, sizeof scan_status, "Busy; try again");
-            break;
-        case AIRGAP_SCAN_SUBMITTED:
-            snprintf(scan_status, sizeof scan_status, "Checking request...");
+            snprintf(scan_status, sizeof scan_status, "Not supported yet");
             break;
     }
     ui_invalidate();
@@ -3609,113 +3323,6 @@ static void service_scan(void)
         }
         ui_invalidate();
     }
-}
-
-/* The worker's answer, whatever screen is up. After an approval the device is
- * on SCREEN_SIGN_RESULT; the signature QR replaces it, because showing it is
- * the whole point of having approved. */
-static void service_airgap(void)
-{
-    const uint8_t *cbor = NULL;
-    size_t len = 0;
-    TxSignResult rc = TXSIGN_OK;
-    const AirgapState s = airgap_poll(&cbor, &len, &rc);
-    if (s == AIRGAP_DONE) {
-        if (!ui_show_ur("eth-signature", cbor, len, SCREEN_MAIN_MENU)) {
-            snprintf(scan_status, sizeof scan_status, "Cannot show it");
-            ui_set_screen(SCREEN_SCAN);
-        }
-        airgap_acknowledge();
-    } else if (s == AIRGAP_FAILED) {
-        airgap_acknowledge();
-        /* Back to the scanner with the reason on it, so the next attempt is
-           one step away and the refusal is not a screen that vanished. */
-        ui_set_screen(SCREEN_SCAN);
-        /* After the switch: entering the scanner writes its own greeting. */
-        snprintf(scan_status, sizeof scan_status, "%s", airgap_refusal_text(rc));
-        ui_invalidate();
-    }
-}
-
-/* ============================================================================
- * QR Code Screen
- * ============================================================================ */
-
-static void screen_qr_code_enter(void)
-{
-    ESP_LOGI(TAG, "QR code screen");
-
-    /* eth_address should already be populated from wallet_info screen */
-    if (!address_valid()) {
-        /* Fallback: try to get address again */
-        address_error[0] = '\0';
-        if (ensure_wallet_unlocked()) {
-            WalletStatus status = wallet_get_status();
-            if (status.wallet_count > 0) {
-                if (status.active_wallet_index == 0) {
-                    wallet_select_wallet(1);
-                }
-                HDPath eth_path = hd_path_at(address_index);
-                if (wallet_get_address_at_path(&eth_path, &eth_address) != WALLET_OK) {
-                    set_address_error("Addr failed");
-                }
-            } else {
-                set_address_error("No wallet");
-            }
-        } else {
-            set_address_error("Unlock failed");
-        }
-    }
-}
-
-static void screen_qr_code_render(void)
-{
-    /* One gate, asked of the same field the QR is built from.
-     *
-     * The old check listed the error strings it knew about, so every failure
-     * added later - "Addr failed", "Derive failed" - was encoded into a QR
-     * code and presented to a camera as a receive address. Ask whether there
-     * is an address instead of trying to enumerate the ways there is not. */
-    if (!address_valid()) {
-        oled_clear();
-        oled_draw_string_centered(3, "No address");
-        oled_draw_string(7, 0, "BACK");
-        return;
-    }
-
-    /* Draw QR code (fills entire display) */
-    oled_draw_qrcode(eth_address.hex);
-
-    /* We can't overlay text on QR code easily, so just show the QR */
-    /* User can press buttons to navigate */
-}
-
-static void screen_qr_code_on_button(button_id_t btn)
-{
-    switch (btn) {
-        case BUTTON_CANCEL:
-        case BUTTON_UP:
-            /* Go back to wallet info */
-            ui_set_screen(SCREEN_WALLET_INFO);
-            break;
-
-        case BUTTON_ACCEPT:
-        case BUTTON_DOWN:
-            /* Also just goes back.
-             *
-             * This used to mean "reveal the seed phrase", which locked the
-             * device and demanded the PIN. The QR fills the display, so there
-             * was no footer to say so, and pressing a button to leave a screen
-             * instead locked you out of it. Revealing the seed now lives in
-             * Settings, where it is labelled. */
-            ui_set_screen(SCREEN_WALLET_INFO);
-            break;
-
-        default:
-            break;
-    }
-
-    ui_invalidate();
 }
 
 /* ============================================================================
@@ -4637,7 +4244,6 @@ static void screen_passphrase_on_button(button_id_t btn)
                  * saying so (T42). */
                 protocol_note_device_passphrase();
                 text_entry_clear(&passphrase_entry);
-                address_index = 0;
                 ui_set_screen(SCREEN_PASSPHRASE_CONFIRM);
                 return;
             }
@@ -4793,19 +4399,19 @@ static void screen_ble_name_on_button(button_id_t btn)
  *
  * The one defence against a mistyped passphrase. A wrong passphrase does not
  * error - it derives a different, perfectly valid, empty-looking wallet - so
- * the device shows the resulting address and the user compares it with what
- * they recorded last time.
+ * the device shows the resulting seed fingerprint and the user compares it
+ * with what they recorded last time.
  *
  * Its limitation is worth stating: on first use there is nothing to compare
- * against. That is exactly why this address must be written down alongside the
- * seed, not merely glanced at.
+ * against. That is exactly why this fingerprint must be written down alongside
+ * the seed, not merely glanced at.
  * ============================================================================ */
 
 static void screen_passphrase_confirm_enter(void)
 {
     ESP_LOGI(TAG, "Passphrase confirmation screen");
     /* Derivation runs PBKDF2 over the new passphrase, so this is the slow one. */
-    wallet_info_refresh_address();
+    wallet_info_refresh();
 }
 
 static void screen_passphrase_confirm_render(void)
@@ -4815,29 +4421,20 @@ static void screen_passphrase_confirm_render(void)
                                                          : "No passphrase");
 
     /* This screen asks the user to confirm a passphrase by recognising its
-     * address. With no address there is nothing to recognise, and rendering
-     * blank lines under "Match your record" invites them to accept a wallet
+     * fingerprint. With none there is nothing to recognise, and rendering a
+     * blank row under "Match your record" invites them to accept a wallet
      * that never derived. */
-    if (!address_valid()) {
+    if (master_xfp[0] == '\0') {
         oled_draw_string_centered(2, "Error");
-        oled_draw_string_centered(4, address_error[0] ? address_error : "No address");
+        oled_draw_string_centered(4, "No fingerprint");
         oled_draw_string_centered(6, "Cannot confirm");
         oled_draw_string(7, 0, "RETRY");
         return;
     }
 
-    char line1[17], line2[17], line3[17];
-    strncpy(line1, eth_address.hex, 16);      line1[16] = '\0';
-    strncpy(line2, eth_address.hex + 16, 14); line2[14] = '\0';
-    strncpy(line3, eth_address.hex + 30, 12); line3[12] = '\0';
-    oled_draw_string_centered(2, line1);
-    oled_draw_string_centered(3, line2);
-    oled_draw_string_centered(4, line3);
-
     /* The fingerprint names the seed, so it is the fact that actually says
-     * "this is the passphrase you meant" - the address below it is only one
-     * account off that seed. */
-    draw_master_xfp(5, "XFP");
+     * "this is the passphrase you meant". */
+    draw_master_xfp(3, "XFP");
 
     oled_draw_string_centered(6, "Match your record");
     oled_draw_string(7, 0, "RETRY         OK");
@@ -4846,7 +4443,7 @@ static void screen_passphrase_confirm_render(void)
 static void screen_passphrase_confirm_on_button(button_id_t btn)
 {
     if (btn == BUTTON_CANCEL) {
-        /* Wrong address means the wrong passphrase. Clear it rather than
+        /* Wrong fingerprint means the wrong passphrase. Clear it rather than
          * leaving a wallet the user did not intend selected. */
         wallet_clear_passphrase();
         ui_set_screen(SCREEN_PASSPHRASE);
@@ -4856,1460 +4453,47 @@ static void screen_passphrase_confirm_on_button(button_id_t btn)
 }
 
 /* ============================================================================
- * Transaction Confirmation
+ * Approval outcome
  *
- * The screen that makes this a hardware wallet rather than a USB key. The
- * fields shown are the device's own parse of the request, and the bytes signed
- * are the ones hashed from exactly these values. A host that says one thing and
- * sends another is visible here, which is the only place it can be.
- *
- * Paged, because 128x64 cannot hold a 42-character address, an amount, a chain
- * and a source address at a legible size. Every page must be seen before the
- * approve option appears - scrolling past is the point, not an obstacle.
- *
- * Which pages exist depends on what the device could decode. A token transfer
- * has a different set of facts worth reading than a native one, and the
- * protocol task has already refused anything outside the decodable set (T50)
- * unless the owner turned blind signing on (T16) — which is the only way a
- * page here ever renders "unknown", and when it does it says so in those
- * words rather than dressing the call up as something it understood.
+ * The channel a host request waits on while the user answers a question on
+ * the device. LeekWallet carried transaction, message and typed-data
+ * review pages here; they are gone (roadmap 1.1), and the host-supplied
+ * passphrase is the one question left. The Zcash transaction review of a later
+ * phase rides the same outcome rather than a second one.
  * ============================================================================ */
 
-typedef enum {
-    SIGN_PAGE_MESSAGE,      /* the full text of an EIP-191 personal_sign */
-    SIGN_PAGE_VALUE,        /* amount in ether, and the chain */
-    SIGN_PAGE_TO,           /* recipient of a native transfer */
-    SIGN_PAGE_ACTION,       /* what the token call does, and for how much */
-    SIGN_PAGE_PARTY,        /* the token recipient or the approved spender */
-    SIGN_PAGE_PARTY2,       /* transferFrom's destination */
-    SIGN_PAGE_CONTRACT,     /* the token contract being called, and the chain */
-    SIGN_PAGE_BLIND_WARN,   /* blind signing: the device cannot read this call */
-    SIGN_PAGE_BLIND_DATA,   /* blind signing: calldata length and its hash */
-    SIGN_PAGE_TYPED_DOMAIN, /* EIP-712: which contract, which chain, what name */
-    SIGN_PAGE_TYPED_FIELD,  /* EIP-712: one leaf of the struct, one page */
-    SIGN_PAGE_TYPED_BLIND,  /* EIP-712: hashed, but not showable in full */
-    SIGN_PAGE_CALL_NAME,    /* generic call: the function's name, and the limit
-                             * of what a name proves */
-    SIGN_PAGE_CALL_ARG,     /* generic call: one declared argument, one page */
-    SIGN_PAGE_AQUA_ACTION,  /* Aqua: ship or dock, said in those words */
-    SIGN_PAGE_AQUA_MAKER,   /* Aqua ship: the maker named inside the strategy */
-    SIGN_PAGE_AQUA_APP,     /* Aqua: the app the strategy is shipped to */
-    SIGN_PAGE_AQUA_HASH,    /* Aqua: keccak256(strategy), or dock's argument */
-    SIGN_PAGE_AQUA_LEG,     /* Aqua: one token of the strategy */
-    SIGN_PAGE_AQUA_AMOUNT,  /* Aqua ship: what that token is credited with */
-    SIGN_PAGE_AQUA_INSTR,   /* Aqua ship to the SwapVM router: one SwapVM
-                             * program instruction, in program order (B3) */
-    SIGN_PAGE_DISPERSE_ACTION, /* Disperse: how many payments, and the token */
-    SIGN_PAGE_DISPERSE_LEG,    /* Disperse: one recipient and its amount */
-    SIGN_PAGE_ATS_ACTION,   /* ATS: issuing a security, and what that means */
-    SIGN_PAGE_ATS_NAME,     /* ATS: the security's name, in full */
-    SIGN_PAGE_ATS_SYMBOL,   /* ATS: the security's symbol, in full */
-    SIGN_PAGE_FROM          /* the address that will sign (T47) */
-} SignPageKind;
-
-/* The longest plan is a generic call: its name, one page for each of its six
- * possible arguments, the contract and the source. Typed data wants the domain,
- * one page per struct leaf and the source; a transaction, blind or not, needs
- * at most five. An Aqua ship wants action, maker, app, hash, TWO pages per leg,
- * contract and source -- the token and its amount are separate pages because a
- * uint256 in decimal is 78 digits and this device wraps rather than truncates
- * (see sign_draw_amount): a token address and a full amount do not fit on one
- * screen together, and a shortened amount is a different amount. */
-#define SIGN_TYPED_PAGES   (EIP712_MAX_RENDER_FIELDS + 2)
-#define SIGN_GENERIC_PAGES (ETH_MAX_ARGS + 3)
-#define SIGN_AQUA_PAGES    (2 * ETH_AQUA_MAX_LEGS + ETH_AQUA_MAX_INSTRUCTIONS + 6)
-/* Action, one page per recipient, contract, source. Stated rather than left to
- * happen to fit under the Aqua figure: the two bounds move for unrelated
- * reasons, and a page plan that silently truncated would drop a payment from a
- * batch -- the one screen where a missing row is money going somewhere nobody
- * was shown. */
-#define SIGN_DISPERSE_PAGES (ETH_DISPERSE_MAX_RECIPIENTS + 3)
-#define SIGN_MAX2(a, b) ((a) > (b) ? (a) : (b))
-#define SIGN_MAX_PAGES \
-    SIGN_MAX2(SIGN_DISPERSE_PAGES, \
-    SIGN_MAX2(SIGN_AQUA_PAGES, SIGN_MAX2(SIGN_TYPED_PAGES, SIGN_GENERIC_PAGES)))
-
-static EthTx        sign_tx;
-static EthCall      sign_call;
-/* The path the signature will be taken at, carried in whole rather than as an
- * index (T45/T47). The account level is host-selectable, so an index alone
- * cannot say which wallet is signing - and this screen exists to say exactly
- * that. Rendered in full on the source page. */
-static HDPath       sign_path_shown;
-static char         sign_from[43];
-static int          sign_page;
-static SignPageKind sign_page_kind[SIGN_MAX_PAGES] = {SIGN_PAGE_FROM};
-/* Never zero: the button handler takes a modulus by it, so reaching this
- * screen without a request must be a blank page, not a divide-by-zero.
- * ui_request_sign() overwrites both before the screen can be shown. */
-static int          sign_page_count = 1;
-static bool         sign_seen[SIGN_MAX_PAGES];
 static volatile SignOutcome sign_outcome = SIGN_PENDING;
-static volatile bool sign_request_pending = false;
 
-/* A personal_sign request rides the same screen, the same paging and the same
- * outcome as a transaction. A second approval path would be a second place for
- * "what was displayed" and "what was signed" to drift apart, which is the one
- * thing this screen exists to prevent. */
-static bool sign_is_message = false;
-static char sign_message[ETH_MAX_MESSAGE + 1];
-
-/* Typed data rides the same screen for the same reason, and carries the render
- * model eip712.c built rather than a re-parse of the request. There is exactly
- * one traversal of a typed-data document on this device and this is what it
- * produced; a second one here could disagree with the digest. */
-static bool         sign_is_typed = false;
-static Eip712Render sign_typed;
-/* Which struct leaf each page shows. Parallel to sign_page_kind[] and only
- * meaningful for SIGN_PAGE_TYPED_FIELD. */
-static int          sign_page_field[SIGN_MAX_PAGES];
-
-/* Set when the request got here only because blind signing is on. The screen
- * has to look different from a normal confirmation - same buttons, same paging
- * rule, but nobody should be able to approve one while thinking they approved
- * the other. */
-static bool    sign_blind = false;
-static uint8_t sign_data_hash[32];   /* keccak256 of the calldata as received */
-
-void ui_request_sign_message(const char *message, size_t length,
-                             const HDPath *path, const char *from)
-{
-    memzero(&sign_tx, sizeof(sign_tx));
-    memzero(&sign_call, sizeof(sign_call));
-    memzero(sign_message, sizeof(sign_message));
-
-    /* Truncation here would show less than is signed, so refuse the whole
-     * request rather than display a prefix. The protocol task has already
-     * bounded it; this is the belt to that pair of braces. */
-    if (!message || length > ETH_MAX_MESSAGE) {
-        sign_outcome = SIGN_REJECTED;
-        return;
-    }
-    memcpy(sign_message, message, length);
-    sign_message[length] = '\0';
-
-    sign_is_message = true;
-    sign_is_typed = false;
-    /* A message that reached this screen was renderable in full; blind
-     * signing does not and must not reopen the ones that were not. */
-    sign_blind = false;
-    memzero(sign_data_hash, sizeof(sign_data_hash));
-    sign_path_shown = path ? *path : (HDPath)HDPATH_ETH_DEFAULT;
-    if (from) {
-        snprintf(sign_from, sizeof(sign_from), "%s", from);
-    } else {
-        sign_from[0] = '\0';
-    }
-
-    sign_page_kind[0] = SIGN_PAGE_MESSAGE;
-    sign_page_kind[1] = SIGN_PAGE_FROM;
-    sign_page_count = 2;
-
-    sign_outcome = SIGN_PENDING;
-    sign_request_pending = true;
-}
-
-void ui_request_sign_typed_data(const Eip712Render *render,
-                                const uint8_t digest[32], bool blind,
-                                const HDPath *path, const char *from)
-{
-    memzero(&sign_tx, sizeof(sign_tx));
-    memzero(&sign_call, sizeof(sign_call));
-    memzero(sign_message, sizeof(sign_message));
-    memzero(&sign_typed, sizeof(sign_typed));
-
-    if (!render || !digest) {
-        sign_outcome = SIGN_REJECTED;
-        return;
-    }
-    sign_typed = *render;
-
-    sign_is_message = false;
-    sign_is_typed = true;
-    sign_blind = blind;
-    /* The typed-data digest, not a calldata hash — but the same field, because
-     * the page that draws it is asking the same question: which exact bytes is
-     * this signature over, so they can be checked somewhere else. */
-    memcpy(sign_data_hash, digest, sizeof(sign_data_hash));
-
-    sign_path_shown = path ? *path : (HDPath)HDPATH_ETH_DEFAULT;
-    if (from) {
-        snprintf(sign_from, sizeof(sign_from), "%s", from);
-    } else {
-        sign_from[0] = '\0';
-    }
-
-    int n = 0;
-    memset(sign_page_field, 0, sizeof(sign_page_field));
-    if (blind) {
-        /* No field pages at all. Showing the leaves that happened to fit would
-         * read as the whole document, and the one thing this page has to
-         * communicate is that it is not. */
-        sign_page_kind[n++] = SIGN_PAGE_TYPED_BLIND;
-        sign_page_kind[n++] = SIGN_PAGE_TYPED_DOMAIN;
-        sign_page_kind[n++] = SIGN_PAGE_BLIND_DATA;
-    } else {
-        /* Domain first: a Permit's fields are meaningless until you know which
-         * contract on which chain will honour them, and that is the field a
-         * lookalike token gets wrong. */
-        sign_page_kind[n++] = SIGN_PAGE_TYPED_DOMAIN;
-        for (int i = 0; i < sign_typed.field_count &&
-                        n < SIGN_MAX_PAGES - 1; i++) {
-            sign_page_field[n] = i;
-            sign_page_kind[n++] = SIGN_PAGE_TYPED_FIELD;
-        }
-    }
-    sign_page_kind[n++] = SIGN_PAGE_FROM;
-    sign_page_count = n;
-
-    sign_outcome = SIGN_PENDING;
-    sign_request_pending = true;
-}
-
-void ui_request_sign(const EthTx *tx, const HDPath *path, const char *from)
-{
-    sign_is_message = false;
-    sign_is_typed = false;
-    memzero(sign_message, sizeof(sign_message));
-    memzero(&sign_typed, sizeof(sign_typed));
-    memcpy(&sign_tx, tx, sizeof(sign_tx));
-    sign_path_shown = path ? *path : (HDPath)HDPATH_ETH_DEFAULT;
-
-    /* The source address is derived by the protocol task before it asks, and
-     * carried in rather than looked up here. Deriving on the UI task would put
-     * this screen in the same race that once signed with a key it never named
-     * (T47) - and a screen that names the wrong address is worse than one that
-     * names none. */
-    if (from) {
-        snprintf(sign_from, sizeof(sign_from), "%s", from);
-    } else {
-        sign_from[0] = '\0';
-    }
-
-    eth_decode_call(sign_tx.data, sign_tx.data_length, &sign_call);
-
-    sign_blind = (sign_call.kind == ETH_CALL_UNKNOWN);
-    memzero(sign_data_hash, sizeof(sign_data_hash));
-    if (sign_blind) {
-        /* The one thing the device can honestly say about bytes it cannot
-         * read: which bytes they were. Hashed here, from the same buffer the
-         * signature is taken over, so a user who wants to check the call
-         * against a second source has something to compare. */
-        keccak_256(sign_tx.data, sign_tx.data_length, sign_data_hash);
-    }
-
-    int n = 0;
-    switch (sign_call.kind) {
-        case ETH_CALL_ERC20_TRANSFER:
-        case ETH_CALL_ERC20_APPROVE:
-        case ETH_CALL_MINT_TO:
-            sign_page_kind[n++] = SIGN_PAGE_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_PARTY;
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_MINT_TOKEN_TO:
-            /* Two addresses again, but the first is the TOKEN and the second
-             * the recipient - not a payer and a payee. Same pages, different
-             * labels; see sign_party_label(). */
-        case ETH_CALL_ERC20_TRANSFER_FROM:
-            /* Two parties, and which is which matters more here than
-             * anywhere: this call moves someone else's tokens. */
-            sign_page_kind[n++] = SIGN_PAGE_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_PARTY;
-            sign_page_kind[n++] = SIGN_PAGE_PARTY2;
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_SET_APPROVAL_ALL:
-            sign_page_kind[n++] = SIGN_PAGE_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_PARTY;
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_WETH_DEPOSIT:
-            /* The amount wrapped is the transaction's own value, so the ether
-             * page is the amount page here. */
-            sign_page_kind[n++] = SIGN_PAGE_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_VALUE;
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_WETH_WITHDRAW:
-        case ETH_CALL_MINT:
-            sign_page_kind[n++] = SIGN_PAGE_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_GENERIC:
-            /* Name first, then every declared argument in the order the
-             * contract will read them, then the contract itself. One argument
-             * per page and none skipped: a page that quietly dropped the
-             * fourth of five would be a screen the signature does not match. */
-            sign_page_kind[n++] = SIGN_PAGE_CALL_NAME;
-            for (int a = 0; a < sign_call.arg_count && n < SIGN_MAX_PAGES - 2; a++) {
-                sign_page_field[n] = a;
-                sign_page_kind[n++] = SIGN_PAGE_CALL_ARG;
-            }
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_AQUA_SHIP:
-            /* Order is the order in which a wrong answer is fatal.
-             *
-             * The maker comes second, straight after what the call is, because
-             * it is the field the user cannot get from anywhere else. Aqua
-             * files the position under msg.sender and hashes the strategy
-             * without it, so the maker written inside the strategy is a
-             * separate claim that nothing on chain reconciles: ship a strategy
-             * naming somebody else and the balance is yours while the app has
-             * been told to act for them. The host refuses that mismatch before
-             * it ever gets here; this page is what makes the refusal checkable
-             * by the person whose key it is. */
-            sign_page_kind[n++] = SIGN_PAGE_AQUA_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_AQUA_MAKER;
-            sign_page_kind[n++] = SIGN_PAGE_AQUA_APP;
-            sign_page_kind[n++] = SIGN_PAGE_AQUA_HASH;
-            for (int leg = 0; leg < sign_call.aqua_legs &&
-                              n < SIGN_MAX_PAGES - 3; leg++) {
-                sign_page_field[n] = leg;
-                sign_page_kind[n++] = SIGN_PAGE_AQUA_LEG;
-                sign_page_field[n] = leg;
-                sign_page_kind[n++] = SIGN_PAGE_AQUA_AMOUNT;
-            }
-            /* B3: one page per SwapVM program instruction, in program order,
-             * only for a ship to the pinned router. Reaching this point at
-             * all means aqua_decode_ship() already walked the whole program
-             * successfully -- a program it could not read in full made the
-             * ship refuse outright (ETH_CALL_UNKNOWN), long before this
-             * switch, so there is never a page here for an instruction the
-             * device gave up on (spec §6.6). */
-            if (sign_call.aqua_is_swapvm) {
-                for (int ins = 0; ins < sign_call.aqua_instr_count &&
-                                  n < SIGN_MAX_PAGES - 1; ins++) {
-                    sign_page_field[n] = ins;
-                    sign_page_kind[n++] = SIGN_PAGE_AQUA_INSTR;
-                }
-            }
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_DISPERSE_TOKEN:
-            /* One page per recipient, never a total.
-             *
-             * A batch is the easiest call on this device to misread as one
-             * payment when it is nine, so the count leads and every leg gets
-             * its own screen. There is deliberately no "total" page: a total
-             * is the number somebody checks INSTEAD of the list, and the list
-             * is what actually leaves the wallet. */
-            sign_page_kind[n++] = SIGN_PAGE_DISPERSE_ACTION;
-            for (int leg = 0; leg < sign_call.disperse_count &&
-                              n < SIGN_MAX_PAGES - 2; leg++) {
-                sign_page_field[n] = leg;
-                sign_page_kind[n++] = SIGN_PAGE_DISPERSE_LEG;
-            }
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_ATS_DEPLOY_EQUITY:
-        case ETH_CALL_ATS_DEPLOY_BOND:
-            /* Three pages, and they are the WHOLE call.
-             *
-             * Everything else about the security -- decimals, max supply,
-             * nominal value, regulation, the control-list polarity, and which
-             * twelve roles land where -- is frozen in the factory's verified
-             * on-chain code and cannot be varied by this transaction. So name
-             * and symbol are not a summary of what is being signed, they are
-             * all of it, which is the only condition under which drawing a
-             * call is not blind signing with better manners. The action page
-             * says the part that is NOT on the other two: that whoever signs
-             * becomes the issuer, holding every role. */
-            sign_page_kind[n++] = SIGN_PAGE_ATS_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_ATS_NAME;
-            sign_page_kind[n++] = SIGN_PAGE_ATS_SYMBOL;
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_AQUA_DOCK:
-            /* No maker page: a dock names a hash, not a strategy, so there is
-             * nothing in the calldata to read a maker out of. Drawing an empty
-             * field would be worse than not having one. */
-            sign_page_kind[n++] = SIGN_PAGE_AQUA_ACTION;
-            sign_page_kind[n++] = SIGN_PAGE_AQUA_APP;
-            sign_page_kind[n++] = SIGN_PAGE_AQUA_HASH;
-            for (int leg = 0; leg < sign_call.aqua_legs &&
-                              n < SIGN_MAX_PAGES - 2; leg++) {
-                sign_page_field[n] = leg;
-                sign_page_kind[n++] = SIGN_PAGE_AQUA_LEG;
-            }
-            sign_page_kind[n++] = SIGN_PAGE_CONTRACT;
-            break;
-        case ETH_CALL_UNKNOWN:
-            /* Only reachable with blind signing on (T16); the protocol task
-             * refuses it otherwise. The warning comes first so the page the
-             * user lands on is the one that says the device cannot read this,
-             * and the rest is everything it does know. */
-            sign_page_kind[n++] = SIGN_PAGE_BLIND_WARN;
-            sign_page_kind[n++] = SIGN_PAGE_VALUE;
-            sign_page_kind[n++] = SIGN_PAGE_TO;
-            sign_page_kind[n++] = SIGN_PAGE_BLIND_DATA;
-            break;
-        default:
-            /* ETH_CALL_EMPTY: a plain transfer, and the two facts that
-             * describe it entirely. */
-            sign_page_kind[n++] = SIGN_PAGE_VALUE;
-            sign_page_kind[n++] = SIGN_PAGE_TO;
-            break;
-    }
-    sign_page_kind[n++] = SIGN_PAGE_FROM;
-    sign_page_count = n;
-
-    sign_outcome = SIGN_PENDING;
-    sign_request_pending = true;
-}
+/* Raised when the approval window closed with nobody answering, so the UI
+ * task takes the question down. */
+static volatile bool sign_expired_pending = false;
 
 SignOutcome ui_sign_outcome(void)
 {
     return sign_outcome;
 }
 
-/* What to say, and until when. Reported by the protocol task; the UI task
- * dismisses it so a user who walks away is not left on a stale screen. */
-static volatile bool  sign_result_ok = false;
-static volatile bool  sign_result_ready = false;
-static int64_t        sign_result_until_us = 0;
-
-/* Raised when the approval window closed with nobody answering. Separate from
- * sign_result_ok because "you said no" and "you said nothing" are different
- * things to tell a user, and only one of them means the host is still waiting
- * for an answer it will never get. */
-static volatile bool  sign_result_expired = false;
-static volatile bool  sign_expired_pending = false;
-
-#define SIGN_RESULT_HOLD_US 2000000   /* long enough to read, short enough not to nag */
-
-void ui_sign_report(bool ok)
-{
-    sign_result_ok = ok;
-    sign_result_expired = false;
-    sign_result_ready = true;
-    sign_result_until_us = esp_timer_get_time() + SIGN_RESULT_HOLD_US;
-
-    /* Without this the acknowledgement never appears.
-     *
-     * The UI task only repaints inside `if (ui_needs_render())`, and every
-     * other thing that changes the screen is either a button press or a screen
-     * transition, both of which set the flag. This is neither: it is called
-     * from the protocol task the moment wallet_sign_hash_at_path() returns,
-     * and on the path that matters - approve, sign, done - there is no press
-     * afterwards. So the "Signing..." frame drawn on entry stayed the last
-     * frame drawn, the two-second auto-dismiss then moved on, and the device
-     * dropped back to the address list without ever saying it had signed.
-     * Reported on hardware against a WalletConnect transaction. The simple
-     * send flow looked correct only because unrelated activity happened to
-     * mark the screen dirty in time.
-     *
-     * Safe from another task for the same reason ui_request_sign() is: this
-     * sets a flag and nothing else. Screen transitions stay the UI task's, and
-     * a render that races this call paints either the old frame or the new one
-     * - both are frames the device is entitled to draw, and the loop repaints
-     * within 100 ms regardless. */
-    ui_invalidate();
-}
-
 /**
  * The approval window closed with nobody answering. Take the question down.
  *
  * wait_for_user() has a 120 s deadline, after which it answers the host and
- * calls ui_sign_clear() -- which zeroes the request but leaves the screen
- * exactly where it was. The device then sat on a confirmation screen rendering
- * a *wiped* request and still accepting buttons: pressing SIGN advanced to the
- * result screen and said the transaction had been approved, when nothing was
- * signed and the host had been told no seconds earlier.
+ * calls ui_sign_clear() -- which resets the outcome but leaves the screen
+ * exactly where it was. A question left on the glass after the host has been
+ * told no would still accept buttons, and the device must never appear to
+ * accept something nothing is waiting for.
  *
- * Found on hardware while reproducing H-1, and it is the one thing this device
- * must never do -- claim an approval happened. Nothing was exploitable, because
- * the outcome is no longer read by then; the harm is entirely that the screen
- * lied about what the device had done.
- *
- * Sets a flag rather than moving the screen, for the same reason
- * ui_sign_report() does: screen transitions belong to the UI task, and this
- * runs on the protocol task.
+ * Sets a flag rather than moving the screen: screen transitions belong to the
+ * UI task, and this runs on the protocol task.
  */
 void ui_sign_expire(void)
 {
-    sign_result_ok = false;
-    sign_result_expired = true;
-    sign_result_ready = true;
-    sign_result_until_us = esp_timer_get_time() + SIGN_RESULT_HOLD_US;
     sign_expired_pending = true;
     ui_invalidate();
-}
-
-static void screen_sign_result_enter(void)
-{
-    ESP_LOGI(TAG, "Sign result screen");
-}
-
-static void screen_sign_result_render(void)
-{
-    oled_clear();
-
-    if (!sign_result_ready) {
-        /* Approved, and the signature is being computed - about 30 ms, but
-         * saying so beats a frozen-looking screen if it ever is not. */
-        oled_draw_string_centered(2, "Approved");
-        oled_draw_string_centered(4, "Signing...");
-        return;
-    }
-
-    if (sign_result_expired) {
-        oled_draw_string_centered(2, "Expired");
-        /* Says why, because the user's next question is what they did wrong,
-         * and the answer is that they took longer than the device waits. */
-        oled_draw_string_centered(4, "No answer in time");
-        oled_draw_string_centered(6, "Nothing was sent");
-        oled_draw_string(7, 0, "any key");
-        return;
-    }
-
-    if (sign_result_ok) {
-        oled_draw_string_centered(2, "Signed");
-        /* Deliberately not "Sent". Broadcasting happens on the host and the
-         * device has no way to know whether it worked. */
-        oled_draw_string_centered(4, "Handed to host");
-    } else {
-        oled_draw_string_centered(2, "NOT signed");
-        oled_draw_string_centered(4, "Nothing was sent");
-    }
-    oled_draw_string(7, 0, "any key");
-}
-
-static void screen_sign_result_on_button(button_id_t btn)
-{
-    (void)btn;
-    ui_set_screen(SCREEN_WALLET_INFO);
 }
 
 void ui_sign_clear(void)
 {
     sign_outcome = SIGN_PENDING;
-    memzero(&sign_tx, sizeof(sign_tx));
-    memzero(&sign_call, sizeof(sign_call));
-    memzero(sign_from, sizeof(sign_from));
-    memzero(sign_message, sizeof(sign_message));
-    memzero(&sign_typed, sizeof(sign_typed));
-    sign_is_message = false;
-    sign_is_typed = false;
-    sign_blind = false;
-    memzero(sign_data_hash, sizeof(sign_data_hash));
-}
-
-static bool sign_all_seen(void)
-{
-    for (int i = 0; i < sign_page_count; i++) {
-        if (!sign_seen[i]) return false;
-    }
-    return true;
-}
-
-static void screen_sign_confirm_enter(void)
-{
-    ESP_LOGI(TAG, "Sign confirmation screen (%s)", eth_call_name(sign_call.kind));
-    sign_page = 0;
-    memset(sign_seen, 0, sizeof(sign_seen));
-    sign_seen[0] = true;
-}
-
-/* An address across three rows, never truncated: the user compares it against
- * what they intended, and a shortened address compares equal to one that is
- * not the same. */
-/**
- * A count of seconds since 1970, as a calendar date.
- *
- * No clock is involved, and that is the point. This device has no RTC, which
- * was once taken to mean it could not show a date at all -- but a date is a
- * function of the number alone. Only "how far away is that" needs to know the
- * present, and that is not the question a deadline poses. The question is
- * whether the permission being signed ends this afternoon or in 2033, and
- * "2033-05-18" answers it where "2000000000" does not: both deadlines are ten
- * digits, and on a small screen they read the same.
- *
- * Hinnant's civil_from_days, exact for every day this can express and needing
- * no table. Returns false rather than a wrong date when the text is not a
- * plain decimal or the year would not fit four digits, so the caller can show
- * the raw seconds instead of inventing something.
- */
-bool unix_to_civil_date(const char *secs, int *year, int *month, int *day)
-{
-    if (!secs || !*secs) {
-        return false;
-    }
-    uint64_t t = 0;
-    for (const char *p = secs; *p; p++) {
-        if (*p < '0' || *p > '9') {
-            return false;
-        }
-        if (t > (UINT64_MAX - (uint64_t)(*p - '0')) / 10) {
-            return false;               /* longer than any real timestamp */
-        }
-        t = t * 10 + (uint64_t)(*p - '0');
-    }
-    if (t > 253402300799ULL) {          /* past 9999-12-31 */
-        return false;
-    }
-
-    int64_t  z   = (int64_t)(t / 86400) + 719468;
-    int64_t  era = (z >= 0 ? z : z - 146096) / 146097;
-    uint32_t doe = (uint32_t)(z - era * 146097);
-    uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    int64_t  yr  = (int64_t)yoe + era * 400;
-    uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    uint32_t mp  = (5 * doy + 2) / 153;
-    uint32_t dd  = doy - (153 * mp + 2) / 5 + 1;
-    uint32_t mm  = mp + (mp < 10 ? 3 : (uint32_t)-9);
-
-    *year  = (int)(yr + (mm <= 2));
-    *month = (int)mm;
-    *day   = (int)dd;
-    return true;
-}
-
-static void sign_draw_address(int row, const char *hex42)
-{
-    char part[17];
-
-    /* Anything that is not a full address is a derivation that failed. Say so
-     * rather than slicing a short string into three misleading rows. */
-    if (!hex42 || strlen(hex42) < 42) {
-        oled_draw_string(row, 0, "(unavailable)");
-        return;
-    }
-
-    snprintf(part, sizeof(part), "%.16s", hex42);
-    oled_draw_string(row, 0, part);
-    snprintf(part, sizeof(part), "%.14s", hex42 + 16);
-    oled_draw_string(row + 1, 0, part);
-    snprintf(part, sizeof(part), "%.12s", hex42 + 30);
-    oled_draw_string(row + 2, 0, part);
-}
-
-/* All 64 hex characters of a 32-byte digest, four rows of sixteen.
- *
- * Never a prefix. A truncated hash is cheap to read and trivially forgeable,
- * which is why nothing on this device shows one -- and why this is a function
- * rather than a loop copied into each page that needs it. */
-static void sign_draw_hash32(int row, const uint8_t hash[32])
-{
-    static const char hex[] = "0123456789abcdef";
-    for (int r = 0; r < 4; r++) {
-        char part[17];
-        for (int i = 0; i < 8; i++) {
-            uint8_t b = hash[r * 8 + i];
-            part[i * 2]     = hex[b >> 4];
-            part[i * 2 + 1] = hex[b & 0x0F];
-        }
-        part[16] = '\0';
-        oled_draw_string(row + r, 0, part);
-    }
-}
-
-/* A token amount, wrapped over two rows and labelled for what it is.
- *
- * "raw units" is not a hedge, it is the truth: decimals() lives on the
- * contract and the device cannot call it, so scaling the number would mean
- * inventing the scale. Long values wrap rather than truncate, because a
- * shortened amount is a different amount. */
-static void sign_draw_amount(int row)
-{
-    char amount[80];
-    if (!eth_format_integer(&sign_call.amount, amount, sizeof(amount))) {
-        snprintf(amount, sizeof(amount), "?");
-    }
-    size_t alen = strlen(amount);
-    for (int i = 0; i < 2 && (size_t)(i * 21) < alen; i++) {
-        char part[22];
-        snprintf(part, sizeof(part), "%.21s", amount + i * 21);
-        oled_draw_string(row + i, 0, part);
-    }
-    oled_draw_string(row + 2, 0, "raw units");
-}
-
-static void screen_sign_confirm_render(void)
-{
-    oled_clear();
-
-    char line[24];
-    /* The header is the one row on every page, so it is where "this is not a
-     * normal confirmation" belongs. A blind request has to be distinguishable
-     * at a glance from one the device understood. */
-    const char *title = sign_blind ? "!BLIND SIGN!"
-                      : sign_is_typed ? "Sign data?"
-                      : (sign_is_message ? "Sign msg?" : "Sign?");
-    snprintf(line, sizeof(line), "%s  %u/%u", title,
-             (unsigned)(sign_page + 1), (unsigned)sign_page_count);
-    oled_draw_string_centered(0, line);
-
-    char scratch[32];
-
-    switch (sign_page_kind[sign_page]) {
-        case SIGN_PAGE_MESSAGE: {
-            /* The whole message, wrapped over the six free rows, never cut.
-             * Anything that would not fit, or that is not printable ASCII, was
-             * refused before this screen was ever reached (eth_message_is_
-             * displayable) — so what is on screen is the entire preimage. */
-            size_t mlen = strlen(sign_message);
-            for (int row = 0; row < 6; row++) {
-                size_t off = (size_t)row * 20;
-                if (off >= mlen) break;
-                char part[21];
-                snprintf(part, sizeof(part), "%.20s", sign_message + off);
-                oled_draw_string(1 + row, 0, part);
-            }
-            if (mlen == 0) {
-                oled_draw_string(2, 0, "(empty message)");
-            }
-            break;
-        }
-        case SIGN_PAGE_VALUE: {
-            /* Amount and chain. The two fields that decide what it costs. */
-            char value[40];
-            if (!eth_format_value(&sign_tx.value, value, sizeof(value), 8)) {
-                snprintf(value, sizeof(value), "?");
-            }
-            oled_draw_string(2, 0, "Send");
-
-            /* Compose explicitly. A truncating snprintf here would silently
-             * shorten an amount, and a shortened amount is a different
-             * amount. Eighteen characters fit the line; anything longer is
-             * marked rather than cut. */
-            char amount[24];
-            size_t vlen = strlen(value);
-            if (vlen <= 18) {
-                snprintf(amount, sizeof(amount), "%.18s ETH", value);
-            } else {
-                snprintf(amount, sizeof(amount), "%.15s.. ETH", value);
-            }
-            oled_draw_string(3, 0, amount);
-            oled_draw_string(5, 0, "On");
-            oled_draw_string(6, 0,
-                eth_chain_name(sign_tx.chain_id, scratch, sizeof(scratch)));
-            break;
-        }
-        case SIGN_PAGE_TO: {
-            char addr[43];
-            if (sign_tx.has_to && eth_format_address(sign_tx.to, addr, sizeof(addr))) {
-                oled_draw_string(2, 0, "To");
-                sign_draw_address(3, addr);
-            } else {
-                /* Refused upstream (T50); shown plainly if it ever gets here. */
-                oled_draw_string(2, 0, "Contract creation");
-                oled_draw_string(4, 0, "No recipient!");
-            }
-            break;
-        }
-        case SIGN_PAGE_ACTION: {
-            /* What the call actually does, in words.
-             *
-             * Amounts are raw token units: the device cannot call decimals()
-             * on the contract, and printing "12.5" from a scale it guessed
-             * would be a confident lie about the thing being signed. */
-            switch (sign_call.kind) {
-                case ETH_CALL_ERC20_APPROVE:
-                    oled_draw_string(2, 0, "Approve spending");
-                    if (sign_call.unlimited) {
-                        /* The pattern behind most drain incidents: an
-                         * allowance the user never revisits and an attacker
-                         * can empty at leisure. */
-                        oled_draw_string(4, 0, "UNLIMITED amount");
-                        oled_draw_string(5, 0, "Spender can take");
-                        oled_draw_string(6, 0, "all of this token");
-                    } else {
-                        sign_draw_amount(4);
-                    }
-                    break;
-
-                case ETH_CALL_SET_APPROVAL_ALL:
-                    /* Not an amount at all, which is exactly why it gets its
-                     * own words. This is broader than an unlimited ERC-20
-                     * allowance: it hands over every token in the collection,
-                     * including ones bought after the approval was given. */
-                    if (sign_call.flag) {
-                        oled_draw_string(1, 0, "APPROVE ALL");
-                        oled_draw_string(2, 0, "tokens in this");
-                        oled_draw_string(3, 0, "collection");
-                        oled_draw_string(5, 0, "Operator may move");
-                        oled_draw_string(6, 0, "every one, anytime");
-                    } else {
-                        oled_draw_string(1, 0, "Revoke approval");
-                        oled_draw_string(2, 0, "for all tokens");
-                        oled_draw_string(5, 0, "Operator loses");
-                        oled_draw_string(6, 0, "access");
-                    }
-                    break;
-
-                case ETH_CALL_ERC20_TRANSFER_FROM:
-                    /* Spends an allowance rather than the signer's balance,
-                     * so the holder and the destination are different
-                     * addresses and both get a page of their own. */
-                    oled_draw_string(2, 0, "Move tokens");
-                    oled_draw_string(3, 0, "between accounts");
-                    sign_draw_amount(4);
-                    break;
-
-                case ETH_CALL_WETH_DEPOSIT:
-                    /* No arguments: the amount wrapped is the ether attached
-                     * to the transaction, which the next page shows. */
-                    oled_draw_string(2, 0, "Wrap ETH");
-                    oled_draw_string(4, 0, "Sends the ether");
-                    oled_draw_string(5, 0, "below to this");
-                    oled_draw_string(6, 0, "contract");
-                    break;
-
-                case ETH_CALL_WETH_WITHDRAW:
-                    oled_draw_string(2, 0, "Unwrap tokens");
-                    sign_draw_amount(4);
-                    break;
-
-                case ETH_CALL_MINT_TO:
-                    oled_draw_string(2, 0, "Mint tokens");
-                    oled_draw_string(3, 0, "to address below");
-                    sign_draw_amount(4);
-                    break;
-
-                case ETH_CALL_MINT_TOKEN_TO:
-                    oled_draw_string(2, 0, "Mint a token");
-                    oled_draw_string(3, 0, "to address below");
-                    sign_draw_amount(4);
-                    break;
-
-                case ETH_CALL_MINT:
-                    oled_draw_string(2, 0, "Mint tokens");
-                    oled_draw_string(3, 0, "to this account");
-                    sign_draw_amount(4);
-                    break;
-
-                default:
-                    oled_draw_string(2, 0, "Send tokens");
-                    sign_draw_amount(4);
-                    break;
-            }
-            break;
-        }
-        case SIGN_PAGE_PARTY: {
-            /* One page, several meanings, so the label is never generic: an
-             * address under "To" and the same address under "Spender" are
-             * different things to agree to. */
-            char addr[43];
-            const char *label;
-            switch (sign_call.kind) {
-                case ETH_CALL_ERC20_APPROVE:       label = "Spender";      break;
-                case ETH_CALL_SET_APPROVAL_ALL:    label = "Operator";     break;
-                case ETH_CALL_ERC20_TRANSFER_FROM: label = "Taken from";   break;
-                case ETH_CALL_MINT_TO:             label = "Minted to";    break;
-                case ETH_CALL_MINT_TOKEN_TO:       label = "Token";        break;
-                default:                           label = "To";           break;
-            }
-            oled_draw_string(2, 0, label);
-            if (eth_format_address(sign_call.address, addr, sizeof(addr))) {
-                sign_draw_address(3, addr);
-            }
-            break;
-        }
-        case SIGN_PAGE_PARTY2: {
-            char addr[43];
-            /* "Sent to" is right for transferFrom, where the two addresses are
-             * a payer and a payee. For mint(token,to,amount) the first word is
-             * the token and this one is the recipient, so naming both "Sent
-             * to" would describe the wrong argument. */
-            oled_draw_string(2, 0,
-                sign_call.kind == ETH_CALL_MINT_TOKEN_TO ? "Minted to" : "Sent to");
-            if (sign_call.has_second &&
-                eth_format_address(sign_call.second, addr, sizeof(addr))) {
-                sign_draw_address(3, addr);
-            } else {
-                oled_draw_string(4, 0, "(unavailable)");
-            }
-            break;
-        }
-        case SIGN_PAGE_BLIND_WARN: {
-            /* The whole point of the hatch being opt-in is that this page
-             * exists and is unmissable. It claims nothing about the call. */
-            oled_draw_string(1, 0, "UNKNOWN CALL");
-            oled_draw_string(2, 0, "Device cannot read");
-            oled_draw_string(3, 0, "this contract call");
-            oled_draw_string(4, 0, "or say what it");
-            oled_draw_string(5, 0, "does. You trust");
-            oled_draw_string(6, 0, "the app, not this.");
-            break;
-        }
-        case SIGN_PAGE_TYPED_DOMAIN: {
-            /* Which contract, on which chain, calling itself what.
-             *
-             * The domain is the half of an EIP-712 signature that decides where
-             * it is valid, and it is where a lookalike hides: a Permit whose
-             * fields all read correctly against a verifyingContract that is not
-             * the token you think it is drains the token that it is. The name
-             * is shown last and lowest on purpose - it is the one field of the
-             * three the contract does not have to prove. */
-            snprintf(line, sizeof(line), "%.20s", sign_typed.primary_type);
-            oled_draw_string(1, 0, line);
-            if (sign_typed.has_verifying_contract) {
-                char addr[43];
-                oled_draw_string(2, 0, "Contract");
-                if (eth_format_address(sign_typed.verifying_contract, addr, sizeof(addr))) {
-                    sign_draw_address(3, addr);
-                }
-            } else {
-                /* Legal, and worth saying out loud: a domain with no contract
-                 * binds the signature to nothing on chain. */
-                oled_draw_string(2, 0, "No contract named");
-            }
-            if (sign_typed.has_chain_id) {
-                oled_draw_string(6, 0,
-                    eth_chain_name(sign_typed.chain_id, scratch, sizeof(scratch)));
-            } else {
-                oled_draw_string(6, 0, "Any chain!");
-            }
-            break;
-        }
-        case SIGN_PAGE_TYPED_FIELD: {
-            const Eip712Field *f = &sign_typed.fields[sign_page_field[sign_page]];
-
-            snprintf(line, sizeof(line), "%.20s", f->label);
-            oled_draw_string(1, 0, line);
-            if (f->is_deadline) {
-                /* As a date, not as seconds since 1970.
-                 *
-                 * This row used to say "valid until (unix)" and leave the
-                 * number, on the reasoning that a device with no clock cannot
-                 * produce a date. The reasoning was wrong: turning a count of
-                 * seconds into a calendar date is arithmetic and needs no
-                 * clock. What needs a clock is saying how far away it is, and
-                 * that is not what makes a deadline suspicious.
-                 *
-                 * What makes it suspicious is being years out, and 2000000000
-                 * against 1787950000 is not a difference a person reads off a
-                 * small screen -- both are ten digits starting with 1 or 2.
-                 * "2033-05-18" against "2026-08-28" is. A far-future deadline
-                 * is the signature of a drainer holding a permit until it
-                 * suits them (docs/ANTI-SCAM.md), so it has to be the part
-                 * that is legible. */
-                int y = 0, mo = 0, d = 0;
-                if (unix_to_civil_date(f->value, &y, &mo, &d)) {
-                    char when[24];
-                    snprintf(when, sizeof(when), "%04d-%02d-%02d", y, mo, d);
-                    oled_draw_string(2, 0, "valid until");
-                    oled_draw_string(3, 0, when);
-                    /* The seconds stay too, one row down and quieter. The date
-                     * is what a person can judge; the number is what is
-                     * actually being signed, and it is the only form that can
-                     * be checked against what the dapp claims to have sent. A
-                     * rendering that replaced it would be asking to be trusted
-                     * about the very field it exists to expose. */
-                    snprintf(line, sizeof(line), "%.21s", f->value);
-                    oled_draw_string(5, 0, line);
-                    break;
-                }
-                /* Unparseable: fall through and show the raw seconds rather
-                 * than invent a date. */
-                oled_draw_string(2, 0, "valid until (unix)");
-            }
-
-            if (f->is_address) {
-                sign_draw_address(3, f->value);
-            } else if (f->unlimited) {
-                /* The same words the ERC-20 approve screen uses, because it is
-                 * the same thing being agreed to and a user should not have to
-                 * learn two vocabularies for one risk. A Permit is worse than
-                 * an approve only in that it costs nothing and leaves no trace
-                 * on chain. */
-                oled_draw_string(3, 0, "UNLIMITED amount");
-                oled_draw_string(4, 0, "Spender can take");
-                oled_draw_string(5, 0, "all of this token");
-            } else {
-                /* Wrapped over four rows, never cut. A shortened value is a
-                 * different value, and a uint256 in decimal needs the room. */
-                size_t vlen = strlen(f->value);
-                for (int row = 0; row < 4; row++) {
-                    size_t off = (size_t)row * 21;
-                    if (off >= vlen) break;
-                    char part[22];
-                    snprintf(part, sizeof(part), "%.21s", f->value + off);
-                    oled_draw_string(3 + row, 0, part);
-                }
-            }
-            break;
-        }
-        case SIGN_PAGE_TYPED_BLIND: {
-            oled_draw_string(1, 0, "UNREADABLE DATA");
-            oled_draw_string(2, 0, "Device hashed this");
-            oled_draw_string(3, 0, "but cannot show");
-            oled_draw_string(4, 0, "all of it. You");
-            oled_draw_string(5, 0, "trust the app,");
-            oled_draw_string(6, 0, "not this screen.");
-            break;
-        }
-        case SIGN_PAGE_BLIND_DATA: {
-            /* Which bytes, since not what they mean. The length says how much
-             * is hidden and the digest lets it be checked against a second
-             * source - the only two honest facts available about calldata the
-             * device cannot parse. Typed data has no calldata to measure, so it
-             * names the digest for what it is instead. */
-            if (sign_is_typed) {
-                snprintf(line, sizeof(line), "Typed data");
-            } else {
-                snprintf(line, sizeof(line), "Calldata %u bytes",
-                         (unsigned)sign_tx.data_length);
-            }
-            oled_draw_string(1, 0, line);
-            oled_draw_string(2, 0, "keccak256:");
-
-            sign_draw_hash32(3, sign_data_hash);
-            break;
-        }
-        case SIGN_PAGE_CALL_NAME: {
-            /* The function name, taken from the same string whose keccak
-             * matched the selector being signed — so the name and the four
-             * bytes cannot disagree.
-             *
-             * The three rows under it are not hedging, they are the honest
-             * limit of what this page can claim. Hashing a signature proves
-             * what the function is CALLED and what its arguments ARE. It
-             * proves nothing about what the code does: any contract may name a
-             * drain `supply`, and nothing on chain forbids it. So the wording
-             * stays descriptive ("Contract calls this") rather than reassuring
-             * ("Supplying to Aave"), and the contract address keeps a page of
-             * its own — the address is the only thing here that identifies who
-             * will run the code. */
-            char name[21];
-            eth_call_function_name(&sign_call, name, sizeof(name));
-            oled_draw_string(1, 0, "Call");
-            oled_draw_string(2, 0, name[0] ? name : "(unnamed)");
-            oled_draw_string(4, 0, "Name and args are");
-            oled_draw_string(5, 0, "read from the ABI.");
-            oled_draw_string(6, 0, "Not what it does!");
-            break;
-        }
-        case SIGN_PAGE_CALL_ARG: {
-            /* One declared argument: its name, its value, nothing inferred.
-             *
-             * Values are rendered by the same rules as everywhere else on this
-             * device - an address across three rows and never truncated, an
-             * integer in raw units because decimals() is not callable from
-             * here, and an allowance past its own type's halfway mark named
-             * UNLIMITED in the words the ERC-20 approve screen uses. A user
-             * should not have to learn a second vocabulary for the same risk
-             * just because the call arrived through a different decoder. */
-            int a = sign_page_field[sign_page];
-            char label[21];
-            eth_call_arg_name(&sign_call, a, label, sizeof(label));
-            oled_draw_string(1, 0, label[0] ? label : "argument");
-
-            uint8_t addr_bytes[20];
-            EthQuantity q;
-            char addr[43];
-            if (eth_arg_address(&sign_call, sign_tx.data, sign_tx.data_length,
-                                a, addr_bytes)) {
-                if (eth_format_address(addr_bytes, addr, sizeof(addr))) {
-                    sign_draw_address(3, addr);
-                }
-            } else if (eth_arg_unlimited(&sign_call, sign_tx.data,
-                                         sign_tx.data_length, a)) {
-                oled_draw_string(3, 0, "UNLIMITED amount");
-                oled_draw_string(4, 0, "Spender can take");
-                oled_draw_string(5, 0, "all of this token");
-            } else if (eth_arg_quantity(&sign_call, sign_tx.data,
-                                        sign_tx.data_length, a, &q)) {
-                char amount[80];
-                if (!eth_format_integer(&q, amount, sizeof(amount))) {
-                    snprintf(amount, sizeof(amount), "?");
-                }
-                /* The unit note goes ABOVE the number, because the number owns
-                 * the four rows below it: a uint256 in decimal is 78 digits,
-                 * and row 7 is the button bar. Wrapped, never cut - a
-                 * shortened number is a different number. */
-                oled_draw_string(2, 0, "raw units");
-                size_t alen = strlen(amount);
-                for (int row = 0; row < 4; row++) {
-                    size_t off = (size_t)row * 21;
-                    if (off >= alen) break;
-                    char part[22];
-                    snprintf(part, sizeof(part), "%.21s", amount + off);
-                    oled_draw_string(3 + row, 0, part);
-                }
-            } else {
-                const uint8_t *word = eth_arg_word(&sign_call, sign_tx.data,
-                                                   sign_tx.data_length, a);
-                /* All that is left is a bool. Printed flat, with no adjective:
-                 * what a true means here belongs to the contract, and
-                 * setApprovalForAll - the one bool whose meaning IS known - has
-                 * its own loud screen rather than this one. */
-                oled_draw_string(3, 0, (word && word[31]) ? "true" : "false");
-            }
-            break;
-        }
-        case SIGN_PAGE_DISPERSE_ACTION: {
-            char head[24];
-            char addr[43];
-            snprintf(head, sizeof(head), "DISPERSE to %u",
-                     (unsigned)sign_call.disperse_count);
-            oled_draw_string(1, 0, head);
-            oled_draw_string(2, 0, "addresses, of:");
-            if (eth_format_address(sign_call.disperse_token, addr, sizeof(addr))) {
-                sign_draw_address(3, addr);
-            } else {
-                oled_draw_string(3, 0, "(token unavailable)");
-            }
-            /* The count is the thing to check, so it is said twice and in
-             * words: the pages that follow are the payments, one each. */
-            oled_draw_string(6, 0, "Check every page.");
-            break;
-        }
-        case SIGN_PAGE_DISPERSE_LEG: {
-            int leg = sign_page_field[sign_page];
-            uint8_t to[20];
-            char addr[43];
-            char heading[32];
-            char text[80];
-            EthQuantity q;
-            snprintf(heading, sizeof(heading), "Payment %d of %u", leg + 1,
-                     (unsigned)sign_call.disperse_count);
-            oled_draw_string(1, 0, heading);
-            if (eth_disperse_to(&sign_call, sign_tx.data, sign_tx.data_length, leg, to) &&
-                eth_format_address(to, addr, sizeof(addr))) {
-                sign_draw_address(2, addr);
-            } else {
-                oled_draw_string(2, 0, "(unavailable)");
-            }
-            /* Raw units, like every other token amount on this device: it
-             * cannot call decimals() and must not imply a scale it does not
-             * know. */
-            if (eth_disperse_amount(&sign_call, sign_tx.data, sign_tx.data_length,
-                                    leg, &q) &&
-                eth_format_integer(&q, text, sizeof(text))) {
-                oled_draw_string(5, 0, "Raw units:");
-                oled_draw_string(6, 0, text);
-            } else {
-                oled_draw_string(5, 0, "(amount unavailable)");
-            }
-            break;
-        }
-        case SIGN_PAGE_ATS_ACTION: {
-            /* What it creates, and the consequence nobody can read off the
-             * other two pages: the signer becomes the issuer, with every role
-             * on the register -- mint, freeze, force-transfer, pause. That is
-             * authority over other people's holdings, so it is said in those
-             * words rather than implied by the word "issue". */
-            oled_draw_string(1, 0, sign_call.kind == ETH_CALL_ATS_DEPLOY_EQUITY
-                                       ? "ISSUE equity" : "ISSUE bond");
-            oled_draw_string(3, 0, "Creates a NEW");
-            oled_draw_string(4, 0, "security. You get");
-            oled_draw_string(5, 0, "ALL roles: mint,");
-            oled_draw_string(6, 0, "freeze, transfer.");
-            break;
-        }
-        case SIGN_PAGE_ATS_NAME:
-        case SIGN_PAGE_ATS_SYMBOL: {
-            /* Wrapped over the free rows and never cut. The decoder refused
-             * anything that is not printable ASCII within the factory's own
-             * bounds, so what is here is the entire string that will be
-             * written on chain -- there is no elision to hide behind. */
-            bool is_name = (sign_page_kind[sign_page] == SIGN_PAGE_ATS_NAME);
-            char text[ETH_ATS_MAX_NAME + 1];
-            oled_draw_string(1, 0, is_name ? "Name" : "Symbol");
-            if (eth_ats_string(&sign_call, sign_tx.data, sign_tx.data_length,
-                               is_name ? ETH_ATS_NAME : ETH_ATS_SYMBOL,
-                               text, sizeof(text))) {
-                size_t tlen = strlen(text);
-                for (int row = 0; row < 5; row++) {
-                    size_t off = (size_t)row * 20;
-                    if (off >= tlen) break;
-                    char part[21];
-                    snprintf(part, sizeof(part), "%.20s", text + off);
-                    oled_draw_string(2 + row, 0, part);
-                }
-            } else {
-                /* Never silently blank: a field that was signed and could not
-                 * be read is a reason to reject, and the screen has to say so
-                 * rather than look like an empty name. */
-                oled_draw_string(2, 0, "(unavailable)");
-            }
-            break;
-        }
-        case SIGN_PAGE_AQUA_ACTION: {
-            /* What this does, in the words a maker would use, and the one
-             * sentence that makes Aqua different from a pool: the tokens do
-             * not move now. They move later, out of this wallet, when somebody
-             * swaps against the strategy -- so the amounts on the leg pages are
-             * a ceiling the app agreed to, and the ERC-20 allowance is the
-             * ceiling that is actually enforced. Nothing on this device can
-             * show that allowance, which is why the sentence names it. */
-            if (sign_call.kind == ETH_CALL_AQUA_SHIP) {
-                oled_draw_string(1, 0, "SHIP to Aqua");
-                oled_draw_string(3, 0, "Tokens stay here");
-                oled_draw_string(4, 0, "but Aqua may PULL");
-                oled_draw_string(5, 0, "them from this");
-                oled_draw_string(6, 0, "wallet on a swap.");
-            } else {
-                oled_draw_string(1, 0, "DOCK from Aqua");
-                oled_draw_string(3, 0, "Withdraws this");
-                oled_draw_string(4, 0, "strategy. Your");
-                oled_draw_string(5, 0, "approval stays");
-                oled_draw_string(6, 0, "until you revoke.");
-            }
-            break;
-        }
-        case SIGN_PAGE_AQUA_MAKER: {
-            /* The maker the strategy names, and the instruction to compare it
-             * with the source page. The device cannot do that comparison
-             * itself: the address that will sign is derived on the protocol
-             * task and carried in as text, and a screen that claimed "this is
-             * you" from a string comparison it might have got wrong would be
-             * the one claim on this page nobody could check. So both addresses
-             * are drawn in full, three pages apart, and the user is told what
-             * the answer has to be. */
-            char addr[43];
-            oled_draw_string(1, 0, "Strategy maker");
-            if (sign_call.has_aqua_maker &&
-                eth_format_address(sign_call.aqua_maker, addr, sizeof(addr))) {
-                sign_draw_address(2, addr);
-            } else {
-                oled_draw_string(2, 0, "(unavailable)");
-            }
-            oled_draw_string(5, 0, "Must match From");
-            oled_draw_string(6, 0, "or REJECT.");
-            break;
-        }
-        case SIGN_PAGE_AQUA_APP: {
-            /* The Aqua app, which is the contract that will be allowed to pull
-             * against this strategy. Not the registry -- that is the CONTRACT
-             * page -- and the difference is the whole of who ends up holding
-             * the power here. */
-            char addr[43];
-            oled_draw_string(1, 0, "Aqua app");
-            if (eth_format_address(sign_call.aqua_app, addr, sizeof(addr))) {
-                sign_draw_address(2, addr);
-            }
-            oled_draw_string(5, 0, "This app decides");
-            oled_draw_string(6, 0, "your swaps.");
-            break;
-        }
-        case SIGN_PAGE_AQUA_HASH: {
-            /* For a ship this is keccak256 of the strategy bytes in this very
-             * calldata, computed here rather than taken from the host; for a
-             * dock it is the argument, which the device has no strategy to
-             * check against. Either way it is the key the registry files the
-             * position under, and the figure the companion's portfolio view
-             * shows -- so it is the one string that lets the two screens be
-             * compared. */
-            oled_draw_string(1, 0, sign_call.kind == ETH_CALL_AQUA_SHIP
-                                       ? "Strategy hash" : "Docking hash");
-            sign_draw_hash32(3, sign_call.aqua_hash);
-            break;
-        }
-        case SIGN_PAGE_AQUA_LEG: {
-            /* One token per page. The address owns three rows and is never
-             * truncated, which leaves no room for a full amount beside it --
-             * hence the separate page below for a ship, and, for a dock, the
-             * one true sentence about what happens to this token. */
-            int leg = sign_page_field[sign_page];
-            uint8_t token[20];
-            char addr[43];
-            /* Its own buffer rather than the shared `line`: both counts are
-             * bounded by ETH_AQUA_MAX_LEGS, but the compiler cannot see that
-             * and a truncation warning on a signing screen is not a warning to
-             * wave through. */
-            char heading[32];
-            snprintf(heading, sizeof(heading), "Token %d of %u", leg + 1,
-                     (unsigned)sign_call.aqua_legs);
-            oled_draw_string(1, 0, heading);
-            if (eth_aqua_token(&sign_call, sign_tx.data, sign_tx.data_length,
-                               leg, token) &&
-                eth_format_address(token, addr, sizeof(addr))) {
-                sign_draw_address(2, addr);
-            } else {
-                oled_draw_string(2, 0, "(unavailable)");
-            }
-            if (!sign_call.has_aqua_amounts) {
-                /* Docking takes back whatever is there, so there is no figure
-                 * to print. Inventing a zero would read as "this leg is
-                 * empty", which is a claim about the position rather than
-                 * about the call. */
-                oled_draw_string(6, 0, "Returned in full");
-            }
-            break;
-        }
-        case SIGN_PAGE_AQUA_AMOUNT: {
-            /* What this leg is credited with, in raw units and wrapped over
-             * four rows -- the same treatment SIGN_PAGE_CALL_ARG gives an
-             * integer, and for the same two reasons: decimals() is not
-             * callable from here, so scaling would mean inventing the scale,
-             * and a uint256 in decimal is 78 characters, so a single row would
-             * silently show a different number.
-             *
-             * The sentence under the heading is the one thing that stops this
-             * page being read as "this is what leaves your wallet". It is not:
-             * it is what the strategy is credited with, and what can actually
-             * be taken is bounded by the ERC-20 allowance, which this device
-             * has no way to see. */
-            int leg = sign_page_field[sign_page];
-            char heading[32];
-            snprintf(heading, sizeof(heading), "Provide, token %d", leg + 1);
-            oled_draw_string(1, 0, heading);
-
-            EthQuantity q;
-            char amount[80];
-            if (!eth_aqua_amount(&sign_call, sign_tx.data, sign_tx.data_length,
-                                 leg, &q) ||
-                !eth_format_integer(&q, amount, sizeof(amount))) {
-                oled_draw_string(2, 0, "(unavailable)");
-                break;
-            }
-            oled_draw_string(2, 0, "raw units");
-            size_t alen = strlen(amount);
-            for (int row = 0; row < 4; row++) {
-                size_t off = (size_t)row * 21;
-                if (off >= alen) break;
-                char part[22];
-                snprintf(part, sizeof(part), "%.21s", amount + off);
-                oled_draw_string(3 + row, 0, part);
-            }
-            break;
-        }
-        case SIGN_PAGE_AQUA_INSTR: {
-            /* One SwapVM program instruction: its name, and its one headline
-             * figure when it has one (spec §6.7's example row). Re-read from
-             * sign_tx.data at render time via eth_aqua_instr_name/value,
-             * exactly like every other Aqua field on this screen -- never a
-             * copy the decoder made that this render trusts blindly. */
-            int ins = sign_page_field[sign_page];
-            char heading[32];
-            snprintf(heading, sizeof(heading), "Program %d of %u", ins + 1,
-                     (unsigned)sign_call.aqua_instr_count);
-            oled_draw_string(1, 0, heading);
-
-            char name[32];
-            eth_aqua_instr_name(&sign_call, sign_tx.data, sign_tx.data_length,
-                                ins, name, sizeof(name));
-            oled_draw_string(2, 0, name[0] ? name : "(unavailable)");
-
-            char value[80];
-            if (eth_aqua_instr_value(&sign_call, sign_tx.data, sign_tx.data_length,
-                                     ins, value, sizeof(value)) && value[0]) {
-                size_t vlen = strlen(value);
-                for (int row = 0; row < 4; row++) {
-                    size_t off = (size_t)row * 21;
-                    if (off >= vlen) break;
-                    char part[22];
-                    snprintf(part, sizeof(part), "%.21s", value + off);
-                    oled_draw_string(3 + row, 0, part);
-                }
-            }
-            break;
-        }
-        case SIGN_PAGE_CONTRACT: {
-            /* Which token. An amount and a spender mean nothing without it:
-             * the same approval against a different contract is a different
-             * thing to lose. */
-            char addr[43];
-            oled_draw_string(1, 0,
-                (sign_call.kind == ETH_CALL_GENERIC ||
-                 sign_call.kind == ETH_CALL_AQUA_SHIP ||
-                 sign_call.kind == ETH_CALL_DISPERSE_TOKEN ||
-                 sign_call.kind == ETH_CALL_ATS_DEPLOY_EQUITY ||
-                 sign_call.kind == ETH_CALL_ATS_DEPLOY_BOND ||
-                 sign_call.kind == ETH_CALL_AQUA_DOCK) ? "Contract"
-                                                       : "Token contract");
-            if (eth_format_address(sign_tx.to, addr, sizeof(addr))) {
-                sign_draw_address(2, addr);
-            }
-            oled_draw_string(6, 0,
-                eth_chain_name(sign_tx.chain_id, scratch, sizeof(scratch)));
-            break;
-        }
-        default: {
-            /* The address that will sign, in full.
-             *
-             * The index alone was true of what the device was asked and blind
-             * to what it did - a task race had it signing with a key this
-             * screen never named (T47). The address is derived from the same
-             * path the signature is taken at. */
-            /* The whole path, not "addr N".
-             *
-             * T47 put the source address here because an index was not enough
-             * to know what was signing. An account level makes that strictly
-             * worse: m/44'/60'/0'/0/0 and m/44'/60'/9'/0/0 are both "addr 0"
-             * and are different wallets, so a host moving accounts between
-             * requests would be invisible. The path is what makes it visible,
-             * and it is the same string the wallet screen shows. */
-            oled_draw_string(1, 0, "From");
-            sign_draw_address(2, sign_from);
-
-            /* On a row of its own, so nothing can push it off the edge: a
-             * truncated path would misname the wallet that is signing, which
-             * is worse than the index this replaced. */
-            format_hd_path(line, sizeof(line), &sign_path_shown);
-            oled_draw_string(5, 0, line);
-
-            if (sign_is_message) {
-                /* No value, no chain: a personal_sign moves nothing by itself.
-                 * Saying so stops the page reading as "+0 ETH transfer". */
-                oled_draw_string(6, 0, "Message signature");
-            } else if (sign_is_typed) {
-                /* Same reasoning as a message, and more easily forgotten: a
-                 * Permit moves nothing when it is signed, which is exactly what
-                 * makes it comfortable to sign. */
-                oled_draw_string(6, 0, "Typed data sig");
-            } else if (sign_call.kind == ETH_CALL_EMPTY) {
-                oled_draw_string(6, 0, "Plain transfer");
-            } else {
-                char value[40];
-                if (!eth_format_value(&sign_tx.value, value, sizeof(value), 8)) {
-                    snprintf(value, sizeof(value), "?");
-                }
-                /* A token call that also moves ether is unusual and worth
-                 * seeing; almost always this reads "+0 ETH". */
-                char eth[24];
-                snprintf(eth, sizeof(eth), "+%.15s ETH", value);
-                oled_draw_string(6, 0, eth);
-            }
-            break;
-        }
-    }
-
-    if (sign_all_seen()) {
-        oled_draw_string(7, 0, "NO  <  >    SIGN");
-    } else {
-        oled_draw_string(7, 0, "NO  <  >  more");
-    }
-}
-
-static void screen_sign_confirm_on_button(button_id_t btn)
-{
-    switch (btn) {
-        case BUTTON_UP:
-            sign_page = (sign_page + sign_page_count - 1) % sign_page_count;
-            sign_seen[sign_page] = true;
-            break;
-        case BUTTON_DOWN:
-            sign_page = (sign_page + 1) % sign_page_count;
-            sign_seen[sign_page] = true;
-            break;
-
-        case BUTTON_CANCEL:
-            ESP_LOGW(TAG, "Transaction rejected by user");
-            sign_outcome = SIGN_REJECTED;
-            ui_set_screen(SCREEN_WALLET_INFO);
-            return;
-
-        case BUTTON_ACCEPT:
-            /* Approving without having seen every page is not approval. */
-            if (!sign_all_seen()) {
-                break;
-            }
-            ESP_LOGW(TAG, "Transaction approved by user");
-            sign_result_ready = false;
-            sign_outcome = SIGN_APPROVED;
-            ui_set_screen(SCREEN_SIGN_RESULT);
-            return;
-
-        default:
-            break;
-    }
-
-    ui_invalidate();
 }
 
 /* ============================================================================
@@ -6319,7 +4503,7 @@ static void screen_sign_confirm_on_button(button_id_t btn)
  * convenience and a real downgrade: a compromised host sees the passphrase
  * before encryption ever touches it. What makes the trade survivable is this
  * screen. A wrong or substituted passphrase derives a different, perfectly
- * valid wallet rather than failing, so the address shown here is the only
+ * valid wallet rather than failing, so the fingerprint shown here is the only
  * signal that anything went wrong — and rejecting it must put the device back
  * where it was, not leave a wallet nobody chose selected.
  *
@@ -6330,12 +4514,15 @@ static void screen_sign_confirm_on_button(button_id_t btn)
  * ============================================================================ */
 
 static volatile bool host_passphrase_pending = false;
-static char host_passphrase_address[43];
+/* The fingerprint the protocol task derived after applying the passphrase, as
+ * eight hex characters, or "" for none. Derived there rather than here for the
+ * T47 reason: the screen must name what the device actually did. */
+static char host_passphrase_xfp[9];
 
-void ui_request_passphrase_confirm(const char *address)
+void ui_request_passphrase_confirm(uint32_t fingerprint)
 {
-    snprintf(host_passphrase_address, sizeof(host_passphrase_address), "%s",
-             address ? address : "");
+    snprintf(host_passphrase_xfp, sizeof(host_passphrase_xfp), "%08lX",
+             (unsigned long)fingerprint);
     sign_outcome = SIGN_PENDING;
     host_passphrase_pending = true;
 }
@@ -6354,12 +4541,11 @@ bool ui_user_is_answering(void)
      * compares the new digits rather than the old — that behaviour is tested
      * and it is the right one. Refusing here instead would strand a host that
      * abandoned a handshake behind a screen only a button press can clear. */
-    if (sign_request_pending || host_passphrase_pending) {
+    if (host_passphrase_pending) {
         return true;
     }
 
     switch (ui_get_screen()) {
-        case SCREEN_SIGN_CONFIRM:
         case SCREEN_HOST_PASSPHRASE_CONFIRM:
         case SCREEN_PASSPHRASE_CONFIRM:
         case SCREEN_WIPE_CONFIRM:
@@ -6377,9 +4563,6 @@ bool ui_user_is_answering(void)
 static void screen_host_passphrase_enter(void)
 {
     ESP_LOGI(TAG, "Host passphrase confirmation screen");
-    /* The passphrase was typed somewhere this device cannot see. The
-     * fingerprint is what the user can compare against their own record. */
-    refresh_master_xfp();
 }
 
 static void screen_host_passphrase_render(void)
@@ -6387,26 +4570,24 @@ static void screen_host_passphrase_render(void)
     oled_clear();
     oled_draw_string_centered(0, "App passphrase");
 
-    if (strlen(host_passphrase_address) < 42) {
+    if (strlen(host_passphrase_xfp) != 8) {
         /* Nothing to recognise means nothing to confirm. */
-        oled_draw_string_centered(3, "No address");
+        oled_draw_string_centered(3, "No fingerprint");
         oled_draw_string(7, 0, "NO");
         return;
     }
 
-    sign_draw_address(2, host_passphrase_address);
-    oled_draw_string(5, 0, "Typed on host!");
-    if (master_xfp[0]) {
-        draw_master_xfp(6, "Match XFP");
-    } else {
-        oled_draw_string(6, 0, "Match your record");
-    }
+    char line[22];
+    snprintf(line, sizeof(line), "XFP %s", host_passphrase_xfp);
+    oled_draw_string_centered(2, line);
+    oled_draw_string(4, 0, "Typed on host!");
+    oled_draw_string(6, 0, "Match your record");
     oled_draw_string(7, 0, "NO           YES");
 }
 
 static void screen_host_passphrase_on_button(button_id_t btn)
 {
-    if (btn == BUTTON_ACCEPT && strlen(host_passphrase_address) == 42) {
+    if (btn == BUTTON_ACCEPT && strlen(host_passphrase_xfp) == 8) {
         sign_outcome = SIGN_APPROVED;
     } else if (btn == BUTTON_ACCEPT || btn == BUTTON_CANCEL) {
         /* The protocol task clears the passphrase on a rejection: the wrong
@@ -6415,7 +4596,7 @@ static void screen_host_passphrase_on_button(button_id_t btn)
     } else {
         return;
     }
-    memzero(host_passphrase_address, sizeof(host_passphrase_address));
+    memzero(host_passphrase_xfp, sizeof(host_passphrase_xfp));
     ui_set_screen(SCREEN_WALLET_INFO);
 }
 
@@ -6532,7 +4713,6 @@ void ui_init(void)
     screens[SCREEN_WALLET_SELECT] = &screen_wallet_select;
     screens[SCREEN_MNEMONIC_DISPLAY] = &screen_mnemonic_display;
     screens[SCREEN_SETTINGS] = &screen_settings;
-    screens[SCREEN_QR_CODE] = &screen_qr_code;
     screens[SCREEN_ENTROPY] = &screen_entropy;
     screens[SCREEN_WIPE_CONFIRM] = &screen_wipe_confirm;
     screens[SCREEN_BLIND_WARN] = &screen_blind_warn;
@@ -6544,8 +4724,6 @@ void ui_init(void)
     screens[SCREEN_BLE_NAME] = &screen_ble_name;
     screens[SCREEN_TEMP_SEED] = &screen_temp_seed;
     screens[SCREEN_PASSPHRASE_CONFIRM] = &screen_passphrase_confirm;
-    screens[SCREEN_SIGN_CONFIRM] = &screen_sign_confirm;
-    screens[SCREEN_SIGN_RESULT] = &screen_sign_result;
     screens[SCREEN_HOST_PASSPHRASE_CONFIRM] = &screen_host_passphrase;
     screens[SCREEN_QR_OUT] = &screen_qr_out;
     screens[SCREEN_SHOW_ADDRESS] = &screen_show_address;
@@ -6631,12 +4809,6 @@ void ui_invalidate(void)
 
 void ui_poll_deferred(void)
 {
-    if (show_pending && current_screen == SCREEN_SHOW_ADDRESS) {
-        show_address_run();
-        return;
-    }
-    show_pending = false;
-
     if (create_generate_pending && current_screen == SCREEN_WALLET_CREATE) {
         wallet_create_run_generation();
         return;
@@ -6646,15 +4818,15 @@ void ui_poll_deferred(void)
      * request goes with the screen. */
     create_generate_pending = false;
 
-    /* The passphrase changed under a screen that is already showing an address
-     * derived from the old one (T42). Every way that can happen is another
-     * task or a timer: a host setPassphrase, a host-rejected confirmation, an
-     * auto-lock. Re-derive rather than merely repaint - the address itself is
-     * wrong now, not just the marker beside it. */
+    /* The passphrase changed under a screen that is already showing a
+     * fingerprint derived from the old one (T42). Every way that can happen is
+     * another task or a timer: a host setPassphrase, a host-rejected
+     * confirmation, an auto-lock. Re-derive rather than merely repaint - the
+     * fingerprint itself is wrong now, not just the marker beside it. */
     if (current_screen == SCREEN_WALLET_INFO &&
         wallet_has_passphrase() != wallet_info_passphrase_shown) {
         ESP_LOGW(TAG, "Passphrase changed under the wallet screen; re-deriving");
-        wallet_info_refresh_address();
+        wallet_info_refresh();
         ui_invalidate();
     }
 }
@@ -6701,13 +4873,9 @@ static void service_sign_expiry(void)
     }
     sign_expired_pending = false;
 
-    screen_id_t here = ui_get_screen();
-    if (here == SCREEN_SIGN_CONFIRM) {
-        ui_set_screen(SCREEN_SIGN_RESULT);
-    } else if (here == SCREEN_HOST_PASSPHRASE_CONFIRM) {
-        /* Same expiry, different question. There is no result screen for a
-         * passphrase, and the wallet is the honest place to land: whatever was
-         * proposed has already been dropped by the protocol task. */
+    if (ui_get_screen() == SCREEN_HOST_PASSPHRASE_CONFIRM) {
+        /* The wallet is the honest place to land: whatever was proposed has
+         * already been dropped by the protocol task. */
         ui_set_screen(SCREEN_WALLET_INFO);
     }
 }
@@ -6743,7 +4911,7 @@ void ui_task(void *pvParameters)
          * screen: the host is waiting, and the user needs to compare a code. */
         if (session_confirm_pending) {
             session_confirm_pending = false;
-            /* Same class of omission as ui_sign_report(): a second handshake
+            /* A second handshake
              * while this screen is already up derives a NEW passkey, and
              * without a repaint the user would compare the app's code against
              * the previous handshake's digits and see a mismatch that is not
@@ -6762,17 +4930,9 @@ void ui_task(void *pvParameters)
             }
         }
 
-        /* Dismiss the result once it has been up long enough. Doing it here
-         * rather than blocking in the screen keeps buttons live throughout. */
-        if (ui_get_screen() == SCREEN_SIGN_RESULT && sign_result_ready &&
-            esp_timer_get_time() > sign_result_until_us) {
-            ui_set_screen(SCREEN_WALLET_INFO);
-        }
-
         service_lock_hold();
         service_qr_out();
         service_scan();
-        service_airgap();
 
         /* A companion that died without saying so. Tears down the channel
          * only: the wallet stays unlocked and a temporary seed survives, so
@@ -6783,11 +4943,6 @@ void ui_task(void *pvParameters)
         }
 
         service_sign_expiry();
-
-        if (sign_request_pending) {
-            sign_request_pending = false;
-            ui_set_screen(SCREEN_SIGN_CONFIRM);
-        }
 
         if (host_passphrase_pending) {
             host_passphrase_pending = false;
@@ -6846,7 +5001,6 @@ void ui__service_sign_expiry_for_test(void) { service_sign_expiry(); }
 void ui__service_lock_hold_for_test(void) { service_lock_hold(); }
 void ui__service_host_lock_for_test(void) { service_host_lock(); }
 void ui__service_qr_out_for_test(void) { service_qr_out(); }
-void ui__service_airgap_for_test(void) { service_airgap(); }
 void ui__scan_feed_for_test(const char *ur) { scan_handle(ur, strlen(ur)); }
 const char *ui__scan_status_for_test(void) { return scan_status; }
 
@@ -6855,8 +5009,8 @@ const char *ui__scan_status_for_test(void) { return scan_status; }
  * failure is that it is still HERE when the next screen goes to draw it. */
 const char *ui__master_xfp_for_test(void) { return master_xfp; }
 
-/* Which account the device is deriving at, and whether the wallet screen's
- * address was derived with a passphrase applied. Both are private on purpose;
+/* Which account the device is on, and whether the wallet screen's
+ * fingerprint was derived with a passphrase applied. Both are private on purpose;
  * both are the state a stale-passphrase or wrong-account bug lives in. */
 uint32_t ui__account_for_test(void)            { return hd_account; }
 bool ui__wallet_info_pass_shown_for_test(void) { return wallet_info_passphrase_shown; }
@@ -6884,10 +5038,9 @@ void ui__reset_static_state_for_test(void)
     settings_selection = 0;
     wallet_list_selection = 0;
 
-    address_index = 0;
     hd_account = 0;
     wallet_info_passphrase_shown = false;
-    memzero(&eth_address, sizeof(eth_address));
+    memzero(wallet_info_error, sizeof(wallet_info_error));
     memzero(mnemonic_buffer, sizeof(mnemonic_buffer));
     mnemonic_word_count = 0;
     mnemonic_page = 0;
@@ -6933,16 +5086,12 @@ void ui__reset_static_state_for_test(void)
     session_confirm_return = SCREEN_MAIN_MENU;
     host_unlock_pending = false;
     host_lock_pending = false;
-    sign_request_pending = false;
     sign_outcome = SIGN_PENDING;
-    sign_is_message = false;
-    sign_blind = false;
-    memzero(sign_data_hash, sizeof(sign_data_hash));
+    sign_expired_pending = false;
     blind_confirm_count = 0;
     blind_signing_forget();
-    memzero(sign_message, sizeof(sign_message));
     host_passphrase_pending = false;
-    memzero(host_passphrase_address, sizeof(host_passphrase_address));
+    memzero(host_passphrase_xfp, sizeof(host_passphrase_xfp));
 
     lock_timeout_choice = 1;
     lock_timeout_stored_choice = 1;

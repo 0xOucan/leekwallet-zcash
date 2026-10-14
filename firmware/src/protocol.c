@@ -16,9 +16,11 @@
  *   │ 'L'  │ 'K'  │ len:u16│ type + CBOR │
  *   └──────┴──────┴────────┴─────────────┘
  *
- * Only the commands that reveal nothing are implemented here. Anything touching
- * keys waits for the session layer, because shipping getAddress before session
- * establishment exists would mean shipping it unauthenticated.
+ * The Ethereum commands LeekWallet carried (getAddress, signTransaction,
+ * signMessage, signTypedData) are gone (roadmap 1.1). What remains is the
+ * chain-agnostic core: the handshake, device and wallet state, unlock and
+ * lock, wallet selection and the host-supplied passphrase. Zcash commands
+ * arrive in later phases, behind the same session gate.
  */
 
 #include "protocol.h"
@@ -39,11 +41,6 @@
 #include "leek-wallet.h"
 #include "pin.h"
 #include "session.h"
-#include "eth-tx.h"
-#include "eth-decode.h"
-#include "eip712.h"
-#include "eip4527.h"
-#include "eth-tx-rlp.h"
 #include "ui.h"
 
 static const char *TAG = "protocol";
@@ -79,9 +76,6 @@ static const char *TAG = "protocol";
 #define ERR_BUSY         0x0401
 #define ERR_USER_REJECTED 0x0200
 #define ERR_USER_TIMEOUT  0x0201
-/* Outside the decodable set: the device will not ask for approval of
- * something it cannot describe. See eth-decode.h. */
-#define ERR_UNDECODABLE   0x0202
 
 static uint8_t rx_buf[MAX_FRAME];
 static size_t  rx_len = 0;
@@ -440,20 +434,6 @@ static bool handle_hello_reveal(const uint8_t *payload, size_t len,
     return true;
 }
 
-/**
- * Every level this device will derive at must fit in a non-hardened index.
- *
- * Hardened levels are encoded by the wallet layer as 0x80000000 | n, so an
- * account or an index at or above 2^31 is not a path — it is an overflow that
- * would silently land somewhere else. Refusing is the only honest answer.
- *
- * Deliberately NOT bounded by HD_ACCOUNT_COUNT. That bound is what the
- * device's own menu offers; a host asking for account 12 is asking for a real
- * wallet, and refusing it would make paths the device can sign unreachable by
- * anything but the menu. What makes it safe is that the confirmation screen
- * renders the whole path, so an account the user did not choose is visible
- * rather than merely legal.
- */
 /* A passphrase this device did not see typed (T42).
  *
  * Set once the user has approved a host-supplied passphrase, and the reason
@@ -491,85 +471,11 @@ static void host_passphrase_forget(void)
     wallet_clear_passphrase();
 }
 
-static bool hd_path_in_range(const HDPath *path)
-{
-    return path->account <= 0x7FFFFFFFu && path->address_index <= 0x7FFFFFFFu;
-}
-
-/**
- * The derivation path a request names, from "index"/"account" or from "path".
- *
- * Both spellings exist because the client thinks in BIP44 paths and the device
- * in indices; reading only "index" once meant every path-bearing request
- * silently derived address zero.
- *
- * The account level is read for the same reason, and it is the more dangerous
- * of the two to ignore (T45). Until now m/44'/60'/3'/0/0 was parsed for its
- * trailing 0 and answered with account 0's address under the label the host
- * asked for — the device returning a different wallet than the one requested,
- * with nothing anywhere saying so. Silently substituting a wallet is the exact
- * failure the confirmation screens exist to prevent, so the account is parsed
- * here and rendered there.
- *
- * `out` is pre-filled with the defaults by the caller. Components that are not
- * present keep those defaults rather than being guessed at.
- */
-static void request_path(const uint8_t *payload, size_t len, HDPath *out)
-{
-    CborItem item;
-    bool have_index = false;
-
-    if (cbor_map_find(payload, len, "index", &item) && item.type == CBOR_UINT) {
-        out->address_index = item.value;
-        have_index = true;
-    }
-    if (cbor_map_find(payload, len, "account", &item) && item.type == CBOR_UINT) {
-        out->account = item.value;
-    }
-
-    if (cbor_map_find(payload, len, "path", &item) && item.type == CBOR_TEXT) {
-        char path_str[40];
-        if (!cbor_text_copy(&item, path_str, sizeof(path_str))) {
-            return;
-        }
-
-        /* Walk the components rather than only the tail. In m/44'/60'/a'/c/i
-         * the third slash introduces the account and the fifth the address
-         * index. A shorter path leaves whatever the explicit keys or the
-         * defaults gave; a longer one is not a path this device derives, and
-         * its extra components are ignored rather than mapped onto levels
-         * they do not name. */
-        const char *p = path_str;
-        int component = -1;   /* -1 while still on the leading "m" */
-        while (*p) {
-            if (*p != '/') {
-                p++;
-                continue;
-            }
-            component++;
-            p++;
-            if (*p == '\0') {
-                break;
-            }
-            uint32_t value = (uint32_t)strtoul(p, NULL, 10);
-            if (component == 2) {
-                out->account = value;
-            } else if (component == 4 && !have_index) {
-                /* An explicit "index" wins over the path's tail: a request
-                 * carrying both and disagreeing is malformed, and the device
-                 * must not quietly prefer the one the user is less likely to
-                 * have been shown. */
-                out->address_index = value;
-            }
-        }
-    }
-}
-
 /**
  * Block until the user answers the prompt on screen, or long enough that
  * nobody is going to.
  *
- * Shared by every confirmation - transaction, message, passphrase - because a
+ * Shared by every confirmation - today only the passphrase - because a
  * second copy of this loop is a second place for a request to be answered
  * without anyone having looked at the device. Returns the outcome; the caller
  * owns whatever it has to undo on anything but SIGN_APPROVED.
@@ -591,362 +497,13 @@ static SignOutcome wait_for_user(void)
             ui_sign_expire();
             return SIGN_PENDING;        /* nobody answered */
         }
-        /* A user standing at the device reading pages is not an idle
+        /* A user standing at the device reading a question is not an idle
          * session, but no frames cross the wire while they do it. Without
-         * this the idle timeout would tear the channel down mid-approval and
-         * approval_still_holds() would then refuse the signature -- H-1's
-         * shape, reintroduced as a feature. */
+         * this the idle timeout would tear the channel down mid-approval --
+         * H-1's shape, reintroduced as a feature. */
         session_note_activity();
         vTaskDelay(pdMS_TO_TICKS(50));
     }
-}
-
-/**
- * Re-derive at the approved path and check it is still the address on screen.
- *
- * T47 said "what was approved and what was signed must be the same object",
- * and the path is: `sign_path` is captured before the prompt and used unchanged
- * for the signature. The *wallet* is not. A passphrase is global state rather
- * than part of a path, and a host-supplied one is dropped by session_reset()
- * (T42) — which is called from NimBLE's host task on a disconnect, not from
- * the task sitting in wait_for_user(). So the approval window, the two minutes
- * in which the user has picked the device up and walked away from the phone,
- * is exactly when the wallet underneath the prompt can move.
- *
- * The device then shows an address in the hidden wallet and signs in the base
- * one: the user approves X and signs with Y. Recomputing costs one BIP32
- * derivation on a path that has just been derived anyway, and it can only ever
- * refuse — there is no branch here that signs something it otherwise would not.
- *
- * Deliberately compares the rendered address rather than tracking the state
- * that moved. Whatever moves the key in future — a wallet switch, an account
- * change, a lock — moves the address too, and this catches it without anyone
- * having to remember to add a flag.
- */
-static bool approval_still_holds(const HDPath *path, const char *shown)
-{
-    EthAddress now;
-    if (wallet_get_address_at_path(path, &now) != WALLET_OK) {
-        return false;
-    }
-    return strcmp(now.hex, shown) == 0;
-}
-
-/* ------------------------------------------------ the owned transaction */
-
-/**
- * The one transaction the device holds between parsing and signing.
- *
- * It used to be a local in dispatch(). That was correct while one request was
- * one stack frame: parse, draw, wait, hash and sign all happened inside it and
- * the struct could not outlive the question. The air gap breaks that shape -
- * scanning and confirming are separate user actions on a different entrance -
- * and the invariant that has to survive is RESEARCH-AIRGAP-VAULT.md section 16
- * rule 5: decode, display and sign read ONE buffer, never re-parsed between
- * approval and signing.
- *
- * So it is owned storage with exactly one slot, and a claim on it. One slot
- * rather than a queue because the screen shows one transaction at a time, and
- * a second request arriving mid-approval is a request the user has not seen;
- * it is refused, not held. Static rather than on a stack also returns roughly
- * a kilobyte to both request tasks (see protocol_start()).
- *
- * The claim is an atomic exchange because two tasks can reach it: the USB and
- * BLE request tasks both run dispatch(), and the air-gap worker runs
- * protocol_airgap_sign(). One transport at a time (PROTOCOL.md 3b) means they
- * should never race, and the flag is what makes "should" into "cannot".
- */
-static EthTx owned_tx;
-static bool  owned_tx_busy;
-
-static EthTx *owned_tx_claim(void)
-{
-    if (__atomic_exchange_n(&owned_tx_busy, true, __ATOMIC_ACQ_REL)) {
-        return NULL;
-    }
-    memset(&owned_tx, 0, sizeof owned_tx);
-    return &owned_tx;
-}
-
-/* Zeroed on release. Calldata is not a secret, but it is what the user was
-   doing, and nothing needs it once the answer has gone out. */
-static void owned_tx_release(void)
-{
-    memzero(&owned_tx, sizeof owned_tx);
-    __atomic_store_n(&owned_tx_busy, false, __ATOMIC_RELEASE);
-}
-
-/**
- * Everything between "the slot holds a transaction" and "here is a signature",
- * shared by both entrances so there is one decision path rather than two that
- * agree today.
- *
- * Reads `owned_tx` and nothing else for the transaction: the screen is handed
- * a pointer to it, the digest is taken from it, and nothing writes it between
- * the two. The caller owns the claim and releases it.
- */
-static TxSignResult sign_owned_tx(const HDPath *sign_path, EthSignature *sig_out)
-{
-    const EthTx *tx = &owned_tx;
-
-    /* Refuse what cannot be explained (T50).
-     *
-     * The alternative is to render a hash and ask for a signature that
-     * means nothing to the person giving it. Every other wallet that took
-     * that road ended up shipping a blind-signing toggle; better to say no
-     * and grow the decodable set deliberately. */
-    EthCall call;
-    if (!eth_tx_is_decodable(tx, &call)) {
-        /* The escape hatch (T16), and the narrowest form of it that is
-         * useful. Two conditions, both required:
-         *
-         *   - the owner turned blind signing on, at the device, having
-         *     read what it costs. No command can do this.
-         *   - the transaction still has a recipient. Contract creation
-         *     stays refused: a blind confirmation is bearable only
-         *     because it can still name who is being paid, and there the
-         *     device would have nothing true left to show.
-         *
-         * Oversized calldata is refused before this and stays refused for a
-         * different reason again — the device never held those bytes, so
-         * it could not even hash what it was signing. */
-        if (!(tx->has_to && blind_signing_enabled())) {
-            return TXSIGN_UNDECODABLE;
-        }
-        ESP_LOGW(TAG, "Blind signing: undecodable calldata, %u bytes",
-                 (unsigned)tx->data_length);
-    }
-
-    /* Derive the source address here, on the task that will do the
-     * signing, and hand it to the screen. Deriving on the UI task shares
-     * state with this one and once produced a signature from a key the
-     * confirmation never named (T47). */
-    EthAddress from_addr;
-    if (wallet_get_address_at_path(sign_path, &from_addr) != WALLET_OK) {
-        return TXSIGN_NO_WALLET;
-    }
-
-    /* Show it and wait. The screen renders the owned slot and the hash
-     * below is taken from the same slot, so what is approved and what is
-     * signed cannot differ. The screen is handed the same path the
-     * signature will be taken at, not a copy of one field of it, so "what
-     * was approved" and "what was signed" stay the same object (T47, T45). */
-    ui_request_sign(tx, sign_path, from_addr.hex);
-
-    SignOutcome outcome = wait_for_user();
-    if (outcome == SIGN_PENDING) {
-        return TXSIGN_TIMEOUT;
-    }
-    if (outcome != SIGN_APPROVED) {
-        return TXSIGN_REJECTED;
-    }
-
-    /* The wallet may have moved while the screen was up. See
-     * approval_still_holds(). */
-    if (!approval_still_holds(sign_path, from_addr.hex)) {
-        ui_sign_report(false);
-        return TXSIGN_WALLET_CHANGED;
-    }
-
-    uint8_t digest[32];
-    if (!eth_tx_hash(tx, digest)) {
-        return TXSIGN_UNENCODABLE;
-    }
-
-    /* Select and sign atomically. Doing these as two calls let the UI
-     * task re-derive in between and the device signed with a key nobody
-     * asked for. `sign_path` is the same struct the confirmation screen
-     * was handed, unchanged since. */
-    if (wallet_sign_hash_at_path(sign_path, digest, sig_out) != WALLET_OK) {
-        ui_sign_report(false);
-        return TXSIGN_SIGN_FAILED;
-    }
-    ui_sign_report(true);
-    return TXSIGN_OK;
-}
-
-/* The USB/BLE wording for each refusal, unchanged from when these were
-   inline, because the app matches on the codes and people read the text. */
-static void send_tx_sign_error(TxSignResult rc)
-{
-    switch (rc) {
-        case TXSIGN_UNDECODABLE:
-            send_error(ERR_UNDECODABLE, "this device cannot show what that call does");
-            break;
-        case TXSIGN_NO_WALLET:
-            send_error(ERR_NO_WALLET, "derivation failed");
-            break;
-        case TXSIGN_TIMEOUT:
-            send_error(ERR_USER_TIMEOUT, "no answer on the device");
-            break;
-        case TXSIGN_REJECTED:
-            send_error(ERR_USER_REJECTED, "rejected on device");
-            break;
-        case TXSIGN_WALLET_CHANGED:
-            send_error(ERR_USER_REJECTED,
-                       "the wallet changed while you were confirming; try again");
-            break;
-        case TXSIGN_UNENCODABLE:
-            send_error(ERR_MALFORMED, "could not encode the transaction");
-            break;
-        case TXSIGN_SIGN_FAILED:
-        default:
-            send_error(ERR_NO_WALLET, "signing failed");
-            break;
-    }
-}
-
-/* ------------------------------------------------------ the air gap */
-
-/* A 42-character "0x" address against 20 raw bytes, either case. The rendered
-   form is what approval_still_holds() compares too, so the check here reads
-   the same string the screen will. */
-static bool address_matches(const char *hex, const uint8_t raw[20])
-{
-    if (hex == NULL || strlen(hex) != 42 || hex[0] != '0' ||
-        (hex[1] != 'x' && hex[1] != 'X')) {
-        return false;
-    }
-    for (int i = 0; i < 20; i++) {
-        uint8_t v = 0;
-        for (int j = 0; j < 2; j++) {
-            const char ch = hex[2 + i * 2 + j];
-            uint8_t d;
-            if (ch >= '0' && ch <= '9')      d = (uint8_t)(ch - '0');
-            else if (ch >= 'a' && ch <= 'f') d = (uint8_t)(ch - 'a' + 10);
-            else if (ch >= 'A' && ch <= 'F') d = (uint8_t)(ch - 'A' + 10);
-            else return false;
-            v = (uint8_t)((v << 4) | d);
-        }
-        if (v != raw[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-/* m/44'/60'/<account>'/0/<index> and nothing else, which is every path the
-   device's own screens and the USB path can name. A request for any other
-   shape is refused rather than approximated: an HDPath cannot carry it, and
-   signing at the nearest path it CAN carry is signing with a key nobody
-   asked for. */
-static bool keypath_to_hdpath(const E4527Keypath *kp, HDPath *out)
-{
-    if (kp->count != 5) {
-        return false;
-    }
-    for (int i = 0; i < 5; i++) {
-        if (kp->components[i].wildcard ||
-            kp->components[i].hardened != (i < 3)) {
-            return false;
-        }
-    }
-    if (kp->components[0].index != 44 || kp->components[1].index != 60 ||
-        kp->components[3].index != 0) {
-        return false;
-    }
-    HDPath p = HDPATH_ETH_DEFAULT;
-    p.account = kp->components[2].index;
-    p.address_index = kp->components[4].index;
-    if (!hd_path_in_range(&p)) {
-        return false;
-    }
-    *out = p;
-    return true;
-}
-
-TxSignResult protocol_airgap_sign(const E4527SignRequest *req,
-                                  uint8_t signature_out[65])
-{
-    if (req == NULL || signature_out == NULL) {
-        return TXSIGN_MALFORMED;
-    }
-    /* No session on this entrance and none needed (ARCHITECTURE.md): the
-       request is self-contained and the user is looking at both screens. The
-       PIN gate is a different matter and applies exactly as it does to USB. */
-    if (!pin_is_unlocked()) {
-        return TXSIGN_LOCKED;
-    }
-
-    /* The signature has to name the request it answers, and the reader
-       refuses one without an id, so a request without one cannot be
-       answered. Transactions only: messages and typed data over QR are not
-       built on either side yet, and refusing them is the honest state. */
-    if (!req->has_request_id || req->data_type != E4527_SIGN_TYPED_TRANSACTION) {
-        return TXSIGN_MALFORMED;
-    }
-
-    HDPath sign_path;
-    if (!keypath_to_hdpath(&req->derivation_path, &sign_path)) {
-        return TXSIGN_MALFORMED;
-    }
-
-    /* A request addressed to a different seed - another device, or this one
-       with another passphrase - is refused before anything is derived at its
-       path. Without this the device would derive at the path, find the
-       address wrong, and say "mismatch", which is true but less useful. */
-    if (req->derivation_path.has_source_fingerprint) {
-        uint32_t xfp;
-        if (wallet_get_master_fingerprint(&xfp) != WALLET_OK) {
-            return TXSIGN_NO_WALLET;
-        }
-        if (xfp != req->derivation_path.source_fingerprint) {
-            return TXSIGN_PATH_MISMATCH;
-        }
-    }
-
-    /* Rule 4 of section 16: the path is verified, not trusted. The address
-       the request claims is compared with the one derived here; the screen
-       will show the derived one either way. Required rather than optional,
-       because a request without one leaves nothing to verify against. */
-    if (!req->has_address) {
-        return TXSIGN_MALFORMED;
-    }
-    EthAddress derived;
-    if (wallet_get_address_at_path(&sign_path, &derived) != WALLET_OK) {
-        return TXSIGN_NO_WALLET;
-    }
-    if (!address_matches(derived.hex, req->address)) {
-        return TXSIGN_PATH_MISMATCH;
-    }
-
-    EthTx *slot = owned_tx_claim();
-    if (slot == NULL) {
-        return TXSIGN_BUSY;
-    }
-
-    /* The sign-data becomes the owned transaction, canonically or not at all
-       (eth-tx-rlp.h). From here on nothing reads the request's bytes again. */
-    if (!eth_tx_from_rlp(req->sign_data, req->sign_data_len, slot)) {
-        owned_tx_release();
-        return TXSIGN_MALFORMED;
-    }
-
-    /* Rule 3: the chain id is the one inside the signed payload. The
-       request's own chain-id field is a second statement of it, and a
-       request whose two statements disagree is refused rather than resolved
-       in favour of either. */
-    if (req->chain_id != slot->chain_id) {
-        owned_tx_release();
-        return TXSIGN_MALFORMED;
-    }
-
-    EthSignature sig;
-    TxSignResult rc = sign_owned_tx(&sign_path, &sig);
-    owned_tx_release();
-    if (rc != TXSIGN_OK) {
-        memzero(&sig, sizeof sig);
-        return rc;
-    }
-
-    /* r || s || yParity. yParity rather than 27/28 for a type-2
-       transaction, for the reason the USB path gives: a companion that masks
-       the low bit of 27 inverts it. */
-    memcpy(signature_out, sig.r, 32);
-    memcpy(signature_out + 32, sig.s, 32);
-    signature_out[64] = (sig.v >= 27) ? (uint8_t)(sig.v - 27) : (uint8_t)(sig.v & 1);
-    memzero(&sig, sizeof sig);
-    return TXSIGN_OK;
 }
 
 /* Handle one decoded request. */
@@ -983,7 +540,7 @@ static void dispatch(const uint8_t *payload, size_t len)
     } else if (strcmp(method, "getFeatures") == 0) {
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 3);
+        cbor_write_map(&w, 4);
         /* The real state, never a constant. A host that cannot tell whether
          * the device is in the weaker mode cannot warn anyone about it, and
          * this field is the only place it is visible from off-device. It is
@@ -991,6 +548,12 @@ static void dispatch(const uint8_t *payload, size_t len)
          * wallet, and it is the answer to "will you refuse my dapp?". */
         cbor_write_text(&w, "blindSigning");
         cbor_write_uint(&w, blind_signing_enabled() ? 1 : 0);
+        /* Which chain this firmware speaks. Was implied - LeekWallet only
+           ever spoke Ethereum and answered with no chain at all - and a host
+           built for that firmware must be able to tell it is not talking to
+           one. No signing command exists yet (roadmap phase 1). */
+        cbor_write_text(&w, "chain");
+        cbor_write_text(&w, "zcash");
         cbor_write_text(&w, "firmware");
         cbor_write_text(&w, "0.1.0");
         cbor_write_text(&w, "model");
@@ -1072,385 +635,6 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, "unlocked");
         cbor_write_uint(&w, 0);
 
-    } else if (strcmp(method, "getAddress") == 0) {
-        /* Behind the session: an address list is not secret, but it is
-         * user-specific, and anything plugged into this port should not be able
-         * to enumerate a wallet without the user confirming a passkey. */
-        if (!request_is_authenticated()) {
-            send_session_error(ERR_SESSION, "session required");
-            return;
-        }
-        if (!pin_is_unlocked()) {
-            send_error(ERR_NOT_UNLOCKED, "device is locked");
-            return;
-        }
-
-        /* Accept either a bare index or a full path. The client sends a path
-         * because that is what PROTOCOL.md documents and what viem thinks in;
-         * reading only "index" meant every request quietly derived address
-         * zero, and ten identical addresses is a symptom that looks like a
-         * derivation bug rather than a parsing one. */
-        HDPath path = HDPATH_ETH_DEFAULT;
-        request_path(payload, len, &path);
-
-        if (!hd_path_in_range(&path)) {
-            send_error(ERR_MALFORMED, "derivation path out of range");
-            return;
-        }
-        uint32_t index = path.address_index;
-
-        EthAddress addr;
-
-        if (wallet_get_address_at_path(&path, &addr) != WALLET_OK) {
-            send_error(ERR_NO_WALLET, "derivation failed");
-            return;
-        }
-
-        cbor_write_map(&w, 1);
-        cbor_write_text(&w, "result");
-        cbor_write_map(&w, 2);
-        cbor_write_text(&w, "address");
-        cbor_write_text(&w, addr.hex);
-        cbor_write_text(&w, "index");
-        cbor_write_uint(&w, index);
-
-    } else if (strcmp(method, "signTransaction") == 0) {
-        if (!request_is_authenticated()) {
-            send_session_error(ERR_SESSION, "session required");
-            return;
-        }
-        if (!pin_is_unlocked()) {
-            send_error(ERR_NOT_UNLOCKED, "device is locked");
-            return;
-        }
-
-        /* Claim the one transaction slot before writing into it. See
-         * owned_tx: decode, display and sign read it, and the air-gap
-         * entrance fills the same slot, so a second request must be refused
-         * rather than allowed to write over one being shown. */
-        EthTx *slot = owned_tx_claim();
-        if (slot == NULL) {
-            send_error(ERR_BUSY, "another transaction is awaiting approval");
-            return;
-        }
-
-        /* Build the transaction from the host's fields. Every value is parsed
-         * here and nothing the host sends is treated as bytes to sign. */
-        if (!cbor_map_find(payload, len, "chainId", &item) || item.type != CBOR_UINT) {
-            owned_tx_release();
-            send_error(ERR_MALFORMED, "chainId required");
-            return;
-        }
-        slot->chain_id = item.value;
-
-        if (cbor_map_find(payload, len, "nonce", &item) && item.type == CBOR_UINT) {
-            eth_quantity_set_u64(&slot->nonce, item.value);
-        }
-
-        if (cbor_map_find(payload, len, "to", &item) &&
-            item.type == CBOR_BYTES && item.value == 20) {
-            memcpy(slot->to, item.data, 20);
-            slot->has_to = true;
-        }
-
-        if (cbor_map_find(payload, len, "value", &item) && item.type == CBOR_BYTES) {
-            if (!eth_quantity_set(&slot->value, item.data, item.value)) {
-                owned_tx_release();
-                send_error(ERR_MALFORMED, "value too large");
-                return;
-            }
-        }
-        if (cbor_map_find(payload, len, "maxFeePerGas", &item) && item.type == CBOR_BYTES) {
-            eth_quantity_set(&slot->max_fee, item.data, item.value);
-        }
-        if (cbor_map_find(payload, len, "maxPriorityFeePerGas", &item) &&
-            item.type == CBOR_BYTES) {
-            eth_quantity_set(&slot->max_priority_fee, item.data, item.value);
-        }
-        if (cbor_map_find(payload, len, "gas", &item) && item.type == CBOR_BYTES) {
-            eth_quantity_set(&slot->gas_limit, item.data, item.value);
-        }
-
-        if (cbor_map_find(payload, len, "data", &item) && item.type == CBOR_BYTES) {
-            if (item.value > ETH_MAX_DATA) {
-                /* Refusing is the honest answer. Truncating would sign
-                 * something other than what was asked for, and accepting an
-                 * unbounded blob lets the host choose our memory usage. */
-                owned_tx_release();
-                send_error(ERR_MALFORMED, "calldata too large to display");
-                return;
-            }
-            memcpy(slot->data, item.data, item.value);
-            slot->data_length = item.value;
-        }
-
-        HDPath sign_path = HDPATH_ETH_DEFAULT;
-        request_path(payload, len, &sign_path);
-        if (!hd_path_in_range(&sign_path)) {
-            owned_tx_release();
-            send_error(ERR_MALFORMED, "derivation path out of range");
-            return;
-        }
-        uint32_t sign_index = sign_path.address_index;
-
-        EthSignature sig;
-        TxSignResult signed_rc = sign_owned_tx(&sign_path, &sig);
-        owned_tx_release();
-        if (signed_rc != TXSIGN_OK) {
-            send_tx_sign_error(signed_rc);
-            return;
-        }
-
-        cbor_write_map(&w, 1);
-        cbor_write_text(&w, "result");
-        cbor_write_map(&w, 4);
-        cbor_write_text(&w, "index");
-        cbor_write_uint(&w, sign_index);
-        cbor_write_text(&w, "r");
-        cbor_write_bytes(&w, sig.r, sizeof(sig.r));
-        cbor_write_text(&w, "s");
-        cbor_write_bytes(&w, sig.s, sizeof(sig.s));
-        /* Emit yParity, 0 or 1, not the legacy 27+parity form.
-         *
-         * wallet_sign_hash returns the legacy convention, and a client that
-         * masks the low bit of that inverts it: 27 becomes 1 and 28 becomes 0.
-         * The signature then recovers to an address nobody owns, and the
-         * network rejects it for having no funds - which looks like a funding
-         * problem rather than a signing one. EIP-1559 wants yParity, so send
-         * exactly that and leave nothing to infer. */
-        cbor_write_text(&w, "yParity");
-        cbor_write_uint(&w, (sig.v >= 27) ? (uint32_t)(sig.v - 27) : (uint32_t)(sig.v & 1));
-
-    } else if (strcmp(method, "signMessage") == 0) {
-        /* EIP-191 personal_sign. Same rule as a transaction: the device builds
-         * the preimage itself, renders exactly that, and signs exactly what it
-         * rendered. The host supplies the message text and nothing else - never
-         * a digest, which is signHash and is off by default. */
-        if (!request_is_authenticated()) {
-            send_session_error(ERR_SESSION, "session required");
-            return;
-        }
-        if (!pin_is_unlocked()) {
-            send_error(ERR_NOT_UNLOCKED, "device is locked");
-            return;
-        }
-
-        /* Text only. Accepting a byte string as well would give one message two
-         * spellings, and the device would have to guess which of them the user
-         * was shown. */
-        if (!cbor_map_find(payload, len, "message", &item) || item.type != CBOR_TEXT) {
-            send_error(ERR_MALFORMED, "message required");
-            return;
-        }
-
-        uint8_t message[ETH_MAX_MESSAGE];
-        size_t  message_len = item.value;
-        if (message_len > sizeof(message)) {
-            send_error(ERR_MALFORMED, "message too long to display");
-            return;
-        }
-        memcpy(message, item.data, message_len);
-
-        /* A message the screen cannot render honestly is refused rather than
-         * mangled.
-         *
-         * Control bytes and anything above ASCII have no glyph on a 128x64
-         * OLED, so showing them means showing a different string than the one
-         * being hashed - which is blind signing wearing a costume (PROTOCOL.md
-         * 6bis). The alternative on offer, a hash next to "undisplayable
-         * content", asks for a confirmation that carries no information. Same
-         * error code as undecodable calldata, for the same reason: the device
-         * cannot say what this does. */
-        if (!eth_message_is_displayable(message, message_len)) {
-            send_error(ERR_UNDECODABLE,
-                       "this device cannot display that message");
-            return;
-        }
-
-        HDPath msg_path = HDPATH_ETH_DEFAULT;
-        request_path(payload, len, &msg_path);
-        if (!hd_path_in_range(&msg_path)) {
-            send_error(ERR_MALFORMED, "derivation path out of range");
-            return;
-        }
-        uint32_t msg_index = msg_path.address_index;
-
-        EthAddress msg_from;
-        if (wallet_get_address_at_path(&msg_path, &msg_from) != WALLET_OK) {
-            send_error(ERR_NO_WALLET, "derivation failed");
-            return;
-        }
-
-        ui_request_sign_message((const char *)message, message_len,
-                                &msg_path, msg_from.hex);
-
-        SignOutcome msg_outcome = wait_for_user();
-        if (msg_outcome == SIGN_PENDING) {
-            send_error(ERR_USER_TIMEOUT, "no answer on the device");
-            return;
-        }
-        if (msg_outcome != SIGN_APPROVED) {
-            send_error(ERR_USER_REJECTED, "rejected on device");
-            return;
-        }
-
-        /* The wallet may have moved while the screen was up. See
-         * approval_still_holds(). */
-        if (!approval_still_holds(&msg_path, msg_from.hex)) {
-            ui_sign_report(false);
-            send_error(ERR_USER_REJECTED,
-                       "the wallet changed while you were confirming; try again");
-            return;
-        }
-
-        uint8_t msg_digest[32];
-        if (!eth_message_hash(message, message_len, msg_digest)) {
-            send_error(ERR_MALFORMED, "could not hash the message");
-            return;
-        }
-
-        EthSignature msg_sig;
-        if (wallet_sign_hash_at_path(&msg_path, msg_digest, &msg_sig) != WALLET_OK) {
-            ui_sign_report(false);
-            send_error(ERR_NO_WALLET, "signing failed");
-            return;
-        }
-        ui_sign_report(true);
-
-        /* Same shape as signTransaction. One reply format for one kind of
-         * answer; a client that parses one parses the other. */
-        cbor_write_map(&w, 1);
-        cbor_write_text(&w, "result");
-        cbor_write_map(&w, 4);
-        cbor_write_text(&w, "index");
-        cbor_write_uint(&w, msg_index);
-        cbor_write_text(&w, "r");
-        cbor_write_bytes(&w, msg_sig.r, sizeof(msg_sig.r));
-        cbor_write_text(&w, "s");
-        cbor_write_bytes(&w, msg_sig.s, sizeof(msg_sig.s));
-        cbor_write_text(&w, "yParity");
-        cbor_write_uint(&w, (msg_sig.v >= 27) ? (uint32_t)(msg_sig.v - 27)
-                                              : (uint32_t)(msg_sig.v & 1));
-
-    } else if (strcmp(method, "signTypedData") == 0) {
-        /* EIP-712 (T12b). The same rule as everything else here: the host sends
-         * the structure, the device recomputes the digest from it and signs
-         * only what it put on the screen. There is deliberately no way to pass
-         * a domain separator or a struct hash — either would be signHash with a
-         * schema attached, and this is precisely the request shape that drains
-         * wallets when a device shows a hash and shrugs. */
-        if (!request_is_authenticated()) {
-            send_session_error(ERR_SESSION, "session required");
-            return;
-        }
-        if (!pin_is_unlocked()) {
-            send_error(ERR_NOT_UNLOCKED, "device is locked");
-            return;
-        }
-
-        uint8_t      typed_digest[32];
-        Eip712Render typed;
-        Eip712Result typed_result = eip712_prepare(payload, len, typed_digest, &typed);
-
-        if (typed_result == EIP712_MALFORMED) {
-            send_error(ERR_MALFORMED, "typed data request is incomplete");
-            return;
-        }
-        if (typed_result == EIP712_UNHASHABLE) {
-            /* Not reopened by blind signing, and this is the one refusal here
-             * worth being loud about in the code. The device could not compute
-             * the digest at all — arrays, an undefined type, a value that
-             * contradicts its declared type — so the only way to sign would be
-             * to take a digest from the host. That is the thing this device
-             * exists not to do, so it stays refused however the settings are
-             * set, exactly as contract creation does. */
-            send_error(ERR_UNDECODABLE,
-                       "this device cannot compute that structure's hash");
-            return;
-        }
-
-        bool typed_blind = (typed_result == EIP712_UNRENDERABLE);
-        if (typed_blind && !blind_signing_enabled()) {
-            /* Hashable but not showable: too many fields for the screen, a
-             * string it has no glyphs for, a label that does not fit. The
-             * digest is real, so the owner who turned blind signing on may take
-             * it — with a warning screen and the digest, and no field list
-             * pretending to be complete. Same code as undecodable calldata,
-             * because it is the same sentence: the device cannot say what this
-             * does. */
-            send_error(ERR_UNDECODABLE,
-                       "this device cannot show all of that structure");
-            return;
-        }
-
-        HDPath typed_path = HDPATH_ETH_DEFAULT;
-        request_path(payload, len, &typed_path);
-        if (!hd_path_in_range(&typed_path)) {
-            send_error(ERR_MALFORMED, "derivation path out of range");
-            return;
-        }
-        uint32_t typed_index = typed_path.address_index;
-
-        EthAddress typed_from;
-        if (wallet_get_address_at_path(&typed_path, &typed_from) != WALLET_OK) {
-            send_error(ERR_NO_WALLET, "derivation failed");
-            return;
-        }
-
-        if (typed_blind) {
-            ESP_LOGW(TAG, "Blind signing: unrenderable typed data, %s",
-                     typed.primary_type);
-        }
-
-        /* The screen is handed the digest the signature will be taken over,
-         * not a second computation of it. There is one traversal of a
-         * typed-data document on this device and both the pages and the hash
-         * come out of it (T47, PROTOCOL.md 6bis). */
-        ui_request_sign_typed_data(&typed, typed_digest, typed_blind,
-                                   &typed_path, typed_from.hex);
-
-        SignOutcome typed_outcome = wait_for_user();
-        if (typed_outcome == SIGN_PENDING) {
-            send_error(ERR_USER_TIMEOUT, "no answer on the device");
-            return;
-        }
-        if (typed_outcome != SIGN_APPROVED) {
-            send_error(ERR_USER_REJECTED, "rejected on device");
-            return;
-        }
-
-        /* The wallet may have moved while the screen was up. See
-         * approval_still_holds(). */
-        if (!approval_still_holds(&typed_path, typed_from.hex)) {
-            ui_sign_report(false);
-            send_error(ERR_USER_REJECTED,
-                       "the wallet changed while you were confirming; try again");
-            return;
-        }
-
-        EthSignature typed_sig;
-        if (wallet_sign_hash_at_path(&typed_path, typed_digest, &typed_sig) != WALLET_OK) {
-            ui_sign_report(false);
-            send_error(ERR_NO_WALLET, "signing failed");
-            return;
-        }
-        ui_sign_report(true);
-
-        /* The reply shape signTransaction and signMessage already use. A client
-         * that reassembles one reassembles all three. */
-        cbor_write_map(&w, 1);
-        cbor_write_text(&w, "result");
-        cbor_write_map(&w, 4);
-        cbor_write_text(&w, "index");
-        cbor_write_uint(&w, typed_index);
-        cbor_write_text(&w, "r");
-        cbor_write_bytes(&w, typed_sig.r, sizeof(typed_sig.r));
-        cbor_write_text(&w, "s");
-        cbor_write_bytes(&w, typed_sig.s, sizeof(typed_sig.s));
-        cbor_write_text(&w, "yParity");
-        cbor_write_uint(&w, (typed_sig.v >= 27) ? (uint32_t)(typed_sig.v - 27)
-                                                : (uint32_t)(typed_sig.v & 1));
-
     } else if (strcmp(method, "selectWallet") == 0) {
         /* Which stored seed is active. No confirmation: it reveals nothing and
          * moves nothing, and every operation that does either names its own
@@ -1495,7 +679,7 @@ static void dispatch(const uint8_t *payload, size_t len)
          * This is the weaker of the two entry paths and it is not close: a
          * compromised host reads the passphrase as it is typed, before any
          * encryption applies. What makes it survivable is that the device
-         * derives the resulting wallet and shows its address, and the user
+         * derives the resulting wallet and shows its fingerprint, and the user
          * recognises it - or does not, and the passphrase is dropped. That is
          * why the passphrase is never accepted without the confirmation below,
          * and why a rejection clears it rather than leaving it applied. */
@@ -1555,26 +739,23 @@ static void dispatch(const uint8_t *payload, size_t len)
             return;
         }
 
-        /* The address the user compares, and the seed fingerprint beside it on
-         * the screen. Derived here, on the task that applied the passphrase,
-         * which is the same rule as T47: the screen must name what the device
-         * actually did.
+        /* The seed fingerprint the user compares. Derived here, on the task
+         * that applied the passphrase, which is the same rule as T47: the
+         * screen must name what the device actually did.
          *
-         * Account 0 deliberately, whatever account the device is browsing: the
-         * question this screen asks is "is this the right SEED", and the XFP
-         * the screen draws answers it for every account at once. Following the
-         * browsing selection would make the same passphrase confirm against a
-         * different address depending on an unrelated menu setting. */
-        HDPath pass_path = HDPATH_ETH_DEFAULT;
-        EthAddress pass_addr;
-        if (wallet_get_address_at_path(&pass_path, &pass_addr) != WALLET_OK) {
+         * The fingerprint rather than an address: it identifies the SEED, which
+         * is the question this screen asks, and it is the same for every chain
+         * and account, and there is no Zcash address to show yet (roadmap
+         * phase 1). */
+        uint32_t pass_xfp = 0;
+        if (wallet_get_master_fingerprint(&pass_xfp) != WALLET_OK) {
             host_passphrase_applied = false;
             wallet_clear_passphrase();
             send_error(ERR_NO_WALLET, "derivation failed");
             return;
         }
 
-        ui_request_passphrase_confirm(pass_addr.hex);
+        ui_request_passphrase_confirm(pass_xfp);
 
         SignOutcome pass_outcome = wait_for_user();
         if (pass_outcome != SIGN_APPROVED) {
@@ -1596,13 +777,13 @@ static void dispatch(const uint8_t *payload, size_t len)
         host_passphrase_applied = true;
         session_set_on_reset(host_passphrase_forget);
 
-        /* The address, never the passphrase or anything derived from it beyond
-         * what a public address already reveals. */
+        /* The fingerprint, never the passphrase or anything derived from it
+         * beyond what a watch-only descriptor already publishes. */
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
         cbor_write_map(&w, 2);
-        cbor_write_text(&w, "address");
-        cbor_write_text(&w, pass_addr.hex);
+        cbor_write_text(&w, "fingerprint");
+        cbor_write_uint(&w, pass_xfp);
         cbor_write_text(&w, "passphrase");
         cbor_write_uint(&w, 1);
 
@@ -1864,22 +1045,12 @@ void protocol_start(void)
         return;
     }
 
-    /* 10 KB, not 4 and no longer 8. Both request tasks run the same
-     * dispatch(), whose frame is sized by its largest local -- the EIP-712
-     * render struct is 744 bytes on its own -- and then call into PBKDF2 and
-     * BIP32 derivation on top of that. At 4 KB the BLE task overflowed and
-     * rebooted the device during unlock.
-     *
-     * The 8 -> 10 KB step paid for ETH_MAX_DATA going 256 -> 640: the deepest
-     * path is signTransaction, where an EthTx local then carried 640 bytes and
-     * eth_tx_hash nests a 832-byte payload buffer over eth_tx_encode's
-     * 800-byte body. That is roughly 1.1 KB more than before, and the margin
-     * warn_on_thin_stack() watches for is 2 KB -- growing the buffers without
-     * growing the stack would have spent that margin rather than kept it.
-     *
-     * The EthTx has since moved to static storage (owned_tx), which gives
-     * about 1 KB of that back. The stack is deliberately NOT shrunk to match:
-     * the hash buffers are still here, and the margin is the point.
+    /* 10 KB, not 4. Both request tasks run the same dispatch() and then call
+     * into PBKDF2 and BIP32 derivation; at 4 KB the BLE task overflowed and
+     * rebooted the device during unlock. The signing paths that pushed this
+     * to 10 KB are gone, but the stack is deliberately not shrunk ahead of
+     * the Zcash signing path that will replace them - warn_on_thin_stack()
+     * is the gauge, and it is cheaper to shrink with measurements later.
      *
      * Raised together with bleproto in ble.c: they must not drift, since either
      * one can serve any request. */
