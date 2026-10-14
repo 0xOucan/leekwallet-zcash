@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["zecz-cli"]
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+# Scanning and Halo 2 proving are unbearably slow unoptimized.
+[profile.dev]
+opt-level = 3
+debug = 1
+
+[profile.test]
+opt-level = 3
