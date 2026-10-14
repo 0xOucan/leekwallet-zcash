@@ -9,25 +9,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "button.h"
-#include "eip712.h"
-#include "eth-tx.h"
 #include "leek-wallet.h"
 
 /**
  * How many BIP44 accounts the device offers on its own screens (T45).
  *
- * m/44'/60'/<account>'/0/<index>: the account level is a separate identity off
- * the same seed — separate history, separate balance — which docs/VAULT.md
- * argues should be the ordinary way to hold several wallets, rather than
- * storing several seeds and multiplying the number of things to back up.
+ * m/44'/<coin>'/<account>': the account level is a separate identity off the
+ * same seed — separate history, separate balance — which docs/VAULT.md argues
+ * should be the ordinary way to hold several wallets, rather than storing
+ * several seeds and multiplying the number of things to back up.
  *
- * Ten, matching ADDRESS_INDEX_COUNT, and for the same reason: a selector on
- * four buttons has to stay a short cycle, and ten identities is already far
- * past what anyone navigates by pressing a button ten times. It is NOT a limit
- * on what the device can derive or sign — the protocol carries a full path and
- * a host may ask for any account — which is exactly why every confirmation
- * screen renders the whole path rather than an index. An account the device's
- * own menu cannot reach is legitimate; an account the user cannot SEE is not.
+ * Ten, because a selector on four buttons has to stay a short cycle. It is
+ * NOT a limit on what the device can derive — which is why any future signing
+ * confirmation must render the whole path rather than an index.
  */
 #define HD_ACCOUNT_COUNT 10
 
@@ -47,15 +41,12 @@ typedef enum {
     SCREEN_WALLET_CREATE,
     SCREEN_SETTINGS,
     SCREEN_WIPE_CONFIRM,
-    SCREEN_QR_CODE,
     SCREEN_ENTROPY,
     SCREEN_MNEMONIC_VERIFY,
     SCREEN_SESSION_CONFIRM,
     SCREEN_PASSPHRASE,
     SCREEN_PASSPHRASE_CONFIRM,
-    SCREEN_SIGN_CONFIRM,
     SCREEN_HOST_PASSPHRASE_CONFIRM,
-    SCREEN_SIGN_RESULT,
     /* Turning blind signing on (T16). Its own screen rather than a toggle in
      * the settings list, because switching off a protection should cost more
      * than one press and should not be possible without reading why. */
@@ -76,11 +67,11 @@ typedef enum {
      * Shows whatever ui_show_ur() was handed and nothing else; the screen
      * that decided to share it is the one that said what it is. */
     SCREEN_QR_OUT,
-    /* Main menu -> Show address: pick an account, read what sharing it means,
-     * then its crypto-hdkey goes out on SCREEN_QR_OUT. */
+    /* Main menu -> Show address. A "Zcash: coming soon" placeholder until
+     * the Zcash address/UFVK export of a later phase. */
     SCREEN_SHOW_ADDRESS,
     /* Main menu -> Scan, on a board with a camera. Hosts the capture loop and
-     * hands a complete eth-sign-request to the same signing path as USB. */
+     * assembles URs; every type is refused until Phase 5 (see airgap.h). */
     SCREEN_SCAN,
     SCREEN_COUNT
 } screen_id_t;
@@ -194,16 +185,6 @@ bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
                 screen_id_t back);
 
 /**
- * Open Show address with `account` preselected - what a scanned request for
- * an account may do, and all it may do.
- *
- * The request populates the screen; it does not answer it. Nothing leaves the
- * device until the user has read the statement and pressed OK, and they can
- * change the account first. UI task only.
- */
-void ui_suggest_show_address(uint32_t account);
-
-/**
  * UI main task - runs the screen state machine
  * This should be started as a FreeRTOS task
  * @param pvParameters Unused
@@ -286,68 +267,16 @@ void ui_request_unlock(void);
 void ui_request_lock(void);
 
 /**
- * Show a transaction and ask the user to approve it.
- *
- * The fields come from the device's own parse, never from a string the host
- * supplied, and the payload that gets signed is the one rendered here.
- *
- * `from` is the checksummed source address, derived by the caller at the same
- * path the signature will be taken at. It is passed in rather than looked up
- * on the UI task, which shares derivation state with the protocol task (T47).
- *
- * `path` is that same path, in full. It is a path rather than an index because
- * the account level is host-selectable too (T45): "addr 0" is identical text
- * for m/44'/60'/0'/0/0 and m/44'/60'/7'/0/0, and those are different wallets.
- * A host quietly moving accounts has to be visible, and it can only be visible
- * if the screen is given the whole path.
- *
- * Returns immediately. The protocol task polls ui_sign_outcome().
- */
-void ui_request_sign(const EthTx *tx, const HDPath *path, const char *from);
-
-/**
- * Show a message and ask the user to approve signing it (EIP-191).
- *
- * Same machinery as ui_request_sign(): one pending request at a time, one
- * outcome, polled by the protocol task. The message is rendered in full — the
- * caller has already refused anything that could not be (eth_message_is_
- * displayable), because a message shown mangled is a message signed blind.
- *
- * `from` is the checksummed source address, derived by the caller at the same
- * path the signature will be taken at (T47).
- */
-void ui_request_sign_message(const char *message, size_t length,
-                             const HDPath *path, const char *from);
-
-/**
- * Show EIP-712 typed data and ask the user to approve signing it (T12b).
- *
- * `render` is what eip712.c produced from the same walk that produced
- * `digest` — the caller does not get to assemble one from the other, and there
- * is no path here that renders a value the hash did not cover. The domain gets
- * a page of its own ahead of the message: a Permit's contract and chain are
- * what decide whose tokens the signature moves, and no amount of reading the
- * fields tells you that.
- *
- * `blind` is true when the structure hashed but could not be shown in full,
- * which the caller only permits with blind signing on. The screen then leads
- * with a warning and shows the digest, rather than a partial field list that
- * would read like a complete one.
- */
-void ui_request_sign_typed_data(const Eip712Render *render,
-                                const uint8_t digest[32], bool blind,
-                                const HDPath *path, const char *from);
-
-/**
  * Show the wallet a host-supplied passphrase produced, and ask the user to
  * confirm it is theirs (PROTOCOL.md 5).
  *
  * A mistyped or substituted passphrase does not error — it derives a different,
- * perfectly valid wallet — so recognising this address is the only thing that
- * catches it. Rejection is the recoverable path: the caller clears the
+ * perfectly valid wallet — so recognising this seed fingerprint is the only
+ * thing that catches it. The caller derives it, on the task that applied the
+ * passphrase. Rejection is the recoverable path: the caller clears the
  * passphrase.
  */
-void ui_request_passphrase_confirm(const char *address);
+void ui_request_passphrase_confirm(uint32_t fingerprint);
 
 typedef enum {
     SIGN_PENDING,
@@ -355,31 +284,11 @@ typedef enum {
     SIGN_REJECTED,
 } SignOutcome;
 
-/**
- * Tell the user what became of the thing they approved.
- *
- * Called by the task that actually produced the signature, not at the moment
- * of approval - the device should not claim to have signed something before it
- * has. Without this the screen dropped straight back to the address list and
- * an approval looked identical to a press that never registered.
- *
- * The device cannot know whether the transaction was broadcast; that happens on
- * the host. It knows only that it signed, and says only that.
- */
-void ui_sign_report(bool ok);
-
 /* The approval window closed with nobody answering: take the question off the
  * screen. Safe from the protocol task. */
 void ui_sign_expire(void);
 
 SignOutcome ui_sign_outcome(void);
 void ui_sign_clear(void);
-
-/**
- * Seconds since 1970 as a calendar date. Exposed so the host suite can check
- * it against known days; see the note on the definition for why a device with
- * no clock can still say what date a deadline names.
- */
-bool unix_to_civil_date(const char *secs, int *year, int *month, int *day);
 
 #endif /* UI_H */
