@@ -1,0 +1,9 @@
+# C code inside dependencies (libsecp256k1) must be built by the chip-specific
+# GCC wrapper. Without this, cc-rs falls back to the unified xtensa-esp-elf
+# compiler, whose default core is big-endian, and links garbage.
+# Both names resolve through PATH (`. ~/export-esp.sh`, or PlatformIO's
+# toolchain-xtensa-esp-elf).
+[env]
+CC_xtensa_esp32s3_none_elf = "xtensa-esp32s3-elf-gcc"
+AR_xtensa_esp32s3_none_elf = "xtensa-esp32s3-elf-ar"
+CFLAGS_xtensa_esp32s3_none_elf = "-mlongcalls -Os"

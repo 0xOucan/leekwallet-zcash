@@ -17,3 +17,8 @@ Before any Xtensa cargo build: `. ~/export-esp.sh`.
   (`platform/zsign_platform_host.c`).
 - PlatformIO's ESP-IDF integration ignores CMake custom targets, so cargo runs
   from `scripts/zsign_cargo.py` (a `pre:` extra script).
+- C code in Rust dependencies (libsecp256k1 via secp256k1-sys) must be built
+  with `xtensa-esp32s3-elf-gcc`. Left to itself, cc-rs picked the unified
+  `xtensa-esp-elf` compiler, whose default core is **big-endian**, and
+  produced big-endian objects. `components/zsign-rust/.cargo/config.toml`
+  pins CC/AR for the target. Check with `readelf -h` (Data: little endian).
