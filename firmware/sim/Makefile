@@ -6,7 +6,7 @@ CC      ?= gcc
 CRYPTO  := ../components/trezor-crypto
 CFLAGS  := -O1 -g -Wall -Wextra -Wno-unused-parameter \
            -I$(CRYPTO) -I../src -I../components/leek-wallet/include -I. -Ishim \
-           -DUSE_BIP39_CACHE=0 -DUSE_BIP32_CACHE=0 -DUSE_ETHEREUM=1 -DUSE_KECCAK=1
+           -DUSE_BIP39_CACHE=0 -DUSE_BIP32_CACHE=0
 BUILD   := build
 
 CRYPTO_SRC := $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c $(CRYPTO)/sha2.c \
