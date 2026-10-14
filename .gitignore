@@ -3,3 +3,6 @@
 /vectors/**/target/
 /host/**/target/
 .pio/
+
+# Claude Code local worktrees
+/.claude/
