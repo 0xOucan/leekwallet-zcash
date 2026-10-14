@@ -8,4 +8,5 @@
 extern crate alloc;
 
 mod platform;
+pub mod account;
 pub mod spike;

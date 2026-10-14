@@ -170,7 +170,7 @@ ZSIGN := ../components/zsign-rust
 $(ZSIGN)/target/release/libzsign_rust.a: FORCE
 	cd $(ZSIGN) && cargo +stable build --release -q
 
-$(BUILD)/test_zcash_keys: test_zcash_keys.c host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
+$(BUILD)/test_zcash_keys: test_zcash_keys.c ../../vectors/keys_vectors.h host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
                           $(ZSIGN)/target/release/libzsign_rust.a \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                    $(CRYPTO)/ecdsa.c $(CRYPTO)/bignum.c $(CRYPTO)/secp256k1.c \
