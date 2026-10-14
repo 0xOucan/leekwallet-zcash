@@ -40,7 +40,7 @@ static void bench_task(void *arg)
 
     vTaskDelay(pdMS_TO_TICKS(1500));    /* let the boot log drain */
 
-    ESP_LOGI(TAG, "starting; point the sensor at an animated ur:eth-sign-request");
+    ESP_LOGI(TAG, "starting; point the sensor at an animated multi-part UR");
     ESP_LOGI(TAG, "internal free %u, psram free %u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));

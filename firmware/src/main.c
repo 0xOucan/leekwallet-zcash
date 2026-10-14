@@ -158,8 +158,9 @@ void app_main(void)
     protocol_start();
 
 #if LEEK_HAS_CAMERA
-    /* The QR entrance's signing worker. Only where there is a camera to feed
-     * it: elsewhere nothing can submit, and 10 KB of idle stack is 10 KB. */
+    /* The QR entrance. A no-op until Phase 5 gives it a signing worker
+     * (airgap.h); only where there is a camera to feed it, because elsewhere
+     * nothing can submit and a worker's idle stack would be wasted. */
     airgap_start();
 #endif
 
