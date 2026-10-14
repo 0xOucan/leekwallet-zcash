@@ -1,5 +1,5 @@
-target/
+# Rust build output (only our crates; esp32-camera has a source dir named target/)
+/firmware/components/zsign-rust/target/
+/vectors/**/target/
+/host/**/target/
 .pio/
-build/
-*.bin
-!vectors/**/*.bin
