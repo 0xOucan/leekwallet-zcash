@@ -21,9 +21,11 @@
  *     or not, so a plaintext error leaves the two sides one apart and every
  *     later frame fails to decrypt. This is a permanent desynchronisation from
  *     a transient fault.
- *   - A call the device cannot describe is refused BEFORE the confirmation
- *     screen. Asking a user to approve something the device could not decode
- *     is blind signing with extra steps (PROTOCOL.md 6bis).
+ *   - A request is answered in the form it arrived in: a plaintext request
+ *     never gets an encrypted reply, whatever the session state.
+ *
+ * The signing commands this suite once covered are gone with the code that
+ * served them (roadmap 1.1); what remains is the chain-agnostic core.
  */
 
 #include <stdio.h>
@@ -32,8 +34,6 @@
 
 #include "cbor.h"
 #include "esp_stubs.h"
-#include "eth-decode.h"
-#include "eth-tx.h"
 #include "fake_nvs.h"
 #include "blind-signing.h"
 #include "fake_usb.h"
@@ -48,14 +48,8 @@
 #include "transport.h"
 #include "session.h"
 #include "ui.h"
-#include "airgap.h"
-#include "eip4527.h"
-#include "qr-out.h"
-#include "ur-decoder.h"
-#include "ur-encoder.h"
 
 #include "chacha20poly1305/rfc7539.h"
-#include "sha3.h"
 
 void pin__reset_static_state_for_test(void);
 void protocol__pump_for_test(void);
@@ -85,7 +79,6 @@ static int failures = 0;
 #define E_NOT_UNLOCKED 0x0100
 #define E_REJECTED     0x0200
 #define E_TIMEOUT      0x0201
-#define E_UNDECODABLE  0x0202
 #define E_NO_WALLET    0x0300
 #define E_SESSION      0x0400
 #define E_BUSY         0x0401
@@ -96,20 +89,13 @@ static int failures = 0;
  * protocol tests need to know is only whether the device asked the user
  * anything, and what answer came back. */
 
-static int  confirm_requests;      /* ui_request_sign calls */
 static int  unlock_prompts;
 static int  lock_requests;
 static int  session_confirm_prompts;
 static SignOutcome scripted_outcome;
-static EthTx    shown_tx;
-static uint32_t shown_index;
-static char     shown_from[43];
 
-static int  message_prompts;       /* ui_request_sign_message calls */
-static char shown_message[256];
-static size_t shown_message_len;
-static int  passphrase_prompts;    /* ui_request_passphrase_confirm calls */
-static char shown_passphrase_address[64];
+static int      passphrase_prompts;    /* ui_request_passphrase_confirm calls */
+static uint32_t shown_passphrase_xfp;
 
 /* What the device's own screens are browsing. A variable rather than a constant
  * so a test can move it the way a button press does, and check getStatus
@@ -129,106 +115,17 @@ bool ui_user_is_answering(void)       { return stub_user_is_answering; }
 void ui_request_unlock(void)          { unlock_prompts++; }
 void ui_request_lock(void)            { lock_requests++; }
 
-/* The path the device said it would sign at. Recorded whole, because the
- * account level is the half of it a host can move without the index changing
- * (T45) - "shown_index == 0" was true of two different wallets. */
-static HDPath shown_path;
-
-/* Set to model a link that dies while the approval screen is up.
- *
- * The device waits up to two minutes for a button, and a BLE disconnect is
- * handled on NimBLE's host task, not on the one blocked in wait_for_user() —
- * so session_reset() really can land inside that window on hardware. Here the
- * suite is single-threaded, and the stub the endpoint calls immediately before
- * it starts waiting is the honest place to inject it. */
-static bool disconnect_while_confirming;
-
-static void maybe_disconnect_mid_confirmation(void)
-{
-    if (disconnect_while_confirming) {
-        disconnect_while_confirming = false;
-        session_reset();
-    }
-}
-
-void ui_request_sign(const EthTx *tx, const HDPath *path, const char *from)
-{
-    confirm_requests++;
-    shown_tx = *tx;
-    shown_path = *path;
-    shown_index = path->address_index;
-    snprintf(shown_from, sizeof(shown_from), "%s", from ? from : "");
-    maybe_disconnect_mid_confirmation();
-}
-
-void ui_request_sign_message(const char *message, size_t length,
-                             const HDPath *path, const char *from)
-{
-    message_prompts++;
-    shown_message_len = length < sizeof(shown_message) - 1 ? length
-                                                          : sizeof(shown_message) - 1;
-    memcpy(shown_message, message, shown_message_len);
-    shown_message[shown_message_len] = '\0';
-    shown_path = *path;
-    shown_index = path->address_index;
-    snprintf(shown_from, sizeof(shown_from), "%s", from ? from : "");
-}
-
-/* Typed data. The rendering itself is eip712.c's business and is checked
- * against the EIP's vectors in test_eip712.c; what matters at this tier is that
- * the device asked at all, what digest it says it will sign, and whether it
- * admitted to being blind. */
-static int          typed_prompts;
-static uint8_t      shown_typed_digest[32];
-static bool         shown_typed_blind;
-static Eip712Render shown_typed;
-
-void ui_request_sign_typed_data(const Eip712Render *render,
-                                const uint8_t digest[32], bool blind,
-                                const HDPath *path, const char *from)
-{
-    typed_prompts++;
-    shown_typed = *render;
-    memcpy(shown_typed_digest, digest, sizeof(shown_typed_digest));
-    shown_typed_blind = blind;
-    shown_path = *path;
-    shown_index = path->address_index;
-    snprintf(shown_from, sizeof(shown_from), "%s", from ? from : "");
-}
-
-void ui_request_passphrase_confirm(const char *address)
+void ui_request_passphrase_confirm(uint32_t fingerprint)
 {
     passphrase_prompts++;
-    snprintf(shown_passphrase_address, sizeof(shown_passphrase_address), "%s",
-             address ? address : "");
+    shown_passphrase_xfp = fingerprint;
 }
-
-/* Run once from inside the approval wait, the way a second transport's task
- * would land while the first request's screen is up. NULL almost always. */
-static void (*while_waiting)(void);
 
 SignOutcome ui_sign_outcome(void)
 {
-    if (while_waiting != NULL) {
-        void (*hook)(void) = while_waiting;
-        while_waiting = NULL;
-        hook();
-    }
     return scripted_outcome;
 }
 
-/* What the device told the screen about the signature it produced. -1 means
- * it said nothing, which is the bug this records: an approval that silently
- * drops back to the address list is indistinguishable from a press that never
- * registered. Reported on hardware over BLE. */
-static int sign_reports;
-static int last_sign_report = -1;
-
-void ui_sign_report(bool ok)
-{
-    sign_reports++;
-    last_sign_report = ok ? 1 : 0;
-}
 void ui_sign_clear(void) { }
 
 /* Counted, because the timeout path answering the host is only half of what it
@@ -516,18 +413,9 @@ static void fresh_device(void)
     stash_len = 0;
     host_tx = host_rx = 0;
     session_up = false;
-    confirm_requests = unlock_prompts = lock_requests = session_confirm_prompts = 0;
-    airgap_acknowledge();
-    airgap_scan_reset();
-    sign_reports = 0;
-    last_sign_report = -1;
-    message_prompts = passphrase_prompts = typed_prompts = 0;
-    shown_typed_blind = false;
-    memset(&shown_typed, 0, sizeof(shown_typed));
-    memset(shown_typed_digest, 0, sizeof(shown_typed_digest));
-    memset(shown_message, 0, sizeof(shown_message));
-    shown_message_len = 0;
-    memset(shown_passphrase_address, 0, sizeof(shown_passphrase_address));
+    unlock_prompts = lock_requests = session_confirm_prompts = 0;
+    passphrase_prompts = 0;
+    shown_passphrase_xfp = 0;
     stub_user_is_answering = false;
     scripted_outcome = SIGN_APPROVED;
 
@@ -722,6 +610,9 @@ static void test_plaintext_ping_and_features(void)
               "getFeatures does not report blind signing off by default");
         CHECK(cbor_map_find(body, body_len, "model", &it) && it.type == CBOR_TEXT,
               "getFeatures names no model");
+        CHECK(cbor_map_find(body, body_len, "chain", &it) && it.type == CBOR_TEXT &&
+              it.value == 5 && memcmp(it.data, "zcash", 5) == 0,
+              "getFeatures does not report the zcash chain");
         /* Nothing user-specific may appear here: it is answered before any
          * session exists, to anything plugged into the port. */
         CHECK(!cbor_map_find(body, body_len, "walletCount", &it) &&
@@ -939,9 +830,11 @@ static void test_keys_need_a_session_and_a_passkey(void)
 
     uint8_t payload[64];
 
-    /* No handshake at all. */
-    send_plain(payload, req(payload, sizeof(payload), "getAddress"));
-    expect_error(T_ERROR, E_SESSION, "getAddress before any handshake");
+    /* No handshake at all. selectWallet is the probe: it moves which seed
+     * every later derivation comes from, so it is the gated command with the
+     * least excuse for answering a stranger. */
+    send_plain(payload, req(payload, sizeof(payload), "selectWallet"));
+    expect_error(T_ERROR, E_SESSION, "selectWallet before any handshake");
 
     /* Keys agreed, but the six digits on the OLED have not been compared. The
      * whole MITM defence is that step, so PENDING must be as good as nothing:
@@ -951,13 +844,13 @@ static void test_keys_need_a_session_and_a_passkey(void)
     CHECK(session_state() == SESSION_PENDING, "handshake left the session in state %d",
           session_state());
 
-    send_encrypted(payload, req(payload, sizeof(payload), "getAddress"));
-    expect_error(T_ERROR, E_SESSION, "getAddress before the passkey was confirmed");
+    send_encrypted(payload, req(payload, sizeof(payload), "selectWallet"));
+    expect_error(T_ERROR, E_SESSION, "selectWallet before the passkey was confirmed");
 
     /* And the plaintext door stays shut too — a host that skips the confirm
      * step and drops back to plaintext must not be answered either. */
-    send_plain(payload, req(payload, sizeof(payload), "getAddress"));
-    expect_error(T_ERROR, E_SESSION, "plaintext getAddress during a pending session");
+    send_plain(payload, req(payload, sizeof(payload), "selectWallet"));
+    expect_error(T_ERROR, E_SESSION, "plaintext selectWallet during a pending session");
 }
 
 static void test_locked_device_refuses_keys(void)
@@ -970,12 +863,12 @@ static void test_locked_device_refuses_keys(void)
     CHECK(!pin_is_unlocked(), "the fixture left the device unlocked");
 
     uint8_t payload[64];
-    send_encrypted(payload, req(payload, sizeof(payload), "getAddress"));
-    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "getAddress while locked");
+    send_encrypted(payload, req(payload, sizeof(payload), "selectWallet"));
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "selectWallet while locked");
 
-    send_encrypted(payload, req(payload, sizeof(payload), "signTransaction"));
-    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "signTransaction while locked");
-    CHECK(confirm_requests == 0, "a locked device put a transaction on screen");
+    send_encrypted(payload, req(payload, sizeof(payload), "setPassphrase"));
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "setPassphrase while locked");
+    CHECK(passphrase_prompts == 0, "a locked device put a passphrase on screen");
 
     /* unlock() prompts on the device and never carries a PIN. */
     send_encrypted(payload, req(payload, sizeof(payload), "unlock"));
@@ -1044,845 +937,38 @@ static void test_lock_answers_before_it_closes_the_channel(void)
           "a request after a lock dropped its own session");
 }
 
-static void test_address_derivation_reads_the_path(void)
+/* The signing and address commands LeekWallet served are gone (roadmap 1.1). A host
+ * built for that firmware must get a clean "unknown method" for each of them,
+ * inside a confirmed session and encrypted like any other error - not
+ * silence, not a plaintext reply that desynchronises the channel, and not a
+ * half-implemented answer. */
+static void test_removed_methods_are_unknown(void)
 {
-    printf("== getAddress derives from the path, not from address zero\n");
+    printf("== the removed LeekWallet methods are refused as unknown\n");
     fresh_device();
     device_unlocked();
     confirmed_session(13);
 
-    uint8_t payload[96];
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "getAddress");
-    cbor_write_text(&w, "path");
-    cbor_write_text(&w, "m/44'/60'/0'/0/7");
-    send_encrypted(payload, w.length);
-
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE, "getAddress was not answered");
-
-    const uint8_t *body;
-    size_t body_len;
-    CborItem it;
-    if (f.present && result_body(&f, &body, &body_len)) {
-        CHECK(cbor_map_find(body, body_len, "index", &it) &&
-              it.type == CBOR_UINT && it.value == 7,
-              "the trailing path component was ignored — every request would "
-              "derive address zero");
-        CHECK(cbor_map_find(body, body_len, "address", &it) &&
-              it.type == CBOR_TEXT && it.value == 42,
-              "address is not a 42-character hex string");
-    }
-}
-
-/* The centrepiece: what happens to a call the device cannot put into words. */
-static void test_undecodable_calldata_refused_before_confirmation(void)
-{
-    printf("== calldata outside the decodable set is 0x0202, before any prompt\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(14);
-
-    uint8_t to[20];
-    memset(to, 0xAB, sizeof(to));
-
-    /* A selector nothing decodes, with a plausible argument block behind it. */
-    uint8_t data[36] = { 0xde, 0xad, 0xbe, 0xef };
-
-    uint8_t payload[256];
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 5);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "path");
-    cbor_write_text(&w, "m/44'/60'/0'/0/0");
-    cbor_write_text(&w, "to");
-    cbor_write_bytes(&w, to, sizeof(to));
-    cbor_write_text(&w, "data");
-    cbor_write_bytes(&w, data, sizeof(data));
-    CHECK(cbor_writer_ok(&w), "request did not fit");
-    send_encrypted(payload, w.length);
-
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "unknown selector");
-
-    /* The refusal has to come first. Showing the screen and then refusing is
-     * only marginally better than showing a hash: the user has already been
-     * trained to press the button. */
-    CHECK(confirm_requests == 0,
-          "the device asked for approval of a call it could not describe");
-
-    /* A recognised selector with a truncated argument block is refused too —
-     * decoding is exact, not best-effort. */
-    uint8_t short_transfer[40] = { 0xa9, 0x05, 0x9c, 0xbb };
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 4);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "to");
-    cbor_write_bytes(&w, to, sizeof(to));
-    cbor_write_text(&w, "data");
-    cbor_write_bytes(&w, short_transfer, sizeof(short_transfer));
-    send_encrypted(payload, w.length);
-
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "half a transfer() call");
-    CHECK(confirm_requests == 0, "a half-decoded call reached the screen");
-
-    /* Contract creation: no recipient to name, no code to describe. */
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    send_encrypted(payload, w.length);
-
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "contract creation");
-    CHECK(confirm_requests == 0, "contract creation reached the screen");
-}
-
-/* A signTransaction request whose calldata nothing decodes. `to` present, so
- * the only thing standing between it and the screen is the setting. */
-static size_t undecodable_request(uint8_t *payload, size_t cap,
-                                  const uint8_t to[20],
-                                  const uint8_t *data, size_t data_len)
-{
-    CborWriter w;
-    cbor_writer_init(&w, payload, cap);
-    cbor_write_map(&w, 5);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "index");
-    cbor_write_uint(&w, 0);
-    cbor_write_text(&w, "to");
-    cbor_write_bytes(&w, to, 20);
-    cbor_write_text(&w, "data");
-    cbor_write_bytes(&w, data, data_len);
-    return cbor_writer_ok(&w) ? w.length : 0;
-}
-
-/* getFeatures over whatever channel is live. Asked inside a session it must
- * go encrypted like everything else, or the two sides desync and every later
- * assertion in the test is about the wrong frame. */
-static uint32_t features_blind_signing(void)
-{
+    static const char *const removed[] = {
+        "getAddress", "signTransaction", "signMessage", "signTypedData", "signHash",
+    };
     uint8_t payload[64];
-    size_t len = req(payload, sizeof(payload), "getFeatures");
-    Frame f;
-    if (session_up) {
-        send_encrypted(payload, len);
-        f = next_reply();
-    } else {
-        send_plain(payload, len);
-        f = next_frame();
+    for (size_t i = 0; i < sizeof(removed) / sizeof(removed[0]); i++) {
+        send_encrypted(payload, req(payload, sizeof(payload), removed[i]));
+        expect_error(T_ENC_ERROR, E_MALFORMED, removed[i]);
     }
-    const uint8_t *body;
-    size_t body_len;
-    CborItem it;
-    if (f.present && result_body(&f, &body, &body_len) &&
-        cbor_map_find(body, body_len, "blindSigning", &it) && it.type == CBOR_UINT) {
-        return (uint32_t)it.value;
-    }
-    return 0xFFFFFFFFu;   /* "no answer" must not read as "off" */
-}
 
-/* The escape hatch (T16): what it opens, and everything it does not. */
-static void test_blind_signing_is_off_until_the_device_says_otherwise(void)
-{
-    printf("== blind signing is off by default, on-device only, and narrow\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(40);
+    CHECK(passphrase_prompts == 0 && session_confirm_prompts == 1,
+          "a removed method put something on the screen");
 
-    uint8_t to[20];
-    memset(to, 0xC0, sizeof(to));
-    uint8_t data[36] = { 0xde, 0xad, 0xbe, 0xef };
-    uint8_t payload[PROTOCOL_MAX_FRAME];
-    size_t len;
-
-    CHECK(features_blind_signing() == 0,
-          "a fresh device does not report blind signing off");
-
-    /* There is no command for this. If one is ever added, this is where it
-     * will start failing: the setting must be unchanged by anything the host
-     * can send, including a request that names it. */
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "setBlindSigning");
-    cbor_write_text(&w, "enabled");
-    cbor_write_uint(&w, 1);
-    send_encrypted(payload, w.length);
-    (void)next_reply();     /* an unknown method; the answer does not matter */
-    CHECK(features_blind_signing() == 0,
-          "a host request changed the blind-signing setting");
-
-    /* Off: refused before the screen. This is the assertion the whole design
-     * rests on, restated here so the hatch cannot quietly remove it. */
-    len = undecodable_request(payload, sizeof(payload), to, data, sizeof(data));
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "undecodable call, setting off");
-    CHECK(confirm_requests == 0, "an undecodable call reached the screen while off");
-
-    /* On, as the device's own settings screen would do it. */
-    CHECK(blind_signing_set(true), "could not enable blind signing");
-    CHECK(features_blind_signing() == 1,
-          "getFeatures hides that the device is in the weaker mode");
-
-    /* Now it reaches the confirmation, and can be approved. */
-    scripted_outcome = SIGN_APPROVED;
-    len = undecodable_request(payload, sizeof(payload), to, data, sizeof(data));
-    send_encrypted(payload, len);
-    CHECK(confirm_requests == 1, "the hatch did not put the call on screen");
-
+    /* And the session is still in step afterwards. */
+    send_encrypted(payload, req(payload, sizeof(payload), "ping"));
     Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE, "the signature was not returned");
-    const uint8_t *body;
-    size_t body_len;
-    CborItem it;
-    if (f.present && result_body(&f, &body, &body_len)) {
-        /* Blind about the meaning, never about the bytes: the signature is
-         * still over the transaction the device parsed and showed, calldata
-         * included. */
-        CHECK(shown_tx.data_length == sizeof(data) &&
-              memcmp(shown_tx.data, data, sizeof(data)) == 0,
-              "the screen was shown different calldata than was sent");
-        uint8_t expect_digest[32];
-        CHECK(eth_tx_hash(&shown_tx, expect_digest), "could not re-hash what was shown");
-        CHECK(cbor_map_find(body, body_len, "r", &it) && it.type == CBOR_BYTES &&
-              it.value == 32 && memcmp(it.data, expect_digest, 32) == 0,
-              "the blind signature is not over what was displayed");
-    }
-
-    /* And can be refused, which must still be the cheap outcome. */
-    confirm_requests = 0;
-    scripted_outcome = SIGN_REJECTED;
-    len = undecodable_request(payload, sizeof(payload), to, data, sizeof(data));
-    send_encrypted(payload, len);
-    CHECK(confirm_requests == 1, "the rejected call never reached the screen");
-    expect_error(T_ENC_ERROR, E_REJECTED, "blind call rejected on device");
-
-    scripted_outcome = SIGN_APPROVED;
-
-    /* --- what the hatch deliberately does NOT open --- */
-
-    /* Contract creation. No recipient to name, so a blind confirmation would
-     * have nothing true left on it. */
-    confirm_requests = 0;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 3);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "data");
-    cbor_write_bytes(&w, data, sizeof(data));
-    send_encrypted(payload, w.length);
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "contract creation with the hatch open");
-    CHECK(confirm_requests == 0, "the hatch let contract creation through");
-
-    /* Oversized calldata. Refused for a different reason again: the device
-     * never held those bytes, so it could not hash what it signed. */
-    uint8_t huge[ETH_MAX_DATA + 1] = { 0xde, 0xad, 0xbe, 0xef };
-    len = undecodable_request(payload, sizeof(payload), to, huge, sizeof(huge));
-    CHECK(len > 0, "the oversized request did not fit the buffer");
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_MALFORMED, "oversized calldata with the hatch open");
-    CHECK(confirm_requests == 0, "the hatch let oversized calldata through");
-
-    /* A message the screen cannot render. Blind signing is about calldata; a
-     * confirmation showing mangled text carries no information at all. */
-    message_prompts = 0;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signMessage");
-    cbor_write_text(&w, "message");
-    cbor_write_text(&w, "hello\x01world");
-    send_encrypted(payload, w.length);
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "unrenderable message with the hatch open");
-    CHECK(message_prompts == 0, "the hatch let an unrenderable message through");
-
-    /* Off again, on the device, and the refusal is back with no reboot. */
-    CHECK(blind_signing_set(false), "could not disable blind signing");
-    CHECK(features_blind_signing() == 0, "getFeatures still reports blind signing on");
-    confirm_requests = 0;
-    len = undecodable_request(payload, sizeof(payload), to, data, sizeof(data));
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "undecodable call after turning it back off");
-    CHECK(confirm_requests == 0, "turning the setting off did not take effect");
-
-    /* Persistence: the setting survives a reboot, because a device that
-     * forgets it is on would silently re-protect - and one that forgets it is
-     * off would silently stay weak. */
-    CHECK(blind_signing_set(true), "could not re-enable");
-    fake_nvs_reboot();
-    blind_signing_forget();
-    CHECK(blind_signing_enabled(), "blind signing did not survive a reboot");
-    CHECK(blind_signing_set(false), "could not disable after the reboot");
-
-    /* A stored byte this firmware never wrote - corruption, or an older or
-     * newer build's encoding. Only an exact 1 may turn the protection off;
-     * anything else has to read as protected, because the safe reading of a
-     * damaged security flag is the safe setting. */
-    nvs_handle_t nvs;
-    CHECK(nvs_open("leek_ui", NVS_READWRITE, &nvs) == ESP_OK,
-          "could not open settings to plant a corrupt flag");
-    nvs_set_u8(nvs, "blindsig", 2);
-    nvs_commit(nvs);
-    nvs_close(nvs);
-    blind_signing_forget();
-    CHECK(!blind_signing_enabled(),
-          "a stored byte of 2 was read as blind signing enabled");
-}
-
-static size_t native_transfer_request(uint8_t *payload, size_t cap,
-                                      const uint8_t to[20], uint32_t index)
-{
-    CborWriter w;
-    cbor_writer_init(&w, payload, cap);
-    cbor_write_map(&w, 6);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "nonce");
-    cbor_write_uint(&w, 42);
-    cbor_write_text(&w, "index");
-    cbor_write_uint(&w, index);
-    cbor_write_text(&w, "to");
-    cbor_write_bytes(&w, to, 20);
-    cbor_write_text(&w, "value");
-    {
-        static const uint8_t value[] = { 0x0d, 0xe0, 0xb6, 0xb3, 0xa7, 0x64, 0x00, 0x00 };
-        cbor_write_bytes(&w, value, sizeof(value));
-    }
-    return cbor_writer_ok(&w) ? w.length : 0;
-}
-
-static void test_signing_signs_what_it_showed(void)
-{
-    printf("== an approved signature is taken over the fields that were rendered\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(15);
-
-    uint8_t to[20];
-    memset(to, 0x11, sizeof(to));
-
-    uint8_t payload[256];
-    size_t len = native_transfer_request(payload, sizeof(payload), to, 3);
-    scripted_outcome = SIGN_APPROVED;
-    send_encrypted(payload, len);
-
-    CHECK(confirm_requests == 1, "the transaction was signed without a prompt");
-    CHECK(shown_index == 3, "the screen named index %u, not 3", shown_index);
-    CHECK(strlen(shown_from) == 42,
-          "the screen was not given a full source address (T47): '%s'", shown_from);
-
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE, "the signature was not returned");
-
-    const uint8_t *body;
-    size_t body_len;
-    CborItem it;
-    if (f.present && result_body(&f, &body, &body_len)) {
-        /* The fake wallet returns the digest as r, so this is the assertion
-         * that the bytes signed are the bytes the device parsed and drew —
-         * the one property Rule 1 reduces to. */
-        uint8_t expect_digest[32];
-        CHECK(eth_tx_hash(&shown_tx, expect_digest), "could not re-hash what was shown");
-
-        CHECK(cbor_map_find(body, body_len, "r", &it) && it.type == CBOR_BYTES &&
-              it.value == 32 && memcmp(it.data, expect_digest, 32) == 0,
-              "the signature is not over the transaction that was displayed");
-
-        /* yParity, never the legacy 27/28 form: a client masking the low bit
-         * of 27 inverts it and recovers an address nobody owns. */
-        CHECK(cbor_map_find(body, body_len, "yParity", &it) && it.type == CBOR_UINT &&
-              it.value <= 1, "yParity is %u — that is the legacy v, not yParity",
-              it.value);
-        CHECK(cbor_map_find(body, body_len, "index", &it) && it.type == CBOR_UINT &&
-              it.value == 3, "the reply names a different index than was signed");
-
-        /* And the user is told. Dropping straight back to the address list
-         * after an approval reads as a press that never registered - observed
-         * on hardware, over BLE, where there is no cable to check against. */
-        CHECK(sign_reports == 1, "the screen was told %d times, expected once", sign_reports);
-        CHECK(last_sign_report == 1, "the screen was not told the signature succeeded");
-    }
-}
-
-/* The second request, sent while the first is on screen. */
-static uint8_t intruder_to[20];
-
-static void send_intruding_request(void)
-{
-    /* Straight into protocol_handle_frame() with a buffer of its own, which
-     * is what the BLE task does. Going through the USB pump instead would
-     * re-enter the one rx buffer the outer request is still sitting in, and
-     * that is a harness artefact rather than anything the device can do. */
-    uint8_t frame[PROTOCOL_MAX_FRAME];
-    size_t len = native_transfer_request(frame + 3, sizeof(frame) - 3,
-                                         intruder_to, 5);
-    len = host_seal(frame + 3, len);
-    frame[0] = (uint8_t)((len + 1) >> 8);
-    frame[1] = (uint8_t)(len + 1);
-    frame[2] = T_ENC_REQUEST;
-    protocol_handle_frame(frame, len + 3);
-}
-
-static void test_the_displayed_transaction_cannot_be_replaced(void)
-{
-    printf("== a transaction on screen owns its slot until it is answered\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(16);
-
-    uint8_t to[20];
-    memset(to, 0x11, sizeof(to));
-    memset(intruder_to, 0x22, sizeof(intruder_to));
-
-    /* EthTx moved from dispatch()'s stack into one owned slot so scan and
-     * confirm can be separate actions. The hazard that creates is a second
-     * request writing into the slot the screen is showing; the claim is what
-     * stops it. With a stack local the intruder got its own struct and its own
-     * prompt, which is survivable - with a shared slot and no claim it would be
-     * the transaction that gets signed. */
-    uint8_t payload[256];
-    size_t len = native_transfer_request(payload, sizeof(payload), to, 3);
-    scripted_outcome = SIGN_APPROVED;
-    while_waiting = send_intruding_request;
-    send_encrypted(payload, len);
-    collect_output();
-
-    CHECK(confirm_requests == 1,
-          "the second request reached the screen (%d prompts)", confirm_requests);
-    CHECK(memcmp(shown_tx.to, to, 20) == 0,
-          "the screen ended up showing the intruder's recipient");
-
-    Frame busy = next_reply();
-    uint32_t code = 0;
-    CHECK(busy.present && error_code(&busy, &code) && code == E_BUSY,
-          "the intruding request was not refused as busy (code 0x%04x)", code);
-
-    Frame f = next_reply();
-    const uint8_t *body;
-    size_t body_len;
-    CborItem it;
-    /* Either framing. `reply_encrypted` in protocol.c is per-frame global
-     * state, and the intruder's frame ending clears it under the outer one,
-     * so the outer answer can come back in the clear. That is the existing
-     * single-transport assumption (PROTOCOL.md 3b) showing through the
-     * harness, not something this test is about; what it is about is WHAT
-     * was signed. */
-    CHECK(f.present && (f.type == T_ENC_RESPONSE || f.type == T_RESPONSE),
-          "the first request was not answered (type 0x%02x)", f.type);
-    if (f.present && result_body(&f, &body, &body_len)) {
-        uint8_t expect_digest[32];
-        CHECK(eth_tx_hash(&shown_tx, expect_digest), "could not re-hash what was shown");
-        CHECK(cbor_map_find(body, body_len, "r", &it) && it.type == CBOR_BYTES &&
-              it.value == 32 && memcmp(it.data, expect_digest, 32) == 0,
-              "the signature is not over the transaction that was displayed");
-        CHECK(cbor_map_find(body, body_len, "index", &it) && it.value == 3,
-              "the reply names the intruder's index");
-    }
-
-    /* And the slot is free again afterwards: a claim that leaked would turn
-     * every later request into "busy". */
-    len = native_transfer_request(payload, sizeof(payload), to, 4);
-    send_encrypted(payload, len);
-    f = next_reply();
     CHECK(f.present && f.type == T_ENC_RESPONSE,
-          "the slot was not released after the first signature");
+          "the session did not survive the refusals");
 }
 
-/* ------------------------------------------------------------- air gap */
-
-/* The QR entrance, end to end on the host: an eth-sign-request built the way
- * a companion builds it, cut into animated parts, scanned with frames lost,
- * signed through the real protocol.c, and the answer shown as animated
- * eth-signature frames that are read back with the same decoders a companion
- * uses. Only the camera and the panel are missing. */
-
-typedef struct {
-    EthTx    tx;
-    uint32_t account, index;
-    uint64_t chain_id_field;   /* key 4, normally the tx's own */
-    uint8_t  data_type;
-    bool     with_id, with_address, with_fp;
-    bool     wrong_address, wrong_fp;
-    int      path_components;  /* 5 normally */
-    const uint8_t *raw_sign_data;   /* overrides tx when set */
-    size_t   raw_sign_data_len;
-} AirgapCase;
-
-static const uint8_t AIRGAP_ID[16] = {
-    0x9b, 0x1d, 0xeb, 0x4d, 0x3b, 0x7d, 0x4b, 0xad,
-    0x9b, 0xdd, 0x2b, 0x0d, 0x7b, 0x3d, 0xcb, 0x6d,
-};
-
-static void put_raw(CborWriter *w, const uint8_t *b, size_t n)
-{
-    for (size_t i = 0; i < n; i++) {
-        if (w->length >= w->capacity) { w->overflow = true; return; }
-        w->buf[w->length++] = b[i];
-    }
-}
-
-static bool hex_to_address(const char *hex, uint8_t out[20])
-{
-    if (strlen(hex) != 42) return false;
-    for (int i = 0; i < 20; i++) {
-        unsigned v;
-        if (sscanf(hex + 2 + i * 2, "%2x", &v) != 1) return false;
-        out[i] = (uint8_t)v;
-    }
-    return true;
-}
-
-static AirgapCase airgap_case(void)
-{
-    AirgapCase c;
-    memset(&c, 0, sizeof c);
-    c.tx.chain_id = 8453;                   /* Base: not the default of 1 */
-    eth_quantity_set_u64(&c.tx.nonce, 7);
-    eth_quantity_set_u64(&c.tx.max_priority_fee, 1000000);
-    eth_quantity_set_u64(&c.tx.max_fee, 3000000000ull);
-    eth_quantity_set_u64(&c.tx.gas_limit, 21000);
-    memset(c.tx.to, 0x42, 20);
-    c.tx.has_to = true;
-    eth_quantity_set_u64(&c.tx.value, 1000000000000000000ull);
-    c.account = 2;
-    c.index = 5;
-    c.chain_id_field = 8453;
-    c.data_type = 4;
-    c.with_id = c.with_address = c.with_fp = true;
-    c.path_components = 5;
-    return c;
-}
-
-/* The request CBOR, key by key, as ERC-4527 and Keystone lay it out. */
-static size_t build_sign_request(const AirgapCase *c, uint8_t *out, size_t cap,
-                                 uint8_t *sign_data, size_t *sign_data_len)
-{
-    size_t sd_len;
-    if (c->raw_sign_data) {
-        memcpy(sign_data, c->raw_sign_data, c->raw_sign_data_len);
-        sd_len = c->raw_sign_data_len;
-    } else {
-        sd_len = eth_tx_encode(&c->tx, sign_data, ETH_MAX_DATA + 192);
-    }
-    *sign_data_len = sd_len;
-
-    HDPath p = HDPATH_ETH_DEFAULT;
-    p.account = c->account;
-    p.address_index = c->index;
-    EthAddress a;
-    uint8_t addr[20] = {0};
-    if (wallet_get_address_at_path(&p, &a) == WALLET_OK) {
-        hex_to_address(a.hex, addr);
-    }
-    if (c->wrong_address) addr[19] ^= 0x01;
-    uint32_t fp = 0;
-    wallet_get_master_fingerprint(&fp);
-    if (c->wrong_fp) fp ^= 0x80000000u;
-
-    CborWriter w;
-    cbor_writer_init(&w, out, cap);
-    cbor_write_map(&w, 4 + (c->with_id ? 1 : 0) + (c->with_address ? 1 : 0));
-    if (c->with_id) {
-        cbor_write_uint(&w, 1);
-        put_raw(&w, (const uint8_t[]){ 0xD8, 0x25 }, 2);
-        cbor_write_bytes(&w, AIRGAP_ID, 16);
-    }
-    cbor_write_uint(&w, 2);
-    cbor_write_bytes(&w, sign_data, sd_len);
-    cbor_write_uint(&w, 3);
-    cbor_write_uint(&w, c->data_type);
-    cbor_write_uint(&w, 4);
-    cbor_write_uint(&w, (uint32_t)c->chain_id_field);
-    cbor_write_uint(&w, 5);
-    put_raw(&w, (const uint8_t[]){ 0xD9, 0x01, 0x30 }, 3);
-    cbor_write_map(&w, c->with_fp ? 2 : 1);
-    cbor_write_uint(&w, 1);
-    const uint32_t comp[5] = { 44, 60, c->account, 0, c->index };
-    cbor_write_array(&w, (size_t)c->path_components * 2);
-    for (int i = 0; i < c->path_components; i++) {
-        cbor_write_uint(&w, comp[i]);
-        put_raw(&w, (const uint8_t[]){ i < 3 ? 0xF5 : 0xF4 }, 1);
-    }
-    if (c->with_fp) {
-        cbor_write_uint(&w, 2);
-        cbor_write_uint(&w, fp);
-    }
-    if (c->with_address) {
-        cbor_write_uint(&w, 6);
-        cbor_write_bytes(&w, addr, 20);
-    }
-    return cbor_writer_ok(&w) ? w.length : 0;
-}
-
-/* Scan `cbor` as an animated ur:<type>, dropping every third frame. Returns
-   the last result the scanner gave. */
-static AirgapScan scan_animated(const char *type, const uint8_t *cbor, size_t len)
-{
-    static UrEncoder e;
-    AirgapScan last = AIRGAP_SCAN_UNREADABLE;
-    if (!ur_encoder_init(&e, type, cbor, len, 40)) {
-        return last;
-    }
-    for (int i = 1; i <= 200; i++) {
-        char part[400];
-        const size_t n = ur_encoder_next_part(&e, part, sizeof part);
-        if (i % 3 == 0) {
-            continue;   /* the camera missed it */
-        }
-        ur_to_upper(part);   /* as the companion shows it */
-        last = airgap_scan_feed(part, n);
-        if (last != AIRGAP_SCAN_ACCEPTED && last != AIRGAP_SCAN_REDUNDANT) {
-            break;
-        }
-    }
-    return last;
-}
-
-/* Run one case through the scanner. Returns the worker's state. */
-static AirgapState airgap_run(const AirgapCase *c, TxSignResult *rc,
-                              uint8_t *sign_data, size_t *sign_data_len)
-{
-    uint8_t req[1400];
-    const size_t n = build_sign_request(c, req, sizeof req, sign_data, sign_data_len);
-    CHECK(n > 0, "could not build the sign request");
-    const AirgapScan s = scan_animated("eth-sign-request", req, n);
-    CHECK(s == AIRGAP_SCAN_SUBMITTED, "the request was not submitted (scan %d)", s);
-    *rc = TXSIGN_OK;
-    return airgap_poll(NULL, NULL, rc);
-}
-
-static void test_airgap_signs_what_it_showed(void)
-{
-    printf("== a scanned sign request is signed through the USB path and answered as a UR\n");
-    fresh_device();
-    device_unlocked();
-    scripted_outcome = SIGN_APPROVED;
-
-    AirgapCase c = airgap_case();
-    uint8_t sign_data[ETH_MAX_DATA + 192];
-    size_t sign_data_len = 0;
-    TxSignResult rc;
-    const AirgapState st = airgap_run(&c, &rc, sign_data, &sign_data_len);
-    CHECK(st == AIRGAP_DONE, "the worker did not finish (state %d, %s)", st,
-          airgap_refusal_text(rc));
-    CHECK(confirm_requests == 1, "the user was asked %d times", confirm_requests);
-
-    /* What was shown came from the signed bytes: Base, account 2 index 5. */
-    CHECK(shown_tx.chain_id == 8453, "the screen showed chain %llu",
-          (unsigned long long)shown_tx.chain_id);
-    CHECK(shown_path.account == 2 && shown_path.address_index == 5,
-          "the screen showed m/44'/60'/%u'/0/%u", shown_path.account,
-          shown_path.address_index);
-    CHECK(last_sign_report == 1, "the screen was not told it was signed");
-
-    const uint8_t *body = NULL;
-    size_t body_len = 0;
-    if (airgap_poll(&body, &body_len, NULL) != AIRGAP_DONE) {
-        return;
-    }
-
-    /* Out through the panel's own frame schedule, in the chunky mode so it
-       takes several frames, and back through a companion's decoders. */
-    CHECK(qr_out_start("eth-signature", body, body_len, 2, 0), "could not show it");
-    CHECK(qr_out_seq_len() > 1, "a signature fit one v3 frame, so this is not animated");
-    static uint8_t frag[2048], mix[8 * 512];
-    static UrDecoder d;
-    ur_decoder_init(&d, frag, sizeof frag, mix, sizeof mix);
-    UrPartResult r = UR_PART_ACCEPTED;
-    int64_t now = 0;
-    for (int i = 0; i < 100 && r != UR_PART_COMPLETE; i++) {
-        const char *f = qr_out_frame();
-        if (i % 4 != 1) {   /* the companion's camera misses some too */
-            r = ur_decoder_receive(&d, f, strlen(f));
-        }
-        now += 1000000;
-        qr_out_tick(now);
-    }
-    qr_out_stop();
-    airgap_acknowledge();
-    CHECK(r == UR_PART_COMPLETE, "the signature UR never reassembled");
-    CHECK(strcmp(d.type, "eth-signature") == 0, "the answer is a %s", d.type);
-
-    size_t mlen = 0;
-    const uint8_t *m = ur_decoder_message(&d, &mlen);
-    E4527Signature sig;
-    const char *field = NULL;
-    CHECK(m && eip4527_decode_signature(m, mlen, &sig, &field) == E4527_OK,
-          "the strict reader refused the answer in %s", field ? field : "?");
-    CHECK(memcmp(sig.request_id, AIRGAP_ID, 16) == 0,
-          "the request id was not echoed exactly");
-
-    /* The fake wallet puts the digest in r: the signature is over keccak of
-       the exact bytes that were scanned, 0x02 || rlp(...). */
-    uint8_t digest[32];
-    keccak_256(sign_data, sign_data_len, digest);
-    CHECK(memcmp(sig.signature, digest, 32) == 0,
-          "the signature is not over the scanned sign-data");
-    CHECK(sig.signature[32 + 1] == 5, "signed at index %u, not 5", sig.signature[33]);
-    CHECK(sig.signature[64] <= 1, "v is %u, not yParity", sig.signature[64]);
-}
-
-/* Every refusal below happens before the question is put to the user, except
-   the ones that are the user's answer. A request the device will not sign
-   must not first cost the user a confirmation. */
-static void expect_refused(const AirgapCase *c, TxSignResult want, bool prompted,
-                           const char *what)
-{
-    fresh_device();
-    device_unlocked();
-    scripted_outcome = SIGN_APPROVED;
-    uint8_t sd[ETH_MAX_DATA + 192];
-    size_t sdl;
-    TxSignResult rc = TXSIGN_OK;
-    const AirgapState st = airgap_run(c, &rc, sd, &sdl);
-    CHECK(st == AIRGAP_FAILED && rc == want, "%s: state %d, %s (wanted %s)",
-          what, st, airgap_refusal_text(rc), airgap_refusal_text(want));
-    CHECK((confirm_requests > 0) == prompted, "%s: %s", what,
-          prompted ? "the user was never asked" : "the user was asked anyway");
-    airgap_acknowledge();
-}
-
-static void test_airgap_refusals(void)
-{
-    printf("== the air gap refuses what it cannot verify, before asking\n");
-    AirgapCase c;
-
-    c = airgap_case(); c.wrong_address = true;
-    expect_refused(&c, TXSIGN_PATH_MISMATCH, false,
-                   "an address that the path does not derive");
-
-    c = airgap_case(); c.wrong_fp = true;
-    expect_refused(&c, TXSIGN_PATH_MISMATCH, false, "another seed's fingerprint");
-
-    c = airgap_case(); c.chain_id_field = 1;
-    expect_refused(&c, TXSIGN_MALFORMED, false,
-                   "a chain-id field that disagrees with the signed bytes");
-
-    c = airgap_case(); c.data_type = 3;
-    expect_refused(&c, TXSIGN_MALFORMED, false, "a personal message");
-    c = airgap_case(); c.data_type = 1;
-    expect_refused(&c, TXSIGN_MALFORMED, false, "a legacy transaction");
-
-    c = airgap_case(); c.with_id = false;
-    expect_refused(&c, TXSIGN_MALFORMED, false, "a request with no id to answer");
-
-    c = airgap_case(); c.with_address = false;
-    expect_refused(&c, TXSIGN_MALFORMED, false, "a request with no address to verify");
-
-    c = airgap_case(); c.path_components = 4;
-    expect_refused(&c, TXSIGN_MALFORMED, false, "a path that is not m/44'/60'/a'/0/i");
-
-    /* 0x02 || rlp with the nonce as 0x81 0x07: the long form of a byte that
-       should stand alone. It parses; it is not what eth_tx_encode would
-       produce, so the bytes hashed would not be the bytes scanned. */
-    {
-        c = airgap_case();
-        uint8_t canon[ETH_MAX_DATA + 192];
-        const size_t n = eth_tx_encode(&c.tx, canon, sizeof canon);
-        static uint8_t odd[ETH_MAX_DATA + 200];
-        /* canon = 02 | f8/c0-list-header | 82 21 05 (chain) | 07 (nonce) ... */
-        const size_t hdr = (canon[1] >= 0xF8) ? 2 + (canon[1] - 0xF7) : 2;
-        const size_t chain_len = 3;
-        size_t o = 0;
-        odd[o++] = 0x02;
-        const size_t body = (n - hdr) + 1;
-        odd[o++] = 0xF8;
-        odd[o++] = (uint8_t)body;
-        memcpy(odd + o, canon + hdr, chain_len); o += chain_len;
-        odd[o++] = 0x81;
-        odd[o++] = 0x07;
-        memcpy(odd + o, canon + hdr + chain_len + 1, n - hdr - chain_len - 1);
-        o += n - hdr - chain_len - 1;
-        c.raw_sign_data = odd;
-        c.raw_sign_data_len = o;
-        expect_refused(&c, TXSIGN_MALFORMED, false, "a non-canonical RLP nonce");
-    }
-
-    /* A non-empty access list: EthTx cannot hold it, and dropping it would
-       sign a different transaction. */
-    {
-        c = airgap_case();
-        uint8_t canon[ETH_MAX_DATA + 192];
-        const size_t n = eth_tx_encode(&c.tx, canon, sizeof canon);
-        static uint8_t al[ETH_MAX_DATA + 200];
-        const size_t hdr = (canon[1] >= 0xF8) ? 2 + (canon[1] - 0xF7) : 2;
-        const size_t inner = n - hdr - 1;          /* body without the C0 */
-        /* [[0x11 x20, []]] = D7 D6 94 <20> C0 */
-        uint8_t entry[24] = { 0xD7, 0xD6, 0x94 };
-        memset(entry + 3, 0x11, 20);
-        entry[23] = 0xC0;
-        size_t o = 0;
-        al[o++] = 0x02;
-        al[o++] = 0xF8;
-        al[o++] = (uint8_t)(inner + sizeof entry);
-        memcpy(al + o, canon + hdr, inner); o += inner;
-        memcpy(al + o, entry, sizeof entry); o += sizeof entry;
-        c.raw_sign_data = al;
-        c.raw_sign_data_len = o;
-        expect_refused(&c, TXSIGN_MALFORMED, false, "a non-empty access list");
-    }
-
-    c = airgap_case();
-    fresh_device();
-    device_unlocked();
-    scripted_outcome = SIGN_REJECTED;
-    {
-        uint8_t sd[ETH_MAX_DATA + 192];
-        size_t sdl;
-        TxSignResult rc;
-        CHECK(airgap_run(&c, &rc, sd, &sdl) == AIRGAP_FAILED && rc == TXSIGN_REJECTED,
-              "a rejection on the device did not refuse");
-        CHECK(confirm_requests == 1, "a rejected request was not asked first");
-        airgap_acknowledge();
-    }
-
-    /* Locked: the PIN gate applies to this entrance exactly as to USB. */
-    fresh_device();
-    device_unlocked();
-    {
-        uint8_t req[1400], sd[ETH_MAX_DATA + 192];
-        size_t sdl;
-        c = airgap_case();
-        const size_t n = build_sign_request(&c, req, sizeof req, sd, &sdl);
-        pin_lock();
-        CHECK(scan_animated("eth-sign-request", req, n) == AIRGAP_SCAN_SUBMITTED,
-              "not submitted");
-        TxSignResult rc;
-        CHECK(airgap_poll(NULL, NULL, &rc) == AIRGAP_FAILED && rc == TXSIGN_LOCKED,
-              "a locked device went ahead");
-        CHECK(confirm_requests == 0, "a locked device asked the user");
-        airgap_acknowledge();
-    }
-
-    /* Anything that is not a sign request is not answered at all. */
-    fresh_device();
-    device_unlocked();
-    {
-        const uint8_t hdkey[] = { 0xA1, 0x03, 0x41, 0x02 };
-        CHECK(scan_animated("crypto-hdkey", hdkey, sizeof hdkey) == AIRGAP_SCAN_WRONG_TYPE,
-              "a crypto-hdkey was treated as a sign request");
-        CHECK(airgap_poll(NULL, NULL, NULL) == AIRGAP_IDLE, "the worker was started");
-    }
-}
+static size_t set_passphrase_request(uint8_t *buf, size_t cap, const char *pass);
 
 static void test_rejection_and_timeout(void)
 {
@@ -1891,20 +977,20 @@ static void test_rejection_and_timeout(void)
     device_unlocked();
     confirmed_session(16);
 
-    uint8_t to[20];
-    memset(to, 0x22, sizeof(to));
     uint8_t payload[256];
-    size_t len = native_transfer_request(payload, sizeof(payload), to, 0);
+    size_t len = set_passphrase_request(payload, sizeof(payload), "hunter2");
 
     scripted_outcome = SIGN_REJECTED;
     send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_REJECTED, "user rejected the transaction");
+    expect_error(T_ENC_ERROR, E_REJECTED, "user rejected the passphrase");
 
     /* Nobody touches the device. It must give up rather than hold the channel
-     * open forever. */
+     * open forever, and take the question off the screen as it does. */
+    sign_expiries = 0;
     scripted_outcome = SIGN_PENDING;
     send_encrypted(payload, len);
     expect_error(T_ENC_ERROR, E_TIMEOUT, "nobody answered the prompt");
+    CHECK(sign_expiries == 1, "the unanswered question was left on the screen");
 }
 
 /* The asymmetry that cost a hardware session: see the file header. */
@@ -2070,260 +1156,6 @@ static void test_tampered_frame_tears_down_the_session(void)
           "a failed tag left the session standing (state %d)", session_state());
 }
 
-/* ------------------------------------------------- EIP-191 personal_sign */
-
-/**
- * The prefixed digest, spelled out here rather than called out of eth-tx.c.
- *
- * The whole risk in personal_sign is the preimage: a wrong prefix or a wrong
- * decimal length produces a valid signature over something the user never
- * agreed to, and nothing downstream notices. A test that asked the device's own
- * hasher what the answer was would agree with any prefix at all.
- */
-static void personal_digest(const char *message, uint8_t out[32])
-{
-    char prefix[64];
-    int n = snprintf(prefix, sizeof(prefix),
-                     "\x19" "Ethereum Signed Message:\n%zu", strlen(message));
-
-    SHA3_CTX ctx;
-    keccak_256_Init(&ctx);
-    sha3_Update(&ctx, (const uint8_t *)prefix, (size_t)n);
-    sha3_Update(&ctx, (const uint8_t *)message, strlen(message));
-    keccak_Final(&ctx, out);
-}
-
-/** { "method": ..., "message": ..., "index": ... } */
-static size_t sign_message_request(uint8_t *buf, size_t cap,
-                                   const char *message, uint32_t index)
-{
-    CborWriter w;
-    cbor_writer_init(&w, buf, cap);
-    cbor_write_map(&w, 3);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signMessage");
-    cbor_write_text(&w, "message");
-    cbor_write_text(&w, message);
-    cbor_write_text(&w, "index");
-    cbor_write_uint(&w, index);
-    return cbor_writer_ok(&w) ? w.length : 0;
-}
-
-static void test_sign_message_signs_what_it_showed(void)
-{
-    printf("== signMessage hashes the EIP-191 preimage of the text it displayed\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(20);
-
-    /* The keccak the helper above uses is the same primitive the address
-     * checksum depends on, so pin it against the one vector everyone knows
-     * before trusting it to judge a prefix. */
-    static const uint8_t KECCAK_EMPTY[32] = {
-        0xc5,0xd2,0x46,0x01,0x86,0xf7,0x23,0x3c, 0x92,0x7e,0x7d,0xb2,0xdc,0xc7,0x03,0xc0,
-        0xe5,0x00,0xb6,0x53,0xca,0x82,0x27,0x3b, 0x7b,0xfa,0xd8,0x04,0x5d,0x85,0xa4,0x70,
-    };
-    uint8_t empty[32];
-    SHA3_CTX ctx;
-    keccak_256_Init(&ctx);
-    keccak_Final(&ctx, empty);
-    CHECK(memcmp(empty, KECCAK_EMPTY, 32) == 0,
-          "the test's own keccak is wrong; nothing below means anything");
-
-    const char *message = "Sign in to LeekWallet";
-
-    uint8_t payload[256];
-    scripted_outcome = SIGN_APPROVED;
-    send_encrypted(payload, sign_message_request(payload, sizeof(payload), message, 2));
-
-    CHECK(message_prompts == 1, "the message was signed without a prompt");
-    CHECK(shown_index == 2, "the screen named index %u, not 2", shown_index);
-    CHECK(strlen(shown_from) == 42,
-          "the screen was not given a full source address: '%s'", shown_from);
-    CHECK(shown_message_len == strlen(message) &&
-          memcmp(shown_message, message, shown_message_len) == 0,
-          "the screen was shown something other than the message: '%s'", shown_message);
-
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE, "the signature was not returned");
-
-    const uint8_t *body;
-    size_t body_len;
-    CborItem it;
-    uint8_t first[32];
-    memset(first, 0, sizeof(first));
-
-    if (f.present && result_body(&f, &body, &body_len)) {
-        /* The fake wallet returns the digest as r, so this compares the bytes
-         * signed against the prefixed hash of the bytes displayed. */
-        uint8_t want[32];
-        personal_digest(shown_message, want);
-
-        CHECK(cbor_map_find(body, body_len, "r", &it) && it.type == CBOR_BYTES &&
-              it.value == 32 && memcmp(it.data, want, 32) == 0,
-              "the signature is not over the EIP-191 digest of what was shown");
-        if (cbor_map_find(body, body_len, "r", &it) && it.type == CBOR_BYTES &&
-            it.value == 32) {
-            memcpy(first, it.data, 32);
-        }
-
-        /* And specifically that the prefix is there at all: signing the bare
-         * keccak of the message would be a working signature over a preimage
-         * an attacker can choose to look like a transaction. */
-        uint8_t unprefixed[32];
-        keccak_256_Init(&ctx);
-        sha3_Update(&ctx, (const uint8_t *)message, strlen(message));
-        keccak_Final(&ctx, unprefixed);
-        CHECK(memcmp(first, unprefixed, 32) != 0,
-              "signMessage hashed the message without the EIP-191 prefix");
-
-        CHECK(cbor_map_find(body, body_len, "yParity", &it) &&
-              it.type == CBOR_UINT && it.value <= 1,
-              "yParity is %u - that is the legacy v", it.value);
-        CHECK(cbor_map_find(body, body_len, "index", &it) &&
-              it.type == CBOR_UINT && it.value == 2,
-              "the reply names a different index than was signed");
-    }
-
-    /* The decimal length is a byte count with no padding, so a message one byte
-     * longer must hash under a different prefix as well as different content. */
-    send_encrypted(payload,
-                   sign_message_request(payload, sizeof(payload),
-                                        "Sign in to LeekWallet!", 2));
-    f = next_reply();
-    if (f.present && result_body(&f, &body, &body_len) &&
-        cbor_map_find(body, body_len, "r", &it) && it.type == CBOR_BYTES &&
-        it.value == 32) {
-        uint8_t want2[32];
-        personal_digest("Sign in to LeekWallet!", want2);
-        CHECK(memcmp(it.data, want2, 32) == 0,
-              "a 22-byte message did not hash under its own length prefix");
-        CHECK(memcmp(it.data, first, 32) != 0, "two messages hashed the same");
-    } else {
-        CHECK(false, "the second message was not signed");
-    }
-}
-
-static void test_sign_message_refuses_what_it_cannot_show(void)
-{
-    printf("== signMessage refuses tiers, junk and anything it cannot render\n");
-    fresh_device();
-    device_has_a_wallet();          /* wallet present, PIN not entered */
-
-    uint8_t payload[512];
-    size_t len = sign_message_request(payload, sizeof(payload), "hi", 0);
-
-    /* No session at all. */
-    send_plain(payload, len);
-    expect_error(T_ERROR, E_SESSION, "signMessage before any handshake");
-    CHECK(message_prompts == 0, "a session-less request reached the screen");
-
-    confirmed_session(21);
-
-    /* Session, but locked: the keys tier is not open. */
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "signMessage while locked");
-    CHECK(message_prompts == 0, "a locked device put a message on screen");
-
-    pin_set("123456");
-    pin_verify("123456");
-    CHECK(pin_is_unlocked(), "the fixture did not unlock the device");
-
-    CborWriter w;
-
-    /* No message field at all. */
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 1);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signMessage");
-    send_encrypted(payload, w.length);
-    expect_error(T_ENC_ERROR, E_MALFORMED, "signMessage with no message");
-
-    /* A byte string where text was specified. Guessing that bytes are UTF-8 is
-     * how one message acquires two spellings and the device stops knowing which
-     * one it displayed. */
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signMessage");
-    cbor_write_text(&w, "message");
-    cbor_write_bytes(&w, (const uint8_t *)"hi", 2);
-    send_encrypted(payload, w.length);
-    expect_error(T_ENC_ERROR, E_MALFORMED, "a message sent as bytes");
-
-    /* Longer than the screen can hold. Truncating would sign more than it
-     * showed, which is the failure this whole file is about. */
-    char long_message[200];
-    memset(long_message, 'A', sizeof(long_message) - 1);
-    long_message[sizeof(long_message) - 1] = '\0';
-    send_encrypted(payload,
-                   sign_message_request(payload, sizeof(payload), long_message, 0));
-    expect_error(T_ENC_ERROR, E_MALFORMED, "a message longer than the display");
-    CHECK(message_prompts == 0, "an oversized message reached the screen");
-
-    /* Exactly at the bound is fine, one over is not. */
-    char at_limit[121];
-    memset(at_limit, 'B', 120);
-    at_limit[120] = '\0';
-    scripted_outcome = SIGN_APPROVED;
-    send_encrypted(payload, sign_message_request(payload, sizeof(payload), at_limit, 0));
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE, "a 120-byte message was refused");
-    CHECK(message_prompts == 1, "the 120-byte message was not confirmed");
-    CHECK(shown_message_len == 120, "the screen was shown %zu of 120 bytes",
-          shown_message_len);
-
-    char over_limit[122];
-    memset(over_limit, 'B', 121);
-    over_limit[121] = '\0';
-    send_encrypted(payload, sign_message_request(payload, sizeof(payload), over_limit, 0));
-    expect_error(T_ENC_ERROR, E_MALFORMED, "a 121-byte message");
-
-    /* Not renderable on a 128x64 OLED, so not signable: a control byte, a
-     * newline, a non-ASCII byte and a tab. Showing a mangled version of a
-     * message while signing the real one is blind signing in a costume (6bis),
-     * so each is 0x0202 - the device cannot say what this is. */
-    message_prompts = 0;
-    static const char *unrenderable[] = {
-        "hello\x01world",
-        "line one\nline two",
-        "caf\xc3\xa9",
-        "tab\there",
-    };
-    for (size_t i = 0; i < sizeof(unrenderable) / sizeof(unrenderable[0]); i++) {
-        send_encrypted(payload,
-                       sign_message_request(payload, sizeof(payload),
-                                            unrenderable[i], 0));
-        expect_error(T_ENC_ERROR, E_UNDECODABLE, "an unrenderable message");
-    }
-    CHECK(message_prompts == 0,
-          "the device asked for approval of a message it could not render");
-
-    /* An index beyond the non-hardened range is a parse failure, not an
-     * address. */
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 3);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signMessage");
-    cbor_write_text(&w, "message");
-    cbor_write_text(&w, "hi");
-    cbor_write_text(&w, "index");
-    cbor_write_uint(&w, 0x80000000u);
-    send_encrypted(payload, w.length);
-    expect_error(T_ENC_ERROR, E_MALFORMED, "an index above 0x7FFFFFFF");
-    CHECK(message_prompts == 0, "an out-of-range index reached the screen");
-
-    /* And the two ways a user ends a request. */
-    len = sign_message_request(payload, sizeof(payload), "hi", 0);
-    scripted_outcome = SIGN_REJECTED;
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_REJECTED, "the user refused the message");
-
-    scripted_outcome = SIGN_PENDING;
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_TIMEOUT, "nobody answered the message prompt");
-}
-
 /* ----------------------------------------------------------- selectWallet */
 
 static size_t select_wallet_request(uint8_t *buf, size_t cap, uint64_t index)
@@ -2338,281 +1170,11 @@ static size_t select_wallet_request(uint8_t *buf, size_t cap, uint64_t index)
     return cbor_writer_ok(&w) ? w.length : 0;
 }
 
-static bool address_of_index_zero(char *out, size_t out_size)
+/* Which seed the device is deriving from, by its fingerprint. The switch has
+ * to reach derivation, not merely a status field. */
+static bool active_fingerprint(uint32_t *out)
 {
-    uint8_t payload[96];
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "getAddress");
-    cbor_write_text(&w, "index");
-    cbor_write_uint(&w, 0);
-    send_encrypted(payload, w.length);
-
-    Frame f = next_reply();
-    const uint8_t *body;
-    size_t body_len;
-    CborItem it;
-    if (!f.present || !result_body(&f, &body, &body_len)) return false;
-    if (!cbor_map_find(body, body_len, "address", &it) || it.type != CBOR_TEXT) {
-        return false;
-    }
-    return cbor_text_copy(&it, out, out_size);
-}
-
-/* ------------------------------------------------------- signTypedData */
-
-/* An ERC-2612 Permit against USDC. The digest this hashes to is pinned in
- * test_eip712.c against viem; here the question is only what the command does
- * with it, so the value is a parameter and the rest is fixed.
- *
- * `field_type` is a parameter for one reason: swapping "uint256" for
- * "uint256[]" turns a document the device can hash into one it cannot, without
- * changing anything else about the request. */
-static size_t permit_request(uint8_t *buf, size_t cap, const uint8_t value[32],
-                             const char *field_type, uint32_t index)
-{
-    static const uint8_t USDC[20] = {
-        0xa0,0xb8,0x69,0x91,0xc6,0x21,0x8b,0x36,0xc1,0xd1,
-        0x9d,0x4a,0x2e,0x9e,0xb0,0xce,0x36,0x06,0xeb,0x48
-    };
-    static const uint8_t OWNER[20] = {
-        0x5b,0x38,0xda,0x6a,0x70,0x1c,0x56,0x85,0x45,0xdc,
-        0xfc,0xb0,0x3f,0xcb,0x87,0x5f,0x56,0xbe,0xdd,0xc4
-    };
-    static const uint8_t SPENDER[20] = {
-        0x11,0x11,0x11,0x12,0x54,0xee,0xb2,0x54,0x77,0xb6,
-        0x8f,0xb8,0x5e,0xd9,0x29,0xf7,0x3a,0x96,0x05,0x82
-    };
-
-    CborWriter w;
-    cbor_writer_init(&w, buf, cap);
-    cbor_write_map(&w, 6);
-
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTypedData");
-
-    cbor_write_text(&w, "types");
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "EIP712Domain");
-    cbor_write_array(&w, 4);
-    static const char *dom_names[] = {"name", "version", "chainId", "verifyingContract"};
-    static const char *dom_types[] = {"string", "string", "uint256", "address"};
-    for (int i = 0; i < 4; i++) {
-        cbor_write_map(&w, 2);
-        cbor_write_text(&w, "name");
-        cbor_write_text(&w, dom_names[i]);
-        cbor_write_text(&w, "type");
-        cbor_write_text(&w, dom_types[i]);
-    }
-    cbor_write_text(&w, "Permit");
-    cbor_write_array(&w, 5);
-    static const char *p_names[] = {"owner", "spender", "value", "nonce", "deadline"};
-    for (int i = 0; i < 5; i++) {
-        cbor_write_map(&w, 2);
-        cbor_write_text(&w, "name");
-        cbor_write_text(&w, p_names[i]);
-        cbor_write_text(&w, "type");
-        cbor_write_text(&w, i < 2 ? "address" : (i == 2 ? field_type : "uint256"));
-    }
-
-    cbor_write_text(&w, "primaryType");
-    cbor_write_text(&w, "Permit");
-
-    cbor_write_text(&w, "domain");
-    cbor_write_map(&w, 4);
-    cbor_write_text(&w, "name");
-    cbor_write_text(&w, "USD Coin");
-    cbor_write_text(&w, "version");
-    cbor_write_text(&w, "2");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "verifyingContract");
-    cbor_write_bytes(&w, USDC, 20);
-
-    cbor_write_text(&w, "message");
-    cbor_write_map(&w, 5);
-    cbor_write_text(&w, "owner");
-    cbor_write_bytes(&w, OWNER, 20);
-    cbor_write_text(&w, "spender");
-    cbor_write_bytes(&w, SPENDER, 20);
-    cbor_write_text(&w, "value");
-    cbor_write_bytes(&w, value, 32);
-    cbor_write_text(&w, "nonce");
-    cbor_write_uint(&w, 0);
-    cbor_write_text(&w, "deadline");
-    cbor_write_uint(&w, 1893456000u);
-
-    cbor_write_text(&w, "index");
-    cbor_write_uint(&w, index);
-
-    return cbor_writer_ok(&w) ? w.length : 0;
-}
-
-static void test_sign_typed_data_signs_what_it_showed(void)
-{
-    printf("== signTypedData shows the domain and the fields, then signs that digest\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(30);
-
-    uint8_t max[32];
-    memset(max, 0xff, sizeof(max));
-
-    uint8_t payload[2048];
-    size_t  len = permit_request(payload, sizeof(payload), max, "uint256", 3);
-    CHECK(len > 0, "the permit request did not fit");
-
-    scripted_outcome = SIGN_APPROVED;
-    send_encrypted(payload, len);
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE, "a well-formed Permit was refused");
-    CHECK(typed_prompts == 1, "the Permit was signed without a confirmation");
-    CHECK(!shown_typed_blind, "a renderable Permit was shown as blind");
-
-    /* The digest test_eip712.c pins against viem. Checked again here because
-     * this is the path where a signature actually comes out: a command that
-     * hashed correctly and then signed something else would pass every test in
-     * that file. */
-    static const uint8_t WANT[32] = {
-        0x42,0x3a,0x95,0x8e,0xc7,0x2d,0xaf,0x49, 0x6f,0xde,0x79,0xb1,0x2e,0x29,0x2d,0xd6,
-        0xed,0xe3,0x71,0xac,0x07,0x07,0xc0,0xcc, 0x84,0x8d,0xfe,0x6d,0x7d,0x45,0xd1,0x11,
-    };
-    CHECK(memcmp(shown_typed_digest, WANT, 32) == 0,
-          "the device signed a digest other than the Permit's");
-
-    /* The screen was given the fields, not a summary of them - and the
-     * infinite allowance is named rather than printed. */
-    CHECK(shown_typed.field_count == 5, "the screen got %d fields",
-          shown_typed.field_count);
-    CHECK(shown_typed.fields[2].unlimited,
-          "an infinite Permit reached the screen as an ordinary number");
-    CHECK(shown_typed.fields[4].is_deadline, "the deadline was not flagged");
-    CHECK(shown_typed.has_verifying_contract,
-          "the screen was not told which contract honours this");
-
-    /* Same reply shape as the other two signing commands, and the index the
-     * request asked for. */
-    CborItem it;
-    CHECK(cbor_map_find(f.payload, f.len, "result", &it), "no result map");
-    /* The signature rides in the result map; what matters here is that the
-     * path the screen saw is the path the request named. */
-    CHECK(shown_path.address_index == 3, "signed at index %u, asked for 3",
-          (unsigned)shown_path.address_index);
-}
-
-static void test_sign_typed_data_refuses_what_it_cannot_show(void)
-{
-    printf("== signTypedData refuses tiers, arrays, and structures it cannot render\n");
-    fresh_device();
-    device_has_a_wallet();
-
-    uint8_t value[32];
-    memset(value, 0, sizeof(value));
-    value[31] = 1;
-
-    uint8_t payload[2048];
-    size_t  len = permit_request(payload, sizeof(payload), value, "uint256", 0);
-
-    send_plain(payload, len);
-    expect_error(T_ERROR, E_SESSION, "signTypedData before any handshake");
-    CHECK(typed_prompts == 0, "a session-less request reached the screen");
-
-    confirmed_session(31);
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "signTypedData while locked");
-    CHECK(typed_prompts == 0, "a locked device put typed data on screen");
-
-    pin_set("123456");
-    pin_verify("123456");
-
-    /* Nothing typed-data-shaped in the request at all. A protocol error, not a
-     * policy one, and it must not read as a refusal to display. */
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 1);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTypedData");
-    send_encrypted(payload, w.length);
-    expect_error(T_ENC_ERROR, E_MALFORMED, "signTypedData with no structure");
-
-    /* An array field. The device can neither hash nor show it, and this is the
-     * refusal blind signing does NOT reopen - checked below. */
-    len = permit_request(payload, sizeof(payload), value, "uint256[]", 0);
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_UNDECODABLE, "a typed-data array");
-    CHECK(typed_prompts == 0, "an array structure reached the screen");
-
-    CHECK(blind_signing_set(true), "could not enable blind signing");
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_UNDECODABLE,
-                 "an array structure with blind signing on");
-    CHECK(typed_prompts == 0,
-          "blind signing reopened a document the device cannot hash");
-    CHECK(blind_signing_set(false), "could not disable blind signing");
-}
-
-static void test_unrenderable_typed_data_is_the_blind_case(void)
-{
-    printf("== an unshowable structure is refused by default and blind-signable after\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(32);
-
-    /* A string with no glyphs on this screen. It hashes perfectly well, which
-     * is exactly what separates it from the array above. */
-    CborWriter w;
-    uint8_t   payload[1024];
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 5);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTypedData");
-    cbor_write_text(&w, "types");
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "EIP712Domain");
-    cbor_write_array(&w, 1);
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "name");
-    cbor_write_text(&w, "name");
-    cbor_write_text(&w, "type");
-    cbor_write_text(&w, "string");
-    cbor_write_text(&w, "Note");
-    cbor_write_array(&w, 1);
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "name");
-    cbor_write_text(&w, "body");
-    cbor_write_text(&w, "type");
-    cbor_write_text(&w, "string");
-    cbor_write_text(&w, "primaryType");
-    cbor_write_text(&w, "Note");
-    cbor_write_text(&w, "domain");
-    cbor_write_map(&w, 1);
-    cbor_write_text(&w, "name");
-    cbor_write_text(&w, "Notes");
-    cbor_write_text(&w, "message");
-    cbor_write_map(&w, 1);
-    cbor_write_text(&w, "body");
-    cbor_write_text(&w, "approve \xf0\x9f\x92\xb8 now");
-    size_t len = w.length;
-
-    send_encrypted(payload, len);
-    expect_error(T_ENC_ERROR, E_UNDECODABLE,
-                 "a structure the screen cannot draw");
-    CHECK(typed_prompts == 0, "an unrenderable structure reached the screen");
-
-    /* With the hatch open it signs — but the screen is told it is blind, so it
-     * can lead with the warning and the digest rather than a field list that
-     * would read as complete. */
-    CHECK(blind_signing_set(true), "could not enable blind signing");
-    scripted_outcome = SIGN_APPROVED;
-    send_encrypted(payload, len);
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE,
-          "blind signing did not admit an unrenderable structure");
-    CHECK(typed_prompts == 1, "it signed without asking");
-    CHECK(shown_typed_blind, "the screen was not told the request was blind");
-    CHECK(blind_signing_set(false), "could not disable blind signing");
+    return wallet_get_master_fingerprint(out) == WALLET_OK;
 }
 
 static void test_select_wallet(void)
@@ -2637,8 +1199,8 @@ static void test_select_wallet(void)
         "legal winner thank year wave sausage worth useful legal winner thank year "
         "wave sausage worth useful legal winner thank year wave sausage worth title");
 
-    char before[64] = {0}, after[64] = {0};
-    CHECK(address_of_index_zero(before, sizeof(before)), "no address before the switch");
+    uint32_t before = 0, after = 0;
+    CHECK(active_fingerprint(&before), "no fingerprint before the switch");
 
     send_encrypted(payload, select_wallet_request(payload, sizeof(payload), 1));
     Frame f = next_reply();
@@ -2652,13 +1214,14 @@ static void test_select_wallet(void)
               "selectWallet did not report the wallet it selected");
     }
 
-    CHECK(address_of_index_zero(after, sizeof(after)), "no address after the switch");
+    CHECK(active_fingerprint(&after), "no fingerprint after the switch");
     /* The switch has to reach derivation, not merely a status field: a
      * selectWallet that updates a counter and leaves the keys alone is worse
      * than one that fails, because the screen would then name wallet 1 while
-     * signing with wallet 2. */
-    CHECK(strcmp(before, after) != 0,
-          "selecting a different wallet derived the same address (%s)", after);
+     * the keys came from wallet 2. */
+    CHECK(before != after,
+          "selecting a different wallet left the same seed active (%08X)",
+          (unsigned)after);
 
     /* Out of range, in every direction the host can reach for. 256 and 257 are
      * the ones worth naming: a uint8_t cast would turn them into 0 and 1, and 1
@@ -2669,9 +1232,9 @@ static void test_select_wallet(void)
         expect_error(T_ENC_ERROR, E_NO_WALLET, "an out-of-range wallet index");
     }
     /* Whatever it refused, it must not have moved. */
-    char still[64] = {0};
-    CHECK(address_of_index_zero(still, sizeof(still)), "no address after the refusals");
-    CHECK(strcmp(still, after) == 0,
+    uint32_t still = 0;
+    CHECK(active_fingerprint(&still), "no fingerprint after the refusals");
+    CHECK(still == after,
           "a refused selectWallet changed the active wallet anyway");
 
     /* No index, and an index of the wrong type. */
@@ -2748,16 +1311,19 @@ static void test_set_passphrase(void)
     pin_set("123456");
     pin_verify("123456");
 
-    /* The happy path. The address the device shows is the one it answers with:
-     * a reply naming a different wallet than the screen did would make the
-     * confirmation meaningless. */
+    /* The happy path. The fingerprint the device shows is the one it answers
+     * with: a reply naming a different wallet than the screen did would make
+     * the confirmation meaningless. */
     scripted_outcome = SIGN_APPROVED;
     send_encrypted(payload, len);
 
     CHECK(passphrase_prompts == 1, "the passphrase was applied without a prompt");
-    CHECK(strlen(shown_passphrase_address) == 42,
-          "the screen was given '%s', not a full address", shown_passphrase_address);
     CHECK(wallet_has_passphrase(), "an approved passphrase was not applied");
+    uint32_t applied_xfp = 0;
+    CHECK(wallet_get_master_fingerprint(&applied_xfp) == WALLET_OK &&
+          applied_xfp == shown_passphrase_xfp,
+          "the screen was shown %08X, not the fingerprint of the wallet applied",
+          (unsigned)shown_passphrase_xfp);
 
     Frame f = next_reply();
     CHECK(f.present && f.type == T_ENC_RESPONSE, "setPassphrase was not answered");
@@ -2766,10 +1332,11 @@ static void test_set_passphrase(void)
     size_t body_len;
     CborItem it;
     if (f.present && result_body(&f, &body, &body_len)) {
-        CHECK(cbor_map_find(body, body_len, "address", &it) &&
-              it.type == CBOR_TEXT && it.value == 42 &&
-              memcmp(it.data, shown_passphrase_address, 42) == 0,
+        CHECK(cbor_map_find(body, body_len, "fingerprint", &it) &&
+              it.type == CBOR_UINT && it.value == shown_passphrase_xfp,
               "the reply names a different wallet than the screen did");
+        CHECK(!cbor_map_find(body, body_len, "address", &it),
+              "the reply still carries an address");
         CHECK(cbor_map_find(body, body_len, "passphrase", &it) &&
               it.type == CBOR_UINT && it.value == 1,
               "the reply does not report the passphrase as active");
@@ -3265,8 +1832,8 @@ static const char *case_name(ConformanceCase c)
     switch (c) {
         case CASE_PING:                      return "ping";
         case CASE_UNKNOWN_METHOD:            return "getMnemonic (unknown method)";
-        case CASE_TIER_NEEDS_SESSION:        return "getAddress with no session";
-        case CASE_TIER_NEEDS_UNLOCK:         return "getAddress while locked";
+        case CASE_TIER_NEEDS_SESSION:        return "selectWallet with no session";
+        case CASE_TIER_NEEDS_UNLOCK:         return "selectWallet while locked";
         case CASE_UNKNOWN_METHOD_IN_SESSION: return "unknown method in a session";
         case CASE_PLAINTEXT_IN_SESSION:      return "plaintext request in a session";
         case CASE_NO_METHOD_KEY:             return "a request with no method";
@@ -3297,13 +1864,13 @@ static Frame run_case(Via v, ConformanceCase c)
 
         case CASE_TIER_NEEDS_SESSION:
             device_unlocked();
-            via_send_plain(v, payload, req(payload, sizeof(payload), "getAddress"));
+            via_send_plain(v, payload, req(payload, sizeof(payload), "selectWallet"));
             break;
 
         case CASE_TIER_NEEDS_UNLOCK:
             device_has_a_wallet();
             via_confirmed_session(v, 61);
-            via_send_encrypted(v, payload, req(payload, sizeof(payload), "getAddress"));
+            via_send_encrypted(v, payload, req(payload, sizeof(payload), "selectWallet"));
             break;
 
         case CASE_UNKNOWN_METHOD_IN_SESSION:
@@ -3473,8 +2040,8 @@ static void test_a_reply_matches_its_request(void)
 
     /* Belt and braces on the other direction: a key operation still refuses in
      * plaintext, since a plaintext frame proves nothing about who sent it. */
-    send_plain(payload, req(payload, sizeof(payload), "getAddress"));
-    expect_error(T_ERROR, E_SESSION, "plaintext getAddress inside a session");
+    send_plain(payload, req(payload, sizeof(payload), "selectWallet"));
+    expect_error(T_ERROR, E_SESSION, "plaintext selectWallet inside a session");
 }
 
 /* A complete request a transport cannot hand to the dispatcher is refused, not
@@ -3620,213 +2187,6 @@ static void test_ble_name_is_bounded_and_persisted(void)
 
 
 /* ============================================================================
- * T45 - the account level in a requested path
- * ============================================================================ */
-
-/* The bug this is here for: m/44'/60'/3'/0/0 was parsed for its trailing 0 and
- * answered with ACCOUNT 0's address, under the label the host asked for. A
- * device that quietly substitutes one wallet for another is the failure every
- * confirmation screen exists to prevent, and here it happened before any
- * screen was involved. */
-static void test_the_account_level_is_read_not_assumed(void)
-{
-    printf("== a request naming an account gets that account (T45)\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(41);
-
-    char account0[43] = {0};
-    char account3[43] = {0};
-    const char *paths[2] = { "m/44'/60'/0'/0/5", "m/44'/60'/3'/0/5" };
-    char *out[2] = { account0, account3 };
-
-    for (int i = 0; i < 2; i++) {
-        uint8_t payload[96];
-        CborWriter w;
-        cbor_writer_init(&w, payload, sizeof(payload));
-        cbor_write_map(&w, 2);
-        cbor_write_text(&w, "method");
-        cbor_write_text(&w, "getAddress");
-        cbor_write_text(&w, "path");
-        cbor_write_text(&w, paths[i]);
-        send_encrypted(payload, w.length);
-
-        Frame f = next_reply();
-        CHECK(f.present && f.type == T_ENC_RESPONSE, "getAddress was not answered");
-        const uint8_t *body;
-        size_t body_len;
-        CborItem it;
-        if (f.present && result_body(&f, &body, &body_len)) {
-            CHECK(cbor_map_find(body, body_len, "index", &it) &&
-                  it.type == CBOR_UINT && it.value == 5,
-                  "the address index was lost while reading the account");
-            if (cbor_map_find(body, body_len, "address", &it) &&
-                it.type == CBOR_TEXT && it.value == 42) {
-                memcpy(out[i], it.data, 42);
-            }
-        }
-    }
-
-    CHECK(strlen(account0) == 42 && strlen(account3) == 42,
-          "one of the two requests produced no address");
-    CHECK(strcmp(account0, account3) != 0,
-          "m/44'/60'/3'/0/5 answered with account 0's address - the device "
-          "returned a different wallet than the one that was asked for");
-}
-
-/* A path is not an arbitrary integer. Hardened levels are encoded as
- * 0x80000000|n, so anything at or above 2^31 is an overflow that would land
- * somewhere else entirely; refusing is the only honest answer. */
-static void test_an_out_of_range_account_is_refused(void)
-{
-    printf("== an account outside the hardened range is refused (T45)\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(42);
-
-    uint8_t payload[96];
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 3);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "getAddress");
-    cbor_write_text(&w, "account");
-    cbor_write_uint(&w, 0x80000000u);
-    cbor_write_text(&w, "index");
-    cbor_write_uint(&w, 0);
-    send_encrypted(payload, w.length);
-    expect_error(T_ENC_ERROR, E_MALFORMED, "an account of 2^31");
-
-    /* And the account the device's own menu cannot reach is still legal: the
-     * bound on the selector is a UI bound, not a derivation one. What makes
-     * that safe is the confirmation rendering the whole path. */
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "getAddress");
-    cbor_write_text(&w, "account");
-    cbor_write_uint(&w, 40);
-    send_encrypted(payload, w.length);
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE,
-          "account 40 was refused; the menu's bound has leaked into the wire");
-}
-
-/* The signing path has to carry the account all the way through: what the
- * screen was shown and what the key was derived from must be one object. */
-static void test_the_signing_path_carries_the_account(void)
-{
-    printf("== the account reaches both the confirmation and the signature\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(43);
-    scripted_outcome = SIGN_APPROVED;
-
-    uint8_t to[20];
-    memset(to, 0xAB, sizeof(to));
-
-    uint8_t payload[256];
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 4);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "path");
-    cbor_write_text(&w, "m/44'/60'/6'/0/2");
-    cbor_write_text(&w, "to");
-    cbor_write_bytes(&w, to, sizeof(to));
-    CHECK(cbor_writer_ok(&w), "request did not fit");
-    send_encrypted(payload, w.length);
-
-    CHECK(confirm_requests == 1, "no confirmation was asked for");
-    CHECK(shown_path.account == 6 && shown_path.address_index == 2,
-          "the screen was told m/44'/60'/%u'/0/%u, not the requested "
-          "m/44'/60'/6'/0/2",
-          (unsigned)shown_path.account, (unsigned)shown_path.address_index);
-
-    Frame f = next_reply();
-    CHECK(f.present && f.type == T_ENC_RESPONSE, "the signature was not returned");
-}
-
-/* T47 again, through a door the path check does not cover.
- *
- * `sign_path` is captured before the screen goes up and used unchanged for the
- * signature, so the account and index cannot move underneath the user. The
- * passphrase can: it is wallet-global rather than part of the path, and
- * session_reset() drops a host-supplied one (T42) from a task that is not the
- * one blocked in wait_for_user(). A BLE disconnect during the approval window
- * — the most likely two minutes in the whole session for one to happen, since
- * the user has just picked the device up and walked away from the phone —
- * therefore leaves the OLED showing an address derived under the hidden wallet
- * and the signature taken under the base one.
- *
- * The user approves address X and signs with key Y. Whether that is an
- * attacker forcing the drop or a radio doing it by itself, the invariant the
- * device exists to hold — what was approved is what was signed — does not
- * hold, so the only correct answer is to refuse. */
-static void test_a_signature_matches_the_address_that_was_approved(void)
-{
-    printf("== a wallet that moves during approval voids the approval (T47)\n");
-    fresh_device();
-    device_unlocked();
-    confirmed_session(46);
-
-    /* A hidden wallet, applied by the host and approved on the device. */
-    uint8_t payload[256];
-    size_t len = set_passphrase_request(payload, sizeof(payload), "hunter2");
-    scripted_outcome = SIGN_APPROVED;
-    send_encrypted(payload, len);
-    (void)next_reply();
-    CHECK(wallet_has_passphrase(), "setup: the passphrase was not applied");
-
-    uint8_t to[20];
-    memset(to, 0xAB, sizeof(to));
-
-    CborWriter w;
-    cbor_writer_init(&w, payload, sizeof(payload));
-    cbor_write_map(&w, 4);
-    cbor_write_text(&w, "method");
-    cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");
-    cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "path");
-    cbor_write_text(&w, "m/44'/60'/0'/0/0");
-    cbor_write_text(&w, "to");
-    cbor_write_bytes(&w, to, sizeof(to));
-    CHECK(cbor_writer_ok(&w), "request did not fit");
-
-    /* The link dies between the address going on screen and the button. */
-    disconnect_while_confirming = true;
-    scripted_outcome = SIGN_APPROVED;
-    send_encrypted(payload, w.length);
-
-    CHECK(confirm_requests == 1, "no confirmation was asked for");
-    CHECK(!wallet_has_passphrase(),
-          "setup: the disconnect did not drop the host passphrase");
-
-    /* An address was shown. Whatever comes back must have been signed at that
-     * address or must not come back at all. */
-    char approved[43];
-    snprintf(approved, sizeof(approved), "%s", shown_from);
-
-    EthAddress now;
-    HDPath p = { .account = 0, .address_index = 0 };
-    CHECK(wallet_get_address_at_path(&p, &now) == WALLET_OK,
-          "setup: the base wallet does not derive");
-    CHECK(strcmp(approved, now.hex) != 0,
-          "setup: the passphrase did not change the address, so this test "
-          "proves nothing");
-
-    Frame f = next_reply();
-    CHECK(f.present, "the request was answered with silence");
-    CHECK(f.type == T_ENC_ERROR || f.type == T_ERROR,
-          "the device signed after the wallet moved out from under the "
-          "approval: it showed %s and signed as %s", approved, now.hex);
-}
-
-/* ============================================================================
  * T42 - a host-supplied passphrase belongs to the host's session
  * ============================================================================ */
 
@@ -3920,42 +2280,15 @@ typedef enum {
     MC_UNKNOWN_METHOD_NO_SESSION,
     MC_UNKNOWN_METHOD_IN_SESSION,
     MC_NO_METHOD_KEY,
-    MC_GET_ADDRESS_NO_SESSION,
-    MC_GET_ADDRESS_LOCKED,
-    MC_GET_ADDRESS_INDEX_0,
-    MC_GET_ADDRESS_INDEX_5,
-    MC_GET_ADDRESS_BY_PATH,
-    MC_GET_ADDRESS_HARDENED_INDEX,
+    MC_SELECT_WALLET_NO_SESSION,
+    MC_SELECT_WALLET_LOCKED,
+    MC_REMOVED_GET_ADDRESS,
+    MC_REMOVED_SIGN_TX,
     MC_UNLOCK_WHILE_LOCKED,
     MC_UNLOCK_WHILE_UNLOCKED,
     MC_UNLOCK_NO_SESSION,
     MC_LOCK,
     MC_LOCK_NO_SESSION,
-    MC_SIGN_TX_TRANSFER,
-    MC_SIGN_TX_NO_CHAIN_ID,
-    MC_SIGN_TX_UNDECODABLE,
-    MC_SIGN_TX_UNDECODABLE_BLIND_ON,
-    MC_SIGN_TX_OVERSIZED_DATA,
-    MC_SIGN_TX_OVERSIZED_DATA_BLIND_ON,
-    MC_SIGN_TX_SUPPLY,
-    MC_SIGN_TX_SUPPLY_BAD_ARG,
-    MC_SIGN_TX_AQUA_SHIP,
-    MC_SIGN_TX_AQUA_SHIP_NO_MAKER,
-    MC_SIGN_TX_AQUA_DOCK,
-    MC_SIGN_TX_REJECTED,
-    MC_SIGN_TX_HARDENED_INDEX,
-    MC_SIGN_MESSAGE,
-    MC_SIGN_MESSAGE_AT_LIMIT,
-    MC_SIGN_MESSAGE_EMPTY,
-    MC_SIGN_MESSAGE_TOO_LONG,
-    MC_SIGN_MESSAGE_UNRENDERABLE,
-    MC_SIGN_MESSAGE_AS_BYTES,
-    MC_SIGN_MESSAGE_REJECTED,
-    MC_SIGN_TYPED_PERMIT,
-    MC_SIGN_TYPED_UNHASHABLE,
-    MC_SIGN_TYPED_UNRENDERABLE,
-    MC_SIGN_TYPED_UNRENDERABLE_BLIND_ON,
-    MC_SIGN_TYPED_MALFORMED,
     MC_SELECT_WALLET_1,
     MC_SELECT_WALLET_MISSING_INDEX,
     MC_SELECT_WALLET_UNKNOWN,
@@ -3994,7 +2327,7 @@ static MockSetup mock_setup(MockCase c)
         case MC_GET_STATUS_PLAIN:
         case MC_UNKNOWN_METHOD_NO_SESSION:
         case MC_NO_METHOD_KEY:
-        case MC_GET_ADDRESS_NO_SESSION:
+        case MC_SELECT_WALLET_NO_SESSION:
         case MC_UNLOCK_NO_SESSION:
         case MC_LOCK_NO_SESSION:
             s.session = false;
@@ -4008,18 +2341,11 @@ static MockSetup mock_setup(MockCase c)
         case MC_GET_STATUS_PLAIN_IN_SESSION:
             s.encrypted = false;    /* session up, request sent in the clear */
             break;
-        case MC_GET_ADDRESS_LOCKED:
+        case MC_SELECT_WALLET_LOCKED:
         case MC_UNLOCK_WHILE_LOCKED:
         case MC_SET_PASSPHRASE_LOCKED:
             s.unlocked = false;
             break;
-        case MC_SIGN_TX_UNDECODABLE_BLIND_ON:
-        case MC_SIGN_TX_OVERSIZED_DATA_BLIND_ON:
-        case MC_SIGN_TYPED_UNRENDERABLE_BLIND_ON:
-            s.blind = true;
-            break;
-        case MC_SIGN_TX_REJECTED:
-        case MC_SIGN_MESSAGE_REJECTED:
         case MC_SET_PASSPHRASE_REJECTED:
             s.approve = false;
             break;
@@ -4033,17 +2359,6 @@ static MockSetup mock_setup(MockCase c)
  * the setup so a case cannot be sent down a channel its tier does not allow. */
 static size_t mock_request(MockCase c, uint8_t *buf, size_t cap)
 {
-    static const uint8_t TO[20] = {
-        0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,
-        0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0
-    };
-    static const uint8_t GARBAGE[36] = { 0xde, 0xad, 0xbe, 0xef };
-    static uint8_t huge[ETH_MAX_DATA + 1] = { 0xde, 0xad, 0xbe, 0xef };
-    /* 1 token, as a 32-byte big-endian quantity - the shape signTypedData
-     * wants for a uint256. */
-    static uint8_t one_token[32];
-    one_token[31] = 1;
-
     CborWriter w;
 
     switch (c) {
@@ -4071,45 +2386,16 @@ static size_t mock_request(MockCase c, uint8_t *buf, size_t cap)
             cbor_write_uint(&w, 1);
             return cbor_writer_ok(&w) ? w.length : 0;
 
-        case MC_GET_ADDRESS_NO_SESSION:
-        case MC_GET_ADDRESS_LOCKED:
-        case MC_GET_ADDRESS_INDEX_0:
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "getAddress");
-            cbor_write_text(&w, "index");
-            cbor_write_uint(&w, 0);
-            return cbor_writer_ok(&w) ? w.length : 0;
+        case MC_SELECT_WALLET_NO_SESSION:
+        case MC_SELECT_WALLET_LOCKED:
+            return select_wallet_request(buf, cap, 1);
 
-        case MC_GET_ADDRESS_INDEX_5:
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "getAddress");
-            cbor_write_text(&w, "index");
-            cbor_write_uint(&w, 5);
-            return cbor_writer_ok(&w) ? w.length : 0;
-
-        /* A path rather than an index. The two spellings have disagreed
-         * before, in both implementations and in opposite directions. */
-        case MC_GET_ADDRESS_BY_PATH:
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "getAddress");
-            cbor_write_text(&w, "path");
-            cbor_write_text(&w, "m/44'/60'/0'/0/7");
-            return cbor_writer_ok(&w) ? w.length : 0;
-
-        case MC_GET_ADDRESS_HARDENED_INDEX:
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "getAddress");
-            cbor_write_text(&w, "index");
-            cbor_write_uint(&w, 0x80000000u);
-            return cbor_writer_ok(&w) ? w.length : 0;
+        /* Methods LeekWallet served and this firmware does not.
+         * The mock has to refuse them for the same reason the device does. */
+        case MC_REMOVED_GET_ADDRESS:
+            return req(buf, cap, "getAddress");
+        case MC_REMOVED_SIGN_TX:
+            return req(buf, cap, "signTransaction");
 
         case MC_UNLOCK_WHILE_LOCKED:
         case MC_UNLOCK_WHILE_UNLOCKED:
@@ -4118,205 +2404,6 @@ static size_t mock_request(MockCase c, uint8_t *buf, size_t cap)
         case MC_LOCK:
         case MC_LOCK_NO_SESSION:
             return req(buf, cap, "lock");
-
-        case MC_SIGN_TX_TRANSFER:
-        case MC_SIGN_TX_REJECTED:
-            return native_transfer_request(buf, cap, TO, 0);
-
-        case MC_SIGN_TX_HARDENED_INDEX:
-            return native_transfer_request(buf, cap, TO, 0x80000000u);
-
-        case MC_SIGN_TX_NO_CHAIN_ID:
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "signTransaction");
-            cbor_write_text(&w, "to");
-            cbor_write_bytes(&w, TO, 20);
-            return cbor_writer_ok(&w) ? w.length : 0;
-
-        case MC_SIGN_TX_UNDECODABLE:
-        case MC_SIGN_TX_UNDECODABLE_BLIND_ON:
-            return undecodable_request(buf, cap, TO, GARBAGE, sizeof(GARBAGE));
-
-        /* Aqua's two write calls, which are the reason ETH_MAX_DATA grew and the
-         * reason the decoder has hand-written cases at all. Both are built to
-         * the canonical layout, because that is the only one either side
-         * accepts; the third case is a well-formed ship whose strategy has no
-         * readable maker, and both implementations must refuse it for that
-         * reason alone. A mock that let it through would be a mock that lets a
-         * position be created without saying whose it is. */
-        case MC_SIGN_TX_AQUA_SHIP:
-        case MC_SIGN_TX_AQUA_SHIP_NO_MAKER: {
-            static const char SHIP[] = "ship(address,bytes,address[],uint256[])";
-            uint8_t strategy[96];
-            memset(strategy, 0, sizeof(strategy));
-            strategy[31] = (c == MC_SIGN_TX_AQUA_SHIP) ? 0x20 : 0x40;
-            memset(strategy + 32 + 12, 0xC3, 20);      /* the maker */
-            strategy[95] = 0x07;
-
-            size_t off_s = 4 * 32;
-            size_t off_t = off_s + 32 + sizeof(strategy);
-            size_t off_a = off_t + 32 + 32;
-            size_t len   = 4 + off_a + 32 + 32;
-            uint8_t data[ETH_MAX_DATA];
-            memset(data, 0, len);
-
-            uint8_t digest[32];
-            keccak_256((const uint8_t *)SHIP, sizeof(SHIP) - 1, digest);
-            memcpy(data, digest, 4);
-
-            uint8_t *args = data + 4;
-            memset(args + 12, 0xA9, 20);               /* the Aqua app */
-            args[62] = (uint8_t)(off_s >> 8); args[63] = (uint8_t)off_s;
-            args[94] = (uint8_t)(off_t >> 8); args[95] = (uint8_t)off_t;
-            args[126] = (uint8_t)(off_a >> 8); args[127] = (uint8_t)off_a;
-            args[off_s + 31] = (uint8_t)sizeof(strategy);
-            memcpy(args + off_s + 32, strategy, sizeof(strategy));
-            args[off_t + 31] = 1;
-            args[off_a + 31] = 1;
-            memset(args + off_t + 32 + 12, 0xD4, 20);  /* the token */
-            args[off_a + 32 + 31] = 0x64;              /* 100 raw units */
-            return undecodable_request(buf, cap, TO, data, len);
-        }
-
-        case MC_SIGN_TX_AQUA_DOCK: {
-            static const char DOCK[] = "dock(address,bytes32,address[])";
-            size_t off_t = 3 * 32;
-            size_t len   = 4 + off_t + 32 + 32;
-            uint8_t data[ETH_MAX_DATA];
-            memset(data, 0, len);
-
-            uint8_t digest[32];
-            keccak_256((const uint8_t *)DOCK, sizeof(DOCK) - 1, digest);
-            memcpy(data, digest, 4);
-
-            uint8_t *args = data + 4;
-            memset(args + 12, 0xA9, 20);               /* the Aqua app */
-            memset(args + 32, 0x5E, 32);               /* the strategy hash */
-            args[95] = (uint8_t)off_t;
-            args[off_t + 31] = 1;
-            memset(args + off_t + 32 + 12, 0xD4, 20);  /* the token */
-            return undecodable_request(buf, cap, TO, data, len);
-        }
-
-        /* A call from the signature table (T12c). The selector is hashed here
-         * rather than typed, exactly as the firmware derives it: a corpus that
-         * pinned a hand-copied selector would agree with a mock that had
-         * copied the same mistake. */
-        case MC_SIGN_TX_SUPPLY:
-        case MC_SIGN_TX_SUPPLY_BAD_ARG: {
-            static const char SUPPLY[] = "supply(address,uint256,address,uint16)";
-            uint8_t data[132];
-            uint8_t digest[32];
-            memset(data, 0, sizeof(data));
-            keccak_256((const uint8_t *)SUPPLY, sizeof(SUPPLY) - 1, digest);
-            memcpy(data, digest, 4);
-            memset(data + 4 + 12, 0xA1, 20);      /* asset      */
-            data[4 + 63] = 0x2A;                  /* amount = 42 */
-            memset(data + 4 + 64 + 12, 0xB2, 20); /* onBehalfOf */
-            if (c == MC_SIGN_TX_SUPPLY_BAD_ARG) {
-                /* A uint16 carrying more than sixteen bits: refused on both
-                 * sides, and refused as UNDECODABLE rather than as a bad
-                 * argument, because a call the device cannot read in full is
-                 * outside the set however well-formed the rest of it is. */
-                data[4 + 96 + 28] = 0x01;
-            }
-            return undecodable_request(buf, cap, TO, data, sizeof(data));
-        }
-
-        /* Over ETH_MAX_DATA. Emitted twice, once with the hatch open, because
-         * the two refusals differ in code and only one of them is reopened. */
-        case MC_SIGN_TX_OVERSIZED_DATA:
-        case MC_SIGN_TX_OVERSIZED_DATA_BLIND_ON:
-            return undecodable_request(buf, cap, TO, huge, sizeof(huge));
-
-        case MC_SIGN_MESSAGE:
-        case MC_SIGN_MESSAGE_REJECTED:
-            return sign_message_request(buf, cap, "hello from leek", 0);
-
-        /* Empty text. personal_sign("") is a real request a dapp can make, and
-         * the two implementations disagreed about it in the direction that is
-         * hardest to notice: the device signs it, the mock refused it. */
-        case MC_SIGN_MESSAGE_EMPTY:
-            return sign_message_request(buf, cap, "", 0);
-
-        case MC_SIGN_MESSAGE_AT_LIMIT: {
-            char at_limit[ETH_MAX_MESSAGE + 1];
-            memset(at_limit, 'B', ETH_MAX_MESSAGE);
-            at_limit[ETH_MAX_MESSAGE] = '\0';
-            return sign_message_request(buf, cap, at_limit, 0);
-        }
-        case MC_SIGN_MESSAGE_TOO_LONG: {
-            char over[ETH_MAX_MESSAGE + 2];
-            memset(over, 'B', ETH_MAX_MESSAGE + 1);
-            over[ETH_MAX_MESSAGE + 1] = '\0';
-            return sign_message_request(buf, cap, over, 0);
-        }
-        case MC_SIGN_MESSAGE_UNRENDERABLE:
-            return sign_message_request(buf, cap, "caf\xc3\xa9 \x01 now", 0);
-
-        case MC_SIGN_MESSAGE_AS_BYTES:
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "signMessage");
-            cbor_write_text(&w, "message");
-            cbor_write_bytes(&w, (const uint8_t *)"hi", 2);
-            return cbor_writer_ok(&w) ? w.length : 0;
-
-        case MC_SIGN_TYPED_PERMIT:
-            return permit_request(buf, cap, one_token, "uint256", 0);
-        /* One character of the type changes a document the device can hash
-         * into one it cannot, and nothing else about the request moves. */
-        case MC_SIGN_TYPED_UNHASHABLE:
-            return permit_request(buf, cap, one_token, "uint256[]", 0);
-
-        case MC_SIGN_TYPED_UNRENDERABLE:
-        case MC_SIGN_TYPED_UNRENDERABLE_BLIND_ON:
-            /* Hashable, but carries a glyph the OLED does not have. */
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 5);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "signTypedData");
-            cbor_write_text(&w, "types");
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "EIP712Domain");
-            cbor_write_array(&w, 1);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "name");
-            cbor_write_text(&w, "name");
-            cbor_write_text(&w, "type");
-            cbor_write_text(&w, "string");
-            cbor_write_text(&w, "Note");
-            cbor_write_array(&w, 1);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "name");
-            cbor_write_text(&w, "body");
-            cbor_write_text(&w, "type");
-            cbor_write_text(&w, "string");
-            cbor_write_text(&w, "primaryType");
-            cbor_write_text(&w, "Note");
-            cbor_write_text(&w, "domain");
-            cbor_write_map(&w, 1);
-            cbor_write_text(&w, "name");
-            cbor_write_text(&w, "Notes");
-            cbor_write_text(&w, "message");
-            cbor_write_map(&w, 1);
-            cbor_write_text(&w, "body");
-            cbor_write_text(&w, "approve \xf0\x9f\x92\xb8 now");
-            return cbor_writer_ok(&w) ? w.length : 0;
-
-        case MC_SIGN_TYPED_MALFORMED:
-            /* No types, no domain: the host built it wrong, which is a
-             * different sentence from "the device cannot show this". */
-            cbor_writer_init(&w, buf, cap);
-            cbor_write_map(&w, 2);
-            cbor_write_text(&w, "method");
-            cbor_write_text(&w, "signTypedData");
-            cbor_write_text(&w, "primaryType");
-            cbor_write_text(&w, "Permit");
-            return cbor_writer_ok(&w) ? w.length : 0;
 
         case MC_SELECT_WALLET_1:
             return select_wallet_request(buf, cap, 1);
@@ -4351,42 +2438,15 @@ static const char *case_name_mock(int c)
         case MC_UNKNOWN_METHOD_NO_SESSION:     return "unknown method, no session";
         case MC_UNKNOWN_METHOD_IN_SESSION:     return "unknown method in a session";
         case MC_NO_METHOD_KEY:                 return "a request with no method";
-        case MC_GET_ADDRESS_NO_SESSION:        return "getAddress with no session";
-        case MC_GET_ADDRESS_LOCKED:            return "getAddress while locked";
-        case MC_GET_ADDRESS_INDEX_0:           return "getAddress index 0";
-        case MC_GET_ADDRESS_INDEX_5:           return "getAddress index 5";
-        case MC_GET_ADDRESS_BY_PATH:           return "getAddress by path";
-        case MC_GET_ADDRESS_HARDENED_INDEX:    return "getAddress index above 0x7FFFFFFF";
+        case MC_SELECT_WALLET_NO_SESSION:      return "selectWallet with no session";
+        case MC_SELECT_WALLET_LOCKED:          return "selectWallet while locked";
+        case MC_REMOVED_GET_ADDRESS:           return "getAddress (removed)";
+        case MC_REMOVED_SIGN_TX:               return "signTransaction (removed)";
         case MC_UNLOCK_WHILE_LOCKED:           return "unlock while locked";
         case MC_UNLOCK_WHILE_UNLOCKED:         return "unlock while already unlocked";
         case MC_UNLOCK_NO_SESSION:             return "unlock with no session";
         case MC_LOCK:                          return "lock";
         case MC_LOCK_NO_SESSION:               return "lock with no session";
-        case MC_SIGN_TX_TRANSFER:              return "signTransaction, native transfer";
-        case MC_SIGN_TX_NO_CHAIN_ID:           return "signTransaction with no chainId";
-        case MC_SIGN_TX_UNDECODABLE:           return "signTransaction, undecodable calldata";
-        case MC_SIGN_TX_UNDECODABLE_BLIND_ON:  return "signTransaction, undecodable calldata, blind signing on";
-        case MC_SIGN_TX_OVERSIZED_DATA:        return "signTransaction, oversized calldata";
-        case MC_SIGN_TX_OVERSIZED_DATA_BLIND_ON: return "signTransaction, oversized calldata, blind signing on";
-        case MC_SIGN_TX_AQUA_SHIP:             return "signTransaction, Aqua ship()";
-        case MC_SIGN_TX_AQUA_SHIP_NO_MAKER:    return "signTransaction, Aqua ship() whose strategy names no maker";
-        case MC_SIGN_TX_AQUA_DOCK:             return "signTransaction, Aqua dock()";
-        case MC_SIGN_TX_SUPPLY:                return "signTransaction, supply() from the signature table";
-        case MC_SIGN_TX_SUPPLY_BAD_ARG:        return "signTransaction, supply() with an over-wide uint16";
-        case MC_SIGN_TX_REJECTED:              return "signTransaction rejected on device";
-        case MC_SIGN_TX_HARDENED_INDEX:        return "signTransaction index above 0x7FFFFFFF";
-        case MC_SIGN_MESSAGE:                  return "signMessage";
-        case MC_SIGN_MESSAGE_AT_LIMIT:         return "signMessage at the display limit";
-        case MC_SIGN_MESSAGE_EMPTY:            return "signMessage with empty text";
-        case MC_SIGN_MESSAGE_TOO_LONG:         return "signMessage one byte over the limit";
-        case MC_SIGN_MESSAGE_UNRENDERABLE:     return "signMessage the screen cannot draw";
-        case MC_SIGN_MESSAGE_AS_BYTES:         return "signMessage sent as bytes";
-        case MC_SIGN_MESSAGE_REJECTED:         return "signMessage rejected on device";
-        case MC_SIGN_TYPED_PERMIT:             return "signTypedData, ERC-2612 permit";
-        case MC_SIGN_TYPED_UNHASHABLE:         return "signTypedData the device cannot hash";
-        case MC_SIGN_TYPED_UNRENDERABLE:       return "signTypedData the screen cannot draw";
-        case MC_SIGN_TYPED_UNRENDERABLE_BLIND_ON: return "signTypedData the screen cannot draw, blind signing on";
-        case MC_SIGN_TYPED_MALFORMED:          return "signTypedData with no types";
         case MC_SELECT_WALLET_1:               return "selectWallet 1";
         case MC_SELECT_WALLET_MISSING_INDEX:   return "selectWallet with no index";
         case MC_SELECT_WALLET_UNKNOWN:         return "selectWallet, no such wallet";
@@ -4513,22 +2573,11 @@ static int run_all_tests(void)
     test_keys_need_a_session_and_a_passkey();
     test_locked_device_refuses_keys();
     test_lock_answers_before_it_closes_the_channel();
-    test_address_derivation_reads_the_path();
-    test_undecodable_calldata_refused_before_confirmation();
-    test_blind_signing_is_off_until_the_device_says_otherwise();
-    test_signing_signs_what_it_showed();
-    test_the_displayed_transaction_cannot_be_replaced();
-    test_airgap_signs_what_it_showed();
-    test_airgap_refusals();
+    test_removed_methods_are_unknown();
     test_rejection_and_timeout();
     test_errors_stay_encrypted_once_a_session_exists();
     test_malformed_input();
     test_tampered_frame_tears_down_the_session();
-    test_sign_message_signs_what_it_showed();
-    test_sign_message_refuses_what_it_cannot_show();
-    test_sign_typed_data_signs_what_it_showed();
-    test_sign_typed_data_refuses_what_it_cannot_show();
-    test_unrenderable_typed_data_is_the_blind_case();
     test_select_wallet();
     test_set_passphrase();
     test_ble_carries_the_same_frames();
@@ -4541,10 +2590,6 @@ static int run_all_tests(void)
     test_a_busy_transport_refuses_rather_than_drops();
     test_ble_name_is_bounded_and_persisted();
 
-    test_the_account_level_is_read_not_assumed();
-    test_an_out_of_range_account_is_refused();
-    test_the_signing_path_carries_the_account();
-    test_a_signature_matches_the_address_that_was_approved();
     test_a_host_passphrase_dies_with_its_session();
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

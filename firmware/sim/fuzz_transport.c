@@ -9,8 +9,7 @@
  *   3. usb     — arbitrary byte streams into consume(), the resynchroniser
  *   4. frame   — structured frames with hostile length/type fields
  *   5. session — mutated CBOR *inside* a confirmed session, which is the only
- *                way to reach dispatch(), eth-decode and eip712 with bytes the
- *                peer chose
+ *                way to reach dispatch() with bytes the peer chose
  *
  * Randomised rather than coverage-guided: the corpus here is small and the
  * grammar is known, so a seeded PRNG plus splice/flip mutation of valid
@@ -29,10 +28,7 @@
 #include "ble-chunk.h"
 #include "blind-signing.h"
 #include "cbor.h"
-#include "eip712.h"
 #include "esp_stubs.h"
-#include "eth-decode.h"
-#include "eth-tx.h"
 #include "fake_nvs.h"
 #include "fake_usb.h"
 #include "fake_wallet.h"
@@ -58,19 +54,11 @@ void ui_request_session_confirm(void) { }
 bool ui_user_is_answering(void) { return false; }
 void ui_request_unlock(void) { }
 void ui_request_lock(void) { }
-void ui_request_sign(const EthTx *tx, const HDPath *path, const char *from)
-{ (void)tx; (void)path; (void)from; }
-void ui_request_sign_message(const char *m, size_t n, const HDPath *p, const char *f)
-{ (void)m; (void)n; (void)p; (void)f; }
-void ui_request_sign_typed_data(const Eip712Render *r, const uint8_t d[32], bool b,
-                                const HDPath *p, const char *f)
-{ (void)r; (void)d; (void)b; (void)p; (void)f; }
-void ui_request_passphrase_confirm(const char *a) { (void)a; }
-/* Rejected, always: an approval would run PBKDF2 and secp256k1 on every
+void ui_request_passphrase_confirm(uint32_t fingerprint) { (void)fingerprint; }
+/* Rejected, always: an approval would run PBKDF2 on every
  * iteration and turn a fuzzer into a benchmark. Everything this file is
  * looking for happens in the parse, which is upstream of the prompt. */
 SignOutcome ui_sign_outcome(void) { return SIGN_REJECTED; }
-void ui_sign_report(bool ok) { (void)ok; }
 void ui_sign_clear(void) { }
 void ui_sign_expire(void) { }
 
@@ -318,53 +306,34 @@ static void build_corpus(void)
     add_corpus(&w);
 
     cbor_writer_init(&w, buf, sizeof(buf));
-    cbor_write_map(&w, 3);
-    cbor_write_text(&w, "method"); cbor_write_text(&w, "getAddress");
-    cbor_write_text(&w, "index");  cbor_write_uint(&w, 3);
-    cbor_write_text(&w, "path");   cbor_write_text(&w, "m/44'/60'/1'/0/7");
+    cbor_write_map(&w, 2);
+    cbor_write_text(&w, "method"); cbor_write_text(&w, "selectWallet");
+    cbor_write_text(&w, "index");  cbor_write_uint(&w, 1);
     add_corpus(&w);
 
-    /* signTransaction with realistically shaped fields. */
     cbor_writer_init(&w, buf, sizeof(buf));
-    cbor_write_map(&w, 8);
-    cbor_write_text(&w, "method");   cbor_write_text(&w, "signTransaction");
-    cbor_write_text(&w, "chainId");  cbor_write_uint(&w, 1);
-    cbor_write_text(&w, "nonce");    cbor_write_uint(&w, 5);
-    cbor_write_text(&w, "gasLimit"); cbor_write_uint(&w, 21000);
-    cbor_write_text(&w, "to");
-    { uint8_t to[20]; memset(to, 0xAB, sizeof(to)); cbor_write_bytes(&w, to, sizeof(to)); }
-    cbor_write_text(&w, "value");
-    { uint8_t v[8]; memset(v, 0x11, sizeof(v)); cbor_write_bytes(&w, v, sizeof(v)); }
-    cbor_write_text(&w, "data");
-    { uint8_t d[68]; memset(d, 0x22, sizeof(d));
-      d[0] = 0xa9; d[1] = 0x05; d[2] = 0x9c; d[3] = 0xbb;
-      cbor_write_bytes(&w, d, sizeof(d)); }
-    cbor_write_text(&w, "index");    cbor_write_uint(&w, 0);
+    cbor_write_map(&w, 1);
+    cbor_write_text(&w, "method"); cbor_write_text(&w, "unlock");
     add_corpus(&w);
 
+    cbor_writer_init(&w, buf, sizeof(buf));
+    cbor_write_map(&w, 1);
+    cbor_write_text(&w, "method"); cbor_write_text(&w, "getFeatures");
+    add_corpus(&w);
+
+    /* Nested maps inside arrays inside maps. No command reads that shape any
+     * more, but the CBOR reader still has to skip it, and a mutant that turns
+     * a nesting head into a length is where a skip reads past the end. */
     cbor_writer_init(&w, buf, sizeof(buf));
     cbor_write_map(&w, 2);
-    cbor_write_text(&w, "method");  cbor_write_text(&w, "signMessage");
-    cbor_write_text(&w, "message");
-    { uint8_t m[32]; memset(m, 'A', sizeof(m)); cbor_write_bytes(&w, m, sizeof(m)); }
-    add_corpus(&w);
-
-    /* Typed data: nested maps inside arrays inside maps, which is the shape
-     * the recursive descent in eip712.c is walking. */
-    cbor_writer_init(&w, buf, sizeof(buf));
-    cbor_write_map(&w, 4);
-    cbor_write_text(&w, "method"); cbor_write_text(&w, "signTypedData");
-    cbor_write_text(&w, "types");
+    cbor_write_text(&w, "method"); cbor_write_text(&w, "getStatus");
+    cbor_write_text(&w, "extra");
     cbor_write_map(&w, 1);
-    cbor_write_text(&w, "EIP712Domain");
+    cbor_write_text(&w, "list");
     cbor_write_array(&w, 1);
     cbor_write_map(&w, 2);
     cbor_write_text(&w, "name"); cbor_write_text(&w, "name");
     cbor_write_text(&w, "type"); cbor_write_text(&w, "string");
-    cbor_write_text(&w, "primaryType"); cbor_write_text(&w, "EIP712Domain");
-    cbor_write_text(&w, "message");
-    cbor_write_map(&w, 1);
-    cbor_write_text(&w, "name"); cbor_write_text(&w, "leek");
     add_corpus(&w);
 
     cbor_writer_init(&w, buf, sizeof(buf));

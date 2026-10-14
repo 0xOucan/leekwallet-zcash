@@ -238,7 +238,7 @@ bool cbor_skip(CborReader *r)
 {
     /* Depth counts from here, not from wherever the caller is in the document.
      * The bound exists to cap this function's own recursion; a caller that has
-     * already descended keeps its own count, and eip712.c does. */
+     * already descended has to keep its own count. */
     return skip_item(r, 0);
 }
 
