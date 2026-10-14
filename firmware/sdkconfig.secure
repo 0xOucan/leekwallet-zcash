@@ -1,0 +1,150 @@
+# ============================================================================
+# LeekWallet sdkconfig.defaults
+# ============================================================================
+# ESP32-S3-N16R8: 16MB flash, 8MB PSRAM (deliberately off), USB-Serial-JTAG
+# console. The flash size below is 16MB and must stay in step with
+# partitions-secure.csv -- a config claiming 4MB against a 16MB partition
+# table is the kind of mismatch that only shows up as a boot loop after an
+# irreversible eFuse burn.
+# ============================================================================
+
+# ============================================================================
+# FLASH CONFIGURATION - CRITICAL
+# ============================================================================
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHMODE="dio"
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHFREQ="80m"
+
+# ============================================================================
+# PARTITION TABLE - Custom for NVS wallet storage
+#
+# Only the CUSTOM flag lives here. The filename and offset are set at the
+# bottom of this file with the rest of the secure-boot settings, because they
+# are consequences of signing rather than of storage. Leaving a stale
+# "partitions.csv" here as well meant the file disagreed with itself, and the
+# only reason the right one won was line order.
+# ============================================================================
+CONFIG_PARTITION_TABLE_CUSTOM=y
+
+# ============================================================================
+# NVS - Non-Volatile Storage for wallet data
+# ============================================================================
+CONFIG_NVS_ENCRYPTION=n
+
+# ============================================================================
+# MBEDTLS - Required for AES-256-CBC encryption
+# ============================================================================
+CONFIG_MBEDTLS_AES_C=y
+CONFIG_MBEDTLS_CIPHER_MODE_CBC=y
+CONFIG_MBEDTLS_SHA256_C=y
+CONFIG_MBEDTLS_SHA512_C=y
+
+# ============================================================================
+# CPU CONFIGURATION
+# ============================================================================
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=160
+
+# ============================================================================
+# CONSOLE - USE USB-SERIAL-JTAG (native USB on ESP32-S3 Mini)
+# ============================================================================
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_USB_CDC=n
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_LOG_MAXIMUM_LEVEL=4
+
+# ============================================================================
+# FREERTOS
+# ============================================================================
+CONFIG_FREERTOS_HZ=1000
+
+# ============================================================================
+# WIFI - off. It is a test fixture (an AP with a hardcoded password) on a
+# device that holds seeds; see AUDIT S8g. `pio run -e esp32s3-wifi` turns it
+# back on for the rare occasion it is genuinely wanted.
+# ============================================================================
+CONFIG_ESP_WIFI_ENABLED=n
+CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+
+# ============================================================================
+# BLUETOOTH - Enabled for BLE testing (ESP32-S3 with NimBLE)
+# ============================================================================
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+
+# ============================================================================
+# USB - TinyUSB for USB HID
+# ============================================================================
+CONFIG_TINYUSB_ENABLED=y
+CONFIG_TINYUSB_HID_ENABLED=y
+CONFIG_TINYUSB_DESC_HID_STRING="LeekWallet HID"
+
+# ============================================================================
+# PSRAM - Not available on ESP32-S3 Mini
+# ============================================================================
+CONFIG_SPIRAM=n
+CONFIG_ESP32S3_SPIRAM_SUPPORT=n
+
+# ============================================================================
+# WATCHDOG
+# ============================================================================
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# ============================================================================
+# Flash encryption and secure boot - QEMU target only
+#
+# These burn eFuses on first boot, and eFuses are one-way. They live in their
+# own PlatformIO environment so `pio run -e esp32s3` stays safe to flash to an
+# attached board.
+#
+# Development mode is deliberate: it keeps the UART downloader able to
+# re-encrypt, so a device can still be reflashed while the scheme is in
+# progress. Release mode disables that permanently and belongs at the very end.
+# ============================================================================
+
+# Flash encryption: AES-256-XTS with the key in a read-protected eFuse.
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y
+CONFIG_SECURE_FLASH_ENCRYPTION_AES256=y
+
+
+
+# Secure boot v2. Ships with flash encryption or not at all: encryption alone
+# is bypassable, since an attacker flashes their own firmware and the device
+# decrypts the vault for them.
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+
+# A signed bootloader is 0xB000 here against a default table offset of 0x8000,
+# so the table has to move. Measured rather than guessed: the failure mode is
+# esptool refusing to merge, or worse, a silent overlap.
+CONFIG_PARTITION_TABLE_OFFSET=0xF000
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-secure.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions-secure.csv"
+
+# ============================================================================
+# REPRODUCIBLE BUILD (T37)
+#
+# sdkconfig.secure is a complete defaults file, not an overlay on
+# sdkconfig.defaults, so this has to be repeated here or the shipping target
+# would be the one build nobody can reproduce. See sdkconfig.defaults for why.
+#
+# It matters more here than in the default build: this is the environment whose
+# output gets signed and burned, and a signature over a binary nobody can
+# rebuild only proves who signed it, not what it is.
+# ============================================================================
+CONFIG_APP_REPRODUCIBLE_BUILD=y

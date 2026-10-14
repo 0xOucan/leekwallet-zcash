@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+#
+# Everything that can be checked without a board attached.
+#
+# This is the script CI runs, and running it locally is the same thing CI does
+# rather than an approximation of it. Keeping one definition means a green run
+# here and a red run there cannot disagree about what "green" means.
+#
+#   ./scripts/check.sh            everything
+#   ./scripts/check.sh sim        just the C suites
+#   ./scripts/check.sh app        just the TypeScript
+#   ./scripts/check.sh firmware   just the ESP-IDF builds, both boards
+#   ./scripts/check.sh repro      byte-for-byte reproducibility, firmware + app (slow, opt-in)
+#   ./scripts/check.sh rpc        are the registry's RPC endpoints alive (needs network)
+#
+# Exits non-zero on the first failure, and says which stage.
+#
+# `rpc` is opt-in for a different reason than `repro`: it needs the network, and
+# a suite that goes red because somebody's wifi is down is a suite people learn
+# to ignore. It is the only check that can catch a chain being shut down out
+# from under the registry - see the header of check-rpc-liveness.mjs.
+#
+# `repro` is deliberately NOT part of `all`: it builds the firmware twice, and
+# this script has to stay something worth running before every commit. CI runs
+# it as its own job on every push instead - see .github/workflows/ci.yml and
+# docs/RELEASE.md.
+
+set -uo pipefail
+
+cd "$(dirname "$0")/.."
+
+WHAT="${1:-all}"
+failed=()
+
+run() {
+    local name="$1"; shift
+    printf '\n\033[1m== %s\033[0m\n' "$name"
+    if "$@"; then
+        printf '\033[32m   ok\033[0m\n'
+    else
+        printf '\033[31m   FAILED\033[0m\n'
+        failed+=("$name")
+    fi
+}
+
+# The C suites are the fast ones and catch the most, so they go first: a broken
+# firmware invariant should not wait behind a toolchain download.
+if [[ "$WHAT" == "all" || "$WHAT" == "sim" ]]; then
+    # Cheap, and it guards the one function whose failure is silent: a second
+    # definition of random_buffer() would be resolved by link order rather than
+    # by anyone's decision. Run before the suites, since nothing below is worth
+    # much if seeds come from an unchecked source.
+    run "rng is unique" ./scripts/check-rng-unique.sh
+    run "host suites (sim)" make -C sim test
+fi
+
+if [[ "$WHAT" == "all" || "$WHAT" == "app" ]]; then
+    # Re-record what the firmware answers before the TypeScript suite compares
+    # the mock against it. Deliberately not a checked-in file that is merely
+    # trusted: a corpus generated from an older protocol.c would let the mock
+    # agree with a device that no longer exists, which is the same class of
+    # mistake as the divergences this catches. Cheap - it is one already-built
+    # binary replaying 48 requests.
+    run "conformance vectors" make -C sim conformance
+    # Same reasoning, for the calldata decoders (T50): re-record what
+    # src/eth-decode.c actually accepts and refuses before eth-decode.test.ts
+    # replays it against the TS mirror. See docs/MIRROR-GAP.md.
+    run "eth-decode conformance vectors" make -C sim eth-decode-conformance
+    # And the QR wire format (BC-UR): what src/ur.c encodes, recorded for the
+    # TypeScript mirror. Same reason as the two above - the device and three
+    # companions must agree byte for byte, and a corpus from an older ur.c
+    # would let them agree with an encoder nobody runs.
+    run "ur and eip-4527 conformance vectors" make -C sim ur-conformance
+
+    if command -v pnpm >/dev/null 2>&1; then
+        run "app tests" pnpm --dir app test
+        run "app typecheck" pnpm --dir app typecheck
+        # Not a pnpm step: it guards hand edits in a generated tree that git
+        # does not track, so nothing else can notice them going missing.
+        run "android manifest" ./scripts/check-android-manifest.sh
+    else
+        printf '\n\033[33m== app: skipped, pnpm not installed\033[0m\n'
+    fi
+fi
+
+# Last because it is slow and needs the ESP-IDF toolchain. Note this only proves
+# the firmware compiles; whether it behaves is what the host suites are for.
+# Two targets, both built. The Pixie (ESP32-C3) is experimental and may not
+# ship in a given release, but a target that is only built when a tag is cut is
+# a target that is discovered broken while cutting the tag. Building it here
+# rather than only in CI keeps this script and .github/workflows/ci.yml
+# answering the same question.
+#
+# One visible side effect: `dependencies.lock` is tracked and records the
+# target of whichever environment was built last, so after this stage it says
+# esp32c3 and shows up as a modified file. It is a build artefact of the second
+# build, not a change; `git checkout -- dependencies.lock` puts it back.
+if [[ "$WHAT" == "all" || "$WHAT" == "firmware" ]]; then
+    if command -v pio >/dev/null 2>&1; then
+        run "firmware build (esp32s3)" pio run -e esp32s3
+        run "firmware build (pixie)" pio run -e pixie
+    else
+        printf '\n\033[33m== firmware: skipped, pio not installed\033[0m\n'
+    fi
+fi
+
+if [[ "$WHAT" == "rpc" ]]; then
+    run "rpc liveness" node ./scripts/check-rpc-liveness.mjs
+fi
+
+if [[ "$WHAT" == "repro" ]]; then
+    # Path is relative to the repo root, which this script cd'd to above -
+    # $0's dirname is not usable after that cd.
+    #
+    # repro-verify.sh rather than repro-check.sh: the latter covers the
+    # firmware only, and a release is two artefacts. It calls repro-check.sh
+    # for the firmware half rather than reimplementing it.
+    run "reproducible build" ./scripts/repro-verify.sh
+fi
+
+printf '\n'
+if (( ${#failed[@]} )); then
+    printf '\033[31mFAILED: %s\033[0m\n' "${failed[*]}"
+    exit 1
+fi
+printf '\033[32mAll checks passed.\033[0m\n'

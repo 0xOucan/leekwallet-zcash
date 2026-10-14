@@ -1,0 +1,37 @@
+{
+  "name": "leekwallet-companion",
+  "version": "0.1.0",
+  "description": "LeekWallet companion app workspace (Tauri v2: desktop + Android)",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "pnpm -r test && node --experimental-strip-types --disable-warning=ExperimentalWarning test/wc-uri.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/wc-requests.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/rpc-proxy.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/qr.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/qr-decode.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/flasher.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/nav.test.ts",
+    "dev": "vite --port 1420 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "tauri": "tauri",
+    "android:dev": "tauri android dev",
+    "android:build": "CC_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang AR_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar tauri android build --debug",
+    "android:build:arm64": "CC_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang AR_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar tauri android build --debug --target aarch64",
+    "android:check": "cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^8.2.1"
+  },
+  "dependencies": {
+    "@leekwallet/core": "workspace:*",
+    "@walletconnect/sign-client": "2.23.10",
+    "qrcode-generator": "2.0.4",
+    "viem": "^2.55.13",
+    "zxing-wasm": "3.1.3"
+  }
+}

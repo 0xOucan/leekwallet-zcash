@@ -1,0 +1,137 @@
+# ============================================================================
+# LeekWallet sdkconfig.defaults
+# ============================================================================
+# ESP32-S3 DevKitC-1 N16R8: 16MB flash, 8MB PSRAM (off - see below),
+# USB-Serial-JTAG console
+# ============================================================================
+
+# ============================================================================
+# FLASH CONFIGURATION - CRITICAL
+# ============================================================================
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHMODE="dio"
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHFREQ="80m"
+
+# ============================================================================
+# PARTITION TABLE - Custom for NVS wallet storage
+# ============================================================================
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# ============================================================================
+# NVS - Non-Volatile Storage for wallet data
+# ============================================================================
+CONFIG_NVS_ENCRYPTION=n
+
+# ============================================================================
+# MBEDTLS - Required for AES-256-CBC encryption
+# ============================================================================
+CONFIG_MBEDTLS_AES_C=y
+CONFIG_MBEDTLS_CIPHER_MODE_CBC=y
+CONFIG_MBEDTLS_SHA256_C=y
+CONFIG_MBEDTLS_SHA512_C=y
+
+# ============================================================================
+# CPU CONFIGURATION
+# ============================================================================
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=160
+
+# ============================================================================
+# CONSOLE - USE USB-SERIAL-JTAG (native USB on ESP32-S3 Mini)
+# ============================================================================
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_USB_CDC=n
+
+# ============================================================================
+# LOGGING
+# ============================================================================
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+CONFIG_LOG_MAXIMUM_LEVEL=4
+
+# ============================================================================
+# FREERTOS
+# ============================================================================
+CONFIG_FREERTOS_HZ=1000
+
+# ============================================================================
+# WIFI - off. It is a test fixture (an AP with a hardcoded password) on a
+# device that holds seeds; see AUDIT S8g. `pio run -e esp32s3-wifi` turns it
+# back on for the rare occasion it is genuinely wanted.
+# ============================================================================
+CONFIG_ESP_WIFI_ENABLED=n
+CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+
+# ============================================================================
+# BLUETOOTH - Enabled for BLE testing (ESP32-S3 with NimBLE)
+# ============================================================================
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+
+# ============================================================================
+# USB - TinyUSB for USB HID
+# ============================================================================
+CONFIG_TINYUSB_ENABLED=y
+CONFIG_TINYUSB_HID_ENABLED=y
+CONFIG_TINYUSB_DESC_HID_STRING="LeekWallet HID"
+
+# ============================================================================
+# PSRAM - present, and deliberately OFF.
+#
+# The chip really has it: esptool reports "Embedded PSRAM 8MB (AP_3v3)" on the
+# attached board, and platformio.ini has said devkitc-1 with 16MB flash all
+# along. The old comment here claimed a Mini with none, which was simply wrong
+# about the hardware.
+#
+# It stays off because this is a wallet. PSRAM is a separate die reached over a
+# bus; internal SRAM shares silicon with the CPU. Anything the allocator spills
+# externally - a seed, a mnemonic, a derived key - is reachable in ways internal
+# memory is not, and the S3's external-memory encryption rides on flash
+# encryption, which is T11 and not yet burned. Nothing needs the space today:
+# the firmware uses about 15% of internal RAM.
+#
+# Turn it on when something actually needs it - a camera framebuffer for T58 is
+# the realistic case - and with two conditions: secrets allocated
+# MALLOC_CAP_INTERNAL so they cannot land off-die, and external memory
+# encryption on. Octal PSRAM also consumes GPIO35/36/37, free today.
+# ============================================================================
+CONFIG_SPIRAM=n
+CONFIG_ESP32S3_SPIRAM_SUPPORT=n
+
+# ============================================================================
+# WATCHDOG
+# ============================================================================
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# ============================================================================
+# REPRODUCIBLE BUILD (T37)
+#
+# Whoever solders and flashes a board is its owner's trust anchor. That claim
+# is only checkable if anyone else can rebuild the published source and get the
+# same bytes — otherwise "this is the firmware we published" is a promise, not
+# a fact.
+#
+# Without this, two builds of an identical tree differ in exactly three places,
+# all downstream of one cause: ESP-IDF stamps the wall-clock build time into
+# esp_app_desc_t (and the bootloader's own description), which then changes the
+# ELF SHA-256 recorded in the image and the SHA-256 appended to it. This option
+# drops the time/date stamp from both images and remaps source paths in debug
+# info, so the build no longer depends on when or where it ran.
+#
+# What it deliberately does NOT drop is PROJECT_VER: the short commit hash
+# stays in the image, because a binary that cannot name the source it came from
+# is the problem this task exists to solve. That value is a function of the
+# commit, so it is reproducible for anyone building the same commit.
+#
+# Verify, never assume:  ./scripts/repro-check.sh
+# ============================================================================
+CONFIG_APP_REPRODUCIBLE_BUILD=y

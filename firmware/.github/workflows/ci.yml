@@ -1,0 +1,184 @@
+# Everything checkable without a board.
+#
+# The stages call scripts/check.sh rather than repeating its commands, so a
+# green run here means the same thing as a green run on a developer's machine.
+# They are separate jobs because the C suites finish in seconds and the ESP-IDF
+# toolchain download does not — a broken firmware invariant should be visible
+# long before the build job has finished fetching a compiler.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # The three-OS matrix exists because the companion is published for three
+  # operating systems, and "it builds on Linux" is not evidence about the other
+  # two. It is not evidence about devices either: no runner has a board or a
+  # Bluetooth radio, so USB enumeration, pairing and every signing flow stay
+  # unverified on Windows and macOS until a person with that OS and a board
+  # runs them. docs/RELEASE-0.1.md says so per platform, and the release notes
+  # repeat it rather than letting a green matrix imply otherwise.
+  #
+  # The host C suites are matrixed too, not only the TypeScript: `check.sh app`
+  # regenerates the conformance vectors by compiling and running the C, so the
+  # app leg needs a working compiler on every OS anyway. Matrixing the suites
+  # as well costs one job and tells us which half broke.
+  sim:
+    name: Host suites (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One OS failing must not cancel the other two: which platforms broke is
+      # the entire information this matrix exists to produce.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # The Windows image ships gcc (mingw-w64) but not GNU make, and the sim
+      # harness is a Makefile. Installed rather than worked around, because a
+      # hand-rolled compile command here would be a second definition of how
+      # the suites are built.
+      - if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+      # The scripts are bash; the Windows runner defaults to pwsh, which would
+      # not run them. Git Bash is on the image. This combination has never been
+      # exercised - see the note at the bottom of docs/RELEASE.md.
+      - shell: bash
+        run: ./scripts/check.sh sim
+
+  app:
+    name: App (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          # The TypeScript here is type-stripped, not transpiled, so the Node
+          # version is load-bearing rather than a preference.
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+      - run: pnpm --dir app install --frozen-lockfile
+      # `check.sh app` first regenerates the conformance vectors from the C
+      # source, so this stage needs a compiler as well as Node - that is why
+      # the make install above is not only in the sim job.
+      - shell: bash
+        run: ./scripts/check.sh app
+
+  # Firmware stays Linux-only on purpose. Both targets cross-compile, so a
+  # Windows and a macOS runner would each spend ten minutes downloading the
+  # same toolchain to answer a question Linux has already answered.
+  #
+  # Both targets: `check.sh firmware` builds esp32s3 and pixie. The C3 image is
+  # built on every commit whether or not it ships, because a second target that
+  # is only built at release time is a second target that is broken at release
+  # time - and it lives in check.sh rather than as an extra step here so that a
+  # developer running check.sh locally learns the same thing CI does.
+  firmware:
+    name: Firmware build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # ~/.platformio holds the toolchain and the ESP-IDF checkout. Without
+      # this the job spends most of its time downloading a compiler it already
+      # downloaded last run.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'sdkconfig.defaults') }}
+          restore-keys: pio-${{ runner.os }}-
+      - run: pip install --upgrade platformio
+      - run: ./scripts/check.sh firmware
+
+  # Reproducibility is the property that rots silently: a dependency bump
+  # reintroduces a build timestamp and nothing complains until someone tries to
+  # verify a release months later. Whoever solders and flashes a board is its
+  # owner's trust anchor, and the only way out of that is a binary anyone can
+  # rebuild - so this is checked on every push, not at release time when it is
+  # too late to be a surprise.
+  #
+  # Its own job, not a stage of check.sh: it builds the firmware twice, and
+  # check.sh needs to stay something a developer runs before committing.
+  repro:
+    name: Reproducible build (firmware)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # repro-check.sh clones the repo and checks out a commit, so the
+          # default shallow single-commit checkout is enough - but tags matter:
+          # PROJECT_VER comes from `git describe`, and a checkout that lost the
+          # tags stamps a different version than a full clone would. Fetching
+          # everything keeps the hash CI computes equal to the hash a person
+          # computes.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'sdkconfig.defaults') }}
+          restore-keys: pio-${{ runner.os }}-
+      - run: pip install --upgrade platformio
+      - run: ./scripts/repro-verify.sh firmware
+
+  # The same argument, applied to the half of a release that most users will
+  # actually download. The companion is planned as a GitHub release for three
+  # desktop platforms with a firmware flasher inside it (T65) - a program that
+  # writes to the device the wallet exists to protect. A checksum next to that
+  # download proves the download; only a reproducible build says which source
+  # produced it.
+  #
+  # Split from the firmware job because it needs an entirely different
+  # toolchain, and because two red X's that name the half that broke are worth
+  # more than one that does not.
+  repro-app:
+    name: Reproducible build (companion)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Tauri's Linux dependencies. The build links against WebKitGTK
+      # directly (see src-tauri/Cargo.toml, the linux target section), so a
+      # bare runner cannot compile this crate at all.
+      - run: |
+          sudo apt-get update
+          # libudev-dev: libudev-sys comes in through btleplug, which uses udev
+          # to enumerate Bluetooth adapters on Linux. Same list as the release
+          # workflow, and it must stay the same -- a CI that builds what the
+          # release cannot is a CI that reports green on a broken release.
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev
+      # The registry cache only; target/ is deliberately NOT cached. A cached
+      # target directory would make the second pass incremental, and an
+      # incremental build that matches proves nothing.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - run: ./scripts/repro-verify.sh companion

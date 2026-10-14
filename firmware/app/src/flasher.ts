@@ -1,0 +1,722 @@
+/**
+ * The firmware flasher panel (T65).
+ *
+ * Deliberately hard to use by accident. Flashing installs the code that holds
+ * the keys. There are two ways to do it and they are not interchangeable:
+ *
+ * * **provision** — the merged image at offset 0. The vault lives in `nvs` at
+ *   0x9000, which is *before* the app at 0x10000, so a merged image spans it
+ *   and **erases every wallet**. Correct for a new or bricked board only.
+ * * **update** — the application alone at 0x10000. The vault is untouched.
+ *
+ * Both images begin with the same ESP-IDF magic byte, so the file cannot say
+ * which one it is; the user is asked, and the answer is sent explicitly rather
+ * than defaulted. Defaulting picked the destructive one, and did erase a real
+ * wallet during development.
+ *
+ * Within provisioning there are two further
+ * dangers on this screen and they are stated separately, because they have
+ * different remedies:
+ *
+ * * The seed on the device is destroyed. The user fixes that by writing their
+ *   recovery phrase down first, which is why the acknowledgement says so in
+ *   those words instead of "this cannot be undone".
+ * * Without secure boot the device runs whatever it is given, so a flasher is a
+ *   one-click way to install firmware that records a PIN. Nothing the user does
+ *   fixes that; it is fixed by T11 burning the fuses. Until then the screen says
+ *   it plainly rather than the button being quietly greyed out — a greyed button
+ *   teaches nothing, and the risk is real whether or not this app offers it
+ *   (any host can put a USB-Serial-JTAG chip into ROM download mode, so esptool
+ *   has always been able to do this).
+ *
+ * Three gates in front of the button, in order of how fundamental they are:
+ *
+ * 1. **The build.** `flash_capability()` reports false unless the backend was
+ *    compiled with the `flasher` feature; shipped builds are not.
+ * 2. **The image.** Its SHA-256 is computed here and shown, and if the user
+ *    pasted the digest from the release notes, a mismatch is a *refusal* — not
+ *    a warning with a way past it. So is an image built for the other board:
+ *    the ESP32-S3 reference and the ESP32-C3 Pixie are indistinguishable over
+ *    USB, and the wrong one flashes cleanly and then fails to boot, which reads
+ *    as a broken cable rather than as a wrong file.
+ * 3. **The acknowledgement**, then a device, then a file.
+ *
+ * Nothing here flashes on its own. There is no auto-detect-and-write path, and
+ * connecting is a separate press from writing.
+ */
+
+import { invoker } from "./tauri-transport.ts";
+
+export interface FlashCapability {
+  available: boolean;
+  secureBoot: boolean;
+  warning: string;
+  erases: string;
+}
+
+export interface FlashPort {
+  name: string;
+  description: string;
+  usbId: string;
+  likelyDevice: boolean;
+}
+
+export interface DetectedChip {
+  chip: string;
+  chipId: number | null;
+  revision: string | null;
+  flashSize: string;
+}
+
+export interface FlashProgress {
+  stage: "writing" | "verifying" | "done";
+  current: number;
+  total: number;
+}
+
+/** What the frontend needs from the shell. An interface so tests can fake it. */
+export interface FlashBridge {
+  capability(): Promise<FlashCapability>;
+  ports(): Promise<FlashPort[]>;
+  detect(port: string): Promise<DetectedChip>;
+  write(
+    port: string,
+    image: Uint8Array,
+    expectedSha256: string,
+    /** 0 for a merged provision image, 0x10000 for an application update. */
+    offset: number,
+  ): Promise<string>;
+  onProgress(handler: (p: FlashProgress) => void): void;
+  log(line: string): void;
+}
+
+/** `esp_chip_id_t`, for the two boards this project ships. */
+export const CHIP_IDS: Record<number, string> = { 0x0005: "ESP32-C3", 0x0009: "ESP32-S3" };
+
+/**
+ * The chip id out of an ESP image header, or null if there is no header.
+ *
+ * magic(1) segment_count(1) spi_mode(1) spi_speed/size(1) entry_addr(4)
+ * wp_pin(1) spi_pin_drv(3), then chip_id as a little-endian u16 at byte 12.
+ * Read here as well as in Rust so the mismatch can be caught while choosing the
+ * file, rather than after the device has already been reset into the ROM.
+ */
+export function imageChipId(image: Uint8Array): number | null {
+  if (image.length < 14 || image[0] !== 0xe9) return null;
+  return image[12]! | (image[13]! << 8);
+}
+
+/** A name for a chip id, falling back to the raw number. */
+export function chipName(id: number | null): string {
+  if (id === null) return "an unrecognised chip";
+  return CHIP_IDS[id] ?? `chip id 0x${id.toString(16).padStart(4, "0")}`;
+}
+
+/** The SHA-256 of some bytes, lowercase hex. */
+export async function sha256Hex(data: Uint8Array): Promise<string> {
+  const buf = new Uint8Array(data).buffer;
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Whether a pasted digest matches, and what to say when it does not.
+ *
+ * Forgiving about case and whitespace, because the expected value comes from a
+ * human pasting a line out of release notes. Not forgiving about anything else:
+ * a mismatch returns a sentence and the caller has no way to write anyway.
+ */
+export function digestRefusal(expected: string, actual: string): string {
+  const want = expected.trim().toLowerCase();
+  if (want === "") return "";
+  if (!/^[0-9a-f]{64}$/.test(want)) {
+    return "That is not a SHA-256 digest — it should be 64 hexadecimal characters. Paste the whole line from the release notes.";
+  }
+  if (want !== actual) {
+    return (
+      "Refusing to flash: this file's SHA-256 does not match the one you pasted. " +
+      "The file is not the image you checked — download it again, and do not " +
+      "install this one."
+    );
+  }
+  return "";
+}
+
+/* ------------------------------------------------------------- releases (M4) */
+
+/** One flashable asset out of a GitHub release. */
+export interface ReleaseAsset {
+  name: string;
+  /** "update" keeps the wallet, "provision" erases every one. Never guessed
+   * from bytes — see the module doc — always from the filename suffix. */
+  kind: "update" | "provision";
+  board: "ESP32-C3 (Pixie)" | "ESP32-S3";
+  downloadUrl: string;
+  size: number;
+  /** From this release's SHA256SUMS asset, when one was found and parsed.
+   * Null means "not verifiable from the release notes", never "matches". */
+  sha256: string | null;
+}
+
+export interface Release {
+  tag: string;
+  publishedAt: string;
+  /** The release page, so a person can read the notes before trusting a file. */
+  htmlUrl: string;
+  assets: ReleaseAsset[];
+}
+
+const RELEASES_API = "https://api.github.com/repos/0xOucan/LeekWallet/releases";
+
+/** Board and image kind out of a filename — the two things a release build
+ * actually names. Everything else (chip id, digest) is checked from bytes. */
+function classifyAsset(name: string): Pick<ReleaseAsset, "kind" | "board"> | null {
+  const lower = name.toLowerCase();
+  let kind: ReleaseAsset["kind"];
+  if (lower.endsWith("-update.bin")) kind = "update";
+  else if (lower.endsWith("-provision.bin")) kind = "provision";
+  else return null;
+  const board = lower.includes("esp32s3") || lower.includes("esp32-s3")
+    ? "ESP32-S3"
+    : "ESP32-C3 (Pixie)";
+  return { kind, board };
+}
+
+/** `name  digest` or `digest  name`, one per line — the shape `sha256sum` writes. */
+export function parseShaSums(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const m = /^([0-9a-f]{64})\s+\*?(\S+)$/i.exec(line.trim());
+    if (m) { out[m[2] as string] = (m[1] as string).toLowerCase(); continue; }
+    const m2 = /^(\S+)\s+([0-9a-f]{64})$/i.exec(line.trim());
+    if (m2) out[m2[1] as string] = (m2[2] as string).toLowerCase();
+  }
+  return out;
+}
+
+/**
+ * The releases list, or a thrown error naming what went wrong.
+ *
+ * Never returns an empty array on failure — an empty list reads as "no
+ * releases exist" (UI-REDESIGN-PLAN.md §2a), which is a lie the caller must
+ * not be allowed to render. A genuinely empty releases page is possible and
+ * is a different, honest state the caller renders itself; this function only
+ * ever returns [] for that case, and throws for every kind of "could not ask".
+ */
+export async function fetchReleases(): Promise<Release[]> {
+  let res: Response;
+  try {
+    res = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
+  } catch (e) {
+    throw new Error(
+      `Could not reach GitHub to list releases: ${String((e as Error).message ?? e)}`,
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`GitHub returned ${res.status} listing releases — could not list them.`);
+  }
+  const body = (await res.json()) as unknown;
+  if (!Array.isArray(body)) throw new Error("GitHub's releases response was not a list.");
+
+  const releases: Release[] = [];
+  for (const r of body as Record<string, unknown>[]) {
+    const tag = typeof r["tag_name"] === "string" ? r["tag_name"] : "";
+    const publishedAt = typeof r["published_at"] === "string" ? r["published_at"] : "";
+    const htmlUrl = typeof r["html_url"] === "string" ? r["html_url"] : "";
+    const rawAssets = Array.isArray(r["assets"]) ? (r["assets"] as Record<string, unknown>[]) : [];
+
+    // The digest file, if this release carries one — fetched once per release
+    // and applied to every image asset in it, rather than trusting anything
+    // an asset's own name claims.
+    const sumsAsset = rawAssets.find((a) =>
+      typeof a["name"] === "string" && /^SHA256SUMS/i.test(a["name"] as string));
+    let sums: Record<string, string> = {};
+    if (sumsAsset && typeof sumsAsset["browser_download_url"] === "string") {
+      try {
+        const sr = await fetch(sumsAsset["browser_download_url"] as string);
+        if (sr.ok) sums = parseShaSums(await sr.text());
+      } catch { /* no digests for this release; assets carry sha256: null */ }
+    }
+
+    const assets: ReleaseAsset[] = [];
+    for (const a of rawAssets) {
+      const name = typeof a["name"] === "string" ? a["name"] : "";
+      const url = typeof a["browser_download_url"] === "string" ? a["browser_download_url"] : "";
+      const size = typeof a["size"] === "number" ? a["size"] : 0;
+      const cls = classifyAsset(name);
+      if (!cls || !url) continue;
+      assets.push({ name, kind: cls.kind, board: cls.board, downloadUrl: url, size,
+        sha256: sums[name] ?? null });
+    }
+    releases.push({ tag, publishedAt, htmlUrl, assets });
+  }
+  return releases;
+}
+
+/** Download an asset's bytes, over the same fetch the release list used. */
+export async function downloadAsset(asset: ReleaseAsset): Promise<Uint8Array<ArrayBuffer>> {
+  let res: Response;
+  try {
+    res = await fetch(asset.downloadUrl);
+  } catch (e) {
+    throw new Error(`Could not download ${asset.name}: ${String((e as Error).message ?? e)}`);
+  }
+  if (!res.ok) throw new Error(`GitHub returned ${res.status} downloading ${asset.name}.`);
+  const buf = await res.arrayBuffer();
+  return new Uint8Array(buf.slice(0));
+}
+
+/** Whether the image belongs on the attached board, and what to say if not. */
+export function chipRefusal(imageId: number | null, device: DetectedChip | null): string {
+  if (device === null || imageId === null) return "";
+  if (device.chipId === null) {
+    return (
+      `The attached device reports itself as ${device.chip}, which is not one of the boards ` +
+      "this app knows how to flash (ESP32-S3 or ESP32-C3)."
+    );
+  }
+  if (device.chipId !== imageId) {
+    return (
+      `Refusing to flash: this image was built for ${chipName(imageId)} and the attached device ` +
+      `is ${chipName(device.chipId)}. It would be written without complaint and then fail to ` +
+      "boot, which looks exactly like a broken cable."
+    );
+  }
+  return "";
+}
+
+/**
+ * Why the flash button is disabled, or the empty string when it is not.
+ *
+ * Split out from the DOM so the rule is testable, and returned as the sentence
+ * to display rather than as a boolean: "disabled with no explanation" is the
+ * version of this that generates support questions, and on a screen this
+ * dangerous the explanation is most of the point.
+ */
+export function flashBlockedReason(state: {
+  capability: FlashCapability | null;
+  acknowledged: boolean;
+  port: string;
+  imageBytes: number;
+  digestRefusal: string;
+  chipRefusal: string;
+  busy: boolean;
+}): string {
+  if (state.busy) return "Flashing…";
+  if (!state.capability) return "Checking what this build can do…";
+  if (!state.capability.available) {
+    return (
+      "This build cannot flash firmware. That is deliberate: until secure boot " +
+      "is burned, a device will run whatever it is given, so the flasher is " +
+      "compiled out of shipped builds. Build the backend with `--features " +
+      "flasher` if you are developing on your own board. Flashing is also " +
+      "desktop-only — espflash takes a concrete serial port type that the " +
+      "Android USB backend cannot be handed."
+    );
+  }
+  if (state.imageBytes === 0) return "Choose a firmware image (.bin) to write.";
+  // The refusals come before the smaller omissions: a user holding the wrong
+  // file should be told that, not told to pick a port they will then be
+  // refused at.
+  if (state.digestRefusal !== "") return state.digestRefusal;
+  if (state.chipRefusal !== "") return state.chipRefusal;
+  if (state.port === "") return "Choose the device to flash.";
+  if (!state.acknowledged) return "Read and accept the warning above first.";
+  return "";
+}
+
+/** Human-readable progress. Exported so a test can pin the wording. */
+export function describeProgress(p: FlashProgress): string {
+  const pct = p.total > 0 ? Math.floor((p.current / p.total) * 100) : 0;
+  switch (p.stage) {
+    case "writing":
+      return `Writing… ${pct}% (${p.current} of ${p.total} bytes). Do not unplug the device.`;
+    case "verifying":
+      return "Written. Verifying the checksum on the device…";
+    case "done":
+      return "Done. The device has been reset and should be running the new firmware.";
+  }
+}
+
+const $ = <T extends HTMLElement>(id: string): T => {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`missing element #${id}`);
+  return el as T;
+};
+
+/** The real bridge, over Tauri. Returns null where there is no backend. */
+export function tauriFlashBridge(log: (line: string) => void): FlashBridge | null {
+  const invoke = invoker();
+  if (!invoke) return null;
+  return {
+    capability: () => invoke<FlashCapability>("flash_capability"),
+    ports: () => invoke<FlashPort[]>("flash_ports"),
+    detect: (port) => invoke<DetectedChip>("flash_detect", { port }),
+    write: (port, image, expectedSha256, offset) =>
+      // Bytes, not a path: the only place a file is read is the file input
+      // below, so this command cannot be aimed at an arbitrary path on disk.
+      // The digest travels with them and the backend re-checks it over the
+      // buffer it is actually about to write.
+      invoke<string>("flash_write", {
+        request: { port, image: Array.from(image), expectedSha256, offset },
+      }),
+    onProgress: (handler) => {
+      const w = window as unknown as {
+        __TAURI__?: {
+          event?: { listen?: (e: string, cb: (p: { payload: FlashProgress }) => void) => void };
+        };
+      };
+      w.__TAURI__?.event?.listen?.("flash://progress", (e) => handler(e.payload));
+    },
+    log,
+  };
+}
+
+export function initFlasher(bridge: FlashBridge | null): void {
+  const button = $("flashgo") as HTMLButtonElement;
+  const connectButton = $("flashconnect") as HTMLButtonElement;
+  const status = $("flashstatus");
+  const warning = $("flashwarning");
+  const erase = $("flasherase");
+  const ack = $("flashack") as HTMLInputElement;
+  // Two radios rather than a <select>: the destructive one lives inside a
+  // closed <details> (L2), so reaching it is "open the disclosure, then
+  // choose it" — never a single click from arrival, and closing the
+  // disclosure snaps back to Update (see the "toggle" listener below).
+  const modeUpdate = $("flashmodeupdate") as HTMLInputElement;
+  const modeProvision = $("flashmodeprovision") as HTMLInputElement;
+  const modeDetails = $("flashmodedetails") as HTMLDetailsElement;
+  const ackText = $("flashacktext");
+  const fileLabel = $("flashfilelabel");
+
+  /** Offsets from partitions.csv: nvs 0x9000, phy_init 0xf000, app 0x10000. */
+  const PROVISION_OFFSET = 0x0;
+  const UPDATE_OFFSET = 0x10000;
+  const provisioning = () => modeProvision.checked;
+  const offsetForMode = () => (provisioning() ? PROVISION_OFFSET : UPDATE_OFFSET);
+
+  /* The acknowledgement is not boilerplate to click past — it is the sentence
+     that has to be true. So it says what THIS write does, and re-arms itself
+     when the mode changes: a box ticked against "keeps my wallet" is not
+     consent to erase one. */
+  const describeMode = (): void => {
+    if (provisioning()) {
+      // Named by consequence first (L2): the filename is the parenthetical,
+      // not the headline — a person choosing this should not have to know
+      // what "-provision.bin" means to understand what they are about to do.
+      fileLabel.textContent = "Full flash image (-provision.bin, written at 0x0)";
+      ackText.textContent =
+        "I have written down my recovery phrase. I understand that this erases " +
+        "the device including every seed stored on it, and that the firmware I " +
+        "install will have full access to my PIN and my seed.";
+    } else {
+      fileLabel.textContent = "Update image (-update.bin, written at 0x10000)";
+      ackText.textContent =
+        "I understand that the firmware I install will have full access to my " +
+        "PIN and my seed. My wallet stays on the device.";
+    }
+  };
+  const onModeChange = (): void => {
+    ack.checked = false;
+    describeMode();
+    erase.hidden = !provisioning();
+    refresh();
+  };
+  modeUpdate.addEventListener("change", onModeChange);
+  modeProvision.addEventListener("change", onModeChange);
+  // Closing the disclosure is itself a decision to step back from the
+  // destructive path (L2: "never one click from arrival" must survive a user
+  // opening it, looking, and changing their mind without explicitly
+  // reselecting Update). Opening it does not select provision by itself —
+  // only the radio inside does that.
+  modeDetails.addEventListener("toggle", () => {
+    if (!modeDetails.open && modeProvision.checked) {
+      modeUpdate.checked = true;
+      onModeChange();
+    }
+  });
+  describeMode();
+  const portSelect = $("flashport") as HTMLSelectElement;
+  const file = $("flashfile") as HTMLInputElement;
+  const digestOut = $("flashdigest");
+  const expected = $("flashexpected") as HTMLInputElement;
+  const device = $("flashdevice");
+  const bar = $("flashbar") as HTMLProgressElement;
+
+  let capability: FlashCapability | null = null;
+  let image = new Uint8Array(0);
+  let digest = "";
+  let detected: DetectedChip | null = null;
+  let busy = false;
+
+  const refresh = (): void => {
+    const reason = flashBlockedReason({
+      capability,
+      acknowledged: ack.checked,
+      port: portSelect.value,
+      imageBytes: image.length,
+      digestRefusal: digestRefusal(expected.value, digest),
+      chipRefusal: chipRefusal(imageChipId(image), detected),
+      busy,
+    });
+    button.disabled = reason !== "";
+    if (reason !== "") status.textContent = reason;
+  };
+
+  /* panel's own [hidden] is no longer this module's to set (L1,
+   * docs/UI-SPEC-V2.md §1): it is a launcher destination now, shown only when
+   * chosen from the launcher or entered via Back from elsewhere — see
+   * applyPreConnectVisibility() in main.ts. Its default in index.html is
+   * `hidden`, same as before this module ran at all. */
+  if (!bridge) {
+    warning.textContent =
+      "Flashing needs the desktop app; a browser window cannot reach a USB device.";
+    button.disabled = true;
+    connectButton.disabled = true;
+    return;
+  }
+
+  ack.addEventListener("change", refresh);
+  portSelect.addEventListener("change", () => {
+    // A different port is a different board until it says otherwise. Keeping a
+    // stale detection here would let a C3 image through a check that passed
+    // against the S3 that used to be selected.
+    detected = null;
+    device.textContent = "Not connected.";
+    refresh();
+  });
+  expected.addEventListener("input", refresh);
+
+  /**
+   * Accept bytes picked from a release rather than the file input — same
+   * state, same gates. Sets the mode radio and re-arms the acknowledgement
+   * exactly as the mode radios' own change handler does, because picking a
+   * -provision.bin asset is exactly that: choosing the destructive mode. The
+   * release list's own closed <details> (M4) was that path's deliberate
+   * second step, so the details here is opened rather than made redundant —
+   * it reflects the choice already made instead of asking it twice.
+   */
+  const acceptImage = async (bytes: Uint8Array<ArrayBuffer>, label: string, kind: "update" | "provision", knownSha: string | null): Promise<void> => {
+    image = bytes;
+    digest = await sha256Hex(image);
+    if (provisioning() !== (kind === "provision")) {
+      if (kind === "provision") {
+        modeProvision.checked = true;
+        modeDetails.open = true;
+      } else {
+        modeUpdate.checked = true;
+      }
+      ack.checked = false;
+      describeMode();
+      erase.hidden = !provisioning();
+    }
+    // The digest travelling with the release is a cross-check against a
+    // corrupted or tampered download, not a shortcut past it — it is compared
+    // against the bytes just fetched exactly like a pasted one would be.
+    expected.value = knownSha ?? "";
+    const built = imageChipId(image);
+    digestOut.textContent = `${label} — ${image.length} bytes, built for ${chipName(built)}\nSHA-256 ${digest}` +
+      (knownSha ? "" : "\nThis release did not publish a SHA256SUMS this app could parse — nothing to cross-check against.");
+    refresh();
+  };
+
+  const releasesStatus = $("releasesstatus");
+  const releasesList = $("releaseslist");
+
+  const renderReleases = (releases: Release[]): void => {
+    releasesList.replaceChildren();
+    if (releases.length === 0) {
+      releasesStatus.textContent = "No releases published yet.";
+      return;
+    }
+    releasesStatus.textContent = `${releases.length} release${releases.length === 1 ? "" : "s"} from github.com/0xOucan/LeekWallet.`;
+    for (const rel of releases) {
+      const box = document.createElement("div");
+      box.className = "field";
+      const title = document.createElement("strong");
+      const date = rel.publishedAt ? new Date(rel.publishedAt).toLocaleDateString() : "undated";
+      title.textContent = `${rel.tag} — ${date}`;
+      box.append(title);
+
+      const updates = rel.assets.filter((a) => a.kind === "update");
+      const provisions = rel.assets.filter((a) => a.kind === "provision");
+
+      const row = document.createElement("div");
+      row.className = "row";
+      for (const a of updates) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "secondary";
+        b.textContent = `${a.board} — update (keeps your wallet)`;
+        b.addEventListener("click", () => {
+          releasesStatus.textContent = `Downloading ${a.name}…`;
+          void downloadAsset(a)
+            .then((bytes) => acceptImage(bytes, a.name, "update", a.sha256))
+            .then(() => { releasesStatus.textContent = `Loaded ${a.name} from ${rel.tag}.`; })
+            .catch((e: unknown) => { releasesStatus.textContent = String((e as Error).message ?? e); });
+        });
+        row.append(b);
+      }
+      box.append(row);
+
+      if (provisions.length > 0) {
+        // Never in the open list, never one click away (§4): a second,
+        // deliberate action — opening this — stands between "browsing
+        // releases" and "the button that erases every wallet".
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Show the image that erases every wallet";
+        details.append(summary);
+        const prow = document.createElement("div");
+        prow.className = "row";
+        for (const a of provisions) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "danger";
+          b.textContent = `${a.board} — provision (ERASES every wallet)`;
+          b.addEventListener("click", () => {
+            releasesStatus.textContent = `Downloading ${a.name}…`;
+            void downloadAsset(a)
+              .then((bytes) => acceptImage(bytes, a.name, "provision", a.sha256))
+              .then(() => { releasesStatus.textContent = `Loaded ${a.name} from ${rel.tag}. Read the acknowledgement above before flashing.`; })
+              .catch((e: unknown) => { releasesStatus.textContent = String((e as Error).message ?? e); });
+          });
+          prow.append(b);
+        }
+        details.append(prow);
+        box.append(details);
+      }
+      releasesList.append(box);
+    }
+  };
+
+  releasesStatus.textContent = "Checking github.com/0xOucan/LeekWallet for releases…";
+  void fetchReleases()
+    .then(renderReleases)
+    .catch((e: unknown) => {
+      // Never an empty list on failure — that reads as "no releases exist",
+      // which is not what happened (UI-REDESIGN-PLAN.md §2a/§4).
+      releasesStatus.textContent = String((e as Error).message ?? e);
+    });
+
+  file.addEventListener("change", () => {
+    const f = file.files?.[0];
+    if (!f) {
+      image = new Uint8Array(0);
+      digest = "";
+      digestOut.textContent = "";
+      refresh();
+      return;
+    }
+    void f.arrayBuffer().then(async (buf) => {
+      image = new Uint8Array(buf);
+      digest = await sha256Hex(image);
+      const built = imageChipId(image);
+      digestOut.textContent =
+        `${f.name} — ${image.length} bytes, built for ${chipName(built)}\nSHA-256 ${digest}`;
+      refresh();
+    });
+  });
+
+  connectButton.addEventListener("click", () => {
+    if (busy || portSelect.value === "") return;
+    device.textContent = "Connecting…";
+    void bridge
+      .detect(portSelect.value)
+      .then((d) => {
+        detected = d;
+        const rev = d.revision === null ? "" : ` ${d.revision}`;
+        device.textContent = `${chipName(d.chipId)} (${d.chip}${rev}), ${d.flashSize} flash`;
+        bridge.log(`flasher: ${portSelect.value} is ${d.chip}`);
+        refresh();
+      })
+      .catch((e: unknown) => {
+        detected = null;
+        device.textContent = `Could not identify the device: ${String((e as Error).message ?? e)}`;
+        refresh();
+      });
+  });
+
+  bridge.onProgress((p) => {
+    status.textContent = describeProgress(p);
+    bar.hidden = false;
+    bar.max = p.total || 1;
+    bar.value = p.current;
+  });
+
+  button.addEventListener("click", () => {
+    if (busy) return;
+    /* Never auto-flash, and never flash on a stale answer: everything the
+     * button's state depends on is re-evaluated at the moment of the press. */
+    if (flashBlockedReason({
+      capability,
+      acknowledged: ack.checked,
+      port: portSelect.value,
+      imageBytes: image.length,
+      digestRefusal: digestRefusal(expected.value, digest),
+      chipRefusal: chipRefusal(imageChipId(image), detected),
+      busy,
+    }) !== "") {
+      refresh();
+      return;
+    }
+    busy = true;
+    refresh();
+    bridge.log(`flasher: writing ${image.length} bytes (${digest}) to ${portSelect.value}`);
+    void bridge
+      .write(portSelect.value, image, digest, offsetForMode())
+      .then(() => {
+        status.textContent = describeProgress({
+          stage: "done",
+          current: image.length,
+          total: image.length,
+        });
+        bridge.log("flasher: complete");
+      })
+      .catch((e: unknown) => {
+        status.textContent = `Flashing failed: ${String((e as Error).message ?? e)}`;
+        bridge.log(`flasher: failed: ${String((e as Error).message ?? e)}`);
+      })
+      .finally(() => {
+        busy = false;
+        bar.hidden = true;
+        refresh();
+      });
+  });
+
+  void bridge
+    .capability()
+    .then(async (cap) => {
+      capability = cap;
+      warning.textContent = cap.warning;
+      /* Only where it is true. A standing "this erases your device" banner over
+         an update that does not erase anything is how a warning stops being
+         read by the time it matters. */
+      erase.textContent = cap.erases;
+      erase.hidden = !provisioning();
+      /* Never say "protected" unless the backend says so. Today it never does:
+       * no fuse has been burned, and "unknown" must read the same as "not
+       * protected" for as long as that is true. */
+      warning.dataset["secure"] = String(cap.secureBoot);
+      if (cap.available) {
+        const ports = await bridge.ports();
+        portSelect.textContent = "";
+        for (const p of ports) {
+          const opt = document.createElement("option");
+          opt.value = p.name;
+          opt.textContent =
+            `${p.name} — ${p.description} [${p.usbId}]` +
+            (p.likelyDevice ? "  (Espressif)" : "");
+          portSelect.appendChild(opt);
+        }
+      } else {
+        connectButton.disabled = true;
+      }
+      refresh();
+    })
+    .catch(() => {
+      status.textContent = "Could not ask the backend whether it can flash.";
+    });
+
+  refresh();
+}
