@@ -40,7 +40,7 @@ VAULT_CRYPTO :=                 $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                 $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/aes_modes.c \
                 $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/gf128mul.c
 
-TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_eth_tx test_eth_decode test_eip712 test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_eip4527 test_eip4527_encode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_zcash_keys
+TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_eth_tx test_eth_decode test_eip712 test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_eip4527 test_eip4527_encode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_zcash_keys test_zcash_pczt
 
 all: $(addprefix $(BUILD)/,$(TESTS))
 
@@ -170,7 +170,7 @@ ZSIGN := ../components/zsign-rust
 $(ZSIGN)/target/release/libzsign_rust.a: FORCE
 	cd $(ZSIGN) && cargo +stable build --release -q
 
-$(BUILD)/test_zcash_keys: test_zcash_keys.c host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
+$(BUILD)/test_zcash_keys: test_zcash_keys.c ../../vectors/keys_vectors.h host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
                           $(ZSIGN)/target/release/libzsign_rust.a \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                    $(CRYPTO)/ecdsa.c $(CRYPTO)/bignum.c $(CRYPTO)/secp256k1.c \
@@ -191,6 +191,14 @@ $(BUILD)/test_zcash_keys: test_zcash_keys.c host_stubs.c $(ZSIGN)/platform/zsign
                    $(CRYPTO)/ed25519-donna/ed25519-sha3.c \
                    $(CRYPTO)/ed25519-donna/ed25519-keccak.c | $(BUILD)
 	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -o $@ $(filter %.c,$^) \
+	    $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+
+$(BUILD)/test_zcash_pczt: test_zcash_pczt.c ../../vectors/pczt_vectors.h host_stubs.c \
+                          $(ZSIGN)/platform/zsign_platform_host.c \
+                          $(ZSIGN)/target/release/libzsign_rust.a \
+                          $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c $(CRYPTO)/sha2.c \
+                          $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
+	$(CC) $(CFLAGS) -I$(ZSIGN)/include -o $@ $(filter %.c,$^) \
 	    $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
 .PHONY: FORCE

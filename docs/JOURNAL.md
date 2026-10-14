@@ -51,3 +51,60 @@ the whole check.
 
 - Decision: the Rust backend is viable on Xtensa, so Phase 1 proceeds with
   Rust as the primary signer. The C backend still comes in Phase 4.
+
+### 0.6 Test vectors (keys + PCZT): done
+- `vectors/gen` (Rust, librustzcash at 16f0723) emits 48 key vectors
+  (mainnet + testnet, 4 mnemonics, 3 passphrases, 2 accounts).
+  `test_zcash_keys` checks trezor-crypto (seed, BIP44, t-address, P2PKH
+  receiver) and zsign-rust (seed fingerprint, Orchard FVK and receiver, UFVK,
+  UA) against them: 48/48 pass, and a mutation check fails as it should.
+- `pczt-vectors` (deterministic, seeded ChaCha20) builds testnet NU6.3 v6
+  PCZTs the way a wallet prepares them for a hardware signer (Builder →
+  Creator → IO Finalizer → Updater with ZIP 32 paths and user_address).
+  There are 2 valid sends (shielded with memo; to a tm address) and 7
+  refusals (foreign spend, tampered value, tampered recipient, tampered
+  user_address, truncated, bad magic, NU6.2 branch id).
+
+### 1.3 Account derivation (Rust): done
+`zs_account_derive`: ZIP 32 seed fingerprint, Orchard FVK and receiver, and
+the Orchard + P2PKH UFVK and UA. The transparent half is supplied by
+trezor-crypto, so each export joins two implementations.
+
+### 3.1–3.5 Rust signer (host + QEMU): done, board pending
+`zs_pczt_new / check / sign / verify_sig` (C ABI, `src/signer.rs`), using
+upstream `pczt` 0.10.0-pre.2 (signer feature) and `orchard` 0.16:
+- **Refuses:** branches other than NU6.3/NU7; coin type ≠ network;
+  transparent inputs and Sapling (for now); `dummy_sk`; pre-signed spends
+  with value.
+- **Spends:** `verify_nullifier` + `verify_rk` against our own FVK.
+- **Outputs:** `verify_note_commitment` on every output; `cv_net` when rcv
+  is present; `user_address` must decode on this network and contain the
+  committed receiver; memo recovered with our own OVK (ZIP 302
+  classification).
+- **Bundle:** Σ(spend − output) must equal `value_sum`; the fee is
+  computed on the device.
+- **Signing:** only after a passing check, once per check, with the same
+  seed. Signatures are returned as {pool, action index, sig} so the host
+  applies them (signatures-only output keeps the C backend free of a PCZT
+  writer).
+
+`test_zcash_pczt` (host): 9/9 vectors. The sighash matches librustzcash,
+the fee and outputs match, signatures verify against rk, and every
+refusal carries the exact expected code. Mutation check OK.
+
+On Xtensa under QEMU (`spike/zspike/run-qemu.sh`), with the
+iw_send_shielded PCZT of 4,807 B:
+
+| Measure | Value |
+|---|---|
+| check / sign | OK |
+| Sighash | MATCH |
+| Fee | MATCH |
+| Signature | verifies |
+| Heap peak | ≈ 28 KB (no PSRAM) |
+| **Stack peak** | **≈ 50 KB** (64 KB task; 15,588 B left) → the signing task needs a 64 KB stack |
+| Firmware | 876,144 B |
+| QEMU times (not silicon) | parse 15 ms, check 2.4 s, sign 1.4 s |
+
+Toolchain finding: libsecp256k1 had been built big-endian (see
+TOOLCHAIN.md).
