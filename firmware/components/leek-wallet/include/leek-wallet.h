@@ -276,6 +276,15 @@ WalletError wallet_get_public_key(PublicKey *pubkey_out);
  */
 WalletError wallet_get_public_key_at_path(const HDPath *path, PublicKey *pubkey_out);
 
+/**
+ * Run `fn` with the wallet's 64-byte BIP39 seed (passphrase applied), under
+ * the derive lock. The pointer is valid only during the call; the callee must
+ * not keep it and must wipe whatever it derives. Used by Zcash (ZIP 32), whose
+ * keys come from the seed rather than from a BIP32 node.
+ */
+typedef WalletError (*WalletSeedFn)(const uint8_t seed[64], void *ctx);
+WalletError wallet_with_seed(WalletSeedFn fn, void *ctx);
+
 // ========== Multi-Wallet Storage ========== //
 
 /**

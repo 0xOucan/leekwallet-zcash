@@ -11,12 +11,17 @@ FILE(GLOB app_sources ${CMAKE_SOURCE_DIR}/src/*.c)
 # collected before sdkconfig is loaded.
 if(IDF_TARGET STREQUAL "esp32c3")
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled.c)
+  # The Zcash signer is built for Xtensa only (components/zsign-rust).
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-account.c)
 else()
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled-pixie.c)
 endif()
 
 set(app_requires driver nvs_flash esp_hw_support bootloader_support
                  esp_driver_usb_serial_jtag trezor-crypto leek-wallet)
+if(NOT IDF_TARGET STREQUAL "esp32c3")
+    list(APPEND app_requires zsign-rust)
+endif()
 
 # The camera stack, only where the top-level CMakeLists did not exclude it.
 # Naming these unconditionally would fail the build on every other environment,
