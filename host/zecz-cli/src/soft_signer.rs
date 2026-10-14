@@ -82,20 +82,3 @@ pub fn sign(pczt_bytes: &[u8], account: &DevAccount, coin_type: u32) -> Result<Z
 
     Ok(Zsig::new(pczt_bytes, entries))
 }
-
-/// Applies `.zsig` signatures with the Signer role, which verifies each one
-/// against its action's rk before storing it.
-pub fn apply(pczt: Pczt, zsig: &Zsig) -> Result<Pczt> {
-    let mut signer = Signer::new(pczt).map_err(|e| anyhow!("Signer: {e:?}"))?;
-    for e in &zsig.entries {
-        let sig = orchard::primitives::redpallas::Signature::<orchard::primitives::redpallas::SpendAuth>::from(e.sig);
-        let idx = e.index as usize;
-        match e.pool {
-            Pool::Orchard => signer.apply_orchard_signature(idx, sig),
-            Pool::Ironwood => signer.apply_ironwood_signature(idx, sig),
-            Pool::Transparent => bail!("transparent signatures are not supported yet"),
-        }
-        .map_err(|err| anyhow!("{:?} signature for action {idx} rejected: {err:?}", e.pool))?;
-    }
-    Ok(signer.finish())
-}

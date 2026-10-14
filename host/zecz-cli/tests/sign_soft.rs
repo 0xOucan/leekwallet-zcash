@@ -9,6 +9,7 @@ use pczt::Pczt;
 use serde_json::Value;
 use zcash_protocol::consensus::{NetworkConstants, TestNetwork};
 use zecz::keys::DevAccount;
+use zecz::authorize::{apply_zsig, prove};
 use zecz::soft_signer;
 use zecz::zsig::{Pool, Zsig, ZsigError};
 
@@ -83,12 +84,12 @@ fn sign_soft_iw_send_shielded() {
     }
 
     // The library helper applies the same way.
-    soft_signer::apply(pczt.clone(), &parsed).unwrap();
+    apply_zsig(pczt.clone(), &parsed).unwrap();
 
     // A corrupted signature must be rejected by rk verification.
     let mut bad = parsed.clone();
     bad.entries[0].sig[40] ^= 1;
-    assert!(soft_signer::apply(pczt, &bad).is_err());
+    assert!(apply_zsig(pczt, &bad).is_err());
 
     // A .zsig for these bytes must not be accepted for any other PCZT.
     let (_, other) = pczt_vector("iw_send_transparent");
@@ -107,4 +108,24 @@ fn sign_soft_refuses_wrong_network() {
     let (v, unsigned) = pczt_vector("iw_send_shielded");
     let acct = signer_account(&v);
     assert!(soft_signer::sign(&unsigned, &acct, 133).is_err());
+}
+
+/// The `finish` path without a wallet: sign, apply, prove with the key for
+/// the PCZT's branch, then finalize and extract a transaction that verifies.
+#[test]
+fn sign_apply_prove_extract_iw_send_shielded() {
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
+
+    let (v, unsigned) = pczt_vector("iw_send_shielded");
+    let acct = signer_account(&v);
+    let zsig = soft_signer::sign(&unsigned, &acct, TestNetwork.coin_type()).unwrap();
+    let signed = apply_zsig(Pczt::parse(&unsigned).unwrap(), &zsig).unwrap();
+    let proven = prove(signed).unwrap();
+    assert!(proven.ironwood().zkproof().is_some());
+
+    let finalized = pczt::roles::spend_finalizer::SpendFinalizer::new(proven).finalize_spends().unwrap();
+    let tx = pczt::roles::tx_extractor::TransactionExtractor::new(finalized)
+        .extract(UnwrapErr(SysRng))
+        .expect("extraction verifies proofs and signatures");
+    assert_eq!(u32::from(tx.consensus_branch_id()), 0x37a5_165b);
 }
