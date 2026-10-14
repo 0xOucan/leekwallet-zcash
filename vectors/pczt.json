@@ -1,0 +1,158 @@
+[
+  {
+    "name": "iw_send_shielded",
+    "description": "Ironwood note to an external UA with memo, change back to self (v6, NU6.3)",
+    "file": "pczt/iw_send_shielded.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "466827d957076588ab8cb898b89d44abf32a0c140fb811370dbc37b4022dcc7e",
+    "consensus_branch_id": "37a5165b",
+    "fee": 10000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "external",
+        "address": "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3",
+        "value": 400000,
+        "memo": "LeekWallet Zcash test"
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 590000,
+        "memo": ""
+      }
+    ]
+  },
+  {
+    "name": "iw_send_transparent",
+    "description": "Ironwood note to a tm address, change back to self (v6, NU6.3)",
+    "file": "pczt/iw_send_transparent.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "1ec3b8ffd0598c2f4a33d6b217a4fbaa96da0c6719acd3c58121675a6d48dde6",
+    "consensus_branch_id": "37a5165b",
+    "fee": 15000,
+    "outputs": [
+      {
+        "pool": "transparent",
+        "kind": "external",
+        "address": "tmFkhJaNXuoMeKKBHp8EE9oiFW4uXKAPWnH",
+        "value": 300000,
+        "memo": ""
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 685000,
+        "memo": ""
+      }
+    ]
+  },
+  {
+    "name": "r_foreign_spend",
+    "description": "Valid PCZT, but the spend belongs to another seed",
+    "file": "pczt/r_foreign_spend.pczt",
+    "signer_mnemonic": "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "spend_not_ours",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_output_value_tampered",
+    "description": "External output value changed after the note commitment was made",
+    "file": "pczt/r_output_value_tampered.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "output_commitment_mismatch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_output_recipient_tampered",
+    "description": "External output recipient changed after the note commitment was made",
+    "file": "pczt/r_output_recipient_tampered.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "output_commitment_mismatch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_user_address_tampered",
+    "description": "Displayed user_address no longer matches the output's receiver",
+    "file": "pczt/r_user_address_tampered.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "user_address_mismatch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_truncated",
+    "description": "PCZT cut short",
+    "file": "pczt/r_truncated.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "parse_error",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_bad_magic",
+    "description": "Wrong magic bytes",
+    "file": "pczt/r_bad_magic.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "parse_error",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_old_branch",
+    "description": "Consensus branch id rewritten to NU6.2",
+    "file": "pczt/r_old_branch.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "unsupported_branch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  }
+]
