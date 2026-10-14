@@ -1,0 +1,5 @@
+target/
+.pio/
+build/
+*.bin
+!vectors/**/*.bin
