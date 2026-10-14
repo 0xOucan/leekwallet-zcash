@@ -39,26 +39,11 @@ typedef struct {
 // HD Wallet path (BIP44 compatible)
 typedef struct {
     uint32_t purpose;    // e.g., 44 (BIP44) or 84 (BIP84)
-    uint32_t coin_type;  // e.g., 60 (ETH) or 0 (BTC)
+    uint32_t coin_type;  // e.g., 133 (Zcash transparent) or 0 (BTC)
     uint32_t account;
     uint32_t change;
     uint32_t address_index;
 } HDPath;
-
-// Default Ethereum path: m/44'/60'/0'/0/0
-#define HDPATH_ETH_DEFAULT { .purpose = 44, .coin_type = 60, .account = 0, .change = 0, .address_index = 0 }
-
-// Ethereum address (20 bytes + null)
-typedef struct {
-    char hex[43];  // "0x" + 40 hex chars + null
-} EthAddress;
-
-// Ethereum signature
-typedef struct {
-    uint8_t r[32];
-    uint8_t s[32];
-    uint8_t v;
-} EthSignature;
 
 // Public key (uncompressed, 65 bytes)
 typedef struct {
@@ -205,20 +190,6 @@ bool wallet_has_temporary_mnemonic(void);
  */
 WalletError wallet_get_master_fingerprint(uint32_t *fingerprint_out);
 
-/**
- * Account-level public key and chain code, m/44'/60'/<account>'.
- *
- * What the QR handshake exports as a crypto-hdkey: with it a companion can
- * derive every receive address in the account and nothing else - no private
- * key, and no other account. Not a secret, but it links every address in the
- * account, so it goes out only after the screen has said so. `account` must
- * be below 2^31; it is hardened here.
- */
-WalletError wallet_get_account_key(uint32_t account, uint8_t public_key[33],
-                                   uint8_t chain_code[32],
-                                   uint32_t *parent_fingerprint,
-                                   uint32_t *master_fingerprint);
-
 // ========== Mnemonic Management ========== //
 
 /**
@@ -254,12 +225,12 @@ bool wallet_validate_mnemonic(const char *mnemonic);
 
 /**
  * Parse HD path string into HDPath struct
- * @param path_str Path string like "m/44'/60'/0'/0/0"
+ * @param path_str Path string like "m/44'/133'/0'/0/0"
  * @param path_out Parsed path structure
  * @return true on success, false on invalid path
  *
  * Supported formats:
- * - Standard BIP44: "m/44'/60'/0'/0/0"
+ * - Standard BIP44: "m/44'/133'/0'/0/0"
  * - With or without 'm/' prefix
  * - Hardened notation: ' or h suffix
  * - Max 5 levels (purpose/coin/account/change/index)
@@ -291,69 +262,19 @@ WalletError wallet_select_path(const HDPath *path);
 bool wallet_get_current_path(HDPath *path_out);
 
 /**
- * Get the Ethereum address for the current path
- * @param address_out Address structure to fill
- */
-WalletError wallet_get_eth_address(EthAddress *address_out);
-
-/**
  * Get public key for the current path
  * @param pubkey_out Public key structure to fill
  */
 WalletError wallet_get_public_key(PublicKey *pubkey_out);
 
-// ========== Signing ========== //
-
 /**
- * Sign a message hash (32 bytes)
- * @param hash 32-byte message hash
- * @param signature_out Signature structure to fill
- */
-WalletError wallet_sign_hash(const uint8_t hash[32], EthSignature *signature_out);
-
-/**
- * Select a path and sign under one lock.
+ * Select a path and read its public key under one lock.
  *
- * Prefer this over select-then-sign. Those are two calls sharing mutable
+ * Prefer this over select-then-read. Those are two calls sharing mutable
  * derivation state, and the UI task preempts the protocol task, so anything
- * between them can change which key signs.
+ * between them can change which key is read.
  */
-WalletError wallet_sign_hash_at_path(const HDPath *path, const uint8_t hash[32],
-                                     EthSignature *signature_out);
-
-/** Derive an address at a path under the same lock. */
-WalletError wallet_get_address_at_path(const HDPath *path, EthAddress *address_out);
-
-/**
- * Sign an Ethereum message (EIP-191 personal_sign)
- * @param message Message bytes
- * @param length Message length
- * @param signature_out Signature structure to fill
- */
-WalletError wallet_sign_message(const uint8_t *message, size_t length, EthSignature *signature_out);
-
-/**
- * Sign typed data (EIP-712)
- * Signs: keccak256("\x19\x01" + domain_separator + message_hash)
- * @param domain_separator 32-byte domain separator hash
- * @param message_hash 32-byte typed struct hash
- * @param signature_out Signature structure to fill
- */
-WalletError wallet_sign_typed_data(const uint8_t domain_separator[32],
-                                    const uint8_t message_hash[32],
-                                    EthSignature *signature_out);
-
-/**
- * Sign a raw Ethereum transaction (EIP-1559 or legacy)
- * Hashes the serialized unsigned transaction and signs
- * @param tx_bytes Serialized unsigned transaction (RLP encoded)
- * @param tx_length Length of transaction bytes
- * @param signature_out Signature structure to fill
- * @note For EIP-1559 (type 2), tx_bytes should start with 0x02
- * @note Signature v will be 0/1 for EIP-1559, 27/28 for legacy
- */
-WalletError wallet_sign_transaction(const uint8_t *tx_bytes, size_t tx_length,
-                                     EthSignature *signature_out);
+WalletError wallet_get_public_key_at_path(const HDPath *path, PublicKey *pubkey_out);
 
 // ========== Multi-Wallet Storage ========== //
 

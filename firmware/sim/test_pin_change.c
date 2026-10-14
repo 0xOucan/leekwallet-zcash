@@ -53,19 +53,28 @@ static const char *SEEDS[] = {
 #define OLD_PIN "112233"
 #define NEW_PIN "445566"
 
-static char expected_address[SEED_COUNT][48];
+/* What identifies a seed here is the public key it derives at a fixed path:
+ * if the re-encryption scrambled a mnemonic, the key changes. Hex of the
+ * uncompressed point, so 130 characters and a terminator. The path is the
+ * Zcash transparent one, BIP44 coin 133, though nothing here is Zcash-specific
+ * - any path would do. */
+#define KEY_HEX_LEN (2 * sizeof(((PublicKey *)0)->data) + 1)
+static char expected_address[SEED_COUNT][KEY_HEX_LEN];
 
-static const HDPath ETH_PATH = {
-    .purpose = 44, .coin_type = 60, .account = 0, .change = 0, .address_index = 0
+static const HDPath KEY_PATH = {
+    .purpose = 44, .coin_type = 133, .account = 0, .change = 0, .address_index = 0
 };
 
 static bool address_of_selected(char *out, size_t out_size)
 {
-    EthAddress addr;
-    if (wallet_get_address_at_path(&ETH_PATH, &addr) != WALLET_OK) {
+    PublicKey key;
+    if (out_size < KEY_HEX_LEN ||
+        wallet_get_public_key_at_path(&KEY_PATH, &key) != WALLET_OK) {
         return false;
     }
-    snprintf(out, out_size, "%s", addr.hex);
+    for (size_t i = 0; i < sizeof(key.data); i++) {
+        snprintf(out + 2 * i, 3, "%02x", key.data[i]);
+    }
     return true;
 }
 
@@ -116,7 +125,7 @@ static bool pin_opens_all(const char *pin, int wallet_count)
         if (wallet_select_wallet((uint8_t)(i + 1)) != WALLET_OK) {
             return false;
         }
-        char addr[48];
+        char addr[KEY_HEX_LEN];
         if (!address_of_selected(addr, sizeof(addr))) {
             return false;
         }

@@ -17,7 +17,6 @@
 #include "bip32.h"
 #include "curves.h"
 #include "sha2.h"
-#include "sha3.h"
 #include "memzero.h"
 #include "vault-kdf.h"
 #include "vault-crypt.h"
@@ -1102,7 +1101,7 @@ static WalletError migrate_vault_to_current(const char *password, size_t length)
 
 /* ========== Derivation lock ==========
  *
- * wallet_select_path() and wallet_sign_hash() communicate through state.node,
+ * wallet_select_path() and its readers communicate through state.node,
  * and two tasks reach them: the UI at priority 5 and the protocol endpoint at
  * 4. The UI therefore preempts. Selecting a path and then signing as separate
  * calls is not atomic, and the UI switching screens in between re-derives to
@@ -1132,41 +1131,24 @@ static void derive_lock_give(void) {
 }
 
 /**
- * Select a path and sign in one indivisible step.
+ * Derive at a path and read its public key, atomically.
  *
- * The only safe way to sign: nothing can re-derive between choosing the key
- * and using it.
+ * Select-then-read as two calls shares state.node with every other task that
+ * derives, and a preempting task can re-derive in between: the caller then
+ * reads a key off a path it never asked for. Under the lock, the path chosen
+ * and the key returned are the same derivation.
  */
-WalletError wallet_sign_hash_at_path(const HDPath *path, const uint8_t hash[32],
-                                     EthSignature *signature_out) {
+WalletError wallet_get_public_key_at_path(const HDPath *path, PublicKey *pubkey_out) {
+    if (!path || !pubkey_out) {
+        return WALLET_ERROR_DERIVATION_FAILED;
+    }
     if (!derive_lock_take()) {
         return WALLET_ERROR_STORAGE_FAILED;
     }
 
     WalletError err = wallet_select_path(path);
     if (err == WALLET_OK) {
-        err = wallet_sign_hash(hash, signature_out);
-    }
-
-    derive_lock_give();
-    return err;
-}
-
-/**
- * Derive an address at a path, atomically.
- *
- * Same reasoning: reading back an address that another task re-derived under
- * you is how the app and the device came to disagree about which address index
- * zero was.
- */
-WalletError wallet_get_address_at_path(const HDPath *path, EthAddress *address_out) {
-    if (!derive_lock_take()) {
-        return WALLET_ERROR_STORAGE_FAILED;
-    }
-
-    WalletError err = wallet_select_path(path);
-    if (err == WALLET_OK) {
-        err = wallet_get_eth_address(address_out);
+        err = wallet_get_public_key(pubkey_out);
     }
 
     derive_lock_give();
@@ -1488,69 +1470,6 @@ WalletError wallet_get_master_fingerprint(uint32_t *fingerprint_out) {
 
 done:
     memzero(&master, sizeof(master));
-    derive_lock_give();
-    return err;
-}
-
-/**
- * The account-level public key, m/44'/60'/<account>', for the QR handshake.
- *
- * Same discipline as wallet_get_master_fingerprint(): local nodes only, never
- * state.node, under the derive lock, and every node zeroed on the way out -
- * the private halves are derived along the way even though only public data
- * leaves.
- */
-WalletError wallet_get_account_key(uint32_t account, uint8_t public_key[33],
-                                   uint8_t chain_code[32],
-                                   uint32_t *parent_fingerprint,
-                                   uint32_t *master_fingerprint) {
-    if (!public_key || !chain_code || !parent_fingerprint || !master_fingerprint ||
-        account >= 0x80000000u) {
-        return WALLET_ERROR_DERIVATION_FAILED;
-    }
-    if (!state.initialized) {
-        return WALLET_ERROR_NOT_INITIALIZED;
-    }
-    if (!state.unlocked) {
-        return WALLET_ERROR_LOCKED;
-    }
-    if (!state.has_mnemonic) {
-        return WALLET_ERROR_NO_MNEMONIC;
-    }
-    if (!derive_lock_take()) {
-        return WALLET_ERROR_DERIVATION_FAILED;
-    }
-
-    cache_seed_from_mnemonic();
-
-    HDNode node;
-    WalletError err = WALLET_OK;
-
-    if (hdnode_from_seed(state.seed, SEED_SIZE, SECP256K1_NAME, &node) != 1) {
-        err = WALLET_ERROR_DERIVATION_FAILED;
-        goto done;
-    }
-    hdnode_fill_public_key(&node);
-    *master_fingerprint = hdnode_fingerprint(&node);
-
-    if (hdnode_private_ckd_prime(&node, 44) != 1 ||
-        hdnode_private_ckd_prime(&node, 60) != 1) {
-        err = WALLET_ERROR_DERIVATION_FAILED;
-        goto done;
-    }
-    hdnode_fill_public_key(&node);
-    *parent_fingerprint = hdnode_fingerprint(&node);
-
-    if (hdnode_private_ckd_prime(&node, account) != 1) {
-        err = WALLET_ERROR_DERIVATION_FAILED;
-        goto done;
-    }
-    hdnode_fill_public_key(&node);
-    memcpy(public_key, node.public_key, 33);
-    memcpy(chain_code, node.chain_code, 32);
-
-done:
-    memzero(&node, sizeof(node));
     derive_lock_give();
     return err;
 }
@@ -2073,32 +1992,6 @@ bool wallet_get_current_path(HDPath *path_out) {
     return true;
 }
 
-WalletError wallet_get_eth_address(EthAddress *address_out) {
-    if (!state.initialized) {
-        return WALLET_ERROR_NOT_INITIALIZED;
-    }
-    if (!state.unlocked) {
-        return WALLET_ERROR_LOCKED;
-    }
-    if (!state.has_mnemonic) {
-        return WALLET_ERROR_NO_MNEMONIC;
-    }
-
-    // Get address from public key
-    uint8_t addr[20];
-    hdnode_get_ethereum_pubkeyhash(&state.node, addr);
-
-    // Format as hex string
-    address_out->hex[0] = '0';
-    address_out->hex[1] = 'x';
-    for (int i = 0; i < 20; i++) {
-        sprintf(&address_out->hex[2 + i * 2], "%02x", addr[i]);
-    }
-    address_out->hex[42] = '\0';
-
-    return WALLET_OK;
-}
-
 WalletError wallet_get_public_key(PublicKey *pubkey_out) {
     if (!state.initialized) {
         return WALLET_ERROR_NOT_INITIALIZED;
@@ -2124,152 +2017,6 @@ WalletError wallet_get_public_key(PublicKey *pubkey_out) {
     pubkey_out->data[0] = 0x04;
     bn_write_be(&point.x, &pubkey_out->data[1]);
     bn_write_be(&point.y, &pubkey_out->data[33]);
-
-    return WALLET_OK;
-}
-
-WalletError wallet_sign_hash(const uint8_t hash[32], EthSignature *signature_out) {
-    if (!state.initialized) {
-        return WALLET_ERROR_NOT_INITIALIZED;
-    }
-    if (!state.unlocked) {
-        return WALLET_ERROR_LOCKED;
-    }
-    if (!state.has_mnemonic) {
-        return WALLET_ERROR_NO_MNEMONIC;
-    }
-
-    uint8_t sig[65];
-    uint8_t pby;
-
-    if (hdnode_sign_digest(&state.node, hash, sig, &pby, NULL) != 0) {
-        return WALLET_ERROR_SIGNING_FAILED;
-    }
-
-    memcpy(signature_out->r, sig, 32);
-    memcpy(signature_out->s, sig + 32, 32);
-    signature_out->v = 27 + pby;  // Ethereum recovery ID
-
-    return WALLET_OK;
-}
-
-WalletError wallet_sign_message(const uint8_t *message, size_t length, EthSignature *signature_out) {
-    if (!state.initialized) {
-        return WALLET_ERROR_NOT_INITIALIZED;
-    }
-    if (!state.unlocked) {
-        return WALLET_ERROR_LOCKED;
-    }
-    if (!state.has_mnemonic) {
-        return WALLET_ERROR_NO_MNEMONIC;
-    }
-
-    // EIP-191 personal_sign: keccak256("\x19" + "Ethereum Signed Message:\n" + length + message)
-    const char *prefix = "\x19" "Ethereum Signed Message:\n";
-    size_t prefix_len = strlen(prefix);
-
-    // Convert length to string
-    char len_str[16];
-    snprintf(len_str, sizeof(len_str), "%zu", length);
-    size_t len_str_len = strlen(len_str);
-
-    // Concatenate: prefix + length_string + message
-    size_t total_len = prefix_len + len_str_len + length;
-    uint8_t *data = malloc(total_len);
-    if (!data) {
-        return WALLET_ERROR_SIGNING_FAILED;
-    }
-
-    memcpy(data, prefix, prefix_len);
-    memcpy(data + prefix_len, len_str, len_str_len);
-    memcpy(data + prefix_len + len_str_len, message, length);
-
-    // Keccak256 hash
-    uint8_t hash[32];
-    keccak_256(data, total_len, hash);
-    free(data);
-
-    // Sign the hash
-    return wallet_sign_hash(hash, signature_out);
-}
-
-WalletError wallet_sign_typed_data(const uint8_t domain_separator[32],
-                                    const uint8_t message_hash[32],
-                                    EthSignature *signature_out) {
-    if (!state.initialized) {
-        return WALLET_ERROR_NOT_INITIALIZED;
-    }
-    if (!state.unlocked) {
-        return WALLET_ERROR_LOCKED;
-    }
-    if (!state.has_mnemonic) {
-        return WALLET_ERROR_NO_MNEMONIC;
-    }
-
-    // EIP-712: keccak256("\x19\x01" + domainSeparator + hashStruct)
-    // Total: 2 + 32 + 32 = 66 bytes
-    uint8_t data[66];
-    data[0] = 0x19;
-    data[1] = 0x01;
-    memcpy(data + 2, domain_separator, 32);
-    memcpy(data + 34, message_hash, 32);
-
-    // Keccak256 hash
-    uint8_t hash[32];
-    keccak_256(data, 66, hash);
-
-    // Sign the hash
-    WalletError result = wallet_sign_hash(hash, signature_out);
-
-    memzero(data, sizeof(data));
-    memzero(hash, sizeof(hash));
-
-    return result;
-}
-
-WalletError wallet_sign_transaction(const uint8_t *tx_bytes, size_t tx_length,
-                                     EthSignature *signature_out) {
-    if (!state.initialized) {
-        return WALLET_ERROR_NOT_INITIALIZED;
-    }
-    if (!state.unlocked) {
-        return WALLET_ERROR_LOCKED;
-    }
-    if (!state.has_mnemonic) {
-        return WALLET_ERROR_NO_MNEMONIC;
-    }
-    if (tx_length == 0 || tx_bytes == NULL) {
-        return WALLET_ERROR_SIGNING_FAILED;
-    }
-
-    // Keccak256 hash of the serialized unsigned transaction
-    uint8_t hash[32];
-    keccak_256(tx_bytes, tx_length, hash);
-
-    // Sign the hash
-    uint8_t sig[65];
-    uint8_t pby;
-    if (hdnode_sign_digest(&state.node, hash, sig, &pby, NULL) != 0) {
-        memzero(hash, sizeof(hash));
-        return WALLET_ERROR_SIGNING_FAILED;
-    }
-
-    memcpy(signature_out->r, sig, 32);
-    memcpy(signature_out->s, sig + 32, 32);
-
-    // For EIP-1559 (type 2) transactions, v is the parity (0 or 1)
-    // For legacy transactions, v is 27 + parity
-    // Check if this is an EIP-2718 typed transaction (first byte is type)
-    if (tx_length > 0 && tx_bytes[0] == 0x02) {
-        // EIP-1559: v = parity (0 or 1)
-        signature_out->v = pby;
-    } else {
-        // Legacy: v = 27 + parity
-        signature_out->v = 27 + pby;
-    }
-
-    memzero(hash, sizeof(hash));
-    memzero(sig, sizeof(sig));
 
     return WALLET_OK;
 }
