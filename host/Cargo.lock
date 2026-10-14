@@ -2735,6 +2735,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a183cf7feeba97b4dd1c0d46788634f6221d87fa961b305bed08c851829efcc0"
 dependencies = [
  "getrandom 0.2.15",
+ "serde",
 ]
 
 [[package]]
@@ -3191,6 +3192,7 @@ dependencies = [
  "schemerz-rusqlite",
  "secp256k1",
  "secrecy",
+ "serde",
  "shardtree",
  "static_assertions",
  "subtle",
@@ -3376,6 +3378,7 @@ dependencies = [
  "orchard",
  "pczt",
  "rand 0.10.3",
+ "rusqlite",
  "secrecy",
  "serde_json",
  "sha2 0.10.8",
