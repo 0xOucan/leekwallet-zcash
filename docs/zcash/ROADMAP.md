@@ -2,7 +2,7 @@
 
 There are no dates. Each step ends in a **done when** check. We do one step, debug it until the check passes, and only then move on. Background is in `ANALYSIS.md` (the why) and `PLAN.md` (architecture).
 
-**Name:** not chosen yet; candidates are in §N at the end. This file says "the device".
+**Name: LeekWallet Zcash** (decided). §N is kept for the record.
 
 **Hardware for the whole roadmap:**
 - ESP32-S3-N16R8
@@ -91,6 +91,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
   - a wrong passphrase fails cleanly.
 
 **1.5 BIP39 passphrase handled correctly** (see §P)
+- **Primary path: typed on the device**, as in LeekWallet. Also supported, as in LeekWallet's `setPassphrase`: entered on a companion and sent over the encrypted session. That is more convenient, but the passphrase then passes through the host. Both paths go through the same normalisation and the same ASCII rule.
 - On-device entry uses LeekWallet's `text-entry`, restricted to printable ASCII so NFKD normalisation can't differ between implementations.
 - After unlock, show the **seed fingerprint (short form)** so the user can see which wallet is open.
 - Done when: the passphrase key vectors match, and different passphrases give different fingerprints.
