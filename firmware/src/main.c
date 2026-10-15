@@ -37,6 +37,9 @@
 
 #include "oled.h"
 #include "board.h"
+#if LEEK_HAS_ZCASH
+#include "zcash-worker.h"
+#endif
 #include "button.h"
 #include "ui.h"
 #include "device-wipe.h"
@@ -186,6 +189,14 @@ void app_main(void)
      * Pixie would never touch is 12 KB of internal SRAM they do not have to
      * give up.
      */
+#if LEEK_HAS_ZCASH
+    /* Before the UI and the protocol: either can ask for Zcash work as soon
+     * as it runs. 64 KB of internal stack (zcash-worker.h). */
+    if (!zcash_worker_start()) {
+        ESP_LOGE(TAG, "Zcash worker failed to start; Zcash features unavailable");
+    }
+#endif
+
 #if LEEK_HAS_CAMERA
     const uint32_t ui_stack = 20480;
 #else

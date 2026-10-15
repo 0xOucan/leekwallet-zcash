@@ -13,6 +13,7 @@ if(IDF_TARGET STREQUAL "esp32c3")
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled.c)
   # The Zcash signer is built for Xtensa only (components/zsign-rust).
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-account.c)
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-worker.c)
 else()
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled-pixie.c)
 endif()

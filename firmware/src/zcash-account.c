@@ -9,6 +9,7 @@
 #include "curves.h"
 #include "ecdsa.h"
 #include "memzero.h"
+#include "zcash-worker.h"
 
 #define H(i) (0x80000000u | (i))
 
@@ -64,6 +65,18 @@ done:
     return err;
 }
 
+/* Runs on the Zcash worker: Sinsemilla and the Rust stack want its 64 KB. */
+typedef struct {
+    DeriveCtx   c;
+    WalletError err;
+} DeriveJob;
+
+static void derive_job(void *p)
+{
+    DeriveJob *job = p;
+    job->err = wallet_with_seed(derive_with_seed, &job->c);
+}
+
 WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount *out)
 {
     if (!out || account >= 0x80000000u ||
@@ -74,8 +87,8 @@ WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount
     out->account = account;
     out->network = network;
 
-    DeriveCtx c = { account, network, out };
-    WalletError err = wallet_with_seed(derive_with_seed, &c);
+    DeriveJob job = { { account, network, out }, WALLET_ERROR_DERIVATION_FAILED };
+    WalletError err = zcash_worker_run(derive_job, &job) ? job.err : WALLET_ERROR_DERIVATION_FAILED;
     if (err != WALLET_OK) {
         memset(out, 0, sizeof *out);
     }
