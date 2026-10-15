@@ -47,6 +47,11 @@ pub const ZS_E_INTERNAL: i32 = -23;
 /// meant for a chain this firmware does not know.
 const ALLOWED_BRANCHES: [u32; 2] = [0x37a5_165b, 0x7719_0ad9];
 
+/// The only transaction format the device signs (ZIP 229). librustzcash
+/// still extracts a v5 transaction for an Orchard-only bundle under these
+/// branches; the device refuses it, as the C backend does.
+const V6_TX_VERSION: u32 = 6;
+
 pub const ZS_POOL_TRANSPARENT: u8 = 0;
 pub const ZS_POOL_ORCHARD: u8 = 1;
 pub const ZS_POOL_IRONWOOD: u8 = 2;
@@ -312,6 +317,9 @@ fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut
         return Err(ZS_E_TOO_MANY);
     }
     let signer = Signer::new(pczt.clone()).map_err(|_| ZS_E_PARSE)?;
+    if *g.tx_version() != V6_TX_VERSION {
+        return Err(ZS_E_PARSE);
+    }
 
     out.branch_id = branch;
     out.tx_version = *g.tx_version();
@@ -334,6 +342,33 @@ fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut
     Ok(fvk)
 }
 
+/// `Pczt::parse`, refusing bytes after the encoded body. postcard's
+/// `from_bytes` ignores trailing bytes, so a corrupted length or tag could
+/// end the parse early and leave unread data behind; the device must sign
+/// over exactly the bytes it parsed (and the C backend refuses them too).
+fn parse_exact(bytes: &[u8]) -> Option<Pczt> {
+    if bytes.len() < 8 || &bytes[..4] != b"PCZT" {
+        return None;
+    }
+    let body = &bytes[8..];
+    match u32::from_le_bytes(bytes[4..8].try_into().ok()?) {
+        1 => {
+            let (v1, rest) = postcard::take_from_bytes::<pczt::v1::Pczt>(body).ok()?;
+            rest.is_empty().then(|| Pczt::from(v1))
+        }
+        2 => {
+            // The v2 body is converted by a crate-private step, so parse it
+            // twice: once here for its length, once by Pczt::parse.
+            let (_, rest) = postcard::take_from_bytes::<pczt::v2::Pczt>(body).ok()?;
+            if !rest.is_empty() {
+                return None;
+            }
+            Pczt::parse(bytes).ok()
+        }
+        _ => None,
+    }
+}
+
 /// Parse a PCZT. Returns NULL and sets `*err` on failure.
 ///
 /// # Safety
@@ -345,12 +380,12 @@ pub unsafe extern "C" fn zs_pczt_new(bytes: *const u8, len: usize, err: *mut i32
         set(ZS_E_PARSE);
         return core::ptr::null_mut();
     }
-    match Pczt::parse(core::slice::from_raw_parts(bytes, len)) {
-        Ok(pczt) => {
+    match parse_exact(core::slice::from_raw_parts(bytes, len)) {
+        Some(pczt) => {
             set(0);
             Box::into_raw(Box::new(ZsCtx { pczt, checked: None }))
         }
-        Err(_) => {
+        None => {
             set(ZS_E_PARSE);
             core::ptr::null_mut()
         }

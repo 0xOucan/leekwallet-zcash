@@ -16,7 +16,9 @@ use std::fs;
 use incrementalmerkletree::Retention;
 use orchard::keys::{FullViewingKey, Scope, SpendingKey};
 use orchard::tree::MerkleHashOrchard;
-use pczt::roles::{creator::Creator, io_finalizer::IoFinalizer, signer::Signer, updater::Updater};
+use pczt::roles::{
+    creator::Creator, io_finalizer::IoFinalizer, redactor::Redactor, signer::Signer, updater::Updater,
+};
 use pczt::Pczt;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -34,6 +36,7 @@ use zip32::{fingerprint::SeedFingerprint, AccountId};
 /// Testnet heights: NU6.3 activates at 4,134,000 and NU7 at 4,465,026.
 const H_NU6_2: u32 = 4_100_000;
 const H_NU6_3: u32 = 4_200_000;
+const H_NU7: u32 = 4_500_000;
 
 const SENDER: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 const RECIPIENT: &str = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote";
@@ -210,6 +213,140 @@ fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, a
     Built { pczt, outputs, fee }
 }
 
+/// An Orchard-pool note (note plaintext version 2) and a one-leaf tree, as
+/// `ironwood_note`. It is minted in a pre-NU6.3 bundle (protocol V2), whose
+/// outputs need no matching spend; the note itself is the same in any.
+fn orchard_note(
+    fvk: &FullViewingKey,
+    value: u64,
+    tag: u64,
+) -> (orchard::Note, orchard::Anchor, orchard::tree::MerklePath) {
+    let mut rng = rng(tag);
+    let recipient = fvk.address_at(0u32, Scope::External);
+    let version = orchard::bundle::BundleVersion::orchard_v2();
+    let mut b = orchard::builder::Builder::new(
+        orchard::builder::BundleType::DEFAULT,
+        version,
+        version.default_flags(),
+        orchard::Anchor::empty_tree(),
+    )
+    .unwrap();
+    b.add_output(None, recipient, orchard::value::NoteValue::from_raw(value), Memo::Empty.encode().into_bytes())
+        .unwrap();
+    let (bundle, meta) = b.build::<i64>(&mut rng).unwrap().unwrap();
+    let action = bundle.actions().get(meta.output_action_index(0).unwrap()).unwrap();
+    let domain = orchard::note_encryption::OrchardDomain::for_action(action);
+    let (note, _, _) = try_note_decryption(&domain, &fvk.to_ivk(Scope::External).prepare(), action).unwrap();
+
+    let cmx: orchard::note::ExtractedNoteCommitment = note.commitment().into();
+    let leaf = MerkleHashOrchard::from_cmx(&cmx);
+    let mut tree = ShardTree::<_, 32, 16>::new(MemoryShardStore::<MerkleHashOrchard, u32>::empty(), 100);
+    tree.append(leaf, Retention::Marked).unwrap();
+    tree.checkpoint(9_999_999).unwrap();
+    let path = tree.witness_at_checkpoint_depth(0.into(), 0).unwrap().unwrap();
+    let anchor = path.root(leaf);
+    (note, anchor.into(), path.into())
+}
+
+/// The Updater pass of `build_send` for one Orchard-protocol bundle: ZIP 32
+/// derivation on the spends we sign, user_address on the external output.
+fn annotate(
+    mut u: orchard::pczt::Updater<'_>,
+    fp: [u8; 32],
+    path: &[u32],
+    external_ua: &Option<(orchard::Address, String)>,
+) -> Result<(), orchard::pczt::UpdaterError> {
+    let n = u.bundle().actions().len();
+    for i in 0..n {
+        let action = &u.bundle().actions()[i];
+        let needs_sig = action.spend().spend_auth_sig().is_none() && action.spend().value().map_or(false, |v| v.inner() > 0);
+        let out_recipient = *action.output().recipient();
+        u.update_action_with(i, |mut a| {
+            if needs_sig {
+                a.set_spend_zip32_derivation(orchard::pczt::Zip32Derivation::parse(fp, path.to_vec()).unwrap());
+            }
+            if let (Some((r, ua)), Some(rb)) = (external_ua, out_recipient) {
+                if rb.to_raw_address_bytes() == r.to_raw_address_bytes() {
+                    a.set_output_user_address(ua.clone());
+                }
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// Spend an Orchard-pool note to an external UA (with memo) plus change, in
+/// the Ironwood pool from NU6.3 on (a migration out of Orchard) or in the
+/// Orchard pool before it.
+#[allow(clippy::too_many_arguments)]
+fn build_orchard_send(
+    tag: u64,
+    height: u32,
+    sender: &Account,
+    input: u64,
+    ua: &str,
+    recipient: orchard::Address,
+    amount: u64,
+    memo: &str,
+    fee: u64,
+) -> Built {
+    let ironwood = height >= H_NU6_3;
+    let (note, anchor, path) = orchard_note(&sender.fvk, input, tag);
+    let change = input - amount - fee;
+    let change_addr = sender.fvk.address_at(0u32, Scope::Internal);
+
+    let mut builder = Builder::new(
+        TestNetwork,
+        BlockHeight::from_u32(height),
+        BuildConfig::Standard {
+            sapling_anchor: None,
+            orchard_anchor: Some(anchor),
+            ironwood_anchor: ironwood.then(orchard::Anchor::empty_tree),
+            orchard_padding: BundlePadding::DEFAULT,
+            ironwood_padding: BundlePadding::DEFAULT,
+        },
+    );
+    builder.add_orchard_spend::<zip317::FeeRule>(sender.fvk.clone(), note, path).unwrap();
+    let pool = if ironwood { "ironwood" } else { "orchard" };
+    let memo_bytes = MemoBytes::from(Memo::from_bytes(memo.as_bytes()).unwrap());
+    let ovk_ext = Some(sender.fvk.to_ovk(Scope::External));
+    let ovk_int = Some(sender.fvk.to_ovk(Scope::Internal));
+    if ironwood {
+        builder.add_ironwood_output::<zip317::FeeRule>(ovk_ext, recipient, Zatoshis::const_from_u64(amount), memo_bytes).unwrap();
+        builder.add_ironwood_output::<zip317::FeeRule>(ovk_int, change_addr, Zatoshis::const_from_u64(change), MemoBytes::empty()).unwrap();
+    } else {
+        builder.add_orchard_output::<zip317::FeeRule>(ovk_ext, recipient, Zatoshis::const_from_u64(amount), memo_bytes).unwrap();
+        builder.add_orchard_output::<zip317::FeeRule>(ovk_int, change_addr, Zatoshis::const_from_u64(change), MemoBytes::empty()).unwrap();
+    }
+    let outputs = vec![
+        OutputSummary { pool, kind: "external", address: ua.into(), value: amount, memo: memo.into() },
+        OutputSummary { pool, kind: "change", address: String::new(), value: change, memo: String::new() },
+    ];
+
+    let PcztResult { pczt_parts, .. } = builder
+        .build_for_pczt(rng(tag + 100), &zip317::FeeRule::standard())
+        .unwrap();
+    let pczt = Creator::build_from_parts(pczt_parts).unwrap();
+    let pczt = IoFinalizer::new(pczt).finalize_io(rng(tag + 200)).unwrap();
+
+    let fp = SeedFingerprint::from_seed(&sender.seed).unwrap().to_bytes();
+    let zpath = vec![
+        zip32::ChildIndex::hardened(32).index(),
+        zip32::ChildIndex::hardened(TestNetwork.network_type().coin_type()).index(),
+        zip32::ChildIndex::hardened(0).index(),
+    ];
+    let external_ua = Some((recipient, ua.to_string()));
+    let pczt = Updater::new(pczt)
+        .update_orchard_with(|u| annotate(u, fp, &zpath, &external_ua))
+        .unwrap()
+        .update_ironwood_with(|u| annotate(u, fp, &zpath, &external_ua))
+        .unwrap()
+        .finish();
+
+    Built { pczt, outputs, fee }
+}
+
 fn write(dir: &str, name: &str, bytes: &[u8]) -> String {
     let file = format!("pczt/{name}.pczt");
     fs::write(format!("{dir}/{file}"), bytes).unwrap();
@@ -339,6 +476,26 @@ fn main() {
     let b = build_send(2, H_NU6_3, &sender, 1_000_000, Dest::Transparent(rcpt_taddr_s.clone(), rcpt_taddr), 300_000, "", 15_000);
     push_ok("iw_send_transparent", "Ironwood note to a tm address, change back to self (v6, NU6.3)", &b, &mut vs);
 
+    // 3. The same kind of send under the NU7 branch id (v6, same rules).
+    let c = build_send(3, H_NU7, &sender, 1_000_000, Dest::Shielded(rcpt_ua.clone(), rcpt_addr), 250_000, "NU7 branch", 10_000);
+    push_ok("iw_send_nu7", "Ironwood note to an external UA under NU7 (v6, branch 0x77190ad9)", &c, &mut vs);
+
+    // 4. An Orchard-pool note spent into Ironwood: the Orchard bundle carries
+    // the spend paired with a fabricated zero-valued output (ZIP 326).
+    let d = build_orchard_send(4, H_NU6_3, &sender, 2_000_000, &rcpt_ua, rcpt_addr, 500_000, "out of Orchard", 20_000);
+    push_ok("orchard_to_ironwood", "Orchard note to an external Ironwood UA with memo, Ironwood change (v6, NU6.3)", &d, &mut vs);
+
+    // 5. Vector 1 in the v2 compact form: cv_net and cmx redacted, decryptable
+    // ciphertexts replaced by their memo plaintext, the anchor left absent.
+    let compact = Redactor::new(a.pczt.clone())
+        .redact_ironwood_with(|mut r| {
+            r.compact_resolvable_fields();
+            r.clear_anchor();
+        })
+        .finish();
+    let e = Built { pczt: compact, outputs: a.outputs.clone(), fee: a.fee };
+    let e_bytes = push_ok("iw_send_shielded_compact", "Vector iw_send_shielded with cv_net, cmx and memo ciphertext compacted (v2)", &e, &mut vs);
+
     // Refusals.
     vs.push(refuse("r_foreign_spend", "Valid PCZT, but the spend belongs to another seed", &a_bytes, RECIPIENT, "spend_not_ours"));
 
@@ -381,6 +538,23 @@ fn main() {
     });
     let _ = H_NU6_2;
     vs.push(refuse("r_old_branch", "Consensus branch id rewritten to NU6.2", &old, SENDER, "unsupported_branch"));
+
+    // With cmx and cv_net both resolved from the fields, a changed value is a
+    // different but self-consistent action; only the value balance catches it.
+    let mut needle = rb.to_vec();
+    needle.push(0x01);
+    needle.extend(varint(400_000));
+    let mut with = rb.to_vec();
+    with.push(0x01);
+    with.extend(varint(400_001));
+    vs.push(refuse("r_compact_value_tampered", "Compact PCZT: external output value changed, cmx and cv_net absent", &patch_unique(&e_bytes, &needle, &with), SENDER, "value_balance"));
+
+    // The v1 encoding: an Orchard v5 PCZT from before NU6.3 (the only shape v1
+    // can carry). Parsed by both backends, refused for its branch.
+    let f = build_orchard_send(6, H_NU6_2, &sender, 1_000_000, &rcpt_ua, rcpt_addr, 200_000, "v1", 10_000);
+    let f_bytes = f.pczt.clone().serialize().unwrap();
+    assert_eq!(&f_bytes[4..8], &1u32.to_le_bytes(), "a v5 Orchard PCZT serializes as v1");
+    vs.push(refuse("r_v1_nu6_2", "v1-encoded Orchard PCZT on the NU6.2 branch", &f_bytes, SENDER, "unsupported_branch"));
 
     fs::write(format!("{dir}/pczt.json"), serde_json::to_string_pretty(&vs).unwrap() + "\n").unwrap();
     fs::write(format!("{dir}/pczt_vectors.h"), c_header(&vs)).unwrap();
