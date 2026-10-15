@@ -181,9 +181,20 @@
 #define PIN_PIXELS              GPIO_NUM_NC
 #define PIXEL_COUNT             0
 
+/* microSD for the SD storage mode (roadmap 1.4), wired like the CAM board's
+   slot so one card and one firmware path serve both: 1-bit SDMMC, CMD 38,
+   CLK 39, D0 40 (free on the N16R8: octal PSRAM takes 35-37). Use a passive
+   microSD breakout with pull-ups; the common "SPI module" with a 74LVC125
+   buffer cannot carry SD mode's bidirectional CMD line. No card: the SD
+   screens say so and nothing else changes. */
+#define PIN_SD_CMD              GPIO_NUM_38
+#define PIN_SD_CLK              GPIO_NUM_39
+#define PIN_SD_D0               GPIO_NUM_40
+#define BOARD_SD_BUS_WIDTH      1
+
 #define LEEK_HAS_CAMERA         0
 #define LEEK_HAS_ZCASH          1
-#define LEEK_HAS_SDCARD         0
+#define LEEK_HAS_SDCARD         1
 #define LEEK_HAS_SE             0
 #define LEEK_HAS_BLE            1
 #define LEEK_HAS_USB            1

@@ -44,6 +44,7 @@
 #include "ui.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
+#include "zcash-meta.h"
 #include "zcash-sign.h"
 #endif
 
@@ -974,9 +975,19 @@ static void dispatch(const uint8_t *payload, size_t len)
             send_error(ERR_NO_WALLET, "derivation failed");
             return;
         }
+        /* The birthday, when the device has one for this account (a
+         * companion set it, or the SD file carried it). Absent rather than
+         * zero: zero would read as "scan from genesis". */
+        ZcashMeta meta;
+        const bool have_birthday = zmeta_get(account, &meta) && meta.birthday != 0;
+
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 6);
+        cbor_write_map(&w, have_birthday ? 7 : 6);
+        if (have_birthday) {
+            cbor_write_text(&w, "birthday");
+            cbor_write_uint(&w, meta.birthday);
+        }
         cbor_write_text(&w, "account");
         cbor_write_uint(&w, acct.account);
         cbor_write_text(&w, "network");
@@ -989,6 +1000,58 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, acct.keys.ua);
         cbor_write_text(&w, "tAddress");
         cbor_write_text(&w, acct.t_address);
+
+    } else if (strcmp(method, "zSetAccountMeta") == 0) {
+        /* A companion records the account's birthday (and label) on the
+         * device, so the next companion can import without asking. Not
+         * secret and not needed to sign, so a session and an unlocked
+         * device are enough. Stored in flash only for a stored wallet with
+         * no passphrase; otherwise held until lock (zcash-meta.h). */
+        if (!request_is_authenticated()) {
+            send_session_error(ERR_SESSION, "session required");
+            return;
+        }
+        if (!pin_is_unlocked()) {
+            send_error(ERR_NOT_UNLOCKED, "device is locked");
+            return;
+        }
+        CborItem item;
+        uint32_t account = 0;
+        if (cbor_map_find(payload, len, "account", &item)) {
+            if (item.type != CBOR_UINT || item.value >= 0x80000000u) {
+                send_error(ERR_MALFORMED, "account out of range");
+                return;
+            }
+            account = (uint32_t)item.value;
+        }
+        ZcashMeta meta;
+        zmeta_get(account, &meta);   /* fields not sent are kept */
+        if (cbor_map_find(payload, len, "birthday", &item)) {
+            if (item.type != CBOR_UINT || item.value == 0) {
+                send_error(ERR_MALFORMED, "birthday must be a block height");
+                return;
+            }
+            meta.birthday = (uint32_t)item.value;
+        }
+        if (cbor_map_find(payload, len, "label", &item) &&
+            !cbor_text_copy(&item, meta.label, sizeof meta.label)) {
+            send_error(ERR_MALFORMED, "label: at most 32 characters");
+            return;
+        }
+        ZcashMetaResult r = zmeta_set(account, &meta);
+        if (r == ZMETA_E_ARG) {
+            send_error(ERR_MALFORMED, "label must be printable ASCII");
+            return;
+        }
+        if (r != ZMETA_OK_STORED && r != ZMETA_OK_SESSION) {
+            send_error(ERR_NO_WALLET, "no seed to attach it to");
+            return;
+        }
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "result");
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "stored");
+        cbor_write_uint(&w, r == ZMETA_OK_STORED ? 1 : 0);
 
     } else if (strcmp(method, "zSignBegin") == 0 || strcmp(method, "zSignChunk") == 0 ||
                strcmp(method, "zSignFinish") == 0) {

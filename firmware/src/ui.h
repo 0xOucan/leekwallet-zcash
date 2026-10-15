@@ -68,8 +68,8 @@ typedef enum {
      * Shows whatever ui_show_ur() was handed and nothing else; the screen
      * that decided to share it is the one that said what it is. */
     SCREEN_QR_OUT,
-    /* Main menu -> Show address. A "Zcash: coming soon" placeholder until
-     * the Zcash address/UFVK export of a later phase. */
+    /* Main menu -> Receive: the account's UA and t-address, as text pages
+     * and QR codes (zcash-receive.c). */
     SCREEN_SHOW_ADDRESS,
     /* Main menu -> Scan, on a board with a camera. Hosts the capture loop and
      * assembles URs; every type is refused until Phase 5 (see airgap.h). */
@@ -77,6 +77,9 @@ typedef enum {
     /* A host asked the device to sign a Zcash transaction (zSignFinish).
      * Pages from zcash-review.c; ACCEPT on the last page signs. */
     SCREEN_ZSIGN_REVIEW,
+    /* Main menu -> SD Card: load a seed from a .zkv file for this session,
+     * or save the open seed to one (roadmap 1.4, sd-seed.h). */
+    SCREEN_SD_SEED,
     SCREEN_COUNT
 } screen_id_t;
 

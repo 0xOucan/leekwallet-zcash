@@ -37,7 +37,12 @@ bool fake_protocol_rx_enabled(void);
 #include "airgap.h"
 #include "ur-encoder.h"
 #include "zcash-account.h"
+#include "sdcard.h"
+#include "text-entry.h"
 #include "../../vectors/keys_vectors.h"
+#include <ctype.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* Test hooks from ui.c and pin.c (compiled with -DLEEK_HOST_TEST). */
 void        pin__reset_static_state_for_test(void);
@@ -54,6 +59,8 @@ const char *ui__scan_status_for_test(void);
 const char *ui__master_xfp_for_test(void);
 const char *ui__master_zfp_for_test(void);
 int ui__receive_page_for_test(void);
+TextEntry *ui__sd_entry_for_test(void);
+char *mkdtemp(char *tmpl);   /* POSIX; a shim header hides the libc prototype */
 uint32_t    ui__account_for_test(void);
 bool        ui__wallet_info_pass_shown_for_test(void);
 int         fake_protocol_device_passphrase_notices(void);
@@ -739,6 +746,128 @@ static void test_receive_shows_the_whole_address(void)
     select_menu_item("Net Testnet");
     press(BUTTON_ACCEPT);
     CHECK(ui_zcash_network() == 0, "could not switch back");
+}
+
+/* ============================================================================
+ * Roadmap 1.4 - SD card storage mode, through the real buttons
+ * ============================================================================ */
+
+/* Type `s` into the SD screen's text entry with UP and ACCEPT only, switching
+ * character sets through the ring's own mode entries, then pick OK. */
+static bool sd_type(const char *s)
+{
+    TextEntry *e = ui__sd_entry_for_test();
+    if (!e) return false;
+    for (const char *p = s; ; p++) {
+        char want = *p ? *p : TEXT_ENTRY_OK;
+        bool ok = false;
+        for (int tries = 0; tries < 400 && !ok; tries++) {
+            char opt = text_entry_option(e);
+            if (opt == want) {
+                press(BUTTON_ACCEPT);
+                ok = true;
+            } else if (opt >= TEXT_ENTRY_MODE_ABC && opt <= TEXT_ENTRY_MODE_NUM && want >= ' ' &&
+                       ((opt == TEXT_ENTRY_MODE_ABC && islower((unsigned char)want)) ||
+                        (opt == TEXT_ENTRY_MODE_CAPS && isupper((unsigned char)want)) ||
+                        (opt == TEXT_ENTRY_MODE_NUM && !isalpha((unsigned char)want)))) {
+                press(BUTTON_ACCEPT);   /* switch set, then look again */
+            } else {
+                press(BUTTON_UP);
+            }
+        }
+        if (!ok) return false;
+        if (!*p) return true;
+    }
+}
+
+static int zfp_from_header(char out[9])
+{
+    const char *h = strstr(fake_oled_row(0), "ZFP ");
+    if (!h) return 0;
+    snprintf(out, 9, "%s", h + 4);
+    return 1;
+}
+
+static void open_sd_screen(void)
+{
+    go(SCREEN_MAIN_MENU);
+    CHECK(select_menu_item("SD Card"), "SD Card is not on the main menu");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SD_SEED, "the menu did not open the SD screen");
+}
+
+static void test_sd_card_save_and_load(void)
+{
+    printf("== SD card: save the open seed, load it back as a session seed\n");
+    char card[64] = "/tmp/leek-ui-card-XXXXXX";
+    CHECK(mkdtemp(card) != NULL, "setup: no card directory");
+
+    boot_unlocked_with_seed();
+    sdcard__set_root_for_test(NULL);
+    open_sd_screen();
+    CHECK_SCREEN(fake_oled_contains("No SD card"), "a missing card is not said");
+
+    sdcard__set_root_for_test(card);
+    press(BUTTON_ACCEPT);   /* RETRY */
+    CHECK_SCREEN(fake_oled_contains("> Save open seed"), "nothing offers to save");
+
+    /* Save: a new passphrase twice. */
+    go(SCREEN_MAIN_MENU);
+    char zfp_stored[9] = {0};
+    CHECK(zfp_from_header(zfp_stored), "no ZFP on the home header");
+    open_sd_screen();
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_contains("New card passphrase"), "save did not ask for a passphrase");
+    CHECK(sd_type("Card pass 1"), "could not type the passphrase");
+    CHECK_SCREEN(fake_oled_contains("Repeat passphrase"), "the passphrase was not asked twice");
+    CHECK(sd_type("Card pass 2"), "could not type the repeat");
+    CHECK_SCREEN(fake_oled_contains("Passphrases differ"), "a mismatch was not caught");
+    press(BUTTON_ACCEPT);
+
+    press(BUTTON_ACCEPT);   /* Save open seed, still the only item */
+    sd_type("short");
+    CHECK_SCREEN(fake_oled_contains("8-64 characters"), "a short passphrase was not refused");
+    press(BUTTON_ACCEPT);
+
+    press(BUTTON_ACCEPT);
+    sd_type("Card pass 1");
+    sd_type("Card pass 1");
+    CHECK_SCREEN(fake_oled_contains("Saved SEED1.ZKV"), "not saved");
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_contains("> SEED1.ZKV"), "the new file is not listed");
+    CHECK(ui__sd_entry_for_test()->length == 0, "the passphrase outlived the save");
+
+    /* A device with nothing stored loads it. */
+    boot_device();
+    CHECK(pin_set("1234") && pin_verify("1234"), "setup: PIN");
+    sdcard__set_root_for_test(card);
+    open_sd_screen();
+    CHECK_SCREEN(fake_oled_contains("> SEED1.ZKV") && !fake_oled_contains("Save open seed"),
+                 "list on an empty device");
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_contains("Card passphrase"), "load did not ask for the passphrase");
+    sd_type("Card pass 9");
+    CHECK_SCREEN(fake_oled_contains("Wrong passphrase"), "a wrong passphrase was not said");
+    CHECK(!wallet_has_temporary_mnemonic(), "a wrong passphrase loaded something");
+    press(BUTTON_ACCEPT);
+
+    press(BUTTON_ACCEPT);
+    sd_type("Card pass 1");
+    CHECK_SCREEN(fake_oled_contains("Loaded SEED1.ZKV"), "not loaded");
+    CHECK_SCREEN(fake_oled_contains("Gone on lock/reboot"), "the session-only nature is not said");
+    CHECK(wallet_has_temporary_mnemonic(), "an SD seed is a session seed");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "OK did not go home");
+    char zfp_loaded[9] = {0};
+    CHECK_SCREEN(fake_oled_row_contains(0, "TEMP") && zfp_from_header(zfp_loaded),
+                 "the home header does not name the loaded seed (\"%s\")", fake_oled_row(0));
+    CHECK(strcmp(zfp_loaded, zfp_stored) == 0, "loaded %s, saved %s", zfp_loaded, zfp_stored);
+
+    sdcard__set_root_for_test(NULL);
+    char p[128];
+    snprintf(p, sizeof p, "%s/SEED1.ZKV", card);
+    unlink(p);
+    rmdir(card);
 }
 
 /* ============================================================================
@@ -2514,6 +2643,7 @@ int main(void)
 {
     test_the_seed_fingerprint_is_shown();
     test_receive_shows_the_whole_address();
+    test_sd_card_save_and_load();
     test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
     test_blind_signing_takes_a_deliberate_act();

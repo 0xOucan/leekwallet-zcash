@@ -33,8 +33,16 @@
 #include "board.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
+#include "zcash-fp.h"
+#include "zcash-meta.h"
 #include "zcash-receive.h"
 #include "zcash-review.h"
+#endif
+#if LEEK_HAS_SDCARD && LEEK_HAS_ZCASH
+#include "sd-seed.h"
+#define UI_HAS_SD_SEED 1
+#else
+#define UI_HAS_SD_SEED 0
 #endif
 #include "camera.h"
 #include "viewfinder.h"
@@ -164,6 +172,10 @@ static void forget_mnemonic_entry(screen_id_t next);
 static void forget_pin_entry(screen_id_t next);
 static void forget_passphrase_entry(screen_id_t next);
 
+static void screen_sd_seed_enter(void);
+static void screen_sd_seed_exit(screen_id_t next);
+static void screen_sd_seed_render(void);
+static void screen_sd_seed_on_button(button_id_t btn);
 static void screen_show_address_enter(void);
 static void screen_show_address_exit(screen_id_t next);
 static void screen_show_address_render(void);
@@ -337,6 +349,13 @@ static const screen_t screen_passphrase_confirm = {
     .exit = NULL
 };
 
+static const screen_t screen_sd_seed = {
+    .enter = screen_sd_seed_enter,
+    .render = screen_sd_seed_render,
+    .on_button = screen_sd_seed_on_button,
+    .exit = screen_sd_seed_exit
+};
+
 static const screen_t screen_show_address = {
     .enter = screen_show_address_enter,
     .render = screen_show_address_render,
@@ -476,6 +495,10 @@ typedef enum {
      * assembles a UR and then refuses it (airgap.h). */
     MENU_SHOW_ADDRESS,
     MENU_SCAN,
+    /* SD storage mode (roadmap 1.4): load a .zkv seed for the session, or
+     * save the open one. On every board with a card slot, seed or no seed:
+     * loading one is how a device with nothing stored gets a wallet. */
+    MENU_SD_SEED,
     MENU_SETTINGS,
     MENU_ACTION_COUNT
 } MenuAction;
@@ -497,6 +520,7 @@ static const char *menu_action_label(MenuAction a)
         case MENU_END_TEMP:      return "End Temp Seed";
         case MENU_SHOW_ADDRESS:  return "Receive";
         case MENU_SCAN:          return "Scan";
+        case MENU_SD_SEED:       return "SD Card";
         case MENU_SETTINGS:      return "Settings";
         default:                 return "?";
     }
@@ -535,6 +559,9 @@ static void menu_rebuild(void)
     } else {
         menu_actions[menu_item_count++] = MENU_TEMP_SEED;
     }
+#if UI_HAS_SD_SEED
+    menu_actions[menu_item_count++] = MENU_SD_SEED;
+#endif
 
     /* Creating or importing a seed is only a top-level action on a device that
      * has none. Once one exists, those entries sit one careless press from
@@ -1006,6 +1033,10 @@ static void lock_device(void)
     memzero(master_xfp, sizeof(master_xfp));
     memzero(master_zfp, sizeof(master_zfp));
     wallet_info_passphrase_shown = false;
+#if LEEK_HAS_ZCASH
+    /* Session-only metadata belongs to seeds the lock just destroyed. */
+    zmeta_forget_session();
+#endif
 
     /* wallet_lock() has just destroyed any temporary seed, so the longer
      * timeout it justified goes with it. The user's own preference is what is
@@ -1858,6 +1889,9 @@ static void screen_main_menu_on_button(button_id_t btn)
                 case MENU_TEMP_SEED:
                     ui_set_screen(SCREEN_TEMP_SEED);
                     break;
+                case MENU_SD_SEED:
+                    ui_set_screen(SCREEN_SD_SEED);
+                    break;
                 case MENU_END_TEMP:
                     /* Ending the mode is locking. There is no lighter version:
                      * the seed only exists in RAM, so "put it away" and "destroy
@@ -1932,7 +1966,7 @@ static void refresh_master_xfp(void)
 #if LEEK_HAS_ZCASH
     uint8_t zfp[32];
     if (zcash_seed_fingerprint(zfp) == WALLET_OK) {
-        zrecv_short_fp(zfp, master_zfp);
+        zcash_short_fp(zfp, master_zfp);
     }
     memzero(zfp, sizeof zfp);
 #endif
@@ -3222,6 +3256,300 @@ static void service_qr_out(void)
 }
 
 /* ============================================================================
+ * SD Card Screen (roadmap 1.4)
+ *
+ * A list of the card's .zkv files, plus "Save open seed" when there is one.
+ * Picking a file asks for its passphrase and loads it as the session's seed:
+ * nothing reaches flash, and a lock or a reboot forgets it, exactly like a
+ * typed temporary seed (the home screen then reads TEMP and its ZFP).
+ * Saving asks for a new passphrase twice and writes SEEDn.ZKV, never over an
+ * existing file, and reads it back before saying so. sd-seed.c does the work
+ * and the host suite checks it; this is only the four-button front of it.
+ *
+ * The KDF takes a few seconds on the S3, so the panel says so first.
+ * ============================================================================ */
+
+#if UI_HAS_SD_SEED
+typedef enum { SD_LIST, SD_PASS_LOAD, SD_PASS_NEW, SD_PASS_REPEAT, SD_RESULT } SdStage;
+
+static SdStage   sd_stage;
+static char      sd_names[SDCARD_FILES_MAX][SDCARD_NAME_MAX + 1];
+static int       sd_count;          /* -1: no card */
+static int       sd_sel;
+static bool      sd_can_save;
+static bool      sd_go_home;        /* RESULT: OK goes to the home screen */
+static TextEntry sd_entry;
+static char      sd_first[TEXT_ENTRY_MAX + 1];
+static char      sd_msg[4][22];
+
+static int sd_items(void)
+{
+    return (sd_count > 0 ? sd_count : 0) + (sd_can_save && sd_count >= 0 ? 1 : 0);
+}
+
+static void sd_rescan(void)
+{
+    /* Unmount first: the card may have been swapped since the last look. */
+    sdcard_unmount();
+    sd_count = sdseed_list(sd_names, SDCARD_FILES_MAX);
+    WalletStatus st = wallet_get_status();
+    sd_can_save = st.wallet_count > 0 || wallet_has_temporary_mnemonic();
+    sd_sel = 0;
+}
+
+static void sd_result(bool home, const char *a, const char *b, const char *c, const char *d)
+{
+    const char *lines[4] = { a, b, c, d };
+    for (int i = 0; i < 4; i++) snprintf(sd_msg[i], sizeof sd_msg[i], "%s", lines[i] ? lines[i] : "");
+    sd_go_home = home;
+    sd_stage = SD_RESULT;
+}
+
+static void sd_busy(const char *what)
+{
+    oled_clear();
+    oled_draw_string_centered(3, what);
+    oled_draw_string_centered(4, "a few seconds");
+    oled_refresh();
+}
+
+static void sd_forget(void)
+{
+    text_entry_clear(&sd_entry);
+    memzero(sd_first, sizeof sd_first);
+}
+
+static void sd_load(void)
+{
+    const char *name = sd_names[sd_sel];
+    if (!ensure_wallet_unlocked()) {
+        sd_forget();
+        sd_result(false, "Not loaded", "Unlock failed", NULL, NULL);
+        return;
+    }
+    sd_busy("Opening...");
+    ZkvContents meta;
+    SdSeedResult r = sdseed_load(name, sd_entry.text, (size_t)sd_entry.length, &meta);
+    sd_forget();
+    if (r != SDSEED_OK) {
+        sd_result(false, "Not loaded", sdseed_strerror(r), NULL, NULL);
+        return;
+    }
+    /* The file says which account it is for; Receive follows it, and the
+     * birthday is there for a companion's zGetAccount (session only: this
+     * is a temporary seed). */
+    if (meta.account < HD_ACCOUNT_COUNT) {
+        hd_account_set(meta.account);
+    }
+    ZcashMeta zm;
+    memset(&zm, 0, sizeof zm);
+    zm.birthday = meta.birthday;
+    zm.flags = meta.flags & ZMETA_FLAG_USE_QSK;
+    snprintf(zm.label, sizeof zm.label, "%s", meta.label);
+    zmeta_set(meta.account, &zm);
+    /* Wider than a row; sd_result() cuts each line to the panel. */
+    char l1[40], l2[40], l3[40];
+    snprintf(l1, sizeof l1, "Loaded %s", name);
+    snprintf(l2, sizeof l2, "%s", meta.label[0] ? meta.label : "(no label)");
+    snprintf(l3, sizeof l3, "acct %u from %u", (unsigned)meta.account, (unsigned)meta.birthday);
+    sd_result(true, l1, l2, l3, "Gone on lock/reboot");
+    memzero(&meta, sizeof meta);
+}
+
+static void sd_save(void)
+{
+    if (strcmp(sd_first, sd_entry.text) != 0) {
+        sd_forget();
+        sd_result(false, "Not saved", "Passphrases differ", NULL, NULL);
+        return;
+    }
+    if (!ensure_wallet_unlocked()) {
+        sd_forget();
+        sd_result(false, "Not saved", "Unlock failed", NULL, NULL);
+        return;
+    }
+    sd_busy("Sealing...");
+    char name[SDCARD_NAME_MAX + 1];
+    /* What the device knows about the account goes on the card with it. */
+    ZcashMeta zm;
+    zmeta_get(hd_account, &zm);
+    SdSeedResult r = sdseed_save(sd_entry.text, (size_t)sd_entry.length, zm.label, zm.birthday,
+                                 hd_account, 0, name);
+    sd_forget();
+    if (r != SDSEED_OK) {
+        sd_result(false, "Not saved", sdseed_strerror(r), NULL, NULL);
+        return;
+    }
+    char l1[40];
+    snprintf(l1, sizeof l1, "Saved %s", name);
+    sd_result(false, l1, "Keep the card and", "the passphrase:", "both are needed");
+}
+#endif /* UI_HAS_SD_SEED */
+
+static void screen_sd_seed_enter(void)
+{
+#if UI_HAS_SD_SEED
+    sd_stage = SD_LIST;
+    sd_forget();
+    sd_rescan();
+#endif
+}
+
+static void screen_sd_seed_exit(screen_id_t next)
+{
+    (void)next;
+#if UI_HAS_SD_SEED
+    sd_forget();
+#endif
+}
+
+static void screen_sd_seed_render(void)
+{
+    oled_clear();
+#if UI_HAS_SD_SEED
+    switch (sd_stage) {
+        case SD_LIST: {
+            oled_draw_string_centered(0, "SD Card");
+            if (sd_count < 0) {
+                oled_draw_string_centered(3, "No SD card");
+                oled_draw_string(7, 0, "BACK        RETRY");
+                return;
+            }
+            const int n = sd_items();
+            if (n == 0) {
+                oled_draw_string_centered(3, "No seed files");
+                oled_draw_string(7, 0, "BACK        RETRY");
+                return;
+            }
+            int start = sd_sel > 2 ? sd_sel - 2 : 0;
+            for (int i = 0; i < 4 && start + i < n; i++) {
+                const int idx = start + i;
+                char line[22];
+                snprintf(line, sizeof line, "%s %s", idx == sd_sel ? ">" : " ",
+                         idx < sd_count ? sd_names[idx] : "Save open seed");
+                oled_draw_string(2 + i, 0, line);
+            }
+            oled_draw_string(7, 0, "BACK  UP/DN     OK");
+            return;
+        }
+        case SD_PASS_LOAD:
+        case SD_PASS_NEW:
+        case SD_PASS_REPEAT: {
+            oled_draw_string_centered(0, sd_stage == SD_PASS_LOAD ? "Card passphrase"
+                                         : sd_stage == SD_PASS_NEW ? "New card passphrase"
+                                                                   : "Repeat passphrase");
+            const int len = sd_entry.length;
+            const char *tail = len > 18 ? sd_entry.text + (len - 18) : sd_entry.text;
+            char shown[24];
+            size_t out = 0;
+            if (len > 18) shown[out++] = '<';
+            for (size_t i = 0; tail[i] != '\0' && out < sizeof(shown) - 1; i++) shown[out++] = tail[i];
+            shown[out] = '\0';
+            oled_draw_string(2, 0, len ? shown : "(8-64 characters)");
+            char prev[8], cur[8], next[8], sel[32];
+            text_entry_label_offset(&sd_entry, -1, prev, sizeof prev);
+            text_entry_label_offset(&sd_entry, 0, cur, sizeof cur);
+            text_entry_label_offset(&sd_entry, 1, next, sizeof next);
+            snprintf(sel, sizeof sel, "%s <%s> %s", prev, cur, next);
+            oled_draw_string_centered(4, sel);
+            char count[22];
+            snprintf(count, sizeof count, "%u chars", (unsigned)len & 0x7F);
+            oled_draw_string_centered(5, count);
+            oled_draw_string(7, 0, text_entry_on_group(&sd_entry) ? "UP DN  BCK OPEN"
+                                                                  : "UP DN  BCK  SEL");
+            return;
+        }
+        case SD_RESULT:
+            for (int i = 0; i < 4; i++) oled_draw_string_centered(1 + i + (i > 0), sd_msg[i]);
+            oled_draw_string(7, 0, "                OK");
+            return;
+    }
+#else
+    oled_draw_string_centered(0, "SD Card");
+    oled_draw_string_centered(3, "No card slot");
+    oled_draw_string(7, 0, "BACK");
+#endif
+}
+
+static void screen_sd_seed_on_button(button_id_t btn)
+{
+#if UI_HAS_SD_SEED
+    switch (sd_stage) {
+        case SD_LIST: {
+            const int n = sd_items();
+            if (btn == BUTTON_CANCEL) {
+                ui_set_screen(SCREEN_MAIN_MENU);
+                return;
+            }
+            if (btn == BUTTON_DOWN && sd_sel < n - 1) sd_sel++;
+            if (btn == BUTTON_UP && sd_sel > 0) sd_sel--;
+            if (btn == BUTTON_ACCEPT) {
+                if (sd_count < 0 || n == 0) {
+                    sd_rescan();
+                } else {
+                    text_entry_reset(&sd_entry);
+                    sd_stage = sd_sel < sd_count ? SD_PASS_LOAD : SD_PASS_NEW;
+                }
+            }
+            break;
+        }
+        case SD_PASS_LOAD:
+        case SD_PASS_NEW:
+        case SD_PASS_REPEAT:
+            if (btn == BUTTON_UP) {
+                text_entry_scroll(&sd_entry, 1);
+            } else if (btn == BUTTON_DOWN) {
+                text_entry_scroll(&sd_entry, -1);
+            } else if (btn == BUTTON_CANCEL) {
+                if (!text_entry_back(&sd_entry)) {
+                    sd_forget();
+                    sd_stage = SD_LIST;
+                }
+            } else if (btn == BUTTON_ACCEPT) {
+                TextEntryResult r = text_entry_accept(&sd_entry);
+                if (r == TEXT_ENTRY_CANCELLED) {
+                    sd_forget();
+                    sd_stage = SD_LIST;
+                } else if (r == TEXT_ENTRY_DONE) {
+                    if (!zkv_pass_ok(sd_entry.text, (size_t)sd_entry.length)) {
+                        /* Said before a KDF runs, and the same on both paths:
+                         * no .zkv passphrase can be shorter. */
+                        sd_forget();
+                        sd_result(false, "Passphrase must be", "8-64 characters", NULL, NULL);
+                    } else if (sd_stage == SD_PASS_LOAD) {
+                        sd_load();
+                    } else if (sd_stage == SD_PASS_NEW) {
+                        snprintf(sd_first, sizeof sd_first, "%s", sd_entry.text);
+                        text_entry_clear(&sd_entry);
+                        text_entry_reset(&sd_entry);
+                        sd_stage = SD_PASS_REPEAT;
+                    } else {
+                        sd_save();
+                    }
+                }
+            }
+            break;
+        case SD_RESULT:
+            if (btn == BUTTON_ACCEPT || btn == BUTTON_CANCEL) {
+                if (sd_go_home) {
+                    ui_set_screen(SCREEN_MAIN_MENU);
+                    return;
+                }
+                sd_stage = SD_LIST;
+                sd_rescan();
+            }
+            break;
+    }
+#else
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
+#endif
+    ui_invalidate();
+}
+
+/* ============================================================================
  * Receive Screen (roadmap 1.6)
  *
  * The selected account's addresses on the network chosen under Settings:
@@ -3340,6 +3668,15 @@ static void screen_show_address_on_button(button_id_t btn)
 }
 
 #ifdef LEEK_HOST_TEST
+TextEntry *ui__sd_entry_for_test(void)
+{
+#if UI_HAS_SD_SEED
+    return &sd_entry;
+#else
+    return NULL;
+#endif
+}
+
 int ui__receive_page_for_test(void)
 {
 #if LEEK_HAS_ZCASH
@@ -5037,6 +5374,7 @@ void ui_init(void)
 #endif
     screens[SCREEN_QR_OUT] = &screen_qr_out;
     screens[SCREEN_SHOW_ADDRESS] = &screen_show_address;
+    screens[SCREEN_SD_SEED] = &screen_sd_seed;
     screens[SCREEN_SCAN] = &screen_scan;
 
     current_screen = SCREEN_BOOT;

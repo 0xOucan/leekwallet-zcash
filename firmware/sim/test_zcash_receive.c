@@ -18,6 +18,7 @@
 #include "bip39.h"
 #include "oled.h"
 #include "oled-core.h"
+#include "zcash-fp.h"
 #include "zcash-receive.h"
 #include "../../vectors/keys_vectors.h"
 
@@ -198,19 +199,19 @@ static void test_fingerprint(void)
 
     /* Done-when of 1.5: different passphrases, different fingerprints. */
     ctx = "passphrases";
-    char seen[3][ZRECV_FP_CHARS + 1];
+    char seen[3][ZCASH_FP_CHARS + 1];
     const char *pps[3] = { "", "TREZOR", "LeekWallet Zcash 2026!" };
     cur_mnemonic = ZV_KEYS[0].mnemonic;
     for (int i = 0; i < 3; i++) {
         cur_passphrase = pps[i];
         zcash_seed_fingerprint(fp);
-        zrecv_short_fp(fp, seen[i]);
-        CHECK(strlen(seen[i]) == ZRECV_FP_CHARS, "eight characters");
+        zcash_short_fp(fp, seen[i]);
+        CHECK(strlen(seen[i]) == ZCASH_FP_CHARS, "eight characters");
         printf("    passphrase \"%s\": ZFP %s\n", pps[i], seen[i]);
     }
     CHECK(strcmp(seen[0], seen[1]) && strcmp(seen[0], seen[2]) && strcmp(seen[1], seen[2]),
           "short forms differ");
-    zrecv_short_fp(ZV_KEYS[0].seed_fingerprint, seen[0]);
+    zcash_short_fp(ZV_KEYS[0].seed_fingerprint, seen[0]);
     CHECK(strcmp(seen[0], "E62855DC") == 0, "short form is the first four bytes: %s", seen[0]);
 
     ctx = "locked";

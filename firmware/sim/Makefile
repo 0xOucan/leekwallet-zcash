@@ -161,6 +161,24 @@ $(BUILD)/test_zcash_account: test_zcash_account.c ../src/zcash-account.c ../src/
 	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -DLEEK_HOST_TEST -o $@ \
 	    $(filter %.c,$^) $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
+# SD card storage mode (roadmap 1.4): the three storage modes agree, through
+# the real vault and the real derivation, with a directory as the card.
+$(BUILD)/test_sd_seed: CFLAGS += -DAES_VAR
+$(BUILD)/test_sd_seed: test_sd_seed.c ../src/sd-seed.c ../src/sdcard.c ../src/zkv.c \
+                       ../src/zcash-account.c ../src/zcash-worker.c ../../vectors/keys_vectors.h \
+                       esp_stubs.c host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
+                       $(ZSIGN)/target/release/libzsign_rust.a \
+                       $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+
+# Per-account metadata through the real vault and the fake NVS's power cuts.
+$(BUILD)/test_zcash_meta: CFLAGS += -DAES_VAR
+$(BUILD)/test_zcash_meta: test_zcash_meta.c ../src/zcash-meta.c ../src/zcash-fp.c \
+                          ../../vectors/keys_vectors.h esp_stubs.c host_stubs.c \
+                          $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $(filter %.c,$^)
+
 .PHONY: FORCE
 FORCE:
 
@@ -213,14 +231,24 @@ $(BUILD)/test_zcash_review: test_zcash_review.c ../src/zcash-review.c ../src/zca
 
 # The receive pages and the seed fingerprint. The QR pages are drawn into the
 # real framebuffer and scanned back with zbarimg where it is installed.
-$(BUILD)/test_zcash_receive: test_zcash_receive.c ../src/zcash-receive.c ../src/zcash-receive.h \
+$(BUILD)/test_zcash_receive: test_zcash_receive.c ../src/zcash-receive.c ../src/zcash-receive.h ../src/zcash-fp.c \
                              host_stubs.c ../src/oled-core.c ../src/qrcode.c ../../vectors/keys_vectors.h \
                              $(CRYPTO)/blake2b.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c $(CRYPTO)/sha2.c \
                              $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(filter %.c,$^)
 
-TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive
-all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive
+# The .zkv SD seed file: round trips, tamper, limits, and the golden file
+# zecz must reproduce byte for byte.
+$(BUILD)/test_zkv: CFLAGS += -DAES_VAR -DLEEK_HOST_TEST
+$(BUILD)/test_zkv: test_zkv.c ../src/zkv.c ../src/zkv.h host_stubs.c ../../vectors/keys_vectors.h \
+                   $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/aescrypt.c $(CRYPTO)/aes/aeskey.c \
+                   $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/gf128mul.c \
+                   $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c $(CRYPTO)/sha2.c \
+                   $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(filter %.c,$^)
+
+TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta
 
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
@@ -320,11 +348,16 @@ $(BUILD)/test_temp_seed: test_temp_seed.c esp_stubs.c host_stubs.c \
 # The UI layer, against a framebuffer OLED and a fake wallet (see fake_wallet.c
 # for why the real one is not linked here). The Wi-Fi/BLE/USB blocks in ui.c are
 # all behind CONFIG_* macros that stay undefined on the host, so they vanish.
+$(BUILD)/test_ui: CFLAGS += -DAES_VAR
 $(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
                   fake_input.c fake_protocol.c ../src/transport.c ../src/ble.c \
                   ../src/ble-name.c ../src/ble-chunk.c \
-                  ../src/ui.c ../src/zcash-review.c ../src/zcash-receive.c fake_zcash.c \
+                  ../src/ui.c ../src/zcash-review.c ../src/zcash-receive.c ../src/zcash-fp.c \
+                  ../src/zcash-meta.c fake_zcash.c \
                   ../src/pin.c ../src/mnemonic-entry.c $(CRYPTO)/blake2b.c \
+                  ../src/sd-seed.c ../src/sdcard.c ../src/zkv.c \
+                  $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/aescrypt.c $(CRYPTO)/aes/aeskey.c \
+                  $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/gf128mul.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
                   ../src/blind-signing.c \
                   ../src/cbor.c ../src/device-wipe.c \
@@ -357,6 +390,7 @@ $(BUILD)/test_pin_change: test_pin_change.c esp_stubs.c host_stubs.c \
 # the mock has to match; see test_protocol.c.
 PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.c fake_zcash.c \
                 ../src/zcash-sign.c ../src/zcash-worker.c $(ZSIGN)/platform/zsign_platform_host.c \
+                ../src/zcash-meta.c ../src/zcash-fp.c $(CRYPTO)/blake2b.c \
                 ../src/protocol.c ../src/cbor.c ../src/session.c ../src/pin.c \
                 ../src/ble-chunk.c ../src/ble.c ../src/ble-name.c ../src/transport.c ../src/entropy.c \
                 ../src/blind-signing.c \

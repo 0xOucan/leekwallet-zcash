@@ -312,6 +312,7 @@ against it.
 | `signTypedData` | keys | **yes** | **removed** in the Zcash fork (roadmap 1.1) |
 | `signTransaction` | keys | **yes** | **removed** in the Zcash fork (roadmap 1.1) |
 | `zGetAccount` | keys | — (viewing key, not spend authority) | implemented |
+| `zSetAccountMeta` | keys | — (birthday and label; not secret, not needed to sign) | implemented |
 | `zSignBegin` / `zSignChunk` / `zSignFinish` | keys | **yes — every review page, ACCEPT on the last** | implemented |
 | `signHash` | keys | **yes**, and refused unless blind signing is enabled on-device | **not implemented** — a host-supplied digest is the one thing this device will not sign, and nothing needs it yet |
 
@@ -333,6 +334,28 @@ your wallet is a protocol that a malicious host can erase your wallet with.
 
 `unlock` does not carry a PIN. It asks the device to prompt; the user types on the device; the
 response says whether it worked. The PIN never crosses the wire in any form.
+
+### Zcash account metadata
+
+```
+zGetAccount     { account?: uint, network: "main"|"test" }
+             -> { account, network, seedFingerprint: h'32', ufvk, ua, tAddress, birthday? }
+zSetAccountMeta { account?: uint, birthday?: uint, label?: text }
+             -> { stored: 0|1 }
+```
+
+`birthday` is present in `zGetAccount` only when the device has one for that
+account of the open seed: a companion set it with `zSetAccountMeta`, or the
+seed came from an SD `.zkv` file that carried it. A companion should use it
+instead of asking the user, and set it after an import when it was absent.
+Fields left out of `zSetAccountMeta` keep their values. `label` is at most 32
+printable ASCII characters.
+
+`stored: 1` means the record is in flash, keyed by the seed's short
+fingerprint and the account. That happens only for a stored wallet with no
+BIP39 passphrase. For a passphrase, temporary or SD seed the answer is
+`stored: 0`: the record is held in RAM and dropped on lock, so flash never
+shows that such a seed was used.
 
 ### Zcash signing (PCZT)
 

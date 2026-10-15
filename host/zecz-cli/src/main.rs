@@ -98,6 +98,33 @@ enum Cmd {
         #[arg(long, default_value = "leekwallet-dev")]
         name: String,
     },
+    /// Seal a seed phrase into a .zkv file for the device's SD card.
+    /// Handles the phrase on this computer: use an offline machine for real
+    /// funds. The file passphrase is read from ZECZ_ZKV_PASSPHRASE or stdin.
+    ZkvNew {
+        #[arg(long)]
+        mnemonic: String,
+        /// Output file; the device lists 8.3 names such as SEED1.ZKV.
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        birthday: u32,
+        #[arg(long, default_value_t = 0)]
+        account: u32,
+        #[arg(long, default_value = "")]
+        label: String,
+        #[arg(long, default_value_t = zecz::zkv::ITERATIONS_DEFAULT)]
+        iterations: u32,
+    },
+    /// Open a .zkv file and show what the device will load from it (seed
+    /// fingerprint, account, birthday, UFVK). Never prints the phrase.
+    ZkvOpen {
+        #[arg(long = "in")]
+        input: PathBuf,
+        /// BIP 39 passphrase applied on top, as on the device.
+        #[arg(long, default_value = "")]
+        passphrase: String,
+    },
     /// Scan the chain through lightwalletd until the wallet is up to date.
     Sync {
         /// Blocks per scan batch.
@@ -137,8 +164,10 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         account: u32,
         /// Account birthday height (first block that may contain its notes).
+        /// Optional when the device already knows it; given, it is also
+        /// recorded on the device for the next companion.
         #[arg(long)]
-        birthday: u32,
+        birthday: Option<u32>,
         #[arg(long, default_value = "leekwallet")]
         name: String,
     },
@@ -516,12 +545,56 @@ fn connect_device(port: &str) -> Result<Device> {
     Ok(dev)
 }
 
+/// The .zkv file passphrase: ZECZ_ZKV_PASSPHRASE, or one line of stdin.
+fn zkv_passphrase() -> Result<String> {
+    if let Ok(p) = std::env::var("ZECZ_ZKV_PASSPHRASE") {
+        return Ok(p);
+    }
+    eprint!("File passphrase: ");
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+fn cmd_zkv_new(mnemonic: &str, out: &Path, birthday: u32, account: u32, label: &str, iterations: u32) -> Result<()> {
+    use zecz::zkv;
+    let m = bip39::Mnemonic::parse_normalized(mnemonic).context("invalid BIP 39 mnemonic")?;
+    let pass = zkv_passphrase()?;
+    let c = zkv::Contents { entropy: m.to_entropy(), birthday, account, flags: 0, label: label.to_string() };
+    let file = zkv::seal(&c, &pass, iterations)?;
+    if out.exists() {
+        bail!("{} exists; the device never overwrites a seed file and neither does this", out.display());
+    }
+    std::fs::write(out, &file)?;
+    // Read it back before saying it worked: a card that cannot be opened
+    // is not a backup.
+    if zkv::open(&std::fs::read(out)?, &pass)? != c {
+        bail!("{} did not read back", out.display());
+    }
+    println!("Wrote {} ({} bytes, {} iterations)", out.display(), file.len(), iterations);
+    Ok(())
+}
+
+fn cmd_zkv_open(ctx: &Ctx, input: &Path, bip39_pass: &str) -> Result<()> {
+    use zecz::zkv;
+    let file = std::fs::read(input)?;
+    let iterations = zkv::peek(&file)?;
+    let c = zkv::open(&file, &zkv_passphrase()?)?;
+    let m = bip39::Mnemonic::from_entropy(&c.entropy).context("entropy")?;
+    let acct = DevAccount::from_mnemonic(&ctx.params, &m.to_string(), bip39_pass, c.account)?;
+    println!("{}: {} words, {} iterations", input.display(), m.word_count(), iterations);
+    println!("Label {:?}, account {}, birthday {}, flags {:#04x}", c.label, c.account, c.birthday, c.flags);
+    println!("ZFP {}", short_fp(&acct.seed_fingerprint));
+    println!("UFVK: {}", acct.ufvk.encode(&ctx.params)?);
+    Ok(())
+}
+
 /// The device's short seed fingerprint: the first four bytes, upper-case hex.
 fn short_fp(fp: &SeedFingerprint) -> String {
     hex::encode_upper(&fp.to_bytes()[..4])
 }
 
-async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, name: &str) -> Result<()> {
+async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: Option<u32>, name: &str) -> Result<()> {
     let mut dev = connect_device(port)?;
     let a = dev.z_get_account(account, ctx.net_name())?;
     if device::get_text(&a, "network")? != ctx.net_name() {
@@ -532,6 +605,15 @@ async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, nam
         .try_into()
         .map_err(|_| anyhow!("seedFingerprint is not 32 bytes"))?;
     let device_ua = device::get_text(&a, "ua")?;
+    let device_birthday = device::get_uint(&a, "birthday").ok().map(|b| b as u32);
+    let birthday = match (birthday, device_birthday) {
+        (Some(b), _) => b,
+        (None, Some(b)) => {
+            println!("Birthday {b}, from the device");
+            b
+        }
+        (None, None) => bail!("the device does not know this account's birthday; pass --birthday"),
+    };
     println!("Device account {account}: {device_ua}");
     println!("Device t-address: {}", device::get_text(&a, "tAddress")?);
 
@@ -541,7 +623,13 @@ async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, nam
     if ua.encode(&ctx.params) != device_ua {
         bail!("the device's address does not match its own viewing key; refusing to import");
     }
-    cmd_init(ctx, &ufvk, birthday, SeedFingerprint::from_bytes(fp), account, name).await
+    cmd_init(ctx, &ufvk, birthday, SeedFingerprint::from_bytes(fp), account, name).await?;
+    if device_birthday != Some(birthday) {
+        let stored = dev.z_set_birthday(account, birthday)?;
+        println!("Recorded birthday {birthday} on the device{}",
+                 if stored { "" } else { " until it locks (passphrase or session seed)" });
+    }
+    Ok(())
 }
 
 fn cmd_sign_device(ctx: &Ctx, port: &str, account: u32, input: &Path, out: &Path) -> Result<()> {
@@ -660,6 +748,10 @@ async fn main() -> Result<()> {
             println!("UFVK: {ufvk}");
             cmd_init(&ctx, &ufvk, birthday, acct.seed_fingerprint, account, &name).await
         }
+        Cmd::ZkvNew { mnemonic, out, birthday, account, label, iterations } => {
+            cmd_zkv_new(&mnemonic, &out, birthday, account, &label, iterations)
+        }
+        Cmd::ZkvOpen { input, passphrase } => cmd_zkv_open(&ctx, &input, &passphrase),
         Cmd::Sync { batch } => cmd_sync(&ctx, batch).await,
         Cmd::Tip => cmd_tip(&ctx).await,
         Cmd::Balance => cmd_balance(&ctx),
