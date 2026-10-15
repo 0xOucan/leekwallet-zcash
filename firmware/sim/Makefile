@@ -164,6 +164,42 @@ $(BUILD)/test_zcash_account: test_zcash_account.c ../src/zcash-account.c ../src/
 .PHONY: FORCE
 FORCE:
 
+# Zcash C signer (zsign-c, Phase 4). Built as one archive with its own flags:
+# no trezor-crypto include path, and every vendored libzcash-ironwood-c symbol
+# renamed zcv_* (vendor/zc_vendor_prefix.h), so it links next to trezor-crypto
+# and zsign-rust without sharing a line of code with either.
+ZSIGNC := ../components/zsign-c
+ZCV    := $(ZSIGNC)/vendor/libzcash-ironwood-c
+ZC_CFLAGS := -O2 -g -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Wno-unused-parameter \
+             -include $(ZSIGNC)/vendor/zc_vendor_prefix.h \
+             -I$(ZSIGNC)/include -I$(ZSIGNC) -I$(ZCV)/include -I$(ZCV)/src -Wa,-I$(ZCV)/src
+ZC_SRC := $(ZSIGNC)/pczt_reader.c $(ZSIGNC)/zsign_c.c $(ZSIGNC)/zc_crypto.c $(ZSIGNC)/zc_pallas.c \
+          $(ZSIGNC)/zc_encoding.c $(ZSIGNC)/zc_sinsemilla.S $(ZSIGNC)/platform/zc_platform_host.c \
+          $(ZSIGNC)/zc_xcheck.c \
+          $(addprefix $(ZCV)/src/,orchard.c pallas.c redpallas.c zip244.c bignum.c blake2b.c \
+            memzero.c segwit_addr.c chacha20poly1305.c sha2.c aes/aes_ct.c)
+$(BUILD)/libzsign_c.a: $(ZC_SRC) $(wildcard $(ZSIGNC)/*.h $(ZSIGNC)/include/*.h) | $(BUILD)
+	rm -rf $(BUILD)/zsign-c && mkdir -p $(BUILD)/zsign-c
+	for f in $(ZC_SRC); do $(CC) $(ZC_CFLAGS) -c $$f -o $(BUILD)/zsign-c/$$(basename $$f).o || exit 1; done
+	ar rcs $@ $(BUILD)/zsign-c/*.o
+
+ZC_TEST_DEPS := host_stubs.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c $(CRYPTO)/sha2.c \
+                $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c
+
+$(BUILD)/test_zcash_pczt_c: test_zcash_pczt_c.c ../../vectors/pczt_vectors.h ../../vectors/keys_vectors.h \
+                            $(ZC_TEST_DEPS) $(BUILD)/libzsign_c.a | $(BUILD)
+	$(CC) $(CFLAGS) -I$(ZSIGNC)/include -o $@ $(filter %.c,$^) $(BUILD)/libzsign_c.a
+
+# Both backends on every vector and on deterministic single-byte mutations.
+$(BUILD)/test_zsign_diff: test_zsign_diff.c ../../vectors/pczt_vectors.h $(ZC_TEST_DEPS) \
+                          $(ZSIGN)/platform/zsign_platform_host.c \
+                          $(ZSIGN)/target/release/libzsign_rust.a $(BUILD)/libzsign_c.a | $(BUILD)
+	$(CC) $(CFLAGS) -I$(ZSIGN)/include -I$(ZSIGNC)/include -I$(ZSIGNC) -o $@ $(filter %.c,$^) \
+	    $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+
+TESTS += test_zcash_pczt_c test_zsign_diff
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff
+
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                    $(CRYPTO)/ecdsa.c $(CRYPTO)/bignum.c $(CRYPTO)/secp256k1.c \
@@ -353,12 +389,25 @@ $(BUILD)/test_protocol_asan: $(PROTOCOL_SRC) $(HEADERS) | $(BUILD)
 $(BUILD)/test_ble_chunk_asan: test_ble_chunk.c ../src/ble-chunk.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $^
 
-asan: $(BUILD)/test_protocol_asan $(BUILD)/test_ble_chunk_asan $(BUILD)/test_slip39_asan $(BUILD)/test_ur_encoder_asan $(BUILD)/test_qr_out_asan
+# The C signer parses untrusted PCZT bytes, so its library is instrumented
+# too and driven through the differential test's single-byte mutations.
+$(BUILD)/test_zsign_diff_asan: test_zsign_diff.c ../../vectors/pczt_vectors.h $(ZC_TEST_DEPS) \
+                               $(ZSIGN)/platform/zsign_platform_host.c $(ZC_SRC) \
+                               $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
+	rm -rf $(BUILD)/zsign-c-asan && mkdir -p $(BUILD)/zsign-c-asan
+	for f in $(ZC_SRC); do $(CC) $(ZC_CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer \
+	    -c $$f -o $(BUILD)/zsign-c-asan/$$(basename $$f).o || exit 1; done
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer \
+	    -I$(ZSIGN)/include -I$(ZSIGNC)/include -I$(ZSIGNC) -o $@ $(filter %.c,$(filter-out $(ZC_SRC),$^)) \
+	    $(BUILD)/zsign-c-asan/*.o $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+
+asan: $(BUILD)/test_protocol_asan $(BUILD)/test_ble_chunk_asan $(BUILD)/test_slip39_asan $(BUILD)/test_ur_encoder_asan $(BUILD)/test_qr_out_asan $(BUILD)/test_zsign_diff_asan
 	./$(BUILD)/test_protocol_asan
 	./$(BUILD)/test_ble_chunk_asan
 	./$(BUILD)/test_slip39_asan
 	./$(BUILD)/test_ur_encoder_asan
 	./$(BUILD)/test_qr_out_asan
+	UBSAN_OPTIONS=halt_on_error=1 ./$(BUILD)/test_zsign_diff_asan
 
 # What the six-digit passkey costs a relay. Measurement, not assertion, so it
 # is built on request and never by `make test`. See passkey_grind.c.
