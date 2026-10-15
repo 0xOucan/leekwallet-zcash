@@ -59,6 +59,7 @@ void ui_request_passphrase_confirm(uint32_t fingerprint) { (void)fingerprint; }
  * iteration and turn a fuzzer into a benchmark. Everything this file is
  * looking for happens in the parse, which is upstream of the prompt. */
 SignOutcome ui_sign_outcome(void) { return SIGN_REJECTED; }
+void ui_request_zsign_review(const zs_summary *s, uint8_t network) { (void)s; (void)network; }
 void ui_sign_clear(void) { }
 void ui_sign_expire(void) { }
 

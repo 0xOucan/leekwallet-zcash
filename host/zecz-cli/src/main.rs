@@ -36,6 +36,7 @@ use zip321::{Payment, TransactionRequest};
 use zip32::fingerprint::SeedFingerprint;
 
 use zecz::authorize::{apply_zsig, prove};
+use zecz::device::{self, Device};
 use zecz::keys::DevAccount;
 use zecz::lwd::{self, MemBlockCache};
 use zecz::soft_signer;
@@ -124,6 +125,33 @@ enum Cmd {
         #[arg(long)]
         memo: Option<String>,
         /// Where to write the signer view for the device.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Pair with the device, export its account (UFVK) and run `init`.
+    DeviceInit {
+        /// Serial port of the device (e.g. /dev/ttyACM0), or a zdev PTY.
+        #[arg(long)]
+        port: String,
+        /// ZIP 32 account index on the device.
+        #[arg(long, default_value_t = 0)]
+        account: u32,
+        /// Account birthday height (first block that may contain its notes).
+        #[arg(long)]
+        birthday: u32,
+        #[arg(long, default_value = "leekwallet")]
+        name: String,
+    },
+    /// Have the device check, show and sign a PCZT; write its .zsig.
+    SignDevice {
+        #[arg(long)]
+        port: String,
+        /// ZIP 32 account index on the device.
+        #[arg(long, default_value_t = 0)]
+        account: u32,
+        /// The unsigned PCZT (from `send --out`).
+        #[arg(long = "in")]
+        input: PathBuf,
         #[arg(long)]
         out: PathBuf,
     },
@@ -473,6 +501,63 @@ fn cmd_send(ctx: &Ctx, to: &str, amount: &str, zec: bool, memo: Option<&str>, ou
     Ok(())
 }
 
+/// Open the device, pair (the user compares the passkey) and make sure it is
+/// unlocked.
+fn connect_device(port: &str) -> Result<Device> {
+    let mut dev = Device::open(port)?;
+    dev.pair(|passkey| {
+        println!("Pairing passkey: {passkey}");
+        println!("Check that the device shows the same six digits, then press ALLOW on it.");
+    })?;
+    println!("Paired.");
+    dev.ensure_unlocked()?;
+    Ok(dev)
+}
+
+async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, name: &str) -> Result<()> {
+    let mut dev = connect_device(port)?;
+    let a = dev.z_get_account(account, ctx.net_name())?;
+    if device::get_text(&a, "network")? != ctx.net_name() {
+        bail!("the device answered for a different network");
+    }
+    let ufvk = device::get_text(&a, "ufvk")?;
+    let fp: [u8; 32] = device::get_bytes(&a, "seedFingerprint")?
+        .try_into()
+        .map_err(|_| anyhow!("seedFingerprint is not 32 bytes"))?;
+    let device_ua = device::get_text(&a, "ua")?;
+    println!("Device account {account}: {device_ua}");
+    println!("Device t-address: {}", device::get_text(&a, "tAddress")?);
+
+    // The device derives its address itself; the UFVK must lead to the same one.
+    let parsed = UnifiedFullViewingKey::decode(&ctx.params, &ufvk).map_err(|e| anyhow!("device UFVK: {e}"))?;
+    let (ua, _) = parsed.default_address(ua_request()).map_err(|e| anyhow!("address derivation: {e:?}"))?;
+    if ua.encode(&ctx.params) != device_ua {
+        bail!("the device's address does not match its own viewing key; refusing to import");
+    }
+    cmd_init(ctx, &ufvk, birthday, SeedFingerprint::from_bytes(fp), account, name).await
+}
+
+fn cmd_sign_device(ctx: &Ctx, port: &str, account: u32, input: &Path, out: &Path) -> Result<()> {
+    let bytes = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
+    let mut dev = connect_device(port)?;
+    println!("Uploading {} bytes (sha256 {}) ...", bytes.len(), hex::encode(zsig::sha256(&bytes)));
+    println!("Review the transaction on the device; ACCEPT on its last page signs.");
+    let (sighash, entries) = dev.z_sign(&bytes, account, ctx.net_name(), |done, total| {
+        eprint!("\r  {done}/{total} bytes");
+        if done == total {
+            eprintln!();
+        }
+    })?;
+    let z = Zsig::new(&bytes, entries);
+    fs::write(out, z.to_bytes()?)?;
+    println!("Device signed {} spend(s); sighash {}", z.entries.len(), hex::encode(sighash));
+    for e in &z.entries {
+        println!("  {:?} action {}", e.pool, e.index);
+    }
+    println!("Signatures -> {}", out.display());
+    Ok(())
+}
+
 fn cmd_sign_soft(ctx: &Ctx, mnemonic: &str, passphrase: &str, account: u32, input: &Path, out: &Path) -> Result<()> {
     eprintln!("WARNING: sign-soft is a DEV ONLY reference signer. It does not check what it signs.");
     let bytes = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
@@ -573,6 +658,8 @@ async fn main() -> Result<()> {
         Cmd::Balance => cmd_balance(&ctx),
         Cmd::Address => cmd_address(&ctx),
         Cmd::Send { to, amount, zec, memo, out } => cmd_send(&ctx, &to, &amount, zec, memo.as_deref(), &out),
+        Cmd::DeviceInit { port, account, birthday, name } => cmd_device_init(&ctx, &port, account, birthday, &name).await,
+        Cmd::SignDevice { port, account, input, out } => cmd_sign_device(&ctx, &port, account, &input, &out),
         Cmd::SignSoft { mnemonic, passphrase, account, input, out } => {
             cmd_sign_soft(&ctx, &mnemonic, &passphrase, account, &input, &out)
         }

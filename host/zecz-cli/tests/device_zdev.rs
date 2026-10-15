@@ -1,0 +1,137 @@
+//! The device path with no board: `zdev` (firmware/sim) runs the firmware's
+//! protocol, session, both signer backends and review pages on a PTY, and
+//! this drives it as `zecz sign-device` does: pair, upload, review, sign.
+//! The device's signatures must then prove and extract into a transaction
+//! that verifies, exactly like the soft signer's.
+//!
+//! Builds zdev with `make` if it is missing; skips (loudly) if it cannot.
+
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use pczt::Pczt;
+use serde_json::Value;
+use zecz::authorize::{apply_zsig, prove};
+use zecz::device::{self, Device};
+use zecz::zsig::Zsig;
+
+fn repo() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn vector(name: &str) -> (Value, Vec<u8>) {
+    let v = repo().join("vectors");
+    let all: Vec<Value> = serde_json::from_slice(&std::fs::read(v.join("pczt.json")).unwrap()).unwrap();
+    let e = all.into_iter().find(|e| e["name"] == name).expect("vector");
+    let bytes = std::fs::read(v.join(e["file"].as_str().unwrap())).unwrap();
+    (e, bytes)
+}
+
+fn zdev_binary() -> Option<PathBuf> {
+    let sim = repo().join("firmware/sim");
+    let bin = sim.join("build/zdev");
+    if !bin.exists() {
+        let ok = Command::new("make").arg("-C").arg(&sim).arg("build/zdev").status().is_ok_and(|s| s.success());
+        if !ok {
+            return None;
+        }
+    }
+    Some(bin)
+}
+
+/// A running zdev, killed on drop.
+struct Zdev {
+    child: Child,
+    link: PathBuf,
+    _dir: PathBuf,
+}
+
+impl Drop for Zdev {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.link);
+    }
+}
+
+fn start(tag: &str, auto_yes: bool) -> Option<Zdev> {
+    let bin = zdev_binary()?;
+    let dir = std::env::temp_dir().join(format!("zecz-zdev-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let link = dir.join("port");
+    let mut cmd = Command::new(bin);
+    cmd.arg("--link").arg(&link).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    if auto_yes {
+        cmd.arg("--yes");
+    }
+    let child = cmd.spawn().ok()?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !link.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Some(Zdev { child, link, _dir: dir })
+}
+
+fn connect(z: &Zdev) -> Device {
+    let mut d = Device::open(z.link.to_str().unwrap()).expect("open zdev");
+    d.pair(|_| {}).expect("pair");
+    d.ensure_unlocked().expect("unlocked");
+    d
+}
+
+macro_rules! zdev_or_skip {
+    ($tag:expr, $yes:expr) => {
+        match start($tag, $yes) {
+            Some(z) => z,
+            None => {
+                eprintln!("SKIPPED: zdev could not be built (make -C firmware/sim build/zdev)");
+                return;
+            }
+        }
+    };
+}
+
+#[test]
+fn device_signs_and_the_transaction_verifies() {
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
+
+    let z = zdev_or_skip!("ok", true);
+    let (v, unsigned) = vector("iw_send_shielded");
+    let mut dev = connect(&z);
+    let (sighash, entries) = dev.z_sign(&unsigned, 0, "test", |_, _| {}).expect("device signs");
+    assert_eq!(hex::encode(sighash), v["sighash"].as_str().unwrap(), "device sighash");
+    assert_eq!(entries.len(), 1);
+
+    // The .zsig round trip, then the `finish` path.
+    let zsig = Zsig::parse_for(&Zsig::new(&unsigned, entries).to_bytes().unwrap(), &unsigned).unwrap();
+    let signed = apply_zsig(Pczt::parse(&unsigned).unwrap(), &zsig).expect("signatures verify against rk");
+    let proven = prove(signed).unwrap();
+    let finalized = pczt::roles::spend_finalizer::SpendFinalizer::new(proven).finalize_spends().unwrap();
+    pczt::roles::tx_extractor::TransactionExtractor::new(finalized)
+        .extract(UnwrapErr(SysRng))
+        .expect("extraction verifies proofs and the device's signatures");
+}
+
+#[test]
+fn device_refuses_a_tampered_pczt_before_review() {
+    let z = zdev_or_skip!("tampered", true);
+    let (_, bytes) = vector("r_output_value_tampered");
+    let mut dev = connect(&z);
+    let err = dev.z_sign(&bytes, 0, "test", |_, _| {}).expect_err("must refuse");
+    // ZS_E_OUTPUT_COMMITMENT = -13.
+    assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 13), "{err}");
+}
+
+#[test]
+fn a_rejection_on_the_device_returns_no_signature() {
+    let mut z = zdev_or_skip!("reject", false);
+    // Pairing: yes. Review: no.
+    z.child.stdin.as_mut().unwrap().write_all(b"y\nn\n").unwrap();
+    let (_, bytes) = vector("iw_send_shielded");
+    let mut dev = connect(&z);
+    let err = dev.z_sign(&bytes, 0, "test", |_, _| {}).expect_err("must not sign");
+    assert!(device::is_code(&err, device::ERR_USER_REJECTED), "{err}");
+}
+

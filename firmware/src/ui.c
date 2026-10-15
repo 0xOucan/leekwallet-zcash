@@ -31,6 +31,9 @@
 #include "qr-out.h"
 #include "airgap.h"
 #include "board.h"
+#if LEEK_HAS_ZCASH
+#include "zcash-review.h"
+#endif
 #include "camera.h"
 #include "viewfinder.h"
 #include "esp_random.h"
@@ -4464,6 +4467,12 @@ static void screen_passphrase_confirm_on_button(button_id_t btn)
 
 static volatile SignOutcome sign_outcome = SIGN_PENDING;
 
+#if LEEK_HAS_ZCASH
+/* A Zcash review requested by the protocol task, not yet on screen. Here
+ * rather than with its screen because ui_user_is_answering() reads it. */
+static volatile bool zsign_review_pending = false;
+#endif
+
 /* Raised when the approval window closed with nobody answering, so the UI
  * task takes the question down. */
 static volatile bool sign_expired_pending = false;
@@ -4544,9 +4553,15 @@ bool ui_user_is_answering(void)
     if (host_passphrase_pending) {
         return true;
     }
+#if LEEK_HAS_ZCASH
+    if (zsign_review_pending) {
+        return true;
+    }
+#endif
 
     switch (ui_get_screen()) {
         case SCREEN_HOST_PASSPHRASE_CONFIRM:
+        case SCREEN_ZSIGN_REVIEW:
         case SCREEN_PASSPHRASE_CONFIRM:
         case SCREEN_WIPE_CONFIRM:
         /* Not questions, but a seed is on the glass and the user is working
@@ -4606,6 +4621,89 @@ static const screen_t screen_host_passphrase = {
     .on_button = screen_host_passphrase_on_button,
     .exit = NULL,
 };
+
+/* ============================================================================
+ * Zcash Transaction Review (roadmap 3.4)
+ *
+ * A host asked the device to sign. The summary was produced by the signer
+ * backends on the device (both of them, agreeing, by default), never taken
+ * from the host. Every page comes from zcash-review.c, so the host suite
+ * tests the exact text drawn here.
+ *
+ * ACCEPT moves forward and signs only on the last page, so the only way to
+ * a signature is through every page. CANCEL rejects from any page.
+ * ============================================================================ */
+
+#if LEEK_HAS_ZCASH
+static const zs_summary *zsign_summary = NULL;
+static uint8_t zsign_network = ZS_NET_TEST;
+static int zsign_page = 0;
+
+void ui_request_zsign_review(const zs_summary *s, uint8_t network)
+{
+    zsign_summary = s;
+    zsign_network = network;
+    sign_outcome = SIGN_PENDING;
+    zsign_review_pending = true;
+}
+
+static void screen_zsign_review_enter(void)
+{
+    ESP_LOGI(TAG, "Zcash transaction review");
+    zsign_page = 0;
+}
+
+static void screen_zsign_review_render(void)
+{
+    oled_clear();
+    ZReviewPage page;
+    if (!zsign_summary || !zreview_render(zsign_summary, zsign_network, zsign_page, &page)) {
+        oled_draw_string_centered(3, "Nothing to sign");
+        oled_draw_string(7, 0, "BACK");
+        return;
+    }
+    for (int r = 0; r < ZREVIEW_ROWS; r++) {
+        oled_draw_string(r, 0, page.row[r]);
+    }
+}
+
+static void screen_zsign_review_on_button(button_id_t btn)
+{
+    int last = zsign_summary ? zreview_page_count(zsign_summary, zsign_network) - 1 : -1;
+    switch (btn) {
+        case BUTTON_UP:
+            if (zsign_page > 0) zsign_page--;
+            break;
+        case BUTTON_DOWN:
+            if (zsign_page < last) zsign_page++;
+            break;
+        case BUTTON_ACCEPT:
+            if (last >= 0 && zsign_page < last) {
+                zsign_page++;
+                break;
+            }
+            sign_outcome = last >= 0 ? SIGN_APPROVED : SIGN_REJECTED;
+            zsign_summary = NULL;
+            ui_set_screen(SCREEN_WALLET_INFO);
+            return;
+        case BUTTON_CANCEL:
+            sign_outcome = SIGN_REJECTED;
+            zsign_summary = NULL;
+            ui_set_screen(SCREEN_WALLET_INFO);
+            return;
+        default:
+            return;
+    }
+    ui_invalidate();
+}
+
+static const screen_t screen_zsign_review = {
+    .enter = screen_zsign_review_enter,
+    .render = screen_zsign_review_render,
+    .on_button = screen_zsign_review_on_button,
+    .exit = NULL,
+};
+#endif /* LEEK_HAS_ZCASH */
 
 /* ============================================================================
  * Temporary Seed Screen (T69)
@@ -4725,6 +4823,9 @@ void ui_init(void)
     screens[SCREEN_TEMP_SEED] = &screen_temp_seed;
     screens[SCREEN_PASSPHRASE_CONFIRM] = &screen_passphrase_confirm;
     screens[SCREEN_HOST_PASSPHRASE_CONFIRM] = &screen_host_passphrase;
+#if LEEK_HAS_ZCASH
+    screens[SCREEN_ZSIGN_REVIEW] = &screen_zsign_review;
+#endif
     screens[SCREEN_QR_OUT] = &screen_qr_out;
     screens[SCREEN_SHOW_ADDRESS] = &screen_show_address;
     screens[SCREEN_SCAN] = &screen_scan;
@@ -4873,6 +4974,15 @@ static void service_sign_expiry(void)
     }
     sign_expired_pending = false;
 
+#if LEEK_HAS_ZCASH
+    if (ui_get_screen() == SCREEN_ZSIGN_REVIEW) {
+        /* The protocol task has already refused the host and dropped the
+         * upload; the summary this screen points at is gone with it. */
+        zsign_summary = NULL;
+        ui_set_screen(SCREEN_WALLET_INFO);
+        return;
+    }
+#endif
     if (ui_get_screen() == SCREEN_HOST_PASSPHRASE_CONFIRM) {
         /* The wallet is the honest place to land: whatever was proposed has
          * already been dropped by the protocol task. */
@@ -4948,6 +5058,12 @@ void ui_task(void *pvParameters)
             host_passphrase_pending = false;
             ui_set_screen(SCREEN_HOST_PASSPHRASE_CONFIRM);
         }
+#if LEEK_HAS_ZCASH
+        if (zsign_review_pending) {
+            zsign_review_pending = false;
+            ui_set_screen(SCREEN_ZSIGN_REVIEW);
+        }
+#endif
 
         if (host_unlock_pending) {
             host_unlock_pending = false;
@@ -5092,6 +5208,11 @@ void ui__reset_static_state_for_test(void)
     blind_signing_forget();
     host_passphrase_pending = false;
     memzero(host_passphrase_xfp, sizeof(host_passphrase_xfp));
+#if LEEK_HAS_ZCASH
+    zsign_review_pending = false;
+    zsign_summary = NULL;
+    zsign_page = 0;
+#endif
 
     lock_timeout_choice = 1;
     lock_timeout_stored_choice = 1;

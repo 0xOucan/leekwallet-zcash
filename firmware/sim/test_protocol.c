@@ -128,6 +128,17 @@ SignOutcome ui_sign_outcome(void)
 
 void ui_sign_clear(void) { }
 
+/* The Zcash review: counted, and the summary kept so a test can check that
+ * what the user would have read is what was signed. */
+static int zsign_reviews;
+static zs_summary shown_zsign;
+void ui_request_zsign_review(const zs_summary *s, uint8_t network)
+{
+    (void)network;
+    zsign_reviews++;
+    shown_zsign = *s;
+}
+
 /* Counted, because the timeout path answering the host is only half of what it
  * owes: the confirmation screen has to come down too, and for a long time it
  * did not. */
@@ -1154,6 +1165,249 @@ static void test_tampered_frame_tears_down_the_session(void)
     expect_error(T_ERROR, E_SESSION, "a tampered frame");
     CHECK(session_state() == SESSION_IDLE,
           "a failed tag left the session standing (state %d)", session_state());
+}
+
+/* ------------------------------------------------------------ zSign* */
+
+#include "zcash-sign.h"
+#include "zsign_c.h"
+#include "sha2.h"
+#include "../../vectors/pczt_vectors.h"
+
+#define E_ZSIGN(rc) (0x0500u | ((unsigned)-(rc) & 0xFF))
+
+static uint8_t *load_vector(const char *path, size_t *len)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    *len = (size_t)ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *b = malloc(*len);
+    if (b && fread(b, 1, *len, f) != *len) { free(b); b = NULL; }
+    fclose(f);
+    return b;
+}
+
+static size_t zsign_begin_req(uint8_t *buf, size_t cap, uint32_t len, const uint8_t *sha,
+                              size_t sha_len, const char *network)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 4 + (network != NULL));
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zSignBegin");
+    cbor_write_text(&w, "len");
+    cbor_write_uint(&w, len);
+    cbor_write_text(&w, "sha256");
+    cbor_write_bytes(&w, sha, sha_len);
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, 0);
+    if (network) {
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, network);
+    }
+    return w.length;
+}
+
+static size_t zsign_simple_req(uint8_t *buf, size_t cap, const char *method)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 1);
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, method);
+    return w.length;
+}
+
+static void zsign_chunk(uint32_t offset, const uint8_t *data, size_t n)
+{
+    static uint8_t buf[PROTOCOL_MAX_FRAME];
+    CborWriter w;
+    cbor_writer_init(&w, buf, sizeof buf);
+    cbor_write_map(&w, 3);
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zSignChunk");
+    cbor_write_text(&w, "offset");
+    cbor_write_uint(&w, offset);
+    cbor_write_text(&w, "data");
+    cbor_write_bytes(&w, data, n);
+    send_encrypted(buf, w.length);
+}
+
+/* Begin + every chunk, each acknowledged with the running count. */
+static bool zsign_upload(const uint8_t *b, size_t len, const uint8_t sha[32])
+{
+    uint8_t req[128];
+    send_encrypted(req, zsign_begin_req(req, sizeof req, (uint32_t)len, sha, 32, "test"));
+    Frame f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    if (!(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len))) return false;
+    if (!cbor_map_find(body, body_len, "maxChunk", &it) || it.type != CBOR_UINT) return false;
+    uint32_t max = it.value;
+    for (size_t off = 0; off < len; off += max) {
+        size_t n = len - off < max ? len - off : max;
+        zsign_chunk((uint32_t)off, b + off, n);
+        f = next_reply();
+        if (!(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len) &&
+              cbor_map_find(body, body_len, "received", &it) && it.value == off + n)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_zsign(void)
+{
+    printf("== zSign*: chunked upload, device checks, review, signatures back\n");
+    const zv_pczt_vector *v = &ZV_PCZT[0];
+    size_t len = 0;
+    uint8_t *pczt = load_vector(v->file, &len);
+    CHECK(pczt != NULL, "cannot read %s", v->file);
+    if (!pczt) return;
+    uint8_t sha[32];
+    sha256_Raw(pczt, len, sha);
+    uint8_t req[128];
+
+    fresh_device();
+    pin_set("123456");
+    pin_verify("123456");
+    wallet_unlock("123456", 6);
+    fake_wallet_preload(v->mnemonic);
+
+    send_plain(req, zsign_begin_req(req, sizeof req, (uint32_t)len, sha, 32, "test"));
+    expect_error(T_ERROR, E_SESSION, "zSignBegin before any handshake");
+
+    confirmed_session(31);
+    send_encrypted(req, zsign_begin_req(req, sizeof req, (uint32_t)len, sha, 31, "test"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "a 31-byte hash");
+    send_encrypted(req, zsign_begin_req(req, sizeof req, (uint32_t)len, sha, 32, NULL));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "no network");
+    send_encrypted(req, zsign_begin_req(req, sizeof req, 0, sha, 32, "test"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_TOO_LARGE), "an empty upload");
+    send_encrypted(req, zsign_begin_req(req, sizeof req, ZCASH_PCZT_MAX + 1, sha, 32, "test"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_TOO_LARGE), "an oversized upload");
+    send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_STATE), "zSignFinish with nothing uploaded");
+
+    printf("== zSignChunk out of order drops the upload\n");
+    send_encrypted(req, zsign_begin_req(req, sizeof req, (uint32_t)len, sha, 32, "test"));
+    (void)next_reply();
+    zsign_chunk(100, pczt + 100, 100);
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_OFFSET), "a chunk at a gap");
+    zsign_chunk(0, pczt, 100);
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_STATE), "a chunk after the upload was dropped");
+
+    printf("== the user rejects: no signature, upload gone\n");
+    CHECK(zsign_upload(pczt, len, sha), "upload failed");
+    int reviews = zsign_reviews;
+    scripted_outcome = SIGN_REJECTED;
+    send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+    expect_error(T_ENC_ERROR, E_REJECTED, "a rejected review");
+    CHECK(zsign_reviews == reviews + 1, "no review was shown");
+    send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_STATE), "the rejected upload survived");
+
+    printf("== the user approves: signatures that verify, over the reviewed sighash\n");
+    CHECK(zsign_upload(pczt, len, sha), "upload failed");
+    scripted_outcome = SIGN_APPROVED;
+    send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+    Frame f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    CHECK(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len),
+          "zSignFinish was not answered with a result");
+    if (f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len)) {
+        CHECK(shown_zsign.fee == v->fee, "the review showed fee %llu",
+              (unsigned long long)shown_zsign.fee);
+        CHECK(cbor_map_find(body, body_len, "sighash", &it) && it.type == CBOR_BYTES &&
+              it.value == 32 && memcmp(it.data, shown_zsign.sighash, 32) == 0,
+              "returned sighash is not the reviewed one");
+        CHECK(cbor_map_find(body, body_len, "signatures", &it) && it.type == CBOR_ARRAY &&
+              it.value == 1, "expected one signature");
+        /* Walk the array: [{pool, index, sig}]. */
+        CborReader r;
+        int32_t err = 0;
+        zc_ctx *c = zc_pczt_new(pczt, len, &err);
+        const uint8_t *arr = NULL;
+        {
+            /* Re-find the array position inside body. */
+            CborReader br;
+            CborItem k;
+            cbor_reader_init(&br, body, body_len);
+            cbor_read(&br, &k);   /* the map */
+            while (cbor_read(&br, &k)) {
+                if (k.type == CBOR_TEXT && k.value == 10 && memcmp(k.data, "signatures", 10) == 0) {
+                    arr = body + br.pos;
+                    break;
+                }
+                cbor_skip(&br);
+            }
+        }
+        CHECK(arr != NULL, "signatures not found");
+        if (arr && c) {
+            cbor_reader_init(&r, arr, body_len - (size_t)(arr - body));
+            CborItem a;
+            cbor_read(&r, &a);
+            for (uint32_t i = 0; i < a.value; i++) {
+                const uint8_t *entry = arr + r.pos;
+                size_t elen = body_len - (size_t)(entry - body);
+                CborItem pool, index, sig;
+                bool ok = cbor_map_find(entry, elen, "pool", &pool) &&
+                          cbor_map_find(entry, elen, "index", &index) &&
+                          cbor_map_find(entry, elen, "sig", &sig) && sig.value == 64;
+                CHECK(ok, "signature %u malformed", i);
+                if (ok) {
+                    zs_sig zs = { .pool = (uint8_t)pool.value, .index = index.value };
+                    memcpy(zs.sig, sig.data, 64);
+                    CHECK(zc_pczt_verify_sig(c, &zs) == ZS_OK, "signature %u does not verify", i);
+                }
+                cbor_skip(&r);
+            }
+        }
+        if (c) zc_pczt_free(c);
+    }
+
+    printf("== refused before review: hash mismatch, tampered PCZT\n");
+    uint8_t bad_sha[32];
+    memcpy(bad_sha, sha, 32);
+    bad_sha[0] ^= 1;
+    CHECK(zsign_upload(pczt, len, bad_sha), "upload failed");
+    reviews = zsign_reviews;
+    send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_HASH), "a PCZT that does not match its hash");
+
+    const zv_pczt_vector *bad = NULL;
+    for (size_t i = 0; i < ZV_PCZT_COUNT; i++) {
+        if (strcmp(ZV_PCZT[i].name, "r_output_value_tampered") == 0) bad = &ZV_PCZT[i];
+    }
+    size_t blen = 0;
+    uint8_t *bp = bad ? load_vector(bad->file, &blen) : NULL;
+    CHECK(bp != NULL, "tampered vector missing");
+    if (bp) {
+        uint8_t bsha[32];
+        sha256_Raw(bp, blen, bsha);
+        CHECK(zsign_upload(bp, blen, bsha), "upload failed");
+        send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+        expect_error(T_ENC_ERROR, E_ZSIGN(ZS_E_OUTPUT_COMMITMENT), "a tampered output value");
+        free(bp);
+    }
+    CHECK(zsign_reviews == reviews, "a refused PCZT reached the review screen");
+
+    printf("== locking drops an upload\n");
+    CHECK(zsign_upload(pczt, len, sha), "upload failed");
+    pin_lock();
+    send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "zSignFinish while locked");
+    pin_verify("123456");
+    send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_STATE), "an upload survived a lock");
+
+    zcash_sign_reset();
+    free(pczt);
 }
 
 /* ------------------------------------------------------------ zGetAccount */
@@ -2674,6 +2928,7 @@ static int run_all_tests(void)
     test_tampered_frame_tears_down_the_session();
     test_select_wallet();
     test_zget_account();
+    test_zsign();
     test_set_passphrase();
     test_ble_carries_the_same_frames();
     test_ble_survives_a_split_write_at_mtu_23();

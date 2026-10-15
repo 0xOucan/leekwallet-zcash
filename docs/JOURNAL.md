@@ -196,3 +196,35 @@ build with the component, and it compiles for the Pixie's RISC-V as well.
 Open: `test_protocol_asan` reports UBSan misaligned u32 loads in the inherited
 trezor-crypto `chacha_merged.c` (32 reports, not new; harmless on x86, to be
 checked on Xtensa).
+
+### 3.1–3.5 and 4.3 Device signing path: done on PC; 3.6 pending funds and board
+- **3.1 intake** (`src/zcash-sign.c`): `zSignBegin/zSignChunk/zSignFinish`,
+  ordered chunks of up to 3072 B into PSRAM (internal RAM where there is
+  none), 512 KB cap, SHA-256 checked before any parser runs.
+- **4.3 BOTH mode** (default): Rust and C check the same bytes; summaries
+  must be byte-identical; Rust signs; each signature is verified by both.
+  An injected disagreement is refused (`test_zcash_sign`).
+- **3.4 review** (`src/zcash-review.c`, `SCREEN_ZSIGN_REVIEW`): recipient
+  pages with full address and memo, change, fee/network/upgrade, final
+  question; ACCEPT signs only on the last page (mutation-checked).
+- **3.5 signatures**: `{sighash, signatures:[{pool,index,sig}]}`; refusals
+  are `0x05xx` with the reason in the low byte (PROTOCOL.md).
+- **Companion**: `zecz device-init` and `zecz sign-device` (`src/device.rs`,
+  the v2 session in Rust).
+- **No board needed for any of the above**: `firmware/sim/zdev` runs the
+  firmware's protocol, session, both signers and review pages on a PTY.
+  `tests/device_zdev.rs`: the device's signatures apply, prove and extract
+  into a verifying transaction; tamper and rejection give nothing.
+  `device-init` through zdev against testnet imported the same account as
+  the dev path.
+- Firmware: esp32s3 and pixie build; the esp32s3-qemu image boots to
+  "Initialization complete" with the worker running.
+- Found and fixed: PlatformIO drops `-include` from IDF compile flags, so
+  zsign-c was built without its symbol prefix (would have bound to
+  trezor-crypto's bignum/BLAKE2b once linked). Wrapper units in
+  `components/zsign-c/idf/`; `scripts/check-zsign-c-symbols.sh` verifies.
+- Closed: the UBSan ChaCha alignment reports are x86-only; on Xtensa and
+  RISC-V trezor-crypto's ecrypt config takes the byte-wise path.
+- Open: 3.6 (a confirmed testnet send) needs testnet funds, and then the
+  board; real timings for check/sign and the review on the panel need the
+  board too.
