@@ -33,6 +33,8 @@
 #include "board.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
+#include "zcash-fp.h"
+#include "zcash-meta.h"
 #include "zcash-receive.h"
 #include "zcash-review.h"
 #endif
@@ -1031,6 +1033,10 @@ static void lock_device(void)
     memzero(master_xfp, sizeof(master_xfp));
     memzero(master_zfp, sizeof(master_zfp));
     wallet_info_passphrase_shown = false;
+#if LEEK_HAS_ZCASH
+    /* Session-only metadata belongs to seeds the lock just destroyed. */
+    zmeta_forget_session();
+#endif
 
     /* wallet_lock() has just destroyed any temporary seed, so the longer
      * timeout it justified goes with it. The user's own preference is what is
@@ -1960,7 +1966,7 @@ static void refresh_master_xfp(void)
 #if LEEK_HAS_ZCASH
     uint8_t zfp[32];
     if (zcash_seed_fingerprint(zfp) == WALLET_OK) {
-        zrecv_short_fp(zfp, master_zfp);
+        zcash_short_fp(zfp, master_zfp);
     }
     memzero(zfp, sizeof zfp);
 #endif
@@ -3329,10 +3335,18 @@ static void sd_load(void)
         sd_result(false, "Not loaded", sdseed_strerror(r), NULL, NULL);
         return;
     }
-    /* The file says which account it is for; Receive follows it. */
+    /* The file says which account it is for; Receive follows it, and the
+     * birthday is there for a companion's zGetAccount (session only: this
+     * is a temporary seed). */
     if (meta.account < HD_ACCOUNT_COUNT) {
         hd_account_set(meta.account);
     }
+    ZcashMeta zm;
+    memset(&zm, 0, sizeof zm);
+    zm.birthday = meta.birthday;
+    zm.flags = meta.flags & ZMETA_FLAG_USE_QSK;
+    snprintf(zm.label, sizeof zm.label, "%s", meta.label);
+    zmeta_set(meta.account, &zm);
     /* Wider than a row; sd_result() cuts each line to the panel. */
     char l1[40], l2[40], l3[40];
     snprintf(l1, sizeof l1, "Loaded %s", name);
@@ -3356,7 +3370,11 @@ static void sd_save(void)
     }
     sd_busy("Sealing...");
     char name[SDCARD_NAME_MAX + 1];
-    SdSeedResult r = sdseed_save(sd_entry.text, (size_t)sd_entry.length, "", 0, hd_account, 0, name);
+    /* What the device knows about the account goes on the card with it. */
+    ZcashMeta zm;
+    zmeta_get(hd_account, &zm);
+    SdSeedResult r = sdseed_save(sd_entry.text, (size_t)sd_entry.length, zm.label, zm.birthday,
+                                 hd_account, 0, name);
     sd_forget();
     if (r != SDSEED_OK) {
         sd_result(false, "Not saved", sdseed_strerror(r), NULL, NULL);

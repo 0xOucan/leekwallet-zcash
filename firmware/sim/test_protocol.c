@@ -1504,6 +1504,100 @@ static void test_zget_account(void)
     }
 }
 
+/* -------------------------------------------------------- zSetAccountMeta */
+
+#include "zcash-meta.h"
+
+static size_t zset_meta_request(uint8_t *buf, size_t cap, uint32_t account, uint32_t birthday,
+                                const char *label)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 2 + (birthday != 0) + (label != NULL));
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zSetAccountMeta");
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, account);
+    if (birthday) {
+        cbor_write_text(&w, "birthday");
+        cbor_write_uint(&w, birthday);
+    }
+    if (label) {
+        cbor_write_text(&w, "label");
+        cbor_write_text(&w, label);
+    }
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+/* The birthday in a zGetAccount answer for `account`, or 0 if absent. */
+static uint32_t zget_birthday(uint32_t account)
+{
+    uint8_t payload[96];
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, (int)account, "test"));
+    Frame f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    if (!(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len))) return 0xFFFFFFFFu;
+    return cbor_map_find(body, body_len, "birthday", &it) && it.type == CBOR_UINT ? it.value : 0;
+}
+
+static void test_zset_account_meta(void)
+{
+    printf("== zSetAccountMeta: a companion records the birthday; zGetAccount returns it\n");
+    fresh_device();
+    zmeta__reset_for_test();
+    device_has_a_wallet();
+
+    uint8_t payload[128];
+    size_t len = zset_meta_request(payload, sizeof payload, 0, 3000000, "Main");
+    send_plain(payload, len);
+    expect_error(T_ERROR, E_SESSION, "zSetAccountMeta before any handshake");
+    confirmed_session(24);
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "zSetAccountMeta while locked");
+    pin_set("123456");
+    pin_verify("123456");
+
+    CHECK(zget_birthday(0) == 0, "a birthday before any was set");
+    send_encrypted(payload, len);
+    Frame f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    CHECK(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len) &&
+          cbor_map_find(body, body_len, "stored", &it) && it.type == CBOR_UINT && it.value == 1,
+          "a stored wallet's record was not stored");
+    CHECK(zget_birthday(0) == 3000000, "zGetAccount does not return the birthday");
+    CHECK(zget_birthday(1) == 0, "another account got it");
+
+    /* A label alone keeps the birthday. */
+    send_encrypted(payload, zset_meta_request(payload, sizeof payload, 0, 0, "Renamed"));
+    next_reply();
+    ZcashMeta m;
+    CHECK(zmeta_get(0, &m) && m.birthday == 3000000 && strcmp(m.label, "Renamed") == 0,
+          "a partial update lost a field");
+
+    send_encrypted(payload, zset_meta_request(payload, sizeof payload, 0x80000000u, 1, NULL));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "a hardened account");
+    send_encrypted(payload, zset_meta_request(payload, sizeof payload, 0, 0, "tab\there"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "a control character in the label");
+    send_encrypted(payload, zset_meta_request(payload, sizeof payload, 0, 0,
+                                              "0123456789012345678901234567890123"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "a label over 32 characters");
+
+    /* With a passphrase, the record is for this session only. */
+    wallet_set_passphrase("TREZOR", 6);
+    send_encrypted(payload, zset_meta_request(payload, sizeof payload, 0, 3100000, NULL));
+    f = next_reply();
+    CHECK(f.present && result_body(&f, &body, &body_len) &&
+          cbor_map_find(body, body_len, "stored", &it) && it.value == 0,
+          "a passphrase wallet's record was stored in flash");
+    CHECK(zget_birthday(0) == 3100000, "the session record is not returned");
+    wallet_clear_passphrase();
+    CHECK(zget_birthday(0) == 3000000, "the base wallet saw the hidden wallet's birthday");
+}
+
 /* ----------------------------------------------------------- selectWallet */
 
 static size_t select_wallet_request(uint8_t *buf, size_t cap, uint64_t index)
@@ -2928,6 +3022,7 @@ static int run_all_tests(void)
     test_tampered_frame_tears_down_the_session();
     test_select_wallet();
     test_zget_account();
+    test_zset_account_meta();
     test_zsign();
     test_set_passphrase();
     test_ble_carries_the_same_frames();

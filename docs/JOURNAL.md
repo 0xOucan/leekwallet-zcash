@@ -282,3 +282,15 @@ checked on Xtensa).
   phrase). The file passphrase comes from `ZECZ_ZKV_PASSPHRASE` or stdin.
 - Open: per-account metadata in the vault (birthday, `use_qsk`, label);
   mounting a real card, and the KDF time on silicon.
+- **Per-account metadata** (`src/zcash-meta.c`): birthday, flags
+  (`use_qsk`) and label, keyed by the short seed fingerprint and the
+  account. In NVS for a stored wallet with no passphrase. In RAM until lock
+  for a passphrase, temporary or SD seed, so flash never records that a
+  hidden or session seed was used (`test_zcash_meta` searches flash for the
+  fingerprint and the birthday). A power cut at any write leaves the old or
+  the new record, and a damaged record reads as none.
+- `zGetAccount` now returns `birthday` when known. The new `zSetAccountMeta`
+  records it. `zecz device-init --birthday` is optional when the device
+  knows it, and an import records it on the device. An SD load records the
+  file's birthday, and an SD save writes the known one into the file.
+- The fingerprint helpers moved to `src/zcash-fp.c`.

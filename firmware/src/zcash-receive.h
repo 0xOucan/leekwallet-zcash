@@ -1,7 +1,7 @@
 /**
- * The receive screens (roadmap 1.6) and the seed fingerprint (1.5), as text.
+ * The receive screens (roadmap 1.6), as text.
  *
- * Pure apart from zcash_seed_fingerprint(): an account goes in, pages of
+ * Pure: an account goes in, pages of
  * eight 21-character rows or one QR come out. The UI draws them and the host
  * suite reads them, so what is tested is exactly what the panel shows.
  *
@@ -26,9 +26,6 @@
 
 #define ZRECV_ROWS 8
 #define ZRECV_COLS 21
-
-/* Short form of the ZIP 32 seed fingerprint: its first four bytes in hex. */
-#define ZRECV_FP_CHARS 8
 
 typedef enum {
     ZRECV_TEXT = 0,
@@ -61,16 +58,5 @@ int zrecv_toggle_qr(const ZcashAccount *a, int page);
  * False if none does.
  */
 bool zrecv_qr_fit(int len, uint8_t *version, uint8_t *scale);
-
-/** "1A2B3C4D": the short form of a 32-byte seed fingerprint. */
-void zrecv_short_fp(const uint8_t fp[32], char out[ZRECV_FP_CHARS + 1]);
-
-/**
- * The ZIP 32 seed fingerprint of the unlocked wallet's seed (passphrase
- * applied): BLAKE2b-256, personalisation "Zcash_HD_Seed_FP", over
- * len(seed) || seed. Cheap once the seed is cached; runs on the caller's
- * stack.
- */
-WalletError zcash_seed_fingerprint(uint8_t out[32]);
 
 #endif /* LEEK_ZCASH_RECEIVE_H */

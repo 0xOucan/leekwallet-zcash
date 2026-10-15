@@ -135,3 +135,17 @@ fn a_rejection_on_the_device_returns_no_signature() {
     assert!(device::is_code(&err, device::ERR_USER_REJECTED), "{err}");
 }
 
+
+#[test]
+fn the_device_remembers_the_birthday_a_companion_gives_it() {
+    let z = zdev_or_skip!("birthday", true);
+    let mut dev = connect(&z);
+    let a = dev.z_get_account(0, "test").expect("account");
+    assert!(device::get_uint(&a, "birthday").is_err(), "a birthday before any was set");
+    // zdev's seed is a stored wallet with no passphrase: kept in flash.
+    assert!(dev.z_set_birthday(0, 3_000_123).expect("set"), "not stored");
+    let a = dev.z_get_account(0, "test").expect("account");
+    assert_eq!(device::get_uint(&a, "birthday").unwrap(), 3_000_123);
+    let a1 = dev.z_get_account(1, "test").expect("account 1");
+    assert!(device::get_uint(&a1, "birthday").is_err(), "account 1 got account 0's birthday");
+}

@@ -164,8 +164,10 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         account: u32,
         /// Account birthday height (first block that may contain its notes).
+        /// Optional when the device already knows it; given, it is also
+        /// recorded on the device for the next companion.
         #[arg(long)]
-        birthday: u32,
+        birthday: Option<u32>,
         #[arg(long, default_value = "leekwallet")]
         name: String,
     },
@@ -592,7 +594,7 @@ fn short_fp(fp: &SeedFingerprint) -> String {
     hex::encode_upper(&fp.to_bytes()[..4])
 }
 
-async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, name: &str) -> Result<()> {
+async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: Option<u32>, name: &str) -> Result<()> {
     let mut dev = connect_device(port)?;
     let a = dev.z_get_account(account, ctx.net_name())?;
     if device::get_text(&a, "network")? != ctx.net_name() {
@@ -603,6 +605,15 @@ async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, nam
         .try_into()
         .map_err(|_| anyhow!("seedFingerprint is not 32 bytes"))?;
     let device_ua = device::get_text(&a, "ua")?;
+    let device_birthday = device::get_uint(&a, "birthday").ok().map(|b| b as u32);
+    let birthday = match (birthday, device_birthday) {
+        (Some(b), _) => b,
+        (None, Some(b)) => {
+            println!("Birthday {b}, from the device");
+            b
+        }
+        (None, None) => bail!("the device does not know this account's birthday; pass --birthday"),
+    };
     println!("Device account {account}: {device_ua}");
     println!("Device t-address: {}", device::get_text(&a, "tAddress")?);
 
@@ -612,7 +623,13 @@ async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, nam
     if ua.encode(&ctx.params) != device_ua {
         bail!("the device's address does not match its own viewing key; refusing to import");
     }
-    cmd_init(ctx, &ufvk, birthday, SeedFingerprint::from_bytes(fp), account, name).await
+    cmd_init(ctx, &ufvk, birthday, SeedFingerprint::from_bytes(fp), account, name).await?;
+    if device_birthday != Some(birthday) {
+        let stored = dev.z_set_birthday(account, birthday)?;
+        println!("Recorded birthday {birthday} on the device{}",
+                 if stored { "" } else { " until it locks (passphrase or session seed)" });
+    }
+    Ok(())
 }
 
 fn cmd_sign_device(ctx: &Ctx, port: &str, account: u32, input: &Path, out: &Path) -> Result<()> {
