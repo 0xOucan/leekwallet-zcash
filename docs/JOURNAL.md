@@ -228,3 +228,25 @@ checked on Xtensa).
 - Open: 3.6 (a confirmed testnet send) needs testnet funds, and then the
   board; real timings for check/sign and the review on the panel need the
   board too.
+
+### 1.5 and 1.6 Seed fingerprint and receive screens: done on PC; phone scan needs the board
+- **1.5 fingerprint**: the home screen header reads `ZFP 1A2B3C4D` right
+  after unlock (and after a passphrase, wallet switch or temporary seed),
+  the wallet and passphrase-confirm screens show it beside the BIP32 XFP.
+  It is the first four bytes of the ZIP 32 seed fingerprint
+  (`zcash_seed_fingerprint()`, trezor-crypto BLAKE2b; matches librustzcash
+  on all 48 key vectors, passphrases included). `zecz` prints the same
+  `ZFP` on `init`/`device-init`. The three test passphrases give three
+  different short forms. Every lock path clears it (mutation-checked).
+- **1.6 receive** (`src/zcash-receive.c`, Main menu > Receive): the UA
+  whole over 21-column pages, its QR, the t-address marked PUBLIC, its QR;
+  UP/DN page, OK flips text and QR, BACK leaves. Settings > Network picks
+  mainnet or testnet (persisted; a view only, signing follows the PCZT).
+- QR codes carry the address lowercase in byte mode: zcash_address takes
+  the HRP as written, so an uppercase `UTEST1...` would scan but not parse.
+  A UA is v7 at scale 1 (45 px), a t-address v3 at scale 2. Every vector's
+  UA and t-address QR is drawn into the real framebuffer and scanned back
+  with `zbarimg` in `test_zcash_receive` (96 scans, all exact).
+- Open: whether a phone reads the scale-1 UA QR off the real 128x64 panel
+  (the roadmap's own question) needs the board; the text pages are the
+  fallback either way.

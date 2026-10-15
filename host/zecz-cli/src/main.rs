@@ -321,6 +321,8 @@ async fn cmd_init(
     let acct = db.import_account_ufvk(name, &ufvk, &birthday, purpose, Some("leekwallet"))?;
     println!("Imported account {:?} ({}), birthday {}", name, acct.id().expose_uuid(), u32::from(birthday.height()));
     println!("Seed fingerprint {}, ZIP 32 account {}", hex::encode(fp.to_bytes()), u32::from(account_index));
+    // The short form the device shows on its home and wallet screens.
+    println!("ZFP {} (compare with the device)", short_fp(&fp));
     print_addresses(&ctx.params, &ufvk)
 }
 
@@ -512,6 +514,11 @@ fn connect_device(port: &str) -> Result<Device> {
     println!("Paired.");
     dev.ensure_unlocked()?;
     Ok(dev)
+}
+
+/// The device's short seed fingerprint: the first four bytes, upper-case hex.
+fn short_fp(fp: &SeedFingerprint) -> String {
+    hex::encode_upper(&fp.to_bytes()[..4])
 }
 
 async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: u32, name: &str) -> Result<()> {

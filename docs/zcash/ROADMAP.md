@@ -95,12 +95,14 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 - On-device entry uses LeekWallet's `text-entry`, restricted to printable ASCII so NFKD normalisation can't differ between implementations.
 - After unlock, show the **seed fingerprint (short form)** so the user can see which wallet is open.
 - Done when: the passphrase key vectors match, and different passphrases give different fingerprints.
+- Status: done on PC. `ZFP xxxxxxxx` (first four bytes of the ZIP 32 seed fingerprint) on the home header after unlock and on the wallet screen; all 48 key vectors match; three passphrases give three fingerprints (JOURNAL).
 
 **1.6 Receive UI**
 - The UA paged across screens, never truncated.
 - A t-address screen.
 - A QR of the address (test whether a phone can read the UA QR on 128×64; if not, page the text only).
 - Done when: a phone wallet scans or types the address and it matches the vector.
+- Status: done on PC. UA pages, t-address page, both QR codes (lowercase, byte mode; UA v7 x1, t-address v3 x2), network under Settings. Every vector's QR scans back exactly with zbarimg from the framebuffer. The phone-off-the-panel check waits for the board.
 
 **1.7 Protocol: accounts**
 - `zGetFeatures` (backends, branch IDs, storage mode), `zGetAccount` (UFVK + fingerprint + birthday), `zShowAddress`.
