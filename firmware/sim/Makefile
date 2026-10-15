@@ -207,8 +207,12 @@ $(BUILD)/test_zcash_sign: test_zcash_sign.c ../src/zcash-sign.c ../src/zcash-sig
 	    -o $@ $(sort $(filter %.c,$^)) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a \
 	    -lpthread -ldl -lm
 
-TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign
-all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign
+# The review pages, exactly as the panel shows them.
+$(BUILD)/test_zcash_review: test_zcash_review.c ../src/zcash-review.c ../src/zcash-review.h | $(BUILD)
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(filter %.c,$^)
+
+TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review
 
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
@@ -311,7 +315,7 @@ $(BUILD)/test_temp_seed: test_temp_seed.c esp_stubs.c host_stubs.c \
 $(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
                   fake_input.c fake_protocol.c ../src/transport.c ../src/ble.c \
                   ../src/ble-name.c ../src/ble-chunk.c \
-                  ../src/ui.c ../src/pin.c ../src/mnemonic-entry.c \
+                  ../src/ui.c ../src/zcash-review.c ../src/pin.c ../src/mnemonic-entry.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
                   ../src/blind-signing.c \
                   ../src/cbor.c ../src/device-wipe.c \

@@ -23,6 +23,7 @@
 #include "ble.h"
 #include "transport.h"
 #include "ui.h"
+#include "zcash-review.h"
 #include "pin.h"
 #include "button.h"
 bool fake_protocol_rx_enabled(void);
@@ -1412,6 +1413,66 @@ static void test_host_passphrase_confirmation(void)
 }
 
 
+/* Roadmap 3.4: the Zcash review. A signature is reachable only by walking
+ * every page; CANCEL refuses from any of them; an unanswered review comes
+ * off the screen. The page text itself is test_zcash_review's subject. */
+static void test_zsign_review_walks_every_page(void)
+{
+    printf("== a Zcash review signs only from its last page\n");
+    boot_unlocked_with_seed();
+    static zs_summary s;
+    memset(&s, 0, sizeof s);
+    s.branch_id = 0x37a5165b;
+    s.fee = 10000;
+    s.n_spends = 1;
+    s.n_outputs = 2;
+    s.outputs[0].pool = ZS_POOL_IRONWOOD;
+    s.outputs[0].kind = ZS_KIND_EXTERNAL;
+    s.outputs[0].value = 400000;
+    strcpy(s.outputs[0].address, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8y");
+    s.outputs[1].pool = ZS_POOL_IRONWOOD;
+    s.outputs[1].kind = ZS_KIND_CHANGE;
+    s.outputs[1].value = 590000;
+    int pages = zreview_page_count(&s, ZS_NET_TEST);
+
+    ui_request_zsign_review(&s, ZS_NET_TEST);
+    CHECK(ui_user_is_answering(), "a pending review does not count as a question");
+    go(SCREEN_ZSIGN_REVIEW);
+    CHECK_SCREEN(fake_oled_row_contains(0, "Send 1 of 1"), "first page is \"%s\"", fake_oled_row(0));
+    CHECK_SCREEN(fake_oled_contains("0.004 TAZ"), "amount not shown");
+    press(BUTTON_UP);
+    CHECK_SCREEN(fake_oled_row_contains(0, "Send 1 of 1"), "UP moved before the first page");
+    for (int i = 1; i < pages; i++) {
+        CHECK(ui_sign_outcome() == SIGN_PENDING, "answered on page %d of %d", i, pages);
+        press(BUTTON_ACCEPT);
+    }
+    CHECK_SCREEN(fake_oled_row_contains(0, "Sign?"), "last page is \"%s\"", fake_oled_row(0));
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "reaching the last page signed");
+    press(BUTTON_DOWN);
+    CHECK_SCREEN(fake_oled_row_contains(0, "Sign?"), "DOWN moved past the last page");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_sign_outcome() == SIGN_APPROVED, "ACCEPT on the last page did not sign");
+    CHECK(ui_get_screen() == SCREEN_WALLET_INFO, "approval did not leave the review");
+    ui_sign_clear();
+
+    ui_request_zsign_review(&s, ZS_NET_TEST);
+    go(SCREEN_ZSIGN_REVIEW);
+    press(BUTTON_DOWN);
+    press(BUTTON_CANCEL);
+    CHECK(ui_sign_outcome() == SIGN_REJECTED, "CANCEL mid-review did not reject");
+    CHECK(ui_get_screen() == SCREEN_WALLET_INFO, "rejection did not leave the review");
+    ui_sign_clear();
+
+    ui_request_zsign_review(&s, ZS_NET_TEST);
+    go(SCREEN_ZSIGN_REVIEW);
+    ui_sign_clear();
+    ui_sign_expire();
+    ui__service_sign_expiry_for_test();
+    ui_render();
+    CHECK(ui_get_screen() != SCREEN_ZSIGN_REVIEW, "an expired review stayed on screen");
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "the expiry recorded an answer");
+}
+
 /* ============================================================================
  * AUDIT S8f - the wallet-create handler no longer renders re-entrantly
  * ============================================================================ */
@@ -2388,6 +2449,7 @@ int main(void)
     test_locking_closes_the_channel();
     test_an_expired_approval_leaves_the_screen();
     test_host_passphrase_confirmation();
+    test_zsign_review_walks_every_page();
     test_harness_sees_the_screen();
 
     test_import_word_count_prompt();

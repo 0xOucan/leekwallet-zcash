@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include "button.h"
 #include "leek-wallet.h"
+#include "board.h"
 
 /**
  * How many BIP44 accounts the device offers on its own screens (T45).
@@ -73,6 +74,9 @@ typedef enum {
     /* Main menu -> Scan, on a board with a camera. Hosts the capture loop and
      * assembles URs; every type is refused until Phase 5 (see airgap.h). */
     SCREEN_SCAN,
+    /* A host asked the device to sign a Zcash transaction (zSignFinish).
+     * Pages from zcash-review.c; ACCEPT on the last page signs. */
+    SCREEN_ZSIGN_REVIEW,
     SCREEN_COUNT
 } screen_id_t;
 
@@ -277,6 +281,16 @@ void ui_request_lock(void);
  * passphrase.
  */
 void ui_request_passphrase_confirm(uint32_t fingerprint);
+
+#if LEEK_HAS_ZCASH
+#include "zsign_rust.h"
+/**
+ * Show a checked Zcash transaction for review (roadmap 3.4) and ask the user
+ * to sign it. The answer arrives through ui_sign_outcome(). `s` must stay
+ * valid until then; it is the summary zcash_sign_check() produced.
+ */
+void ui_request_zsign_review(const zs_summary *s, uint8_t network);
+#endif
 
 typedef enum {
     SIGN_PENDING,
