@@ -139,3 +139,24 @@ iw_send_shielded PCZT of 4,807 B:
 
 Toolchain finding: libsecp256k1 had been built big-endian (see
 TOOLCHAIN.md).
+
+### 2. Host CLI (`host/zecz-cli`, testnet): wallet + PCZT flow done, live send pending funds
+`zecz` is a watch-only wallet on `zcash_client_backend` / `zcash_client_sqlite`
+(path deps on the same librustzcash checkout). Commands: `init` (device UFVK,
+records the ZIP 32 seed fingerprint and account so PCZT spends carry
+`zip32_derivation`), `init-dev` and `sign-soft` (DEV ONLY, mnemonic stand-ins
+for the device), `tip`, `sync`, `balance`, `address`, `send` (full PCZT kept in
+`pending/<sha256>.pczt`, `SignerView::Full` written for the device), and
+`finish` (hash-checked `.zsig` → `apply_*_signature` → prove → store →
+`SendTransaction`).
+
+- Tests: 8 `.zsig` unit tests; 5 integration tests on the committed vectors
+  (dev keys = keys.json; soft sign → `.zsig` → `apply_ironwood_signature`
+  verifies; corrupted signature and wrong-PCZT hash refused; full sign →
+  prove → extract of `iw_send_shielded` verifies).
+- Live, testnet.zec.rocks (tip 4,502,908, branch NU7 `77190ad9`): `init-dev`
+  with abandon…art at birthday 4,501,900 reproduces the vector UFVK and UA;
+  `sync` of ~1,000 blocks takes under 3 s; balance 0. `send` then fails with
+  "Insufficient balance", as it should. A funded end-to-end send is next.
+- Transparent funds show in `balance` but cannot be sent yet (the device
+  refuses transparent inputs).

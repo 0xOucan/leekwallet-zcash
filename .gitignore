@@ -6,3 +6,6 @@
 
 # Claude Code local worktrees
 /.claude/
+
+# zecz wallet data (default --data-dir)
+zecz-data/
