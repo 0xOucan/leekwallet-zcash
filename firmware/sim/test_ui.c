@@ -36,6 +36,8 @@ bool fake_protocol_rx_enabled(void);
 #include "qr-out.h"
 #include "airgap.h"
 #include "ur-encoder.h"
+#include "zcash-account.h"
+#include "../../vectors/keys_vectors.h"
 
 /* Test hooks from ui.c and pin.c (compiled with -DLEEK_HOST_TEST). */
 void        pin__reset_static_state_for_test(void);
@@ -50,6 +52,8 @@ void        ui__service_qr_out_for_test(void);
 void        ui__scan_feed_for_test(const char *ur);
 const char *ui__scan_status_for_test(void);
 const char *ui__master_xfp_for_test(void);
+const char *ui__master_zfp_for_test(void);
+int ui__receive_page_for_test(void);
 uint32_t    ui__account_for_test(void);
 bool        ui__wallet_info_pass_shown_for_test(void);
 int         fake_protocol_device_passphrase_notices(void);
@@ -608,27 +612,43 @@ static void test_passphrase_confirmation_needs_a_fingerprint(void)
  * Roadmap 1.1 - the old chain screens are gone, and nothing leads nowhere
  * ============================================================================ */
 
-static void test_the_wallet_screen_says_zcash_is_coming(void)
+/* Roadmap 1.5: the open seed is named by its Zcash fingerprint as soon as the
+ * device is unlocked, beside the BIP32 one on the wallet screen, and a
+ * passphrase changes it. */
+static void test_the_seed_fingerprint_is_shown(void)
 {
-    printf("== the wallet screen names the seed and says Zcash is coming\n");
+    printf("== the home and wallet screens name the seed by its fingerprint\n");
     boot_unlocked_with_seed();
 
     go(SCREEN_MAIN_MENU);
+    CHECK_SCREEN(fake_oled_row_contains(0, "ZFP "),
+                 "no fingerprint on the home screen after unlock (\"%s\")", fake_oled_row(0));
+    char before[24];
+    snprintf(before, sizeof before, "%s", fake_oled_row(0));
     CHECK_SCREEN(fake_oled_contains("Wallet Info"),
                  "the main menu does not offer Wallet Info");
     CHECK_SCREEN(!fake_oled_contains("View Address"),
                  "the main menu still offers an address view");
 
     go(SCREEN_WALLET_INFO);
-    CHECK_SCREEN(fake_oled_contains("Zcash: coming soon"),
-                 "the wallet screen does not say what is missing");
-    CHECK_SCREEN(fake_oled_contains("XFP"), "no fingerprint on the wallet screen");
+    CHECK_SCREEN(fake_oled_contains("XFP"), "no BIP32 fingerprint on the wallet screen");
+    CHECK_SCREEN(fake_oled_contains("ZFP "), "no Zcash fingerprint on the wallet screen");
+    CHECK_SCREEN(strstr(before, ui__master_zfp_for_test()) != NULL,
+                 "home and wallet screens disagree");
+    CHECK_SCREEN(!fake_oled_contains("coming soon"), "a placeholder is still drawn");
     CHECK_SCREEN(fake_oled_row_contains(0, "W1/1"),
                  "the title does not name the wallet (\"%s\")", fake_oled_row(0));
-    CHECK_SCREEN(!fake_oled_contains("0x"), "something address-shaped was drawn");
 
     press(BUTTON_CANCEL);
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not leave the wallet screen");
+
+    /* A passphrase is a different wallet, and the header has to say so. */
+    CHECK(wallet_set_passphrase("TREZOR", 6) == WALLET_OK, "setup: passphrase");
+    go(SCREEN_MAIN_MENU);
+    CHECK_SCREEN(fake_oled_row_contains(0, "ZFP ") && strcmp(before, fake_oled_row(0)) != 0,
+                 "the passphrase did not change the fingerprint (\"%s\")", fake_oled_row(0));
+    wallet_clear_passphrase();
+    /* That a lock forgets it is check_fully_locked()'s, on every lock path. */
 }
 
 static bool select_menu_item(const char *label)
@@ -644,34 +664,81 @@ static bool select_menu_item(const char *label)
     return false;
 }
 
-static void test_show_address_is_a_placeholder(void)
+/* Roadmap 1.6: Receive pages the whole UA, then its QR, then the t-address
+ * (called public) and its QR; OK flips between an address and its QR; the
+ * network comes from Settings. fake_zcash.c answers with the librustzcash
+ * vector, so what is checked is that the screen shows that address whole. */
+static void walk_receive(const zv_key_vector *v)
 {
-    printf("== Show Address is a placeholder that leads back home\n");
+    char ua[ZS_UA_MAX] = {0};
+    int page = 0;
+    /* Text pages until the first QR. */
+    while (fake_oled_row_contains(0, "UA ") && page < 8) {
+        CHECK_SCREEN(fake_oled_row_contains(0, "UA "), "UA page %d title", page);
+        CHECK_SCREEN(fake_oled_row_contains(0, v->network ? "TEST" : "MAIN"),
+                     "network not named (\"%s\")", fake_oled_row(0));
+        for (int r = 1; r <= 6; r++) strcat(ua, fake_oled_row(r));
+        press(BUTTON_DOWN);
+        page++;
+    }
+    CHECK(strcmp(ua, v->ua) == 0, "the UA does not reassemble:\n  %s\n  %s", ua, v->ua);
+    CHECK(strcmp(fake_oled_qr_data(), v->ua) == 0, "the UA QR carries \"%s\"",
+          fake_oled_qr_data());
+
+    press(BUTTON_ACCEPT);
+    CHECK(ui__receive_page_for_test() == 0, "OK on the QR did not return to the text");
+    press(BUTTON_ACCEPT);
+    CHECK(strcmp(fake_oled_qr_data(), v->ua) == 0, "OK on the text did not show its QR");
+
+    press(BUTTON_DOWN);
+    CHECK_SCREEN(fake_oled_contains("T-addr") && fake_oled_contains("PUBLIC"),
+                 "the t-address page does not warn");
+    char t[64];
+    snprintf(t, sizeof t, "%s%s", fake_oled_row(2), fake_oled_row(3));
+    CHECK(strcmp(t, v->transparent_address) == 0, "t-address \"%s\"", t);
+    press(BUTTON_ACCEPT);
+    CHECK(strcmp(fake_oled_qr_data(), v->transparent_address) == 0, "t-address QR");
+    press(BUTTON_DOWN);
+    CHECK(strcmp(fake_oled_qr_data(), v->transparent_address) == 0, "DOWN ran off the end");
+}
+
+static void test_receive_shows_the_whole_address(void)
+{
+    printf("== Receive shows the whole UA, the t-address, and both as QR\n");
     boot_unlocked_with_seed();
     go(SCREEN_MAIN_MENU);
 
-    CHECK(select_menu_item("Show Address"), "Show Address is not on the main menu");
+    CHECK(select_menu_item("Receive"), "Receive is not on the main menu");
     /* No camera on the host board, and Scan must not pretend otherwise. */
     go(SCREEN_MAIN_MENU);
     CHECK(!select_menu_item("Scan"), "Scan is offered on a board with no camera");
 
     go(SCREEN_MAIN_MENU);
-    select_menu_item("Show Address");
+    select_menu_item("Receive");
     press(BUTTON_ACCEPT);
     CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS, "the menu did not open it");
-    CHECK_SCREEN(fake_oled_contains("Zcash: coming soon"),
-                 "the placeholder does not say what is missing");
-
-    /* Nothing leaves the device from here, whatever is pressed. */
-    press(BUTTON_ACCEPT);
-    press(BUTTON_UP);
-    press(BUTTON_DOWN);
-    idle_pump();
-    CHECK(ui_get_screen() == SCREEN_SHOW_ADDRESS, "the placeholder went somewhere");
-    CHECK(fake_oled_qr_data()[0] == '\0', "a QR appeared on the placeholder");
+    walk_receive(&ZV_KEYS[0]);   /* main/abandon-art/acct0 */
 
     press(BUTTON_CANCEL);
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not return to the menu");
+
+    /* Settings > Network: testnet, persisted, and Receive follows. */
+    go(SCREEN_SETTINGS);
+    CHECK(select_menu_item("Net Mainnet"), "Network is not in Settings");
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_contains("> Net Testnet"), "the setting did not switch");
+    CHECK(ui_zcash_network() == 1, "ui_zcash_network() did not follow");
+    go(SCREEN_SHOW_ADDRESS);
+    walk_receive(&ZV_KEYS[1]);   /* test/abandon-art/acct0 */
+    press(BUTTON_CANCEL);
+
+    ui__reset_static_state_for_test();
+    ui_init();
+    CHECK(ui_zcash_network() == 1, "the network setting was not persisted");
+    go(SCREEN_SETTINGS);
+    select_menu_item("Net Testnet");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_zcash_network() == 0, "could not switch back");
 }
 
 /* ============================================================================
@@ -1794,6 +1861,10 @@ static void check_fully_locked(const char *path)
           "%s: the cached fingerprint survived the lock - the next screen to "
           "draw it would vouch for a wallet the device can no longer derive",
           path);
+    CHECK_SCREEN(!fake_oled_contains("ZFP"),
+                 "%s: a stale Zcash fingerprint is still on screen", path);
+    CHECK(ui__master_zfp_for_test()[0] == '\0',
+          "%s: the cached Zcash fingerprint survived the lock", path);
 }
 
 /* Put the device in the state the bug was reported from: unlocked, seed
@@ -2441,8 +2512,8 @@ static void test_scan_assembles_then_refuses_every_type(void)
 
 int main(void)
 {
-    test_the_wallet_screen_says_zcash_is_coming();
-    test_show_address_is_a_placeholder();
+    test_the_seed_fingerprint_is_shown();
+    test_receive_shows_the_whole_address();
     test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
     test_blind_signing_takes_a_deliberate_act();

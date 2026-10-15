@@ -32,6 +32,8 @@
 #include "airgap.h"
 #include "board.h"
 #if LEEK_HAS_ZCASH
+#include "zcash-account.h"
+#include "zcash-receive.h"
 #include "zcash-review.h"
 #endif
 #include "camera.h"
@@ -88,6 +90,7 @@ static void screen_main_menu_enter(void);
 static void screen_main_menu_render(void);
 static void screen_main_menu_on_button(button_id_t btn);
 
+static void wallet_info_refresh(void);
 static void screen_wallet_info_enter(void);
 static void screen_wallet_info_render(void);
 static void screen_wallet_info_on_button(button_id_t btn);
@@ -161,6 +164,8 @@ static void forget_mnemonic_entry(screen_id_t next);
 static void forget_pin_entry(screen_id_t next);
 static void forget_passphrase_entry(screen_id_t next);
 
+static void screen_show_address_enter(void);
+static void screen_show_address_exit(screen_id_t next);
 static void screen_show_address_render(void);
 static void screen_show_address_on_button(button_id_t btn);
 static void screen_scan_enter(void);
@@ -333,10 +338,10 @@ static const screen_t screen_passphrase_confirm = {
 };
 
 static const screen_t screen_show_address = {
-    .enter = NULL,
+    .enter = screen_show_address_enter,
     .render = screen_show_address_render,
     .on_button = screen_show_address_on_button,
-    .exit = NULL
+    .exit = screen_show_address_exit
 };
 
 static const screen_t screen_scan = {
@@ -490,7 +495,7 @@ static const char *menu_action_label(MenuAction a)
         case MENU_IMPORT_WALLET: return "Import Wallet";
         case MENU_TEMP_SEED:     return "Temp Seed";
         case MENU_END_TEMP:      return "End Temp Seed";
-        case MENU_SHOW_ADDRESS:  return "Show Address";
+        case MENU_SHOW_ADDRESS:  return "Receive";
         case MENU_SCAN:          return "Scan";
         case MENU_SETTINGS:      return "Settings";
         default:                 return "?";
@@ -567,6 +572,9 @@ static void menu_rebuild(void)
  * Bounded by HD_ACCOUNT_COUNT on this device's own screens; see ui.h for why
  * the bound is a UI bound and not a derivation one. */
 static uint32_t hd_account = 0;
+
+/* The network the receive screens show addresses for; see UI_KEY_NETWORK. */
+static uint8_t zcash_network = 0;
 
 static char mnemonic_buffer[256];
 static int mnemonic_word_count = 0;
@@ -752,6 +760,10 @@ static int64_t  last_activity_us = 0;
  * descriptor — and stored beside the other selections rather than in the
  * vault, so it survives a lock exactly as the active wallet index does. */
 #define UI_KEY_ACCOUNT      "acct"
+/* Which Zcash network the receive screens derive for (ZS_NET_*: 0 main,
+ * 1 test). Not secret, and only a view: the signer takes the network a PCZT
+ * declares, never this. */
+#define UI_KEY_NETWORK      "zc_net"
 
 /* Four steps rather than a slider: the OLED is legible across the whole range,
  * so fine control buys nothing and costs presses. Low is genuinely useful -
@@ -856,6 +868,9 @@ static void settings_load(void)
         stored < HD_ACCOUNT_COUNT) {
         hd_account = stored;
     }
+    if (nvs_get_u8(nvs, UI_KEY_NETWORK, &stored) == ESP_OK && stored <= 1) {
+        zcash_network = stored;
+    }
     nvs_close(nvs);
 }
 
@@ -896,6 +911,25 @@ uint32_t ui_hd_account(void)
     return hd_account;
 }
 
+uint8_t ui_zcash_network(void)
+{
+    return zcash_network;
+}
+
+static void zcash_network_toggle(void)
+{
+    zcash_network = zcash_network ? 0 : 1;
+
+    nvs_handle_t nvs;
+    if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) {
+        ESP_LOGW(TAG, "Could not persist the network selection");
+        return;
+    }
+    nvs_set_u8(nvs, UI_KEY_NETWORK, zcash_network);
+    nvs_commit(nvs);
+    nvs_close(nvs);
+}
+
 static void hd_account_set(uint32_t account)
 {
     hd_account = account % HD_ACCOUNT_COUNT;
@@ -914,6 +948,12 @@ static void hd_account_set(uint32_t account)
  * there is none to show. Lives up here because locking has to be able to drop
  * it; the reasoning about what it is for is with refresh_master_xfp(). */
 static char master_xfp[9] = {0};
+
+/* The short ZIP 32 seed fingerprint (zcash-receive.h), or "". Lives and dies
+ * with master_xfp: both name the seed, so they are read and cleared together.
+ * It is the one a Zcash companion can show too (zGetAccount's
+ * seedFingerprint), which makes it the one worth comparing. */
+static char master_zfp[9] = {0};
 
 /* Whether a passphrase was applied when the fingerprint currently on the
  * wallet screen was derived (T42).
@@ -964,6 +1004,7 @@ static void lock_device(void)
     mnemonic_page = 0;
 
     memzero(master_xfp, sizeof(master_xfp));
+    memzero(master_zfp, sizeof(master_zfp));
     wallet_info_passphrase_shown = false;
 
     /* wallet_lock() has just destroyed any temporary seed, so the longer
@@ -1056,6 +1097,7 @@ typedef enum {
     /* Next to the passphrase deliberately (T45). Both answer the same question
      * — "which wallet am I in?" — and the wallet screen shows the result. */
     SET_ACCOUNT,
+    SET_NETWORK,
     SET_BRIGHTNESS,
     SET_AUTOLOCK,
     SET_ENTRY_STYLE,
@@ -1084,6 +1126,7 @@ static const char *settings_items[SETTINGS_ITEMS] = {
     "Import Wallet",
     "Passphrase",
     "Account",
+    "Network",
     "Brightness",
     "Auto-lock",
     "Word entry",
@@ -1690,6 +1733,29 @@ static void screen_pin_change_on_button(button_id_t btn)
  * Main Menu Screen
  * ============================================================================ */
 
+/* Roadmap 1.5: the home screen names the open seed, so the first thing seen
+ * after unlocking (or after a passphrase, a wallet switch or a temporary
+ * seed) is which wallet this is. Derived here, on entry, not per repaint: the
+ * first call after an unlock pays for the seed. */
+static void home_fingerprint_refresh(void)
+{
+    WalletStatus status = wallet_get_status();
+    const bool temp = wallet_has_temporary_mnemonic();
+    if (!pin_is_unlocked() || (status.wallet_count == 0 && !temp)) {
+        return;
+    }
+    if (!ensure_wallet_unlocked()) {
+        return;
+    }
+    /* As the wallet screen does, and with the same exception: never over a
+     * temporary seed. */
+    if (!temp && wallet_get_status().active_wallet_index == 0 &&
+        wallet_select_wallet(1) != WALLET_OK) {
+        return;
+    }
+    wallet_info_refresh();
+}
+
 static void screen_main_menu_enter(void)
 {
     /* A no-op unless seed creation suspended them. Every exit from that flow
@@ -1700,6 +1766,7 @@ static void screen_main_menu_enter(void)
     ESP_LOGI(TAG, "Main menu screen");
     menu_selection = 0;
     menu_rebuild();
+    home_fingerprint_refresh();
 }
 
 static void screen_main_menu_render(void)
@@ -1709,18 +1776,25 @@ static void screen_main_menu_render(void)
 
     /* Show which wallet is active, so "Wallet Info" is not a mystery box. */
     WalletStatus status = wallet_get_status();
-    char header[22];
+    char header[40];
+    char who[16] = "Menu";
     if (wallet_has_temporary_mnemonic()) {
         /* Named on the home screen, permanently, in place of the wallet
          * number. A user who forgets which mode the device is in and reboots
          * has lost the seed; there is no recovering it from anywhere. */
-        snprintf(header, sizeof(header), "-- Menu -- TEMP");
+        snprintf(who, sizeof(who), "TEMP");
     } else if (status.wallet_count > 1) {
-        snprintf(header, sizeof(header), "-- Menu -- W%u/%u",
+        snprintf(who, sizeof(who), "W%u/%u",
                  (unsigned)status.active_wallet_index, (unsigned)status.wallet_count);
-    } else {
-        snprintf(header, sizeof(header), "-- Menu --");
     }
+    if (master_zfp[0]) {
+        /* Roadmap 1.5: which seed is open, first thing after unlocking. */
+        snprintf(header, sizeof(header), "%s  ZFP %s", who, master_zfp);
+    } else {
+        snprintf(header, sizeof(header), "-- Menu --%s%s",
+                 strcmp(who, "Menu") ? " " : "", strcmp(who, "Menu") ? who : "");
+    }
+    header[21] = '\0';   /* the panel's width; nothing here reaches it */
     oled_draw_string_centered(0, header);
 
     /* Draw menu items (3 visible at a time on 128x64) */
@@ -1851,9 +1925,17 @@ static void refresh_master_xfp(void)
     uint32_t fp = 0;
 
     master_xfp[0] = '\0';
+    master_zfp[0] = '\0';
     if (wallet_get_master_fingerprint(&fp) == WALLET_OK) {
         snprintf(master_xfp, sizeof(master_xfp), "%08lX", (unsigned long)fp);
     }
+#if LEEK_HAS_ZCASH
+    uint8_t zfp[32];
+    if (zcash_seed_fingerprint(zfp) == WALLET_OK) {
+        zrecv_short_fp(zfp, master_zfp);
+    }
+    memzero(zfp, sizeof zfp);
+#endif
 }
 
 /* Draw the fingerprint, or nothing at all. A blank row says "not shown"; a row
@@ -1866,6 +1948,18 @@ static void draw_master_xfp(int row, const char *prefix)
 
     char line[22];
     snprintf(line, sizeof(line), "%s %s", prefix, master_xfp);
+    oled_draw_string_centered(row, line);
+}
+
+/* The Zcash seed fingerprint, under the same rule: the value or nothing. */
+static void draw_master_zfp(int row)
+{
+    if (master_zfp[0] == '\0') {
+        return;
+    }
+
+    char line[22];
+    snprintf(line, sizeof(line), "ZFP %s", master_zfp);
     oled_draw_string_centered(row, line);
 }
 
@@ -1889,6 +1983,7 @@ static void screen_wallet_info_enter(void)
 
     wallet_info_error[0] = '\0';
     master_xfp[0] = '\0';
+    master_zfp[0] = '\0';
 
     if (!ensure_wallet_unlocked()) {
         snprintf(wallet_info_error, sizeof(wallet_info_error), "Unlock failed");
@@ -1956,7 +2051,7 @@ static void screen_wallet_info_render(void)
         /* Which seed this is. The fingerprint is the one identifier that
          * does not depend on a chain, and the one a wrong passphrase changes. */
         draw_master_xfp(2, "XFP");
-        oled_draw_string_centered(4, "Zcash: coming soon");
+        draw_master_zfp(4);
     }
 
     oled_draw_string(7, 0, "BACK");
@@ -2824,6 +2919,12 @@ static void screen_settings_render(void)
             snprintf(line, sizeof(line), "%s Account %u",
                      item_idx == settings_selection ? ">" : " ",
                      (unsigned)hd_account);
+        } else if (item_idx == SET_NETWORK) {
+            /* On the line for the same reason as Account: it decides which
+             * addresses Receive shows. */
+            snprintf(line, sizeof(line), "%s Net %s",
+                     item_idx == settings_selection ? ">" : " ",
+                     zcash_network ? "Testnet" : "Mainnet");
         } else if (item_idx == SET_BRIGHTNESS) {
             snprintf(line, sizeof(line), "%s Bright %s",
                      item_idx == settings_selection ? ">" : " ",
@@ -2931,6 +3032,10 @@ static void screen_settings_on_button(button_id_t btn)
                      * is actually confirmed. */
                     hd_account_set(hd_account + 1);
                     ESP_LOGI(TAG, "Account %u selected", (unsigned)hd_account);
+                    break;
+                case SET_NETWORK:
+                    zcash_network_toggle();
+                    ESP_LOGI(TAG, "Network: %s", zcash_network ? "testnet" : "mainnet");
                     break;
                 case SET_ENTRY_STYLE:
                     entry_blocks_apply(!mnemonic_entry_blocks_enabled());
@@ -3117,20 +3222,93 @@ static void service_qr_out(void)
 }
 
 /* ============================================================================
- * Show Address Screen
+ * Receive Screen (roadmap 1.6)
  *
- * A placeholder. LeekWallet exported an account xpub here as a
- * ur:crypto-hdkey; the Zcash equivalent (a UFVK or a transparent address)
- * belongs to a later phase. The menu entry stays so the menu does not change
- * shape again when it arrives, and it says so rather than leading nowhere.
+ * The selected account's addresses on the network chosen under Settings:
+ * the unified address whole, over as many pages as it takes, then as a QR;
+ * the transparent address, marked public, then as a QR. UP/DN step through
+ * the pages, OK flips between an address and its QR, BACK leaves. The pages
+ * themselves are zcash-receive.c's, checked on the host page by page and
+ * scanned back from the framebuffer.
+ *
+ * Derived once on entry: Sinsemilla on the Zcash worker, a second or so.
+ * Nothing here is secret - viewing keys and addresses only - but it is wiped
+ * on the way out like everything else that came from the seed.
  * ============================================================================ */
+
+#if LEEK_HAS_ZCASH
+static ZcashAccount recv_account;
+static bool         recv_ready;
+static int          recv_page;
+
+/* A QR page gets what the QR return path gets (screen_qr_out_enter): Dim and
+ * the fast refresh, which is what a phone camera reads this panel best at.
+ * Text pages get the user's own level back. */
+static void recv_apply_panel(void)
+{
+    ZRecvPage p;
+    const bool qr = recv_ready && zrecv_render(&recv_account, recv_page, &p) &&
+                    p.kind == ZRECV_QR;
+    oled_set_contrast(BRIGHTNESS_LEVELS[qr ? 5 : brightness_choice]);
+    oled_set_fast_refresh(qr);
+}
+#endif
+
+static void screen_show_address_enter(void)
+{
+#if LEEK_HAS_ZCASH
+    recv_ready = false;
+    recv_page = 0;
+    if (ensure_wallet_unlocked() &&
+        zcash_account_derive(hd_account, zcash_network, &recv_account) == WALLET_OK) {
+        recv_ready = true;
+    }
+#endif
+}
+
+static void screen_show_address_exit(screen_id_t next)
+{
+    (void)next;
+#if LEEK_HAS_ZCASH
+    memzero(&recv_account, sizeof recv_account);
+    recv_ready = false;
+    recv_page = 0;
+    recv_apply_panel();
+#endif
+}
 
 static void screen_show_address_render(void)
 {
     oled_clear();
-    oled_draw_string_centered(0, "Show Address");
-    oled_draw_string_centered(3, "Zcash: coming soon");
+#if LEEK_HAS_ZCASH
+    ZRecvPage p;
+    if (!recv_ready || !zrecv_render(&recv_account, recv_page, &p)) {
+        oled_draw_string_centered(0, "Receive");
+        oled_draw_string_centered(3, "No address");
+        oled_draw_string_centered(4, "(derivation failed)");
+        oled_draw_string(7, 0, "BACK");
+        return;
+    }
+    if (p.kind == ZRECV_QR) {
+        if (oled_draw_qrcode_at(p.qr, p.version, p.scale) != ESP_OK) {
+            /* zcash-receive.c sized it for the panel; not a state. */
+            oled_clear();
+            oled_draw_string_centered(3, "QR unavailable");
+            oled_draw_string(7, 0, "BACK");
+        }
+        return;
+    }
+    for (int r = 0; r < ZRECV_ROWS; r++) {
+        if (p.row[r][0]) {
+            oled_draw_string(r, 0, p.row[r]);
+        }
+    }
+#else
+    oled_draw_string_centered(0, "Receive");
+    oled_draw_string_centered(3, "No Zcash on this");
+    oled_draw_string_centered(4, "board");
     oled_draw_string(7, 0, "BACK");
+#endif
 }
 
 static void screen_show_address_on_button(button_id_t btn)
@@ -3139,8 +3317,38 @@ static void screen_show_address_on_button(button_id_t btn)
         ui_set_screen(SCREEN_MAIN_MENU);
         return;
     }
+#if LEEK_HAS_ZCASH
+    if (recv_ready) {
+        const int n = zrecv_page_count(&recv_account);
+        switch (btn) {
+            case BUTTON_DOWN:
+                if (recv_page < n - 1) recv_page++;
+                break;
+            case BUTTON_UP:
+                if (recv_page > 0) recv_page--;
+                break;
+            case BUTTON_ACCEPT:
+                recv_page = zrecv_toggle_qr(&recv_account, recv_page);
+                break;
+            default:
+                break;
+        }
+        recv_apply_panel();
+    }
+#endif
     ui_invalidate();
 }
+
+#ifdef LEEK_HOST_TEST
+int ui__receive_page_for_test(void)
+{
+#if LEEK_HAS_ZCASH
+    return recv_ready ? recv_page : -1;
+#else
+    return -1;
+#endif
+}
+#endif
 
 /* ============================================================================
  * Scan Screen
@@ -4437,7 +4645,8 @@ static void screen_passphrase_confirm_render(void)
 
     /* The fingerprint names the seed, so it is the fact that actually says
      * "this is the passphrase you meant". */
-    draw_master_xfp(3, "XFP");
+    draw_master_xfp(2, "XFP");
+    draw_master_zfp(4);
 
     oled_draw_string_centered(6, "Match your record");
     oled_draw_string(7, 0, "RETRY         OK");
@@ -5124,6 +5333,7 @@ const char *ui__scan_status_for_test(void) { return scan_status; }
  * locked and so cannot be asserted through the framebuffer - the stale-XFP
  * failure is that it is still HERE when the next screen goes to draw it. */
 const char *ui__master_xfp_for_test(void) { return master_xfp; }
+const char *ui__master_zfp_for_test(void) { return master_zfp; }
 
 /* Which account the device is on, and whether the wallet screen's
  * fingerprint was derived with a passphrase applied. Both are private on purpose;
@@ -5217,7 +5427,9 @@ void ui__reset_static_state_for_test(void)
     lock_timeout_choice = 1;
     lock_timeout_stored_choice = 1;
     brightness_choice = 5;
+    zcash_network = 0;
     memzero(master_xfp, sizeof(master_xfp));
+    memzero(master_zfp, sizeof(master_zfp));
     last_activity_us = 0;
 }
 
