@@ -89,6 +89,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
   - the sim has a fake SD backend;
   - a power-cut test passes for vault writes;
   - a wrong passphrase fails cleanly.
+- Status: SD and stateless done on PC; the SD card hardware needs the board. `.zkv` v1 is in FORMATS.md, with C (`src/zkv.c`) and Rust (`zecz zkv-new`/`zkv-open`) implementations that agree byte for byte on the golden file. The three modes give the same keys for all 48 vectors. A wrong passphrase loads nothing. A cut write leaves no seed file. The sim's fake SD is `sdcard.c` on a directory. Still open: per-account metadata in the vault (birthday, `use_qsk`, label).
 
 **1.5 BIP39 passphrase handled correctly** (see §P)
 - **Primary path: typed on the device**, as in LeekWallet. Also supported, as in LeekWallet's `setPassphrase`: entered on a companion and sent over the encrypted session. That is more convenient, but the passphrase then passes through the host. Both paths go through the same normalisation and the same ASCII rule.

@@ -250,3 +250,35 @@ checked on Xtensa).
 - Open: whether a phone reads the scale-1 UA QR off the real 128x64 panel
   (the roadmap's own question) needs the board; the text pages are the
   fallback either way.
+
+### 1.4 SD card storage mode: done on PC; the card itself needs the board
+- **Format** (`.zkv` v1, FORMATS.md): `LKZV` header with the KDF parameters
+  as GCM associated data, then AES-256-GCM over BIP39 entropy, birthday,
+  account, flags and label. PBKDF2-HMAC-SHA512, default 20,000 iterations
+  (about 3 s on the S3 at 240 MHz, estimated from the vault's measured
+  0.226 ms/iteration at 160 MHz), refused outside 10,000 to 200,000.
+- **Two implementations**: `firmware/src/zkv.c` (trezor-crypto) and
+  `host/zecz-cli/src/zkv.rs` (RustCrypto), written separately. Both produce
+  `vectors/zkv/golden-v1.zkv` byte for byte and refuse every single-bit flip
+  of it (840 flips, 105 truncations in C).
+- **Device**: Main menu > SD Card lists `SEEDn.ZKV`, loads one as the session
+  seed (passphrase on the four buttons; the home header then reads
+  `TEMP  ZFP ...`), or saves the open seed under a passphrase entered twice.
+  It never overwrites, writes through a temporary plus rename, and reads the
+  file back before saying it saved. `sdcard.c` is the same POSIX code on
+  FATFS and on a host directory, so the sim's fake SD is the real code.
+- **Done-when checks** (`test_sd_seed`, real vault and real derivation):
+  vault, stateless and SD give the same UFVK, UA and fingerprint for all 48
+  vectors. A random phrase loaded from the card leaves neither the phrase
+  nor 8 bytes of its entropy anywhere in flash. A wrong passphrase loads
+  nothing and leaves the open wallet as it was. A write cut before the
+  rename leaves no seed file and is cleaned up at the next mount. The
+  golden file loads on the device and derives the vector's keys.
+- **Boards**: SD on the S3 reference profile too (GPIO 38/39/40, 1-bit
+  SDMMC, the CAM board's wiring; it needs a passive microSD breakout, not a
+  level-shifted SPI module). esp32s3, esp32s3cam and pixie build; QEMU boots.
+- `zecz zkv-new --mnemonic ... --out SEED1.ZKV --birthday H` and
+  `zecz zkv-open --in FILE` (shows ZFP, account, birthday, UFVK; never the
+  phrase). The file passphrase comes from `ZECZ_ZKV_PASSPHRASE` or stdin.
+- Open: per-account metadata in the vault (birthday, `use_qsk`, label);
+  mounting a real card, and the KDF time on silicon.

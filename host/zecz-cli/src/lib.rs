@@ -5,4 +5,5 @@ pub mod device;
 pub mod keys;
 pub mod lwd;
 pub mod soft_signer;
+pub mod zkv;
 pub mod zsig;
