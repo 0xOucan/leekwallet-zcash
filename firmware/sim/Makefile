@@ -386,6 +386,23 @@ PROTOCOL_INC  := -I$(ZSIGNC)/include
 $(BUILD)/test_protocol: $(PROTOCOL_SRC) $(HEADERS) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
 	$(CC) $(CFLAGS) $(PROTOCOL_INC) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $(PROTOCOL_SRC) $(PROTOCOL_LIBS)
 
+# zdev: the protocol endpoint on a PTY, for driving a companion (zecz) with
+# no board. Development only; see zdev.c. Not part of `make test`.
+ZDEV_SRC := zdev.c $(filter-out test_protocol.c fake_usb.c fake_zcash.c,$(PROTOCOL_SRC)) \
+            ../src/zcash-account.c ../src/zcash-review.c \
+            $(CRYPTO)/bip32.c $(CRYPTO)/ecdsa.c $(CRYPTO)/bignum.c $(CRYPTO)/secp256k1.c \
+            $(CRYPTO)/nist256p1.c $(CRYPTO)/curves.c $(CRYPTO)/ripemd160.c $(CRYPTO)/base58.c \
+            $(CRYPTO)/blake256.c $(CRYPTO)/blake2b.c $(CRYPTO)/hasher.c $(CRYPTO)/groestl.c \
+            $(CRYPTO)/sha3.c $(CRYPTO)/address.c $(CRYPTO)/rfc6979.c $(CRYPTO)/hmac_drbg.c \
+            $(CRYPTO)/ed25519-donna/ed25519.c $(CRYPTO)/ed25519-donna/ed25519-keccak.c \
+            $(CRYPTO)/ed25519-donna/ed25519-sha3.c $(CRYPTO)/ed25519-donna/curve25519-donna-32bit.c \
+            $(CRYPTO)/ed25519-donna/modm-donna-32bit.c $(CRYPTO)/ed25519-donna/ed25519-donna-basepoint-table.c \
+            $(CRYPTO)/ed25519-donna/ed25519-donna-impl-base.c
+$(BUILD)/zdev: $(ZDEV_SRC) $(HEADERS) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
+	$(CC) $(CFLAGS) $(PROTOCOL_INC) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ \
+	    $(sort $(ZDEV_SRC)) $(PROTOCOL_LIBS) -lutil
+zdev: $(BUILD)/zdev
+
 # Sanitised build of the protocol suite, as a separate binary.
 #
 # Kept off the default target on purpose: `make test` has to stay the thing
