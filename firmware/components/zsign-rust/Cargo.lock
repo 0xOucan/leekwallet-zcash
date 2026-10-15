@@ -1447,6 +1447,7 @@ dependencies = [
  "orchard",
  "pasta_curves",
  "pczt",
+ "postcard",
  "rand_core",
  "zcash_address",
  "zcash_protocol",
