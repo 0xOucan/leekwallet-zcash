@@ -160,3 +160,39 @@ for the device), `tip`, `sync`, `balance`, `address`, `send` (full PCZT kept in
   "Insufficient balance", as it should. A funded end-to-end send is next.
 - Transparent funds show in `balance` but cannot be sent yet (the device
   refuses transparent inputs).
+
+### 4.1, 4.2, 4.4 C signer (`components/zsign-c`): done; 4.3 with Phase 3; 4.5 QEMU only
+`zsign-c` implements the same `new / check / sign / verify_sig / free` ABI as
+zsign-rust (shared types in `components/zsign-common`) and shares no code with
+it. It uses a vendored, unedited subset of libzcash-ironwood-c (94562b8, all
+globals renamed to `zcv_*` by a forced-include header) and a bounded postcard
+PCZT reader of our own.
+
+- 4.2: `test_zcash_pczt_c` passes all 14 PCZT vectors (5 valid, 9 refusals,
+  exact codes) and 48/48 key vectors.
+- 4.4: `test_zsign_diff` runs both backends over every vector and 3,675
+  single-byte mutations: 2,133 accepted by both, 0 verdict, summary
+  (sighash included) or refusal-code mismatches. Every 8th accepted mutation
+  is signed, and each backend's signature verifies under the other. A
+  deterministic-nonce mode was not added; cross-verification replaces it.
+  `make asan` runs the diff test with the C library under ASan + UBSan: clean.
+- The diff work hardened the Rust signer too: it now refuses trailing bytes
+  after the postcard body and any tx version other than v6.
+- 4.3 (`BOTH` mode) needs the sign protocol, so it lands with Phase 3.
+
+QEMU, `iw_send_shielded` (4,807 B), each backend in a fresh 64 KiB task:
+
+| Measure | Rust | C |
+|---|---|---|
+| Summary / sighash / fee | MATCH | MATCH (summaries byte-equal) |
+| Stack used | 50,088 B | 5,056 B |
+| Heap used | ≈ 28 KB | ≈ 7 KB |
+| QEMU parse / check / sign / verify | 8 ms / 1.45 s / 0.83 s / 0.25 s | 2 ms / 0.36 s / 0.05 s / 0.09 s |
+| One-time self-test | n/a | 0.10 s |
+
+QEMU times are not silicon times; 4.5 needs the board. Both firmware targets
+build with the component, and it compiles for the Pixie's RISC-V as well.
+
+Open: `test_protocol_asan` reports UBSan misaligned u32 loads in the inherited
+trezor-crypto `chacha_merged.c` (32 reports, not new; harmless on x86, to be
+checked on Xtensa).
