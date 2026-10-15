@@ -308,9 +308,11 @@ against it.
 | `getFingerprint` | keys | — | **not implemented** — the fingerprint is shown on the device's own screen |
 | `getAddress` | keys | optional `display: true` | implemented |
 | `getPublicKey` | keys | — | **not implemented** |
-| `signMessage` | keys | **yes** | implemented |
-| `signTypedData` | keys | **yes** | implemented |
-| `signTransaction` | keys | **yes** | implemented |
+| `signMessage` | keys | **yes** | **removed** in the Zcash fork (roadmap 1.1) |
+| `signTypedData` | keys | **yes** | **removed** in the Zcash fork (roadmap 1.1) |
+| `signTransaction` | keys | **yes** | **removed** in the Zcash fork (roadmap 1.1) |
+| `zGetAccount` | keys | — (viewing key, not spend authority) | implemented |
+| `zSignBegin` / `zSignChunk` / `zSignFinish` | keys | **yes — every review page, ACCEPT on the last** | implemented |
 | `signHash` | keys | **yes**, and refused unless blind signing is enabled on-device | **not implemented** — a host-supplied digest is the one thing this device will not sign, and nothing needs it yet |
 
 Plus `hello` and `helloReveal`, which carry the handshake (§3) rather than a
@@ -331,6 +333,37 @@ your wallet is a protocol that a malicious host can erase your wallet with.
 
 `unlock` does not carry a PIN. It asks the device to prompt; the user types on the device; the
 response says whether it worked. The PIN never crosses the wire in any form.
+
+### Zcash signing (PCZT)
+
+A Zcash transaction reaches the device as a PCZT (ZIP 374), which the
+companion builds and the device checks. Three calls, all encrypted, all
+requiring an unlocked device:
+
+```
+zSignBegin  { len: uint, sha256: h'32', account: uint, network: "main"|"test" }
+         -> { maxChunk: 3072, backend: "both"|"rust"|"c" }
+zSignChunk  { offset: uint, data: h'1..maxChunk' }      offset = bytes so far
+         -> { received: uint }
+zSignFinish {}
+         -> { sighash: h'32', signatures: [ { pool: 1|2, index: uint, sig: h'64' } ] }
+```
+
+`zSignFinish` refuses unless every byte arrived and they hash to `sha256`,
+then checks the PCZT with both signer backends (`src/zcash-sign.c`). In BOTH
+mode, the default, their summaries must be byte-identical, sighash included.
+The device then shows the review pages (`src/zcash-review.c`) and waits for
+the user. Only ACCEPT on the last page signs; every signature is verified by
+both backends before it leaves. The reply carries the sighash the user
+reviewed, so the host can check it against its own. A rejection, timeout or
+lock drops the upload. Pools: 1 Orchard, 2 Ironwood (`ZS_POOL_*`).
+
+A refusal is error `0x05xx`, where the low byte is the reason: `-ZS_E_*`
+from the signers (`zsign_types.h`: 0x0A parse, 0x0B branch, 0x0C foreign
+spend, 0x0D output commitment, 0x0E user address, 0x0F value balance,
+0x10 unsupported bundle, 0x11 network, ...) or `-ZSIGN_E_*` from the
+intake (`zcash-sign.h`: 0x1E out of order, 0x1F size, 0x20 offset, 0x21
+hash, 0x22 incomplete, 0x23 backends disagree, ...).
 
 ### Signing
 
@@ -516,6 +549,7 @@ lock, an account change — is caught without a new flag to remember.
 | `0x0400` | Session required, or the channel is unusable (a frame that failed to authenticate) |
 | `0x0401` | Transport busy; the request was refused, not acted on — resend it |
 | `0x0202` | Outside the decodable set (section 6bis) |
+| `0x05xx` | The device will not sign this PCZT; the low byte is the reason (Zcash signing, above) |
 
 ### A reply matches the frame type of the request that caused it
 
