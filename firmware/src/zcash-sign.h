@@ -58,6 +58,9 @@ int zcash_sign_begin(uint32_t len, const uint8_t sha256[32], uint32_t account, u
 /** Append `n` bytes at `offset`, which must equal the bytes received so far. */
 int zcash_sign_chunk(uint32_t offset, const uint8_t *data, size_t n);
 
+/** The network the current upload was declared for (ZS_NET_*). */
+uint8_t zcash_sign_network(void);
+
 /** Bytes received so far in the current upload. */
 uint32_t zcash_sign_received(void);
 

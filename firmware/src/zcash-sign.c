@@ -155,6 +155,11 @@ int zcash_sign_chunk(uint32_t offset, const uint8_t *data, size_t n)
     return ZS_OK;
 }
 
+uint8_t zcash_sign_network(void)
+{
+    return S.network;
+}
+
 uint32_t zcash_sign_received(void)
 {
     return S.st == ST_RECEIVING ? S.got : 0;

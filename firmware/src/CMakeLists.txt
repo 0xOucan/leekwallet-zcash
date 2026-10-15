@@ -14,6 +14,8 @@ if(IDF_TARGET STREQUAL "esp32c3")
   # The Zcash signer is built for Xtensa only (components/zsign-rust).
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-account.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-worker.c)
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-sign.c)
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-review.c)
 else()
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled-pixie.c)
 endif()
@@ -21,7 +23,8 @@ endif()
 set(app_requires driver nvs_flash esp_hw_support bootloader_support
                  esp_driver_usb_serial_jtag trezor-crypto leek-wallet)
 if(NOT IDF_TARGET STREQUAL "esp32c3")
-    list(APPEND app_requires zsign-rust)
+    # Both signer backends: BOTH mode requires them to agree (zcash-sign.c).
+    list(APPEND app_requires zsign-rust zsign-c)
 endif()
 
 # The camera stack, only where the top-level CMakeLists did not exclude it.

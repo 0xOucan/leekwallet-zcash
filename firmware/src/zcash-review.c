@@ -100,10 +100,15 @@ static void put(ZReviewPage *p, int row, const char *text)
 
 static void header(ZReviewPage *p, const char *label, int page, int total)
 {
+    /* Label on the left, cut to fit; "page/total" right-aligned. */
     char pn[24];
-    snprintf(pn, sizeof pn, "%d/%d", page + 1, total);
-    int room = ZREVIEW_COLS - (int)strlen(pn) - 1;
-    snprintf(p->row[0], sizeof p->row[0], "%-*.*s %s", room, room, label, pn);
+    int pl = snprintf(pn, sizeof pn, "%d/%d", page + 1, total);
+    if (pl < 0 || pl > ZREVIEW_COLS - 2) pl = 0;
+    char *row = p->row[0];
+    memset(row, ' ', ZREVIEW_COLS);
+    row[ZREVIEW_COLS] = '\0';
+    memcpy(row, label, strnlen(label, (size_t)(ZREVIEW_COLS - pl - 1)));
+    memcpy(row + ZREVIEW_COLS - pl, pn, (size_t)pl);
 }
 
 /* `rows` rows of `text` starting at character `from`, one per row from `row`.

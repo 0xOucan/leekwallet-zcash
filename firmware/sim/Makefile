@@ -347,6 +347,7 @@ $(BUILD)/test_pin_change: test_pin_change.c esp_stubs.c host_stubs.c \
 # the only place the wire protocol exists on the device, so it is the reference
 # the mock has to match; see test_protocol.c.
 PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.c fake_zcash.c \
+                ../src/zcash-sign.c ../src/zcash-worker.c $(ZSIGN)/platform/zsign_platform_host.c \
                 ../src/protocol.c ../src/cbor.c ../src/session.c ../src/pin.c \
                 ../src/ble-chunk.c ../src/ble.c ../src/ble-name.c ../src/transport.c ../src/entropy.c \
                 ../src/blind-signing.c \
@@ -378,8 +379,12 @@ PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.
 # costs an afternoon.
 HEADERS := $(wildcard ../src/*.h) $(wildcard *.h)
 
-$(BUILD)/test_protocol: $(PROTOCOL_SRC) $(HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $(PROTOCOL_SRC)
+# The zSign* tests run the real signers, so both backends link in.
+PROTOCOL_LIBS := $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+PROTOCOL_INC  := -I$(ZSIGNC)/include
+
+$(BUILD)/test_protocol: $(PROTOCOL_SRC) $(HEADERS) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
+	$(CC) $(CFLAGS) $(PROTOCOL_INC) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $(PROTOCOL_SRC) $(PROTOCOL_LIBS)
 
 # Sanitised build of the protocol suite, as a separate binary.
 #
@@ -395,9 +400,9 @@ $(BUILD)/test_protocol: $(PROTOCOL_SRC) $(HEADERS) | $(BUILD)
 # on both hosts we build for; it is not an ASan finding and not a leak.
 #
 #   make -C sim asan
-$(BUILD)/test_protocol_asan: $(PROTOCOL_SRC) $(HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST \
-	      -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(PROTOCOL_SRC)
+$(BUILD)/test_protocol_asan: $(PROTOCOL_SRC) $(HEADERS) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
+	$(CC) $(CFLAGS) $(PROTOCOL_INC) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST \
+	      -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(PROTOCOL_SRC) $(PROTOCOL_LIBS)
 
 # The chunk layer gets the same treatment, for the same reason.
 $(BUILD)/test_ble_chunk_asan: test_ble_chunk.c ../src/ble-chunk.c | $(BUILD)
@@ -451,9 +456,9 @@ FUZZ_SRC  := fuzz_transport.c $(filter-out test_protocol.c,$(PROTOCOL_SRC))
 FUZZ_SEED ?= 1
 FUZZ_ITERS ?= 20000
 
-$(BUILD)/fuzz_transport: $(FUZZ_SRC) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST \
-	      -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $^
+$(BUILD)/fuzz_transport: $(FUZZ_SRC) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
+	$(CC) $(CFLAGS) $(PROTOCOL_INC) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST \
+	      -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(FUZZ_SRC) $(PROTOCOL_LIBS)
 
 fuzz: $(BUILD)/fuzz_transport
 	./$(BUILD)/fuzz_transport $(FUZZ_SEED) $(FUZZ_ITERS)

@@ -193,6 +193,19 @@ void wallet_clear_passphrase(void)
 
 bool wallet_has_passphrase(void) { return w.has_passphrase; }
 
+/* The real BIP39 seed of the active mnemonic and passphrase, lent the way the
+ * vault lends it, so the protocol suite can run the real Zcash signers. */
+WalletError wallet_with_seed(WalletSeedFn fn, void *ctx)
+{
+    if (!w.unlocked) return WALLET_ERROR_LOCKED;
+    if (!have_seed()) return WALLET_ERROR_NO_MNEMONIC;
+    uint8_t seed[64];
+    mnemonic_to_seed(active_mnemonic(), w.has_passphrase ? w.passphrase : "", seed, NULL);
+    WalletError err = fn(seed, ctx);
+    memzero(seed, sizeof seed);
+    return err;
+}
+
 WalletError wallet_create_mnemonic(int word_count, char *mnemonic_out, size_t max_length)
 {
     if (!mnemonic_out) {

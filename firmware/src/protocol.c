@@ -44,6 +44,7 @@
 #include "ui.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
+#include "zcash-sign.h"
 #endif
 
 static const char *TAG = "protocol";
@@ -79,6 +80,10 @@ static const char *TAG = "protocol";
 #define ERR_BUSY         0x0401
 #define ERR_USER_REJECTED 0x0200
 #define ERR_USER_TIMEOUT  0x0201
+/* The device checked a PCZT and will not sign it. The low byte is the
+ * signer's reason (-ZS_E_* / -ZSIGN_E_*), so a host can tell "the hash did
+ * not match" from "an output was tampered with" without parsing text. */
+#define ERR_ZSIGN_BASE    0x0500
 
 static uint8_t rx_buf[MAX_FRAME];
 static size_t  rx_len = 0;
@@ -509,6 +514,138 @@ static SignOutcome wait_for_user(void)
     }
 }
 
+#if LEEK_HAS_ZCASH
+/* Payload bytes per zSignChunk: a 4096-byte frame less the frame header,
+ * the session tag and the CBOR around the data. */
+#define ZSIGN_MAX_CHUNK 3072
+
+static void send_zsign_refusal(int rc)
+{
+    send_error((uint16_t)(ERR_ZSIGN_BASE | ((unsigned)-rc & 0xFF)), zcash_sign_strerror(rc));
+}
+
+/* zSignBegin / zSignChunk / zSignFinish. Writes the result into `w` and
+ * returns true, or sends an error and returns false. */
+static bool handle_zsign(const char *method, const uint8_t *payload, size_t len, CborWriter *w)
+{
+    CborItem item;
+    int rc;
+
+    if (strcmp(method, "zSignBegin") == 0) {
+        uint32_t total = 0, account = 0;
+        if (!cbor_map_find(payload, len, "len", &item) || item.type != CBOR_UINT) {
+            send_error(ERR_MALFORMED, "len required");
+            return false;
+        }
+        total = item.value;
+        if (cbor_map_find(payload, len, "account", &item)) {
+            if (item.type != CBOR_UINT) {
+                send_error(ERR_MALFORMED, "account out of range");
+                return false;
+            }
+            account = item.value;
+        }
+        CborItem hash;
+        if (!cbor_map_find(payload, len, "sha256", &hash) || hash.type != CBOR_BYTES ||
+            hash.value != 32) {
+            send_error(ERR_MALFORMED, "sha256 must be 32 bytes");
+            return false;
+        }
+        char net_name[8];
+        if (!cbor_map_find(payload, len, "network", &item) ||
+            !cbor_text_copy(&item, net_name, sizeof(net_name)) ||
+            (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+            send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+            return false;
+        }
+        rc = zcash_sign_begin(total, hash.data, account,
+                              strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST);
+        if (rc != ZS_OK) {
+            send_zsign_refusal(rc);
+            return false;
+        }
+        cbor_write_map(w, 1);
+        cbor_write_text(w, "result");
+        cbor_write_map(w, 2);
+        cbor_write_text(w, "maxChunk");
+        cbor_write_uint(w, ZSIGN_MAX_CHUNK);
+        cbor_write_text(w, "backend");
+        cbor_write_text(w, zcash_sign_backend_name(zcash_sign_backend()));
+        return true;
+    }
+
+    if (strcmp(method, "zSignChunk") == 0) {
+        CborItem data;
+        if (!cbor_map_find(payload, len, "offset", &item) || item.type != CBOR_UINT ||
+            !cbor_map_find(payload, len, "data", &data) || data.type != CBOR_BYTES ||
+            data.value == 0 || data.value > ZSIGN_MAX_CHUNK) {
+            send_error(ERR_MALFORMED, "offset and 1..3072 bytes of data required");
+            return false;
+        }
+        rc = zcash_sign_chunk(item.value, data.data, data.value);
+        if (rc != ZS_OK) {
+            send_zsign_refusal(rc);
+            return false;
+        }
+        cbor_write_map(w, 1);
+        cbor_write_text(w, "result");
+        cbor_write_map(w, 1);
+        cbor_write_text(w, "received");
+        cbor_write_uint(w, zcash_sign_received());
+        return true;
+    }
+
+    /* zSignFinish: check, review, sign. */
+    const zs_summary *summary = NULL;
+    rc = zcash_sign_check(&summary);
+    if (rc != ZS_OK) {
+        send_zsign_refusal(rc);
+        return false;
+    }
+
+    ui_request_zsign_review(summary, zcash_sign_network());
+    SignOutcome outcome = wait_for_user();
+    if (outcome != SIGN_APPROVED) {
+        zcash_sign_reset();
+        send_error(outcome == SIGN_PENDING ? ERR_USER_TIMEOUT : ERR_USER_REJECTED,
+                   outcome == SIGN_PENDING ? "no answer on the device" : "rejected on device");
+        return false;
+    }
+
+    /* The sighash goes back too: the host checks it against its own before
+     * it applies anything, which catches a device and a host that disagree
+     * about what was signed. Copied now, because signing consumes the
+     * summary. */
+    uint8_t sighash[32];
+    memcpy(sighash, summary->sighash, sizeof sighash);
+    static zs_sig sigs[ZS_MAX_SIGS];
+    uint32_t n = 0;
+    rc = zcash_sign_sign(sigs, ZS_MAX_SIGS, &n);
+    if (rc != ZS_OK) {
+        send_zsign_refusal(rc);
+        return false;
+    }
+    cbor_write_map(w, 1);
+    cbor_write_text(w, "result");
+    cbor_write_map(w, 2);
+    cbor_write_text(w, "sighash");
+    cbor_write_bytes(w, sighash, sizeof sighash);
+    cbor_write_text(w, "signatures");
+    cbor_write_array(w, n);
+    for (uint32_t i = 0; i < n; i++) {
+        cbor_write_map(w, 3);
+        cbor_write_text(w, "pool");
+        cbor_write_uint(w, sigs[i].pool);
+        cbor_write_text(w, "index");
+        cbor_write_uint(w, sigs[i].index);
+        cbor_write_text(w, "sig");
+        cbor_write_bytes(w, sigs[i].sig, sizeof sigs[i].sig);
+    }
+    memzero(sigs, sizeof sigs);
+    return true;
+}
+#endif
+
 /* Handle one decoded request. */
 static void dispatch(const uint8_t *payload, size_t len)
 {
@@ -530,10 +667,11 @@ static void dispatch(const uint8_t *payload, size_t len)
     }
 
     /* Static, not stack: a Zcash account reply (UFVK + UA + t-address) is
-     * ~700 bytes and this runs on a 10 KB task. dispatch() is only ever
-     * entered from the one active transport (PROTOCOL.md 3b), never two at
-     * once. Room for the session tag is inside PROTOCOL_MAX_FRAME. */
-    static uint8_t out[1024];
+     * ~700 bytes, a zSignFinish reply up to ~2.8 KB of signatures, and this
+     * runs on a 10 KB task. dispatch() is only ever entered from the one
+     * active transport (PROTOCOL.md 3b), never two at once. The frame header
+     * and the session tag fit in what is left of PROTOCOL_MAX_FRAME. */
+    static uint8_t out[PROTOCOL_MAX_FRAME - 64];
     CborWriter w;
     cbor_writer_init(&w, out, sizeof(out));
 
@@ -851,6 +989,25 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, acct.keys.ua);
         cbor_write_text(&w, "tAddress");
         cbor_write_text(&w, acct.t_address);
+
+    } else if (strcmp(method, "zSignBegin") == 0 || strcmp(method, "zSignChunk") == 0 ||
+               strcmp(method, "zSignFinish") == 0) {
+        /* A PCZT, uploaded in order, checked by the signer backends, shown
+         * page by page and signed only on the user's ACCEPT (roadmap 3).
+         * Session and unlock for all three: an upload is cheap to start but
+         * holds up to ZCASH_PCZT_MAX of PSRAM, and only a paired host may. */
+        if (!request_is_authenticated()) {
+            send_session_error(ERR_SESSION, "session required");
+            return;
+        }
+        if (!pin_is_unlocked()) {
+            zcash_sign_reset();
+            send_error(ERR_NOT_UNLOCKED, "device is locked");
+            return;
+        }
+        if (!handle_zsign(method, payload, len, &w)) {
+            return;     /* it answered with an error */
+        }
 #endif
 
     } else {
