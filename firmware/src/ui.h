@@ -236,6 +236,13 @@ void ui_poll_deferred(void);
  */
 uint32_t ui_hd_account(void);
 
+/**
+ * The Zcash network the receive screens show addresses for: ZS_NET_MAIN (0)
+ * or ZS_NET_TEST (1), set under Settings > Network and persisted. A view
+ * only; signing follows the network the PCZT declares.
+ */
+uint8_t ui_zcash_network(void);
+
 void ui_request_session_confirm(void);
 
 /**
