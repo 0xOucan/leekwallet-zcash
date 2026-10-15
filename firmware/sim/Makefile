@@ -197,8 +197,18 @@ $(BUILD)/test_zsign_diff: test_zsign_diff.c ../../vectors/pczt_vectors.h $(ZC_TE
 	$(CC) $(CFLAGS) -I$(ZSIGN)/include -I$(ZSIGNC)/include -I$(ZSIGNC) -o $@ $(filter %.c,$^) \
 	    $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
-TESTS += test_zcash_pczt_c test_zsign_diff
-all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff
+# PCZT intake and signing through the real vault, both backends and BOTH.
+$(BUILD)/test_zcash_sign: CFLAGS += -DAES_VAR
+$(BUILD)/test_zcash_sign: test_zcash_sign.c ../src/zcash-sign.c ../src/zcash-sign.h ../src/zcash-worker.c \
+                          ../../vectors/pczt_vectors.h esp_stubs.c host_stubs.c \
+                          $(ZSIGN)/platform/zsign_platform_host.c $(VAULT_SRC) $(VAULT_CRYPTO) \
+                          $(ZSIGN)/target/release/libzsign_rust.a $(BUILD)/libzsign_c.a | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -I$(ZSIGNC)/include -DLEEK_HOST_TEST \
+	    -o $@ $(sort $(filter %.c,$^)) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a \
+	    -lpthread -ldl -lm
+
+TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign
 
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
