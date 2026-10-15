@@ -69,9 +69,9 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 **1.2 Platform changes**
 - PSRAM on (settings from `sdkconfig.s3cam`), CPU at 240 MHz.
 - Secrets allocated in internal RAM only.
-- `PROTOCOL_MAX_FRAME` raised to 4096; uint64 support in `cbor.c`.
+- `PROTOCOL_MAX_FRAME` raised to 4096. (uint64 in `cbor.c` turned out unnecessary: amounts travel inside the PCZT, which the signer parses itself, never as CBOR integers. The CBOR grammar stays as small as LeekWallet left it.)
 - A signing task with a large internal stack.
-- Done when: a heap report shows PSRAM available, and a cbor uint64 test passes.
+- Done when: the generated sdkconfig shows PSRAM and 240 MHz, all envs build, and the sim suites pass.
 
 **1.3 `zsign` interface + key derivation in both backends**
 - `zs_derive`: seed → Orchard-protocol keys + FVK, BIP44/133 transparent key, ZIP 32 seed fingerprint, UFVK, UA (F4Jumble + bech32m), t-address.

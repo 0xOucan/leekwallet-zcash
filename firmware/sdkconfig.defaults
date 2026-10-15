@@ -38,8 +38,10 @@ CONFIG_MBEDTLS_SHA512_C=y
 # ============================================================================
 # CPU CONFIGURATION
 # ============================================================================
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=160
+# 240 MHz: Zcash signing is Pallas curve arithmetic, and the clock is the
+# whole budget for it (LeekWallet ran at 160 MHz for ECDSA, which is cheap).
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 
 # ============================================================================
 # CONSOLE - USE USB-SERIAL-JTAG (native USB on ESP32-S3 Mini)
@@ -85,27 +87,35 @@ CONFIG_TINYUSB_HID_ENABLED=y
 CONFIG_TINYUSB_DESC_HID_STRING="LeekWallet HID"
 
 # ============================================================================
-# PSRAM - present, and deliberately OFF.
+# PSRAM - ON, for transaction data only.
 #
-# The chip really has it: esptool reports "Embedded PSRAM 8MB (AP_3v3)" on the
-# attached board, and platformio.ini has said devkitc-1 with 16MB flash all
-# along. The old comment here claimed a Mini with none, which was simply wrong
-# about the hardware.
+# LeekWallet kept the N16R8's 8 MB octal PSRAM off: nothing needed it, and a
+# separate die on a bus is the wrong place for secrets while external-memory
+# encryption (which rides on flash encryption, T11) is not burned.
 #
-# It stays off because this is a wallet. PSRAM is a separate die reached over a
-# bus; internal SRAM shares silicon with the CPU. Anything the allocator spills
-# externally - a seed, a mnemonic, a derived key - is reachable in ways internal
-# memory is not, and the S3's external-memory encryption rides on flash
-# encryption, which is T11 and not yet burned. Nothing needs the space today:
-# the firmware uses about 15% of internal RAM.
-#
-# Turn it on when something actually needs it - a camera framebuffer for T58 is
-# the realistic case - and with two conditions: secrets allocated
-# MALLOC_CAP_INTERNAL so they cannot land off-die, and external memory
-# encryption on. Octal PSRAM also consumes GPIO35/36/37, free today.
+# Zcash needs it. A PCZT is tens of kilobytes and a multi-action one can reach
+# hundreds; the signer clones and parses it. So PSRAM comes on, under the rule
+# LeekWallet's camera board already follows (sdkconfig.s3cam):
+#   - SPIRAM_USE_MALLOC with ALWAYSINTERNAL=16384: every allocation under
+#     16 KB is internal, exactly as before; only big buffers go off-die.
+#   - Secrets never come from malloc: seed, mnemonic and derived keys live in
+#     static or stack storage, internal by construction. The Rust signer's
+#     key material is on its (internal) task stack.
+#   - What lands in PSRAM is the PCZT and its parse: transaction data, which
+#     is private but not key material.
+# This device is experimental and its eFuses are deliberately not burned
+# (docs/zcash/ROADMAP.md), so PSRAM contents are readable off the bus; the
+# rule above is what keeps that from mattering for keys.
+# Octal PSRAM consumes GPIO35/36/37.
 # ============================================================================
-CONFIG_SPIRAM=n
-CONFIG_ESP32S3_SPIRAM_SUPPORT=n
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+CONFIG_SPIRAM_IGNORE_NOTFOUND=n
 
 # ============================================================================
 # WATCHDOG

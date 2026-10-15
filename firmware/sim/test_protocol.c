@@ -1156,6 +1156,100 @@ static void test_tampered_frame_tears_down_the_session(void)
           "a failed tag left the session standing (state %d)", session_state());
 }
 
+/* ------------------------------------------------------------ zGetAccount */
+
+#include "../../vectors/keys_vectors.h"
+
+extern int fake_zcash_derive_calls;
+
+static size_t zget_account_request(uint8_t *buf, size_t cap, int account, const char *network)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 1 + (account >= 0) + (network != NULL));
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zGetAccount");
+    if (account >= 0) {
+        cbor_write_text(&w, "account");
+        cbor_write_uint(&w, (uint32_t)account);
+    }
+    if (network) {
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, network);
+    }
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+static void test_zget_account(void)
+{
+    printf("== zGetAccount: session and unlock required, network named, vector answer\n");
+    fresh_device();
+    device_has_a_wallet();
+
+    uint8_t payload[96];
+    size_t len = zget_account_request(payload, sizeof(payload), 0, "test");
+
+    send_plain(payload, len);
+    expect_error(T_ERROR, E_SESSION, "zGetAccount before any handshake");
+
+    confirmed_session(23);
+    int calls = fake_zcash_derive_calls;
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "zGetAccount while locked");
+    CHECK(fake_zcash_derive_calls == calls, "derived while the device was locked");
+
+    pin_set("123456");
+    pin_verify("123456");
+
+    /* The network is never defaulted. */
+    send_encrypted(payload, zget_account_request(payload, sizeof(payload), 0, NULL));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "zGetAccount without a network");
+    send_encrypted(payload, zget_account_request(payload, sizeof(payload), 0, "regtest"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "zGetAccount on an unknown network");
+
+    CborWriter w;
+    cbor_writer_init(&w, payload, sizeof(payload));
+    cbor_write_map(&w, 3);
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zGetAccount");
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, 0x80000000u);
+    cbor_write_text(&w, "network");
+    cbor_write_text(&w, "test");
+    send_encrypted(payload, w.length);
+    expect_error(T_ENC_ERROR, E_MALFORMED, "a hardened account index");
+
+    for (int net = 0; net <= 1; net++) {
+        for (int acct = 0; acct <= 1; acct++) {
+            const zv_key_vector *v = NULL;
+            for (size_t i = 0; i < ZV_KEYS_COUNT; i++) {
+                if (ZV_KEYS[i].network == net && ZV_KEYS[i].account == (uint32_t)acct &&
+                    !ZV_KEYS[i].passphrase[0]) { v = &ZV_KEYS[i]; break; }
+            }
+            send_encrypted(payload, zget_account_request(payload, sizeof(payload), acct,
+                                                         net ? "test" : "main"));
+            Frame f = next_reply();
+            const uint8_t *body;
+            size_t body_len;
+            CborItem it;
+            char text[512];
+            CHECK(f.present && f.type == T_ENC_RESPONSE, "zGetAccount was not answered");
+            if (!(f.present && result_body(&f, &body, &body_len))) continue;
+            CHECK(cbor_map_find(body, body_len, "ufvk", &it) && cbor_text_copy(&it, text, sizeof text) &&
+                  strcmp(text, v->ufvk) == 0, "ufvk differs from librustzcash (%s)", v->name);
+            CHECK(cbor_map_find(body, body_len, "ua", &it) && cbor_text_copy(&it, text, sizeof text) &&
+                  strcmp(text, v->ua) == 0, "ua differs from librustzcash (%s)", v->name);
+            CHECK(cbor_map_find(body, body_len, "tAddress", &it) && cbor_text_copy(&it, text, sizeof text) &&
+                  strcmp(text, v->transparent_address) == 0, "tAddress differs (%s)", v->name);
+            CHECK(cbor_map_find(body, body_len, "seedFingerprint", &it) && it.type == CBOR_BYTES &&
+                  it.value == 32 && memcmp(it.data, v->seed_fingerprint, 32) == 0,
+                  "seedFingerprint differs (%s)", v->name);
+            CHECK(cbor_map_find(body, body_len, "account", &it) && it.type == CBOR_UINT &&
+                  it.value == (uint32_t)acct, "account not echoed");
+        }
+    }
+}
+
 /* ----------------------------------------------------------- selectWallet */
 
 static size_t select_wallet_request(uint8_t *buf, size_t cap, uint64_t index)
@@ -2579,6 +2673,7 @@ static int run_all_tests(void)
     test_malformed_input();
     test_tampered_frame_tears_down_the_session();
     test_select_wallet();
+    test_zget_account();
     test_set_passphrase();
     test_ble_carries_the_same_frames();
     test_ble_survives_a_split_write_at_mtu_23();

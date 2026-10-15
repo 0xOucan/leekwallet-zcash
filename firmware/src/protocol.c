@@ -42,6 +42,9 @@
 #include "pin.h"
 #include "session.h"
 #include "ui.h"
+#if LEEK_HAS_ZCASH
+#include "zcash-account.h"
+#endif
 
 static const char *TAG = "protocol";
 
@@ -526,7 +529,11 @@ static void dispatch(const uint8_t *payload, size_t len)
         return;
     }
 
-    uint8_t out[192];
+    /* Static, not stack: a Zcash account reply (UFVK + UA + t-address) is
+     * ~700 bytes and this runs on a 10 KB task. dispatch() is only ever
+     * entered from the one active transport (PROTOCOL.md 3b), never two at
+     * once. Room for the session tag is inside PROTOCOL_MAX_FRAME. */
+    static uint8_t out[1024];
     CborWriter w;
     cbor_writer_init(&w, out, sizeof(out));
 
@@ -786,6 +793,65 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_uint(&w, pass_xfp);
         cbor_write_text(&w, "passphrase");
         cbor_write_uint(&w, 1);
+
+#if LEEK_HAS_ZCASH
+    } else if (strcmp(method, "zGetAccount") == 0) {
+        /* The account a companion imports: viewing key, address, and the
+         * seed fingerprint that lets it tell this seed's accounts apart (and a
+         * passphrase wallet from the base one). Viewing keys reveal history,
+         * not spend authority, so this needs a session and an unlocked device
+         * but no on-screen confirmation - the same footing as the xpub a
+         * watch-only Bitcoin wallet asks for. Showing an address for the user
+         * to compare is zShowAddress's job. */
+        if (!request_is_authenticated()) {
+            send_session_error(ERR_SESSION, "session required");
+            return;
+        }
+        if (!pin_is_unlocked()) {
+            send_error(ERR_NOT_UNLOCKED, "device is locked");
+            return;
+        }
+
+        uint32_t account = 0;
+        if (cbor_map_find(payload, len, "account", &item)) {
+            if (item.type != CBOR_UINT || item.value >= 0x80000000u) {
+                send_error(ERR_MALFORMED, "account out of range");
+                return;
+            }
+            account = item.value;
+        }
+        char net_name[8];
+        if (!cbor_map_find(payload, len, "network", &item) ||
+            !cbor_text_copy(&item, net_name, sizeof(net_name)) ||
+            (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+            /* Required, never defaulted: an account on the wrong network is a
+             * set of addresses nobody on the intended one can pay. */
+            send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+            return;
+        }
+        uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+
+        static ZcashAccount acct;
+        if (zcash_account_derive(account, network, &acct) != WALLET_OK) {
+            send_error(ERR_NO_WALLET, "derivation failed");
+            return;
+        }
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "result");
+        cbor_write_map(&w, 6);
+        cbor_write_text(&w, "account");
+        cbor_write_uint(&w, acct.account);
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, net_name);
+        cbor_write_text(&w, "seedFingerprint");
+        cbor_write_bytes(&w, acct.keys.seed_fingerprint, sizeof acct.keys.seed_fingerprint);
+        cbor_write_text(&w, "ufvk");
+        cbor_write_text(&w, acct.keys.ufvk);
+        cbor_write_text(&w, "ua");
+        cbor_write_text(&w, acct.keys.ua);
+        cbor_write_text(&w, "tAddress");
+        cbor_write_text(&w, acct.t_address);
+#endif
 
     } else {
         send_error(ERR_MALFORMED, "unknown or not yet implemented");

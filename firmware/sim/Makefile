@@ -5,7 +5,7 @@
 CC      ?= gcc
 CRYPTO  := ../components/trezor-crypto
 CFLAGS  := -O1 -g -Wall -Wextra -Wno-unused-parameter \
-           -I$(CRYPTO) -I../src -I../components/leek-wallet/include -I. -Ishim \
+           -I$(CRYPTO) -I../src -I../components/leek-wallet/include -I. -Ishim -I../components/zsign-rust/include \
            -DUSE_BIP39_CACHE=0 -DUSE_BIP32_CACHE=0
 BUILD   := build
 
@@ -40,7 +40,7 @@ VAULT_CRYPTO :=                 $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                 $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/aes_modes.c \
                 $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/gf128mul.c
 
-TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_zcash_keys test_zcash_pczt
+TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_zcash_keys test_zcash_pczt test_zcash_account
 
 all: $(addprefix $(BUILD)/,$(TESTS))
 
@@ -150,6 +150,16 @@ $(BUILD)/test_zcash_pczt: test_zcash_pczt.c ../../vectors/pczt_vectors.h host_st
                           $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
 	$(CC) $(CFLAGS) -I$(ZSIGN)/include -o $@ $(filter %.c,$^) \
 	    $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+
+# The Zcash account through the real vault (wallet_with_seed), trezor-crypto
+# for the transparent half and zsign-rust for the Orchard half.
+$(BUILD)/test_zcash_account: CFLAGS += -DAES_VAR
+$(BUILD)/test_zcash_account: test_zcash_account.c ../src/zcash-account.c ../src/zcash-worker.c ../../vectors/keys_vectors.h \
+                             esp_stubs.c host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
+                             $(ZSIGN)/target/release/libzsign_rust.a \
+                             $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
 .PHONY: FORCE
 FORCE:
@@ -286,7 +296,7 @@ $(BUILD)/test_pin_change: test_pin_change.c esp_stubs.c host_stubs.c \
 # The real src/protocol.c, against an in-memory USB-Serial-JTAG pipe. This is
 # the only place the wire protocol exists on the device, so it is the reference
 # the mock has to match; see test_protocol.c.
-PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.c \
+PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.c fake_zcash.c \
                 ../src/protocol.c ../src/cbor.c ../src/session.c ../src/pin.c \
                 ../src/ble-chunk.c ../src/ble.c ../src/ble-name.c ../src/transport.c ../src/entropy.c \
                 ../src/blind-signing.c \

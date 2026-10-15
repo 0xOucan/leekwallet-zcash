@@ -148,6 +148,7 @@
 #define PIN_I2C_SCL             GPIO_NUM_NC
 
 #define LEEK_HAS_CAMERA         0
+#define LEEK_HAS_ZCASH          0   /* zsign is built for Xtensa; this is a RISC-V C3 */
 #define LEEK_HAS_SDCARD         0
 #define LEEK_HAS_SE             0
 #define LEEK_HAS_BLE            1
@@ -181,6 +182,7 @@
 #define PIXEL_COUNT             0
 
 #define LEEK_HAS_CAMERA         0
+#define LEEK_HAS_ZCASH          1
 #define LEEK_HAS_SDCARD         0
 #define LEEK_HAS_SE             0
 #define LEEK_HAS_BLE            1
@@ -262,6 +264,7 @@
 #define PIXEL_COUNT             1
 
 #define LEEK_HAS_CAMERA         1
+#define LEEK_HAS_ZCASH          1
 #define LEEK_HAS_SDCARD         1
 #define LEEK_HAS_SE             0   /* ATECC608B not fitted yet; see RESEARCH-SECURE-ELEMENT.md */
 #define LEEK_HAS_BLE            1   /* present, off at boot, deliberate act to enable */

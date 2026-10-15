@@ -1155,6 +1155,38 @@ WalletError wallet_get_public_key_at_path(const HDPath *path, PublicKey *pubkey_
     return err;
 }
 
+/**
+ * Lend the 64-byte BIP39 seed (passphrase applied) to `fn`, under the derive
+ * lock, without it leaving the vault.
+ *
+ * Zcash derives its keys from the seed itself (ZIP 32), not from a BIP32 node,
+ * so the HD-path API above is not enough. Handing the caller a pointer for the
+ * duration of one call - rather than a copy - keeps a single copy of the seed,
+ * in the vault's own internal-RAM state, which lock and wipe already clear.
+ * The callee must not retain the pointer and must wipe anything it derives.
+ */
+WalletError wallet_with_seed(WalletSeedFn fn, void *ctx) {
+    if (!fn) {
+        return WALLET_ERROR_DERIVATION_FAILED;
+    }
+    if (!state.initialized) {
+        return WALLET_ERROR_NOT_INITIALIZED;
+    }
+    if (!state.unlocked) {
+        return WALLET_ERROR_LOCKED;
+    }
+    if (!state.has_mnemonic) {
+        return WALLET_ERROR_NO_MNEMONIC;
+    }
+    if (!derive_lock_take()) {
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    cache_seed_from_mnemonic();
+    WalletError err = state.seed_cached ? fn(state.seed, ctx) : WALLET_ERROR_DERIVATION_FAILED;
+    derive_lock_give();
+    return err;
+}
+
 #ifdef LEEK_HOST_TEST
 /* Host tests only: drop every byte of RAM state so wallet_init() re-reads
  * storage, which is the only way to simulate a reboot in-process. Compiled out

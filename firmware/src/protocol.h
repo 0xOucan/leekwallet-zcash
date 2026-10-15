@@ -17,18 +17,16 @@
 /**
  * Largest frame the device will assemble in either direction.
  *
- * 1024 since EIP-712 typed data, the largest request LeekWallet took. That
- * command is gone, and the bound is kept rather than shrunk: the Zcash
- * commands that replace it are not designed yet, and moving a wire limit
- * twice is worse than spending the kilobyte of static RAM (rx_buf and tx_buf
- * together) in the meantime.
+ * 4096, the size docs/PROTOCOL.md 2 always allowed and both host transports
+ * already accept. LeekWallet held 1024 for EIP-712; Zcash sends a PCZT of
+ * several to hundreds of kilobytes as a sequence of zSignChunk frames, and
+ * four times the frame is a quarter of the round trips (and of the BLE
+ * chunk headers). The cost is static RAM: rx_buf and tx_buf, 8 KB together.
  *
- * Still far inside the 4 KB the specification allows and both host transports
- * already accept (docs/PROTOCOL.md 2). The declared length is checked against
- * this bound before a single byte is buffered, so the peer still cannot
- * dictate an allocation.
+ * The declared length is still checked against this bound before a single
+ * byte is buffered, so the peer cannot dictate an allocation.
  */
-#define PROTOCOL_MAX_FRAME 1024
+#define PROTOCOL_MAX_FRAME 4096
 
 /**
  * The wire protocol this firmware speaks, offered and required in `hello`.
