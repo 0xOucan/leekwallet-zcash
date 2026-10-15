@@ -17,6 +17,9 @@ if(IDF_TARGET STREQUAL "esp32c3")
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-sign.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-review.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-receive.c)
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/sd-seed.c)
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/sdcard.c)
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zkv.c)
 else()
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled-pixie.c)
 endif()
@@ -26,6 +29,9 @@ set(app_requires driver nvs_flash esp_hw_support bootloader_support
 if(NOT IDF_TARGET STREQUAL "esp32c3")
     # Both signer backends: BOTH mode requires them to agree (zcash-sign.c).
     list(APPEND app_requires zsign-rust zsign-c)
+    # The microSD card (sdcard.c): SDMMC host and FATFS. Every S3 board has
+    # the slot or its pins; the C3 has neither.
+    list(APPEND app_requires fatfs sdmmc esp_driver_sdmmc)
 endif()
 
 # The camera stack, only where the top-level CMakeLists did not exclude it.
