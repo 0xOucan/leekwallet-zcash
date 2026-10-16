@@ -164,6 +164,24 @@ fn a_no_on_the_device_fails_the_address_check() {
     let mut z = zdev_or_skip!("show-no", false);
     z.child.stdin.as_mut().unwrap().write_all(b"y\nn\n").unwrap();
     let mut dev = connect(&z);
-    let err = dev.z_show_address(0, "test", "utest1x").expect_err("must fail");
+    // The wallet's own address, so the question reaches the user.
+    let ua = device::get_text(&dev.z_get_account(0, "test").unwrap(), "ua").unwrap();
+    let err = dev.z_show_address(0, "test", &ua).expect_err("must fail");
     assert!(device::is_code(&err, device::ERR_USER_REJECTED), "{err}");
+}
+
+#[test]
+fn someone_elses_address_is_refused_before_the_screen() {
+    let mut z = zdev_or_skip!("show-foreign", false);
+    z.child.stdin.as_mut().unwrap().write_all(b"y\n").unwrap();
+    let mut dev = connect(&z);
+    // abandon-art testnet account 1: a valid address, but not account 0's.
+    let keys: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vectors/keys.json")).unwrap(),
+    )
+    .unwrap();
+    let other = keys.as_array().unwrap().iter().find(|v| v["name"] == "test/abandon-art/pp0/acct1").unwrap();
+    let err = dev.z_show_address(0, "test", other["ua"].as_str().unwrap()).expect_err("must fail");
+    assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 14), "{err}");
+    assert!(err.to_string().contains("NOT from its wallet"), "{err}");
 }
