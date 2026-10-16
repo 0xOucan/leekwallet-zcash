@@ -1449,7 +1449,9 @@ dependencies = [
  "pczt",
  "postcard",
  "rand_core",
+ "secp256k1",
  "zcash_address",
  "zcash_protocol",
+ "zcash_transparent",
  "zip32",
 ]

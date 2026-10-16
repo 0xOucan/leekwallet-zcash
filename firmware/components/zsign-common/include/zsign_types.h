@@ -67,20 +67,41 @@ typedef struct {
     uint8_t  memo[512];
 } zs_output;
 
+/* A transparent input (roadmap 10.1). Only P2PKH coins of this account at a
+ * path the device re-derived reach the summary (docs/zcash/FORMATS.md). */
+#define ZS_MAX_T_INPUTS 16
+#define ZS_TADDR_MAX    48
+typedef struct {
+    uint64_t value;                 /* zatoshis, committed by every sighash */
+    uint32_t scope, index;          /* m/44'/coin'/account'/scope/index */
+    uint8_t  sighash[32];           /* ZIP 244 transparent sighash, SIGHASH_ALL */
+    char     address[ZS_TADDR_MAX]; /* "t1..." / "tm...", NUL-terminated */
+} zs_tinput;
+
 /* Everything the review screens show. Every field is computed or verified
- * on the device; none is taken from the host as-is. */
+ * on the device; none is taken from the host as-is. total_in counts the
+ * shielded spends; t_in the transparent inputs; fee is computed from both. */
 typedef struct {
     uint32_t branch_id, tx_version, warnings;
     uint8_t  n_outputs, n_spends, n_dummies, _pad;
     uint64_t total_in, fee;
     uint8_t  sighash[32];
     zs_output outputs[ZS_MAX_OUTPUTS];
+    uint8_t  n_tinputs, _pad3[7];
+    uint64_t t_in;
+    zs_tinput tinputs[ZS_MAX_T_INPUTS];
 } zs_summary;
 
+/* One signature. Pools 1 and 2: RedPallas R || S over the shielded sighash,
+ * for action `index`. Pool 0: secp256k1 ECDSA r || s (low S, RFC 6979) over
+ * transparent input `index`'s sighash, by `pubkey`; a .zsig or a protocol
+ * reply carries it DER-encoded with the sighash type byte appended. */
 typedef struct {
     uint8_t  pool, _pad[3];
     uint32_t index;
     uint8_t  sig[64];
+    uint8_t  pubkey[33];            /* pool 0 only; zero otherwise */
+    uint8_t  _pad2[3];
 } zs_sig;
 
 #ifdef __cplusplus

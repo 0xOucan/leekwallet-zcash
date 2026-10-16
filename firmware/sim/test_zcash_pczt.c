@@ -99,12 +99,43 @@ static void run(const zv_pczt_vector *v)
         }
     }
 
+    /* Transparent inputs: shown in order, each with its path and the
+     * sighash librustzcash computes for it. */
+    expect(sum.n_tinputs == v->n_tinputs, v->name, "transparent input count");
+    uint64_t t_in = 0;
+    for (int i = 0; i < v->n_tinputs && i < sum.n_tinputs; i++) {
+        const zv_pczt_tinput *e = &v->tinputs[i];
+        const zs_tinput *t = &sum.tinputs[i];
+        hex32(t->sighash, sh);
+        expect(t->value == e->value && t->scope == e->scope && t->index == e->index,
+               v->name, "transparent input value and path");
+        expect(strcmp(t->address, e->address) == 0, v->name, "transparent input address");
+        expect(strcmp(sh, e->sighash) == 0, v->name, "transparent sighash matches librustzcash");
+        t_in += e->value;
+    }
+    expect(sum.t_in == t_in, v->name, "transparent input total");
+
     zs_sig sigs[ZS_MAX_SIGS];
     uint32_t n = 0;
     rc = zs_pczt_sign(ctx, seed, v->account, v->network, sigs, ZS_MAX_SIGS, &n);
     expect(rc == 0 && n >= 1, v->name, "signs");
-    for (uint32_t i = 0; i < n; i++)
+    uint32_t n_t = 0;
+    for (uint32_t i = 0; i < n; i++) {
         expect(zs_pczt_verify_sig(ctx, &sigs[i]) == 0, v->name, "signature verifies against rk");
+        if (sigs[i].pool != ZS_POOL_TRANSPARENT) continue;
+        expect(sigs[i].index == n_t, v->name, "one transparent signature per input, in order");
+        n_t++;
+        zs_sig bad = sigs[i];
+        bad.sig[40] ^= 1;
+        expect(zs_pczt_verify_sig(ctx, &bad) != 0, v->name, "corrupted transparent signature rejected");
+        bad = sigs[i];
+        bad.pubkey[10] ^= 1;
+        expect(zs_pczt_verify_sig(ctx, &bad) != 0, v->name, "transparent signature under another key rejected");
+        bad = sigs[i];
+        bad.index = 99;
+        expect(zs_pczt_verify_sig(ctx, &bad) != 0, v->name, "transparent signature for a missing input rejected");
+    }
+    expect(n_t == v->n_tinputs, v->name, "every transparent input signed");
     if (n) {
         zs_sig bad = sigs[0];
         bad.sig[5] ^= 1;
