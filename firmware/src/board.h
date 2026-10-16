@@ -154,6 +154,10 @@
 #define LEEK_HAS_BLE            1
 #define LEEK_HAS_USB            0   /* USB Serial/JTAG only; no wallet transport */
 #define LEEK_VAULT_ON_SD        0
+#define LEEK_HAS_ENCODER        0
+#define BOARD_PANEL_SH1107      0
+#define BOARD_SH1107_FLIP       0
+#define BOARD_ENC_REVERSE       0
 
 #elif LEEK_BOARD_S3
 
@@ -199,6 +203,10 @@
 #define LEEK_HAS_BLE            1
 #define LEEK_HAS_USB            1
 #define LEEK_VAULT_ON_SD        0
+#define LEEK_HAS_ENCODER        0
+#define BOARD_PANEL_SH1107      0
+#define BOARD_SH1107_FLIP       0
+#define BOARD_ENC_REVERSE       0
 
 #elif LEEK_BOARD_S3CAM
 
@@ -211,7 +219,8 @@
  * The camera owns GPIO 4-18 except 14, which is the whole reason this board
  * needs its own map: the reference board's I2C pins and all four of its
  * buttons are camera lines here. Nothing below touches a strapping pin
- * (0, 3, 45, 46), and UART0 on 43/44 is left alone so the logs survive.
+ * (0, 3, 45, 46). The console is USB Serial/JTAG, so UART0's 43/44 carry the
+ * encoder (below).
  */
 
 #define BOARD_NAME              "ESP32-S3 CAM"
@@ -281,6 +290,34 @@
 #define LEEK_HAS_BLE            1   /* present, off at boot, deliberate act to enable */
 #define LEEK_HAS_USB            1   /* likewise */
 #define LEEK_VAULT_ON_SD        1
+
+/*
+ * The Zcash screen kit (firmware/docs/WIRING-S3CAM.md): a 1.5" 128x128 SH1107 I2C
+ * OLED on the same bus as before, a four-button module on K1-K4, and an EC11
+ * rotary encoder. Turning it is UP/DOWN; its push switch is wired in
+ * parallel with K4, so pressing the knob is OK.
+ *
+ * Encoder on UART0's pins, free because the console is USB Serial/JTAG:
+ * CLK on GPIO44 (RX, an input at boot) and DT on GPIO43 (TX). The ROM still
+ * prints its boot banner on GPIO43, so DT goes through a 1k resistor: if the
+ * contact happens to be closed during those milliseconds, the resistor, not
+ * the pin, takes it. Both lines also have the module's 10k pull-ups, which
+ * is why its "+" must go to 3V3, never 5V.
+ *
+ * Build with -DBOARD_PANEL_SH1107=0 for the original 128x64 SSD1306.
+ */
+#define LEEK_HAS_ENCODER        1
+#define PIN_ENC_CLK             GPIO_NUM_44
+#define PIN_ENC_DT              GPIO_NUM_43
+#ifndef BOARD_ENC_REVERSE
+#define BOARD_ENC_REVERSE       0   /* 1 if clockwise moves up instead of down */
+#endif
+#ifndef BOARD_PANEL_SH1107
+#define BOARD_PANEL_SH1107      1
+#endif
+#ifndef BOARD_SH1107_FLIP
+#define BOARD_SH1107_FLIP       0   /* 1 if the picture is upside down */
+#endif
 
 #else
 #  error "No board branch matched; see the LEEK_BOARD_* guard above"

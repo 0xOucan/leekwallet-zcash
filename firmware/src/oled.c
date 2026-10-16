@@ -6,6 +6,9 @@
 #include "oled.h"
 #include "oled-core.h"
 #include "board.h"
+#if BOARD_PANEL_SH1107
+#include "panel128.h"
+#endif
 #include <string.h>
 #include "driver/i2c.h"
 #include "driver/gpio.h"
@@ -105,6 +108,111 @@ esp_err_t oled_i2c_init(void)
              PIN_SDA, PIN_SCL, I2C_FREQ_HZ);
     return ESP_OK;
 }
+
+#if BOARD_PANEL_SH1107
+/* ============================================================================
+ * SH1107, 128x128 (the S3CAM screen kit: a 1.5" GME128128-01 IIC module)
+ *
+ * Same I2C framing as the SSD1306 (0x00 command, 0x40 data) and the same
+ * page format, so the frame goes out as it is composed (panel128.c): the UI
+ * in the middle eight pages, or a QR redrawn across all sixteen. Page
+ * addressing: 0xB0+page, then the column, then 128 bytes.
+ *
+ * The init values are the ones Adafruit's SH110X driver uses for 128x128.
+ * Which way up the glass ends up depends on how the module is mounted:
+ * BOARD_SH1107_FLIP turns it 180 degrees (segment remap and COM scan).
+ * ============================================================================ */
+
+static uint8_t panel_image[PANEL128_BYTES];
+
+esp_err_t oled_init(void)
+{
+    panel_ready = true;
+    const uint8_t init_cmds[] = {
+        0xAE,                                   /* display off */
+        0xD5, 0x51,                             /* clock divide / oscillator */
+        0x20,                                   /* page addressing */
+        0x81, 0x4F,                             /* contrast */
+        0xAD, 0x8A,                             /* DC-DC on */
+        BOARD_SH1107_FLIP ? 0xA1 : 0xA0,        /* segment remap */
+        BOARD_SH1107_FLIP ? 0xC8 : 0xC0,        /* COM scan direction */
+        0xDC, 0x00,                             /* display start line */
+        0xD3, 0x00,                             /* display offset */
+        0xD9, 0x22,                             /* pre-charge */
+        0xDB, 0x35,                             /* VCOMH */
+        0xA8, 0x7F,                             /* multiplex: 128 rows */
+        0xA4,                                   /* follow RAM */
+        0xA6,                                   /* normal, not inverted */
+    };
+    for (size_t i = 0; i < sizeof(init_cmds); i++) {
+        if (ssd1306_send_cmd(init_cmds[i]) != ESP_OK) {
+            ESP_LOGE(TAG, "SH1107 init cmd %02X failed", init_cmds[i]);
+            panel_ready = false;
+            return ESP_FAIL;
+        }
+    }
+    /* Clear the panel's RAM before lighting it: it powers up with noise. */
+    oled_clear_panel_now();
+    ssd1306_send_cmd(0xAF);
+    ESP_LOGI(TAG, "SH1107 initialized: 128x128 @ 0x%02X", OLED_ADDR);
+    return ESP_OK;
+}
+
+static esp_err_t send_panel(const uint8_t *img)
+{
+    for (int page = 0; page < PANEL128_PAGES; page++) {
+        ssd1306_send_cmd(0xB0 + page);
+        ssd1306_send_cmd(0x10);     /* column high nibble: 0 */
+        ssd1306_send_cmd(0x00);     /* column low nibble: 0 */
+        esp_err_t err = ssd1306_send_data(img + page * PANEL128_SIZE, PANEL128_SIZE);
+        if (err != ESP_OK) return err;
+    }
+    return ESP_OK;
+}
+
+esp_err_t oled_flush(void)
+{
+    bool inverted = false;
+    const QRCode *qr = oled_core_last_qr(&inverted);
+    panel128_compose(oled_core_framebuffer(), qr, inverted, panel_image);
+    return send_panel(panel_image);
+}
+
+esp_err_t oled_refresh(void)
+{
+    return oled_flush();
+}
+
+esp_err_t oled_clear_panel_now(void)
+{
+    memset(panel_image, 0, sizeof panel_image);
+    return send_panel(panel_image);
+}
+
+esp_err_t oled_set_contrast(uint8_t level)
+{
+    ssd1306_send_cmd(0x81);
+    ssd1306_send_cmd(level);
+    return ESP_OK;
+}
+
+esp_err_t oled_set_fast_refresh(bool fast)
+{
+    /* As on the SSD1306: fastest oscillator and a short pre-charge for a
+     * camera, the init values otherwise. */
+    ssd1306_send_cmd(0xD5);
+    ssd1306_send_cmd(fast ? 0xF1 : 0x51);
+    ssd1306_send_cmd(0xD9);
+    ssd1306_send_cmd(0x22);
+    return ESP_OK;
+}
+
+esp_err_t oled_draw_raw(const uint8_t *data, size_t len)
+{
+    return ssd1306_send_data(data, len);
+}
+
+#else /* SSD1306, 128x64 */
 
 esp_err_t oled_init(void)
 {
@@ -247,4 +355,4 @@ esp_err_t oled_refresh(void)
     return ssd1306_send_data(framebuffer, (size_t)OLED_WIDTH * OLED_PAGES);
 }
 
-
+#endif /* BOARD_PANEL_SH1107 */
