@@ -9,3 +9,11 @@
 
 # zecz wallet data (default --data-dir)
 zecz-data/
+
+# The Android app is its own git repository (a clone of zodl-android on the
+# leekwallet branch), kept out of this one; see docs/zcash/ANDROID.md.
+/android/
+
+# Transactions made while testing at the repo root.
+/*.pczt
+/*.zsig
