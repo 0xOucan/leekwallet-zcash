@@ -436,3 +436,28 @@ checked on Xtensa).
 - The Android app is now pushed to a private repo,
   github.com/0xOucan/leekwallet-zcash-android (branch `leekwallet`,
   default; `upstream` = zodl-inc/zodl-android).
+
+### 7.3 Compact PCZT vectors (2026-10-16)
+- New valid vectors, made as the app's `compact_view` makes them (a host
+  test checks byte equality and the full view's sighash):
+  `iw_send_transparent_compact` 1,286 B (full 4,730),
+  `iw_send_nu7_compact` 1,373 B (4,807),
+  `orchard_to_ironwood_compact` 3,189 B (9,450, both bundles compacted).
+- Finding: the compact view carries nothing that commits to the memo.
+  cmx and epk do not cover it, and the ciphertext is rebuilt from it. So a
+  changed memo is a different transaction, not one the device can refuse.
+  `iw_send_shielded_compact_memo_changed` (3,507 B) pins that: the device
+  shows the new memo and signs a different sighash. Its signatures verify
+  for neither backend's view of the original, and `apply_signatures_to`
+  refuses them.
+- New refusals: `r_compact_recipient_tampered` (pk_d changed; with cmx
+  absent only user_address catches it, -14) and
+  `r_compact_diversifier_tampered` (the memo re-encrypts to another epk,
+  -10). 20 PCZT vectors in all. The generator is seeded: every existing
+  file is unchanged, so `iw_send_shielded.zsig` still matches.
+- `test_zsign_diff`: the random pass now covers the 5 compact vectors
+  (6,225 mutations, 3,429 accepted, 0 mismatches). A new pass aims at the
+  compact output fields (memo, recipient, rseed, epk, rcv, user_address):
+  488 mutations, 193 accepted, and every accepted one changed the sighash.
+- `make -C firmware/sim test` and `cargo test` in `host/` (33 tests)
+  pass.
