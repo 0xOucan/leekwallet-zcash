@@ -197,6 +197,11 @@ pub struct Device {
 /// Replies can take as long as a person reading the review screens.
 const USER_TIMEOUT: Duration = Duration::from_secs(150);
 const SHORT: Duration = Duration::from_secs(10);
+/// Requests that derive keys on the device. On the S3 at 160 MHz an Orchard
+/// account (Sinsemilla, in software) takes many seconds, and the device may
+/// first wait up to 10 s for its vault after the PIN; 10 s was not enough on
+/// the first board.
+const DERIVE: Duration = Duration::from_secs(90);
 
 impl Device {
     pub fn open(path: &str) -> Result<Self> {
@@ -336,7 +341,7 @@ impl Device {
         self.call("zGetAccount", vec![
             ("account", Value::Integer(account.into())),
             ("network", Value::Text(network.into())),
-        ], SHORT)
+        ], DERIVE)
     }
 
     /// `zShowAddress`: the device shows its own unified address for the user
@@ -363,7 +368,7 @@ impl Device {
         let r = self.call("zSetAccountMeta", vec![
             ("account", Value::Integer(account.into())),
             ("birthday", Value::Integer(birthday.into())),
-        ], SHORT)?;
+        ], DERIVE)?;
         Ok(get_uint(&r, "stored")? == 1)
     }
 
@@ -377,7 +382,7 @@ impl Device {
             ("sha256", Value::Bytes(sha.to_vec())),
             ("account", Value::Integer(account.into())),
             ("network", Value::Text(network.into())),
-        ], SHORT)?;
+        ], DERIVE)?;
         let max = get_uint(&begin, "maxChunk")? as usize;
         if max == 0 {
             bail!("device offered a zero chunk size");
