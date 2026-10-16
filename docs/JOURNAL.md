@@ -436,3 +436,24 @@ checked on Xtensa).
 - The Android app is now pushed to a private repo,
   github.com/0xOucan/leekwallet-zcash-android (branch `leekwallet`,
   default; `upstream` = zodl-inc/zodl-android).
+
+### 8.1 zecz library split (2026-10-16)
+- New crate `host/zecz-core`, lib name `zecz`: the old library modules
+  plus `zecz::wallet`, typed functions that return data and never print:
+  `Profile` (data dir, network, server), `Wallet::create/open/init`,
+  `sync` with a progress callback, `tip`, `balances` (Orchard, Ironwood,
+  transparent: total, spendable, pending), `addresses`, `propose_send`
+  (payments, change, fee, target height, signer view; the full PCZT goes
+  to `pending/`) and `finish` (apply `.zsig`, prove, extract, store,
+  broadcast; returns the txid). `zecz::seed_card` covers `.zkv` cards.
+- `host/zecz-cli` is now only the `zecz` binary, over that API, with no
+  direct librustzcash dependency. leek-android's tests use `zecz-core`.
+- Same output as before: the offline commands (help, errors, `zkv-new`,
+  `zkv-open`, `sign-soft`) diffed against the old binary, and `tip`,
+  `init-dev`, `sync`, `balance`, `address` and a refused `send` on
+  testnet. One change: `finish` on a data dir with no wallet now says
+  "no wallet" rather than "no pending PCZT".
+- Tests: `zecz-core/tests/wallet.rs`, 9 offline (temp-dir profiles, the
+  abandon-art account imported from an offline birthday and checked
+  against `vectors/keys.json`, send and finish refusals, `.zkv`) and 2
+  `#[ignore]`d on testnet (tip; init and sync near the tip), which pass.

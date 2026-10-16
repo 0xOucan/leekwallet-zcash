@@ -80,7 +80,8 @@ Everything runs at 3.3 V.
 |---|---|
 | `firmware/` | Device firmware (ESP-IDF 5.5 via PlatformIO), forked from LeekWallet with its history. Zcash code in `src/zcash-*.c`, the C signer in `components/zsign-c`, the Rust signer in `components/zsign-rust` |
 | `firmware/sim/` | Host simulator and tests: the firmware's C code built for Linux with fakes for the hardware; `zdev`, a simulated device on a PTY |
-| `host/zecz-cli` | `zecz`: watch-only wallet, PCZT builder, prover, broadcaster |
+| `host/zecz-core` | The `zecz` library: watch-only wallet, PCZT builder, prover, broadcaster (shared by the CLI and the desktop app) |
+| `host/zecz-cli` | `zecz`, the command line over `zecz-core` |
 | `host/leek-device` | Device client shared by `zecz` and Android: pairing, session, calls, `.zsig` |
 | `host/leek-android` | Native library for the Android app (JNI): device client, compact view, applying signatures |
 | `vectors/` | Key, PCZT (valid and refused) and `.zsig` test vectors, and their generator |
@@ -109,7 +110,7 @@ pio run -e esp32s3cam -t upload --upload-port /dev/ttyACM0
 ```sh
 make -C firmware/sim test      # firmware unit tests, both signers, refusal vectors
 make -C firmware/sim zdev      # simulated device on a PTY, for zecz
-cd host && cargo test          # zecz, device client, Android native library
+cd host && cargo test          # zecz library and CLI, device client, Android native library
 ```
 
 **A testnet send with `zecz`:**
