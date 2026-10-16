@@ -1185,6 +1185,16 @@ static void dispatch(const uint8_t *payload, size_t len)
             return;
         }
         const uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+        /* Optional "ua": the address the app displays, which may be any of
+         * the account's diversified addresses (wallets rotate them). The
+         * device shows it only once its own keys prove it is the account's;
+         * without it, the device shows its default address. */
+        static char asked[ZS_UA_MAX];
+        bool has_ua = cbor_map_find(payload, len, "ua", &item);
+        if (has_ua && !cbor_text_copy(&item, asked, sizeof asked)) {
+            send_error(ERR_MALFORMED, "ua: not an address");
+            return;
+        }
         static ZcashAccount shown;
         WalletError werr = wait_for_wallet();
         if (werr == WALLET_OK) {
@@ -1193,6 +1203,30 @@ static void dispatch(const uint8_t *payload, size_t len)
         if (werr != WALLET_OK) {
             send_wallet_error(werr);
             return;
+        }
+        if (has_ua) {
+            uint8_t index[11];
+            char t_address[ZCASH_TADDR_MAX];
+            switch (zcash_ua_check(&shown, asked, index, t_address)) {
+            case ZCASH_UA_OURS:
+                break;
+            case ZCASH_UA_NOT_OURS:
+                memzero(&shown, sizeof shown);
+                send_error((uint16_t)(ERR_ZSIGN_BASE | (unsigned)-ZS_E_USER_ADDRESS),
+                           "this address is not from this device's wallet");
+                return;
+            case ZCASH_UA_UNSUPPORTED:
+                memzero(&shown, sizeof shown);
+                send_error((uint16_t)(ERR_ZSIGN_BASE | (unsigned)-ZS_E_UNSUPPORTED_BUNDLE),
+                           "the address has a receiver the device cannot check");
+                return;
+            default:
+                memzero(&shown, sizeof shown);
+                send_error(ERR_MALFORMED, "ua: not a unified address on this network");
+                return;
+            }
+            snprintf(shown.keys.ua, sizeof shown.keys.ua, "%s", asked);
+            snprintf(shown.t_address, sizeof shown.t_address, "%s", t_address);
         }
         ui_request_show_address(shown.keys.ua, shown.t_address, account, network);
         SignOutcome outcome = wait_for_user();

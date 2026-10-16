@@ -41,4 +41,23 @@ uint32_t zcash_coin_type(uint8_t network);
  */
 WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount *out);
 
+/** What zcash_ua_check found. */
+typedef enum {
+    ZCASH_UA_OURS = 0,       /* every receiver is this account's */
+    ZCASH_UA_MALFORMED,      /* not a UA on this network, or no Orchard receiver */
+    ZCASH_UA_NOT_OURS,       /* a receiver belongs to someone else */
+    ZCASH_UA_UNSUPPORTED,    /* a receiver the device cannot check (Sapling, P2SH, ...) */
+} ZcashUaCheck;
+
+/**
+ * Is `ua` one of `a`'s own external addresses, at any diversifier index? The
+ * Orchard receiver must be the account's (pk_d = [ivk] g_d); its index comes
+ * from decrypting the diversifier, and a P2PKH receiver must be the account's
+ * transparent key at that same index (ZIP 316). On ZCASH_UA_OURS, index_le
+ * holds the 11-byte index and t_address_out the transparent address the UA
+ * carries ("" if none). Needs `a` from zcash_account_derive.
+ */
+ZcashUaCheck zcash_ua_check(const ZcashAccount *a, const char *ua, uint8_t index_le[11],
+                            char t_address_out[ZCASH_TADDR_MAX]);
+
 #endif /* LEEK_ZCASH_ACCOUNT_H */

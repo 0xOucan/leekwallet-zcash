@@ -156,10 +156,11 @@ $(BUILD)/test_zcash_pczt: test_zcash_pczt.c ../../vectors/pczt_vectors.h host_st
 $(BUILD)/test_zcash_account: CFLAGS += -DAES_VAR
 $(BUILD)/test_zcash_account: test_zcash_account.c ../src/zcash-account.c ../src/zcash-worker.c ../../vectors/keys_vectors.h \
                              esp_stubs.c host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
-                             $(ZSIGN)/target/release/libzsign_rust.a \
+                             $(ZSIGN)/target/release/libzsign_rust.a $(BUILD)/libzsign_c.a \
                              $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -DLEEK_HOST_TEST -o $@ \
-	    $(filter %.c,$^) $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -I$(ZSIGNC)/include -I$(ZSIGNC) \
+	    -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
 # SD card storage mode (roadmap 1.4): the three storage modes agree, through
 # the real vault and the real derivation, with a directory as the card.
