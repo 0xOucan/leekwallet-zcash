@@ -1,5 +1,7 @@
 # LeekWallet Zcash
 
+[![desktop](https://github.com/0xOucan/leekwallet-zcash/actions/workflows/desktop.yml/badge.svg)](https://github.com/0xOucan/leekwallet-zcash/actions/workflows/desktop.yml)
+
 A DIY Zcash hardware wallet on an ESP32-S3 board that costs about as much as
 lunch. It holds the seed, checks every transaction against its own keys, shows
 you what you are signing, and signs it. Your phone or computer builds and proves
@@ -36,6 +38,17 @@ outputs.
 - Pairing is an encrypted session (X25519, HKDF, ChaCha20-Poly1305) confirmed by
   a six-digit passkey on both screens ([PROTOCOL.md](firmware/docs/PROTOCOL.md)).
 
+## Status
+
+| Component | State |
+|---|---|
+| **Board + firmware** | Done and tested on real hardware: signs over USB, Bluetooth, QR and SD; compact PCZT; verifies any of its addresses |
+| **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; testnet sends signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen |
+| **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
+| **Desktop app** (`desktop/`) | Skeleton: import a viewing key, sync with progress, balances, address. Builds on Linux, Windows and macOS in CI. Board pairing and signing in progress |
+| **Chrome extension** | Planned: a test of a Zcash engine in the browser comes first |
+| **Mainnet, NEAR Intents** | Planned (firmware Phase 10, then swaps on every companion) |
+
 ## What works
 
 | | |
@@ -44,8 +57,9 @@ outputs.
 | Storage | PIN vault in flash, stateless (seed typed each boot), or an encrypted `.zkv` file on the microSD card |
 | Signing | Ironwood and Orchard spends, to shielded or transparent outputs, with memos. Two independent signers: C (on the device) and Rust (host and QEMU), cross-checked against each other |
 | Links | USB serial and Bluetooth LE for everyday signing; animated QR (UR fountain codes, the board's camera) and the SD card when the board must stay off every link |
-| Screen | 128×128 SH1107 OLED, EC11 rotary encoder + buttons; receive address as text and QR, "verify address on device" |
-| Companions | `zecz` CLI (PC), LeekWallet Zcash for Android (a [Zodl](https://github.com/zodl-inc/zodl-android) fork) |
+| Screen | 128×128 SH1107 OLED, EC11 rotary encoder + buttons; receive address as text and QR |
+| Address check | The app sends the address it displays, even a rotated diversified one; the board proves it is its own (Orchard `pk_d = [ivk]·g_d`, index recovered by FF1 decryption, transparent receiver checked at that index) and only then shows it to confirm. Foreign or mixed addresses are refused |
+| Companions | `zecz` CLI (PC), LeekWallet Zcash for Android (a [Zodl](https://github.com/zodl-inc/zodl-android) fork), and a desktop app in progress |
 
 Testnet transactions signed on the board include
 `1daaff6366fccbd6ea50f137a975a5013b2632083446b5220205ad16057b1ef0` (the first,
@@ -84,7 +98,9 @@ Everything runs at 3.3 V.
 | `host/zecz-cli` | `zecz`, the command line over `zecz-core` |
 | `host/leek-device` | Device client shared by `zecz` and Android: pairing, session, calls, `.zsig` |
 | `host/leek-android` | Native library for the Android app (JNI): device client, compact view, applying signatures |
-| `vectors/` | Key, PCZT (valid and refused) and `.zsig` test vectors, and their generator |
+| `desktop/` | LeekWallet Zcash desktop app (Tauri 2) on `zecz-core`, for Linux, Windows and macOS |
+| `.github/workflows/` | CI: host tests, and desktop builds on the three systems |
+| `vectors/` | Key, PCZT (valid, compact and refused) and `.zsig` test vectors, and their generator |
 | `docs/zcash/` | [ANALYSIS](docs/zcash/ANALYSIS.md), [PLAN](docs/zcash/PLAN.md), [ROADMAP](docs/zcash/ROADMAP.md), [FORMATS](docs/zcash/FORMATS.md) |
 | `docs/JOURNAL.md` | What was done at each step, what broke, what was measured |
 
@@ -113,6 +129,15 @@ make -C firmware/sim zdev      # simulated device on a PTY, for zecz
 cd host && cargo test          # zecz library and CLI, device client, Android native library
 ```
 
+**Desktop app** (needs Node 22, pnpm 9, and on Linux webkit2gtk-4.1; see
+[desktop/README.md](desktop/README.md)):
+
+```sh
+cd desktop && pnpm install
+pnpm tauri dev                 # run
+pnpm tauri build               # .deb / AppImage, .msi, .dmg
+```
+
 **A testnet send with `zecz`:**
 
 ```sh
@@ -127,15 +152,21 @@ $Z finish --pczt tx.pczt --sigs tx.zsig      # prove, apply signatures, broadcas
 
 ## Roadmap
 
-Next, in [ROADMAP.md](docs/zcash/ROADMAP.md) Phases 6–12:
+The full plan, with a "done when" check for each step, is in
+[ROADMAP.md](docs/zcash/ROADMAP.md); what happened at each step is in
+[JOURNAL.md](docs/JOURNAL.md).
 
-- Android: NEAR Intents swaps signed on the board, passphrase restore, a
-  proper account type, and offering the hardware module to Zodl upstream.
-- Desktop app for Linux, Windows and macOS (Tauri, with `zecz` as its engine).
-- A Chrome extension that is a full wallet: software wallets, the board over
-  Web Serial and Web Bluetooth, and NEAR Intents in the browser.
-- Firmware: transparent inputs, mainnet, several accounts, Bluetooth bonding,
-  a security review.
+- [x] Firmware on the board: keys, storage modes, both signers, USB, Bluetooth, QR, SD
+- [x] `zecz` CLI and the first board-signed testnet transactions
+- [x] Android: import, USB / Bluetooth / QR signing, verify address on device
+- [x] Compact PCZT on every link (Phase 7)
+- [x] Desktop skeleton and CI on three systems (8.1)
+- [ ] Desktop: pair with the board, sign, verify address (8.3), wallet screens (8.4)
+- [ ] Chrome extension: engine test (9.1), then a full wallet with the board over Web Serial / Web Bluetooth
+- [ ] Firmware: transparent inputs, mainnet, several accounts, Bluetooth bonding, security review (Phase 10)
+- [ ] NEAR Intents swaps signed on the board, on Android, desktop and Chrome
+- [ ] A proper account type in the Android app and an offer to Zodl upstream
+- [ ] Releases and the hackathon submission
 
 ## License
 
