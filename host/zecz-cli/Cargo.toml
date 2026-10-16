@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # commit as vectors/gen and zsign-rust), so the host builds exactly the
 # PCZT encoding and Orchard/Ironwood circuits the device checks.
 [dependencies]
-zcash_client_backend = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_client_backend", features = [
+zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = [
     "orchard",
     "transparent-inputs",
     "pczt",
@@ -26,14 +26,14 @@ zcash_client_backend = { path = "../../../referencialeekwallet/zec references/li
     "lightwalletd-tonic-transport",
     "lightwalletd-tonic-tls-webpki-roots",
 ] }
-zcash_client_sqlite = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_client_sqlite", features = ["orchard", "transparent-inputs", "serde"] }
-zcash_keys = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_keys", features = ["orchard", "transparent-inputs"] }
-zcash_protocol = { path = "../../../referencialeekwallet/zec references/librustzcash/components/zcash_protocol" }
-zcash_address = { path = "../../../referencialeekwallet/zec references/librustzcash/components/zcash_address" }
-zip321 = { path = "../../../referencialeekwallet/zec references/librustzcash/components/zip321" }
-zcash_primitives = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_primitives", features = ["transparent-inputs"] }
-zcash_transparent = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_transparent", features = ["transparent-inputs"] }
-pczt = { path = "../../../referencialeekwallet/zec references/librustzcash/pczt", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
+zcash_client_sqlite = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs", "serde"] }
+zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs"] }
+zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_address = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zip321 = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
+zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
+pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
 orchard = { version = "0.16", default-features = false, features = ["std", "circuit"] }
 zip32 = "0.3"
 

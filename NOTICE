@@ -1,0 +1,12 @@
+LeekWallet Zcash
+Copyright 2026 0xoucan
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product is built on LeekWallet (firmware/), also Apache-2.0; see
+firmware/NOTICE and firmware/THIRD-PARTY-LICENSES.md for the third-party
+software it bundles.
+
+The host tools and the Zcash signers use the Zcash Rust libraries
+(librustzcash, orchard, pczt and related crates, MIT OR Apache-2.0) from
+crates.io and https://github.com/zcash/librustzcash.

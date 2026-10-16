@@ -5,22 +5,22 @@ edition = "2021"
 publish = false
 description = "LeekWallet Zcash: generate reference test vectors from librustzcash"
 
-# Path dependencies on the reference checkout of librustzcash, commit
+# librustzcash from upstream git, pinned to commit
 # 16f0723c385957cecc32b4f0c71bb411053b708b (2026-10-14). The generated
 # vectors are committed, so this only matters when regenerating them.
 [dependencies]
-zcash_address = { path = "../../../referencialeekwallet/zec references/librustzcash/components/zcash_address" }
-zcash_keys = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_keys", features = ["orchard", "transparent-inputs", "test-dependencies"] }
-zcash_protocol = { path = "../../../referencialeekwallet/zec references/librustzcash/components/zcash_protocol" }
-zcash_transparent = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_transparent", features = ["transparent-inputs"] }
+zcash_address = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs", "test-dependencies"] }
+zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
 orchard = { version = "0.16", default-features = false, features = ["std", "circuit"] }
 zip32 = "0.3"
 bip39 = { version = "2", features = ["std"] }
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-pczt = { path = "../../../referencialeekwallet/zec references/librustzcash/pczt", features = ["zcp-builder", "io-finalizer", "signer", "orchard", "transparent"] }
-zcash_primitives = { path = "../../../referencialeekwallet/zec references/librustzcash/zcash_primitives", default-features = false, features = ["std", "transparent-inputs"] }
+pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["zcp-builder", "io-finalizer", "signer", "orchard", "transparent"] }
+zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["std", "transparent-inputs"] }
 zcash_note_encryption = "0.5.1"
 shardtree = "0.8"
 incrementalmerkletree = "0.9"
