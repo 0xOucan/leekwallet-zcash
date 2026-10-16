@@ -1636,6 +1636,32 @@ static size_t zshow_request(uint8_t *buf, size_t cap, uint32_t account, const ch
     return cbor_writer_ok(&w) ? w.length : 0;
 }
 
+/* Seen on the first board: the PIN gate opens before the UI has decrypted
+ * the vault, and a companion asking at once was told "derivation failed".
+ * The request now waits for the wallet, and says what is missing. */
+static void test_zcash_waits_for_the_wallet(void)
+{
+    printf("== Zcash requests wait for the vault, and name what is missing\n");
+    fresh_device();
+    confirmed_session(26);
+    pin_set("123456");
+    pin_verify("123456");   /* PIN gate open, vault still closed */
+
+    uint8_t payload[96];
+    size_t len = zget_account_request(payload, sizeof payload, 0, "test");
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "vault never opened");
+
+    wallet_unlock("123456", 6);   /* open, but nothing stored */
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_NO_WALLET, "no wallet on the device");
+
+    fake_wallet_preload(TEST_MNEMONIC);
+    send_encrypted(payload, len);
+    Frame f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "a ready wallet was not answered");
+}
+
 static void test_zget_features(void)
 {
     printf("== zGetFeatures: before a session, what the signer accepts\n");
@@ -3132,6 +3158,7 @@ static int run_all_tests(void)
     test_select_wallet();
     test_zget_account();
     test_zset_account_meta();
+    test_zcash_waits_for_the_wallet();
     test_zget_features();
     test_zshow_address();
     test_zsign();

@@ -516,6 +516,56 @@ static SignOutcome wait_for_user(void)
 }
 
 #if LEEK_HAS_ZCASH
+/*
+ * Wait for the open wallet to be usable, after the PIN gate has opened.
+ *
+ * The PIN gate opens the moment the PIN is accepted, and getStatus reports
+ * unlocked from then on, but the UI task only then decrypts the vault
+ * (another PBKDF2, about 1.5 s on the S3) and selects the stored wallet. A
+ * companion that unlocked the device and asked for its account straight
+ * away met a closed vault and was told "derivation failed" - seen on the
+ * first board. So a Zcash request waits for the wallet, briefly, and says
+ * which of the two it is when it gives up.
+ */
+static WalletError wait_for_wallet(void)
+{
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
+    for (;;) {
+        WalletStatus st = wallet_get_status();
+        const bool temp = wallet_has_temporary_mnemonic();
+        if (st.unlocked && (temp || st.active_wallet_index > 0)) {
+            return WALLET_OK;
+        }
+        if (!pin_is_unlocked()) {
+            return WALLET_ERROR_LOCKED;
+        }
+        if (st.unlocked && st.wallet_count == 0 && !temp) {
+            return WALLET_ERROR_NO_MNEMONIC;
+        }
+        if (xTaskGetTickCount() > deadline) {
+            return st.unlocked ? WALLET_ERROR_NO_MNEMONIC : WALLET_ERROR_LOCKED;
+        }
+        session_note_activity();
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+/* A wallet error from a Zcash request, said in words a user can act on. */
+static void send_wallet_error(WalletError err)
+{
+    switch (err) {
+        case WALLET_ERROR_NO_MNEMONIC:
+            send_error(ERR_NO_WALLET, "no wallet on the device: create or import one");
+            break;
+        case WALLET_ERROR_LOCKED:
+            send_error(ERR_NOT_UNLOCKED, "the wallet is not open yet; unlock the device");
+            break;
+        default:
+            send_error(ERR_NO_WALLET, "derivation failed");
+            break;
+    }
+}
+
 /* Payload bytes per zSignChunk: a 4096-byte frame less the frame header,
  * the session tag and the CBOR around the data. */
 #define ZSIGN_MAX_CHUNK 3072
@@ -533,6 +583,13 @@ static bool handle_zsign(const char *method, const uint8_t *payload, size_t len,
     int rc;
 
     if (strcmp(method, "zSignBegin") == 0) {
+        /* Before any upload: a PCZT for a wallet that is not open yet would
+         * only be refused at the end, after every chunk had crossed. */
+        WalletError werr = wait_for_wallet();
+        if (werr != WALLET_OK) {
+            send_wallet_error(werr);
+            return false;
+        }
         uint32_t total = 0, account = 0;
         if (!cbor_map_find(payload, len, "len", &item) || item.type != CBOR_UINT) {
             send_error(ERR_MALFORMED, "len required");
@@ -971,8 +1028,12 @@ static void dispatch(const uint8_t *payload, size_t len)
         uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
 
         static ZcashAccount acct;
-        if (zcash_account_derive(account, network, &acct) != WALLET_OK) {
-            send_error(ERR_NO_WALLET, "derivation failed");
+        WalletError werr = wait_for_wallet();
+        if (werr == WALLET_OK) {
+            werr = zcash_account_derive(account, network, &acct);
+        }
+        if (werr != WALLET_OK) {
+            send_wallet_error(werr);
             return;
         }
         /* The birthday, when the device has one for this account (a
@@ -1066,8 +1127,12 @@ static void dispatch(const uint8_t *payload, size_t len)
         }
         const uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
         static ZcashAccount shown;
-        if (zcash_account_derive(account, network, &shown) != WALLET_OK) {
-            send_error(ERR_NO_WALLET, "derivation failed");
+        WalletError werr = wait_for_wallet();
+        if (werr == WALLET_OK) {
+            werr = zcash_account_derive(account, network, &shown);
+        }
+        if (werr != WALLET_OK) {
+            send_wallet_error(werr);
             return;
         }
         ui_request_show_address(shown.keys.ua, shown.t_address, account, network);
@@ -1108,6 +1173,11 @@ static void dispatch(const uint8_t *payload, size_t len)
                 return;
             }
             account = (uint32_t)item.value;
+        }
+        WalletError werr = wait_for_wallet();
+        if (werr != WALLET_OK) {
+            send_wallet_error(werr);
+            return;
         }
         ZcashMeta meta;
         zmeta_get(account, &meta);   /* fields not sent are kept */
