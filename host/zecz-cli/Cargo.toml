@@ -9,52 +9,11 @@ description = "LeekWallet Zcash: host companion CLI (watch-only wallet, PCZT bui
 name = "zecz"
 path = "src/main.rs"
 
-# Path dependencies on the reference checkout of librustzcash (the same
-# commit as vectors/gen and zsign-rust), so the host builds exactly the
-# PCZT encoding and Orchard/Ironwood circuits the device checks.
+# All wallet logic lives in zecz-core (lib name `zecz`); this crate only
+# parses arguments and prints.
 [dependencies]
 zecz-core = { path = "../zecz-core" }
-zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = [
-    "orchard",
-    "transparent-inputs",
-    "pczt",
-    "sync",
-    "lightwalletd-tonic",
-    "lightwalletd-tonic-transport",
-    "lightwalletd-tonic-tls-webpki-roots",
-] }
-zcash_client_sqlite = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs", "serde"] }
-zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs"] }
-zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zcash_address = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zip321 = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
-zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
-pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
-orchard = { version = "0.16", default-features = false, features = ["std", "circuit"] }
-zip32 = "0.3"
-
-tonic = { version = "0.14", default-features = false, features = ["transport", "tls-ring", "tls-webpki-roots"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
-bip39 = { version = "2", features = ["std"] }
 hex = "0.4"
-sha2 = "0.10"
-rand = { version = "0.10", features = ["sys_rng"] }
-secrecy = "0.8"
-rusqlite = "0.37"
-
-# The device link (src/device.rs): LeekWallet's own serial framing, and the
-# session primitives session.c uses.
-leek-transport-serial = { path = "../../firmware/app/transport-serial" }
-leek-device = { path = "../leek-device" }
-x25519-dalek = { version = "2", features = ["static_secrets"] }
-hkdf = "0.12"
-chacha20poly1305 = "0.10"
-ciborium = "0.2"
-getrandom = "0.3"
-aes-gcm = "0.10"
-pbkdf2 = { version = "0.12", features = ["hmac"] }
-hmac = "0.12"

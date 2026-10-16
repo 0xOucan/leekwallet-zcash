@@ -746,13 +746,17 @@ impl Wallet {
     /// [`Wallet::finish`] with the signer view and `.zsig` read from files.
     pub async fn finish_files(
         &mut self,
-        unsigned: &Path,
+        unsigned_path: &Path,
         zsig: &Path,
         broadcast: bool,
         on_event: impl FnMut(FinishEvent),
     ) -> Result<Finished> {
-        let unsigned = fs::read(unsigned).with_context(|| format!("reading {}", unsigned.display()))?;
+        let unsigned = fs::read(unsigned_path).with_context(|| format!("reading {}", unsigned_path.display()))?;
         let zsig = fs::read(zsig).with_context(|| format!("reading {}", zsig.display()))?;
+        let pending = self.pending_path(&zsig::sha256(&unsigned));
+        if !pending.exists() {
+            bail!("no pending PCZT {} ; was {} created by `zecz send` with this data dir?", pending.display(), unsigned_path.display());
+        }
         self.finish(&unsigned, &zsig, broadcast, on_event).await
     }
 }
