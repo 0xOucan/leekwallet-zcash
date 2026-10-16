@@ -9,14 +9,11 @@ description = "LeekWallet Zcash: host companion CLI (watch-only wallet, PCZT bui
 name = "zecz"
 path = "src/main.rs"
 
-[lib]
-name = "zecz"
-path = "src/lib.rs"
-
 # Path dependencies on the reference checkout of librustzcash (the same
 # commit as vectors/gen and zsign-rust), so the host builds exactly the
 # PCZT encoding and Orchard/Ironwood circuits the device checks.
 [dependencies]
+zecz-core = { path = "../zecz-core" }
 zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = [
     "orchard",
     "transparent-inputs",
@@ -61,6 +58,3 @@ getrandom = "0.3"
 aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
 hmac = "0.12"
-
-[dev-dependencies]
-serde_json = "1"
