@@ -141,6 +141,8 @@ fn init_dev_imports_the_test_account_offline() {
     let w = Wallet::open(profile.clone()).unwrap();
     assert!(w.has_account().unwrap());
     assert_eq!(w.addresses().unwrap(), a.addresses);
+    // The ZIP 32 origin survives in the database: a signer needs it.
+    assert_eq!(w.key_origin().unwrap(), Some(origin));
     // Not scanned yet: no summary, no balance.
     assert_eq!(w.sync_status().unwrap(), None);
     assert!(err_text(w.balances()).contains("run `zecz sync`"));
@@ -162,6 +164,7 @@ fn a_bare_ufvk_imports_view_only() {
     let (w, outcome) = Wallet::init_with_birthday(profile, &spec, &offline_birthday()).unwrap();
     let InitOutcome::Imported(a) = outcome else { panic!("expected a fresh import") };
     assert_eq!(a.origin, None);
+    assert_eq!(w.key_origin().unwrap(), None);
     assert_eq!(w.birthday().unwrap(), TEST_NU5);
     assert_eq!(a.addresses.unified, kv["ua"].as_str().unwrap());
     assert_eq!(w.ufvk().unwrap(), spec.ufvk);
