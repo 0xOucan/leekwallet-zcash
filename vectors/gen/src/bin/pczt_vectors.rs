@@ -546,16 +546,8 @@ fn build_t_send(
         })
         .unwrap()
         .finish();
-    // The signer view: no dummy spend keys (the IO Finalizer used them) and
-    // no witnesses, as redact_pczt_for_signer leaves it.
-    let pczt = Redactor::new(pczt)
-        .redact_ironwood_with(|mut r| {
-            r.redact_actions(|mut a| {
-                a.clear_spend_witness();
-                a.clear_spend_dummy_sk();
-            });
-        })
-        .finish();
+    // Witnesses kept, as in the shielded vectors, so a host test can prove
+    // the signed result.
     Built { pczt, outputs, fee, t_inputs }
 }
 
