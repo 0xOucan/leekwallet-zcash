@@ -68,6 +68,61 @@ impl FramePort for JniPort {
 // SAFETY: JavaVM and GlobalRef are thread-safe handles; the decoder is plain data.
 unsafe impl Send for JniPort {}
 
+/// FramePort over a Kotlin BleIo object. BLE carries whole frames - the
+/// GATT layer delimits them and Kotlin does the chunking (PROTOCOL.md 2) -
+/// so there is no sync marker: a frame is a big-endian u16 length (type byte
+/// included), the type, then the payload, exactly the USB frame without "LK".
+struct JniBlePort {
+    vm: JavaVM,
+    io: GlobalRef,
+}
+
+// SAFETY: as for JniPort.
+unsafe impl Send for JniBlePort {}
+
+impl FramePort for JniBlePort {
+    fn send(&mut self, frame_type: u8, payload: &[u8]) -> Result<(), TransportError> {
+        let body = payload.len() + 1;
+        let mut frame = Vec::with_capacity(body + 2);
+        frame.extend_from_slice(&(body as u16).to_be_bytes());
+        frame.push(frame_type);
+        frame.extend_from_slice(payload);
+        let mut env = self.vm.attach_current_thread().map_err(|e| TransportError::Serial(e.to_string()))?;
+        let arr = env.byte_array_from_slice(&frame).map_err(|e| TransportError::Serial(e.to_string()))?;
+        let r = env.call_method(&self.io, "sendFrame", "([B)V", &[JValue::Object(&arr)]);
+        if r.is_err() || env.exception_check().unwrap_or(false) {
+            let _ = env.exception_clear();
+            return Err(TransportError::Serial("Bluetooth write failed".into()));
+        }
+        Ok(())
+    }
+
+    fn recv(&mut self, timeout: Duration) -> Result<(u8, Vec<u8>), TransportError> {
+        let mut env = self.vm.attach_current_thread().map_err(|e| TransportError::Serial(e.to_string()))?;
+        let ms = timeout.as_millis().min(i32::MAX as u128) as jint;
+        let r = env.call_method(&self.io, "recvFrame", "(I)[B", &[JValue::Int(ms)]);
+        let obj = match r.and_then(|v| v.l()) {
+            Ok(o) if !env.exception_check().unwrap_or(true) => o,
+            _ => {
+                let _ = env.exception_clear();
+                return Err(TransportError::Serial("Bluetooth read failed".into()));
+            }
+        };
+        if obj.is_null() {
+            return Err(TransportError::Timeout);
+        }
+        let f = env.convert_byte_array(JByteArray::from(obj)).map_err(|e| TransportError::Serial(e.to_string()))?;
+        if f.len() < 3 {
+            return Err(TransportError::Serial("short Bluetooth frame".into()));
+        }
+        let body = u16::from_be_bytes([f[0], f[1]]) as usize;
+        if body + 2 != f.len() || body == 0 {
+            return Err(TransportError::Serial("malformed Bluetooth frame".into()));
+        }
+        Ok((f[2], f[3..].to_vec()))
+    }
+}
+
 fn throw(env: &mut JNIEnv, e: &anyhow::Error) {
     let _ = env.throw_new("java/lang/IllegalStateException", format!("{e:#}"));
 }
@@ -87,6 +142,18 @@ pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_open(
 ) -> jlong {
     let r = (|| -> anyhow::Result<jlong> {
         let port = JniPort { vm: env.get_java_vm()?, io: env.new_global_ref(io)?, decoder: FrameDecoder::new() };
+        Ok(Box::into_raw(Box::new(Device::with_port(Box::new(port)))) as jlong)
+    })();
+    r.unwrap_or_else(|e| { throw(&mut env, &e); 0 })
+}
+
+/// The device over Bluetooth LE: `io` is a Kotlin BleIo (whole frames).
+#[no_mangle]
+pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_openBle(
+    mut env: JNIEnv, _c: JClass, io: JObject,
+) -> jlong {
+    let r = (|| -> anyhow::Result<jlong> {
+        let port = JniBlePort { vm: env.get_java_vm()?, io: env.new_global_ref(io)? };
         Ok(Box::into_raw(Box::new(Device::with_port(Box::new(port)))) as jlong)
     })();
     r.unwrap_or_else(|e| { throw(&mut env, &e); 0 })
