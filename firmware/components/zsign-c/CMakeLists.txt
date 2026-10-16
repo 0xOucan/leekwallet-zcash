@@ -20,7 +20,8 @@ idf_component_register(
     SRCS ${zc_units} "zc_sinsemilla.S"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "." "${ZCV}/include" "${ZCV}/src"
-    PRIV_REQUIRES esp_hw_support)
+    # trezor-crypto only for idf/zc_unit_zc_secp.c (transparent inputs).
+    PRIV_REQUIRES esp_hw_support trezor-crypto)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -std=gnu11

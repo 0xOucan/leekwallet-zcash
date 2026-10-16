@@ -115,6 +115,40 @@ static void run(const zv_pczt_vector *v)
     expect(rc == 0 && n >= 1, v->name, "signs");
     for (uint32_t i = 0; i < n; i++)
         expect(zc_pczt_verify_sig(ctx, &sigs[i]) == 0, v->name, "signature verifies against rk");
+
+    /* Transparent inputs: shown in order with path, address and the sighash
+     * librustzcash computes; one low-S signature each. */
+    expect(sum.n_tinputs == v->n_tinputs, v->name, "transparent input count");
+    for (int i = 0; i < v->n_tinputs && i < sum.n_tinputs; i++) {
+        const zv_pczt_tinput *e = &v->tinputs[i];
+        const zs_tinput *t = &sum.tinputs[i];
+        hex32(t->sighash, sh);
+        expect(t->value == e->value && t->scope == e->scope && t->index == e->index &&
+               strcmp(t->address, e->address) == 0, v->name, "transparent input shown");
+        expect(strcmp(sh, e->sighash) == 0, v->name, "transparent sighash matches librustzcash");
+    }
+    uint32_t n_t = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (sigs[i].pool != ZS_POOL_TRANSPARENT) continue;
+        expect(sigs[i].index == n_t++, v->name, "transparent signatures in input order");
+        /* The same signature with s replaced by n - s: valid ECDSA, but
+         * high S, which the network's policy and libsecp256k1 refuse. */
+        static const uint8_t order[32] = {
+            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFE,
+            0xBA,0xAE,0xDC,0xE6,0xAF,0x48,0xA0,0x3B,0xBF,0xD2,0x5E,0x8C,0xD0,0x36,0x41,0x41 };
+        zs_sig high = sigs[i];
+        int borrow = 0;
+        for (int k = 31; k >= 0; k--) {
+            int d = order[k] - sigs[i].sig[32 + k] - borrow;
+            borrow = d < 0;
+            high.sig[32 + k] = (uint8_t)(d + (borrow ? 256 : 0));
+        }
+        expect(zc_pczt_verify_sig(ctx, &high) != 0, v->name, "high-S transparent signature rejected");
+        zs_sig bad = sigs[i];
+        bad.pubkey[7] ^= 1;
+        expect(zc_pczt_verify_sig(ctx, &bad) != 0, v->name, "transparent signature under another key rejected");
+    }
+    expect(n_t == v->n_tinputs, v->name, "every transparent input signed");
     if (n) {
         zs_sig bad = sigs[0];
         bad.sig[5] ^= 1;

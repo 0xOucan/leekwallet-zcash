@@ -87,6 +87,11 @@ static void run_both(const uint8_t *b, size_t len, const uint8_t seed[64], uint3
                        res->sig_r[i].index != res->sig_c[i].index;
                 bad |= zc_pczt_verify_sig(c, &res->sig_r[i]) != 0;   /* Rust sig, C verifies */
                 bad |= zs_pczt_verify_sig(r, &res->sig_c[i]) != 0;   /* C sig, Rust verifies */
+                /* RFC 6979 in both (libsecp256k1, trezor-crypto): the same
+                 * transparent signature, byte for byte. */
+                if (res->sig_r[i].pool == ZS_POOL_TRANSPARENT)
+                    bad |= memcmp(res->sig_r[i].sig, res->sig_c[i].sig, 64) != 0 ||
+                           memcmp(res->sig_r[i].pubkey, res->sig_c[i].pubkey, 33) != 0;
             }
             if (bad) res->rc_c = 2000;
         }
@@ -284,6 +289,72 @@ static void compact_rebinding(uint8_t seeds[][64])
     expect(verified == 0, chg->name, "no signature over the changed memo verifies for the original");
 }
 
+/* 5. Every byte of the transparent inputs of each valid vector that has
+ * them, three mutations each (from the first prevout to the end of the last
+ * input's derivation path): the backends agree, every accepted mutation
+ * changes the sighash, and every one that is signed gives byte-identical
+ * transparent signatures. */
+static void transparent_fields(uint8_t seeds[][64])
+{
+    static zc_pczt layout;
+    static result res;
+    long total = 0, accepted = 0, mismatch = 0;
+    printf("== transparent input fields: every byte, 3 mutations each\n");
+    for (size_t i = 0; i < ZV_PCZT_COUNT; i++) {
+        const zv_pczt_vector *v = &ZV_PCZT[i];
+        if (v->expect != 0 || v->n_tinputs == 0) continue;
+        size_t len;
+        uint8_t *b = slurp(v->file, &len);
+        if (!b || zc_pczt_read(b, len, &layout) != ZC_R_OK || layout.n_tin == 0) {
+            expect(0, v->name, "transparent layout");
+            free(b);
+            continue;
+        }
+        const zc_tin *last = &layout.tin[layout.n_tin - 1];
+        size_t from = (size_t)(layout.tin[0].prevout_txid - b);
+        size_t to = (size_t)(last->bip32_fp - b) + 32 + 1 + 5 * 5;
+        if (to > len) to = len;
+        uint8_t base[32];
+        int32_t e;
+        zs_ctx *r = zs_pczt_new(b, len, &e);
+        expect(r && zs_pczt_check(r, seeds[i], v->account, v->network, &sr) == 0, v->name,
+               "base checks");
+        memcpy(base, sr.sighash, 32);
+        zs_pczt_free(r);
+        for (size_t pos = from; pos < to; pos++) {
+            for (int k = 0; k < 3; k++) {
+                uint8_t old = b[pos], nb = mutate_byte(old);
+                b[pos] = nb;
+                run_both(b, len, seeds[i], v->account, v->network, total % 4 == 0, &res);
+                total++;
+                if (res.rc_r != res.rc_c) {
+                    if (++mismatch <= 10)
+                        printf("  %s byte %zu %02x->%02x: rust %d, c %d\n", v->name, pos, old, nb,
+                               res.rc_r, res.rc_c);
+                } else if (res.rc_r == 0) {
+                    accepted++;
+                    if (!summaries_equal()) {
+                        if (++mismatch <= 10) {
+                            printf("  SUMMARY %s byte %zu\n", v->name, pos);
+                            explain_summary();
+                        }
+                    } else if (memcmp(sr.sighash, base, 32) == 0 && nb != old) {
+                        /* Only bytes outside the transaction (the path's
+                         * fingerprint is checked, so none should be) may
+                         * leave the sighash alone. */
+                        if (++mismatch <= 10)
+                            printf("  %s byte %zu accepted with the same sighash\n", v->name, pos);
+                    }
+                }
+                b[pos] = old;
+            }
+        }
+        free(b);
+    }
+    printf("  %ld mutations, %ld accepted by both, %ld mismatches\n", total, accepted, mismatch);
+    fails += (int)mismatch;
+}
+
 int main(void)
 {
     const char *ns = getenv("ZSIGN_DIFF_N"), *ss = getenv("ZSIGN_DIFF_SEED");
@@ -378,6 +449,7 @@ int main(void)
 
     compact_fields(seeds, per_vector / 75 > 0 ? per_vector / 75 : 1);
     compact_rebinding(seeds);
+    transparent_fields(seeds);
     for (size_t i = 0; i < ZV_PCZT_COUNT; i++) memzero(seeds[i], 64);
 
     if (fails) {

@@ -351,12 +351,32 @@ static int opcode_ok(uint8_t op)
     }
 }
 
-int zc_script_parses(const uint8_t *s, size_t n)
+/* zcash_script's Disabled opcodes: an error in every script kind. */
+static int opcode_disabled(uint8_t op)
+{
+    switch (op) {
+    case 0x7e: case 0x7f: case 0x80: case 0x81: case 0x83: case 0x84: case 0x85:
+    case 0x86: case 0x8d: case 0x8e: case 0x95: case 0x96: case 0x97: case 0x98:
+    case 0x99: case 0xab:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* script::Sig (PushValue): OP_0, the pushes, OP_1NEGATE, OP_1..OP_16. */
+static int push_value(uint8_t op)
+{
+    return op <= 0x4f || (op >= 0x51 && op <= 0x60);
+}
+
+int zc_script_parses_as(const uint8_t *s, size_t n, int kind)
 {
     size_t i = 0;
     while (i < n) {
         uint8_t op = s[i++];
         size_t len = 0;
+        if (kind == ZC_SCRIPT_SIG && !push_value(op)) return 0;
         if (op >= 0x01 && op <= 0x4b) {
             len = op;
         } else if (op >= 0x4c && op <= 0x4e) {
@@ -365,11 +385,18 @@ int zc_script_parses(const uint8_t *s, size_t n)
             for (size_t j = k; j > 0; j--) len = (len << 8) | s[i + j - 1];
             i += k;
         } else {
-            if (!opcode_ok(op)) return 0;
+            /* script::FromChain keeps bad opcodes (PossiblyBad), but a
+             * disabled one still fails to parse. */
+            if (kind == ZC_SCRIPT_FROM_CHAIN ? opcode_disabled(op) : !opcode_ok(op)) return 0;
             continue;
         }
         if (n - i < len || len > 520) return 0;
         i += len;
     }
     return 1;
+}
+
+int zc_script_parses(const uint8_t *s, size_t n)
+{
+    return zc_script_parses_as(s, n, ZC_SCRIPT_PUBKEY);
 }

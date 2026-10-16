@@ -33,6 +33,7 @@
 #include "pczt_reader.h"
 #include "zc_crypto.h"
 #include "zc_encoding.h"
+#include "zc_secp.h"
 #include "zip244.h"
 
 #define BRANCH_NU6_3 0x37a5165bu
@@ -54,6 +55,7 @@ struct zc_ctx {
     uint8_t valid[2];            /* validate_pool passed, per pool */
     int32_t prepared;            /* 0 not yet, 1 ok, else the refusal */
     uint8_t sighash[32];
+    uint8_t tsighash[ZC_MAX_T_INPUTS][32];  /* per transparent input */
     uint8_t checked;             /* a check passed and no signing used it */
     uint8_t checked_net;
     uint32_t checked_account;
@@ -217,6 +219,7 @@ static int32_t validate_pool(zc_ctx *c, int pool)
 typedef struct {
     const zc_fvk *fvk;
     const uint8_t *fvk96;
+    const uint8_t *t_ovks;       /* transparent OVKs, external || internal, or NULL */
     uint8_t net;
     zs_summary *out;
     uint8_t n_out;               /* outputs collected (saturating) */
@@ -392,11 +395,18 @@ static int32_t check_pool(zc_ctx *c, int pool, acc_t *acc)
         }
 
         /* Memo: recovered with this account's own OVKs (external, then
-         * internal), as signer.rs does; unrecovered otherwise. */
+         * internal, then the transparent ones when the PCZT spends
+         * transparent inputs), as signer.rs does; unrecovered otherwise. */
         o->memo_kind = ZS_MEMO_UNRECOVERED;
         if (enc_ciphertext(pool, a, enc) == 0) {
-            const uint8_t *ovks[2] = { acc->fvk->ovk_ext, acc->fvk->ovk_int };
-            for (int j = 0; j < 2; j++) {
+            const uint8_t *ovks[4] = { acc->fvk->ovk_ext, acc->fvk->ovk_int, NULL, NULL };
+            int n_ovks = 2;
+            if (acc->t_ovks) {
+                ovks[2] = acc->t_ovks;
+                ovks[3] = acc->t_ovks + 32;
+                n_ovks = 4;
+            }
+            for (int j = 0; j < n_ovks; j++) {
                 uint64_t v;
                 if (zc_recover_with_ovk(ovks[j], c->cv[k], c->cmx[k], a->epk, enc,
                                         a->out_ct.p, a->nullifier, nv, rec, &v, memo) == 0 &&
@@ -425,39 +435,185 @@ static int32_t check_pool(zc_ctx *c, int pool, acc_t *acc)
     return rc;
 }
 
+/* ---- stage 2c: transparent inputs (signer.rs check_transparent) --------- */
+
+#define SIGHASH_ALL 0x01
+
+static int is_p2pkh(const zc_bytes *s)
+{
+    return s->len == 25 && s->p[0] == 0x76 && s->p[1] == 0xa9 && s->p[2] == 0x14 &&
+           s->p[23] == 0x88 && s->p[24] == 0xac;
+}
+
+/* transparent::pczt::Bundle::into_parsed, which the Rust Verifier runs before
+ * its checks: Input::parse for every input, then Output::parse. 1 if all
+ * parse. */
+static int t_parses(const zc_pczt *z)
+{
+    for (int i = 0; i < z->n_tin; i++) {
+        const zc_tin *t = &z->tin[i];
+        uint8_t base = t->sighash_type & 0x7F;      /* without ANYONECANPAY */
+        if (t->has_time_lock && t->time_lock < 500000000u) return 0;
+        if (t->has_height_lock && (t->height_lock == 0 || t->height_lock >= 500000000u))
+            return 0;
+        if (t->script_sig.p &&
+            !zc_script_parses_as(t->script_sig.p, t->script_sig.len, ZC_SCRIPT_SIG))
+            return 0;
+        if (t->value > MAX_MONEY) return 0;
+        if (!zc_script_parses_as(t->script_pubkey.p, t->script_pubkey.len, ZC_SCRIPT_FROM_CHAIN))
+            return 0;
+        if (t->redeem_script.p &&
+            !zc_script_parses_as(t->redeem_script.p, t->redeem_script.len, ZC_SCRIPT_FROM_CHAIN))
+            return 0;
+        if (base < 1 || base > 3) return 0;
+        if (t->max_partial_sig_len > 520) return 0;
+    }
+    for (int i = 0; i < z->n_tout; i++) {
+        const zc_tout *o = &z->tout[i];
+        if (o->value > MAX_MONEY) return 0;
+        if (!zc_script_parses(o->script_pubkey.p, o->script_pubkey.len)) return 0;
+        if (o->redeem_script.p && !zc_script_parses(o->redeem_script.p, o->redeem_script.len))
+            return 0;
+    }
+    return 1;
+}
+
+/* Every check a transparent input must pass (docs/zcash/FORMATS.md), in the
+ * Rust backend's order. Fills the inputs of the summary, all but their
+ * sighash (prepare() computes those). */
+static int32_t check_transparent(zc_ctx *c, const uint8_t seed[64], uint32_t account,
+                                 uint8_t net, const zc_t_account *ta, uint64_t *t_in,
+                                 zs_summary *out)
+{
+    const zc_pczt *z = &c->z;
+    uint32_t coin = net == ZS_NET_MAIN ? 133u : 1u;
+    uint8_t fp[32], sk[32], pk[33], h[20];
+    int32_t rc = 0;
+
+    if (!t_parses(z)) return ZS_E_PARSE;
+    zc_seed_fingerprint(seed, fp);
+    *t_in = 0;
+    for (int i = 0; i < z->n_tin; i++) {
+        const zc_tin *t = &z->tin[i];
+        if (t->sighash_type != SIGHASH_ALL) return ZS_E_UNSUPPORTED_BUNDLE;
+        if (!is_p2pkh(&t->script_pubkey)) return ZS_E_UNSUPPORTED_BUNDLE;
+        if (t->redeem_script.p || t->script_sig.p || t->n_partial_sigs ||
+            t->has_time_lock || t->has_height_lock)
+            return ZS_E_UNSUPPORTED_BUNDLE;
+        if (t->n_bip32 == 0) return ZS_E_MISSING_DATA;
+        if (t->n_bip32 > 1) return ZS_E_UNSUPPORTED_BUNDLE;
+        if (memcmp(t->bip32_fp, fp, 32) != 0) return ZS_E_SPEND_NOT_OURS;
+        const uint32_t *p = t->bip32_path;
+        if (t->bip32_path_len != 5 || p[0] != (44u | 0x80000000u) ||
+            p[1] != (coin | 0x80000000u) || p[2] != (account | 0x80000000u) ||
+            p[3] > 2 || p[4] >= 0x80000000u)
+            return ZS_E_SPEND_NOT_OURS;
+        int bad = zc_t_child(ta, p[3], p[4], sk, pk) != 0 || memcmp(pk, t->bip32_key, 33) != 0;
+        zc_t_wipe(sk, sizeof sk);
+        if (bad) return ZS_E_SPEND_NOT_OURS;
+        zc_t_hash160(t->bip32_key, h);
+        if (memcmp(h, t->script_pubkey.p + 3, 20) != 0) return ZS_E_SPEND_NOT_OURS;
+        *t_in += t->value;                      /* each <= MAX_MONEY: no overflow */
+        zs_tinput *o = &out->tinputs[i];
+        o->value = t->value;
+        o->scope = p[3];
+        o->index = p[4];
+        if (!zc_t_address(o->address, sizeof o->address, net, t->script_pubkey.p,
+                          t->script_pubkey.len))
+            rc = ZS_E_INTERNAL;
+        if (rc) return rc;
+    }
+    out->n_tinputs = (uint8_t)z->n_tin;
+    out->t_in = *t_in;
+    return 0;
+}
+
 /* ---- stage 3: what pczt::Signer::new adds, and the sighash -------------- */
 
-static void hash_t_outputs(const zc_pczt *z, uint8_t digest[32])
+static void le_bytes(uint8_t *out, uint64_t v, int n)
+{
+    for (int j = 0; j < n; j++) out[j] = (uint8_t)(v >> (8 * j));
+}
+
+/* CompactSize(n) || bytes: a script as zcash_primitives writes it. */
+static void hash_script(blake2b_state *s, const zc_bytes *b)
+{
+    uint8_t cs[5];
+    size_t n = b->len, csl;
+    if (n < 253) { cs[0] = (uint8_t)n; csl = 1; }
+    else if (n <= 0xFFFF) { cs[0] = 0xFD; le_bytes(cs + 1, n, 2); csl = 3; }
+    else { cs[0] = 0xFE; le_bytes(cs + 1, n, 4); csl = 5; }
+    blake2b_Update(s, cs, csl);
+    if (n) blake2b_Update(s, b->p, n);
+}
+
+/* The transparent leaf of a v6 signature digest (ZIP 244 S.2, which the v6
+ * digest tree keeps). With no inputs it is the txid digest T.2. With inputs
+ * it is the SIGHASH_ALL form, whose txin part is input `input`, or empty for
+ * the shielded sighash (input < 0). */
+static void t_sig_digest(const zc_pczt *z, int input, uint8_t digest[32])
 {
     if (z->n_tout == 0 && z->n_tin == 0) {
         zip244_empty_digest("ZTxIdTranspaHash", digest);
         return;
     }
-    /* No inputs (refused earlier), so prevouts and sequences are empty. */
-    blake2b_state prev, seq, outs, root;
-    uint8_t dp[32], ds[32], dout[32];
+    blake2b_state prev, seq, outs, amts, scr, txin, root;
+    uint8_t dp[32], ds[32], dout[32], da[32], dsc[32], dtx[32], b[8];
     blake2b_InitPersonal(&prev, 32, "ZTxIdPrevoutHash", 16);
     blake2b_InitPersonal(&seq, 32, "ZTxIdSequencHash", 16);
     blake2b_InitPersonal(&outs, 32, "ZTxIdOutputsHash", 16);
+    blake2b_InitPersonal(&amts, 32, "ZTxTrAmountsHash", 16);
+    blake2b_InitPersonal(&scr, 32, "ZTxTrScriptsHash", 16);
+    blake2b_InitPersonal(&txin, 32, "Zcash___TxInHash", 16);
+    for (int i = 0; i < z->n_tin; i++) {
+        const zc_tin *t = &z->tin[i];
+        blake2b_Update(&prev, t->prevout_txid, 32);
+        le_bytes(b, t->prevout_index, 4);
+        blake2b_Update(&prev, b, 4);
+        le_bytes(b, t->sequence, 4);
+        blake2b_Update(&seq, b, 4);
+        le_bytes(b, t->value, 8);
+        blake2b_Update(&amts, b, 8);
+        hash_script(&scr, &t->script_pubkey);
+        if (i == input) {
+            blake2b_Update(&txin, t->prevout_txid, 32);
+            le_bytes(b, t->prevout_index, 4);
+            blake2b_Update(&txin, b, 4);
+            le_bytes(b, t->value, 8);
+            blake2b_Update(&txin, b, 8);
+            hash_script(&txin, &t->script_pubkey);
+            le_bytes(b, t->sequence, 4);
+            blake2b_Update(&txin, b, 4);
+        }
+    }
     for (int i = 0; i < z->n_tout; i++) {
         const zc_tout *o = &z->tout[i];
-        uint8_t v[8], cs[5];
-        size_t n = o->script_pubkey.len, csl;
-        for (int j = 0; j < 8; j++) v[j] = (uint8_t)(o->value >> (8 * j));
-        if (n < 253) { cs[0] = (uint8_t)n; csl = 1; }
-        else if (n <= 0xFFFF) { cs[0] = 0xFD; cs[1] = (uint8_t)n; cs[2] = (uint8_t)(n >> 8); csl = 3; }
-        else { cs[0] = 0xFE; for (int j = 0; j < 4; j++) cs[1 + j] = (uint8_t)(n >> (8 * j)); csl = 5; }
-        blake2b_Update(&outs, v, 8);
-        blake2b_Update(&outs, cs, csl);
-        blake2b_Update(&outs, o->script_pubkey.p, n);
+        le_bytes(b, o->value, 8);
+        blake2b_Update(&outs, b, 8);
+        hash_script(&outs, &o->script_pubkey);
     }
     blake2b_Final(&prev, dp, 32);
     blake2b_Final(&seq, ds, 32);
     blake2b_Final(&outs, dout, 32);
+    blake2b_Final(&amts, da, 32);
+    blake2b_Final(&scr, dsc, 32);
+    blake2b_Final(&txin, dtx, 32);
     blake2b_InitPersonal(&root, 32, "ZTxIdTranspaHash", 16);
-    blake2b_Update(&root, dp, 32);
-    blake2b_Update(&root, ds, 32);
-    blake2b_Update(&root, dout, 32);
+    if (z->n_tin == 0) {
+        /* T.2: prevouts || sequences || outputs. */
+        blake2b_Update(&root, dp, 32);
+        blake2b_Update(&root, ds, 32);
+        blake2b_Update(&root, dout, 32);
+    } else {
+        const uint8_t all = SIGHASH_ALL;
+        blake2b_Update(&root, &all, 1);
+        blake2b_Update(&root, dp, 32);
+        blake2b_Update(&root, da, 32);
+        blake2b_Update(&root, dsc, 32);
+        blake2b_Update(&root, ds, 32);
+        blake2b_Update(&root, dout, 32);
+        blake2b_Update(&root, dtx, 32);
+    }
     blake2b_Final(&root, digest, 32);
 }
 
@@ -485,15 +641,9 @@ static int32_t prepare(zc_ctx *c)
         goto out;
     if (z->g.tx_version != V6_TX_VERSION || z->g.version_group_id != V6_VERSION_GROUP_ID)
         goto out;
-    /* transparent into_parsed: Output::parse */
-    if (z->n_tin) goto out;
-    for (int i = 0; i < z->n_tout; i++) {
-        const zc_tout *o = &z->tout[i];
-        if (o->value > MAX_MONEY) goto out;
-        if (!zc_script_parses(o->script_pubkey.p, o->script_pubkey.len)) goto out;
-        if (o->redeem_script.p && !zc_script_parses(o->redeem_script.p, o->redeem_script.len))
-            goto out;
-    }
+    /* transparent into_parsed: Input::parse and Output::parse. The inputs
+     * themselves were checked by check_transparent. */
+    if (!t_parses(z)) goto out;
     /* sapling into_parsed + extract_effects on an empty bundle. */
     if (z->sapling.present) {
         if (z->sapling.n_spends || z->sapling.n_outputs) goto out;
@@ -514,7 +664,6 @@ static int32_t prepare(zc_ctx *c)
     meta.lock_time = z->g.has_fallback_lock_time ? z->g.fallback_lock_time : 0;
     meta.expiry_height = z->g.expiry_height;
     meta.is_v6 = true;
-    hash_t_outputs(z, meta.transparent_sig_digest);
     zip244_sapling_empty_digest(meta.sapling_digest);
 
     for (int p = 0; p < 2; p++) {
@@ -542,6 +691,16 @@ static int32_t prepare(zc_ctx *c)
             if (!zip244_hash_action(&st[p], action, sizeof action)) goto out;
         }
     }
+    /* One signature digest per transparent input, then the shielded one.
+     * Each consumes the pool states it is given, so the inputs get copies. */
+    for (int i = 0; i < z->n_tin; i++) {
+        static Zip244ActionsState cp[2];
+        cp[0] = st[0];
+        cp[1] = st[1];
+        t_sig_digest(z, i, meta.transparent_sig_digest);
+        zip244_shielded_sighash_v6(&meta, &cp[0], &cp[1], c->tsighash[i]);
+    }
+    t_sig_digest(z, -1, meta.transparent_sig_digest);
     zip244_shielded_sighash_v6(&meta, &st[0], &st[1], c->sighash);
     rc = 0;
 out:
@@ -556,6 +715,8 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
 {
     zc_pczt *z = &c->z;
     static zc_fvk fvk;
+    static zc_t_account ta;
+    static uint8_t t_ovks[64];
     uint8_t ask[32];
     acc_t acc;
     int32_t rc;
@@ -570,8 +731,7 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
     memcpy(fvk_out + 32, fvk.nk, 32);
     memcpy(fvk_out + 64, fvk.rivk, 32);
 
-    /* Not yet supported on the device: refuse rather than sign blind. */
-    if (z->n_tin) { rc = ZS_E_UNSUPPORTED_BUNDLE; goto done; }
+    /* Not supported on the device: refuse rather than sign blind. */
     if (z->sapling.n_spends || z->sapling.n_outputs) { rc = ZS_E_UNSUPPORTED_BUNDLE; goto done; }
 
     memset(&acc, 0, sizeof acc);
@@ -599,19 +759,36 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
         o->memo_kind = ZS_MEMO_NONE;
     }
 
+    /* Transparent inputs: each must be a P2PKH coin of this account. */
+    uint64_t t_in = 0;
+    if (z->n_tin) {
+        if (zc_t_account_derive(seed, net == ZS_NET_MAIN ? 133 : 1, account, &ta) != 0) {
+            rc = ZS_E_INTERNAL;
+            goto done;
+        }
+        if ((rc = check_transparent(c, seed, account, net, &ta, &t_in, out)) != 0) goto done;
+        /* ZIP 316 transparent OVKs: PRF^expand(c, [0xd0] || pk), external
+         * half first (zcash_transparent ovks_for_shielding). */
+        const uint8_t d0 = 0xd0;
+        zc_prf_expand(ta.chain_code, &d0, 1, ta.pub, 33, NULL, 0, t_ovks);
+        acc.t_ovks = t_ovks;
+    }
+
     for (int p = 0; p < 2; p++) {
         if ((rc = validate_pool(c, p)) != 0) goto done;
         if ((rc = check_pool(c, p, &acc)) != 0) goto done;
     }
 
     /* Fee = everything in - everything out, computed here from bound values. */
-    if (acc.shielded_out > acc.total_in || t_out > acc.total_in - acc.shielded_out) {
+    uint64_t all_in = acc.total_in + t_in;    /* each < 2^70 / 16 * MAX_MONEY */
+    if (acc.shielded_out > all_in || t_out > all_in - acc.shielded_out) {
         rc = ZS_E_VALUE_BALANCE;
         goto done;
     }
-    uint64_t fee = acc.total_in - acc.shielded_out - t_out;
+    uint64_t fee = all_in - acc.shielded_out - t_out;
     if (acc.over) { rc = ZS_E_TOO_MANY; goto done; }
     if ((rc = prepare(c)) != 0) goto done;
+    for (int i = 0; i < z->n_tin; i++) memcpy(out->tinputs[i].sighash, c->tsighash[i], 32);
 
     out->branch_id = branch;
     out->tx_version = z->g.tx_version;
@@ -625,6 +802,8 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
     rc = 0;
 done:
     memzero(&fvk, sizeof fvk);
+    zc_t_wipe(&ta, sizeof ta);
+    memzero(t_ovks, sizeof t_ovks);
     return rc;
 }
 
@@ -750,6 +929,36 @@ int32_t zc_pczt_sign(zc_ctx *ctx, const uint8_t seed[64], uint32_t account, uint
             n++;
         }
     }
+
+    /* Transparent inputs, after the shielded spends, as zs_pczt_sign: each
+     * passed check_transparent, so its key is ours at the path it names. */
+    if (ctx->z.n_tin) {
+        static zc_t_account ta;
+        uint8_t sk[32];
+        if (zc_t_account_derive(seed, net == ZS_NET_MAIN ? 133 : 1, account, &ta) != 0) {
+            rc = ZS_E_INTERNAL;
+            goto done;
+        }
+        for (int i = 0; i < ctx->z.n_tin && rc == 0; i++) {
+            const zc_tin *t = &ctx->z.tin[i];
+            zs_sig *s = n < max ? &sigs[n] : &scratch;
+            memset(s, 0, sizeof *s);
+            if (t->bip32_path_len != 5 ||
+                zc_t_child(&ta, t->bip32_path[3], t->bip32_path[4], sk, s->pubkey) != 0 ||
+                memcmp(s->pubkey, t->bip32_key, 33) != 0 ||
+                zc_t_sign(sk, ctx->tsighash[i], s->sig) != 0) {
+                memset(s, 0, sizeof *s);
+                rc = ZS_E_SIGN;
+            } else {
+                s->pool = ZS_POOL_TRANSPARENT;
+                s->index = (uint32_t)i;
+                n++;
+            }
+        }
+        zc_t_wipe(sk, sizeof sk);
+        zc_t_wipe(&ta, sizeof ta);
+        if (rc) goto done;
+    }
     if (n > max) { rc = ZS_E_TOO_MANY; goto done; }
     *n_out = n;
 done:
@@ -757,7 +966,6 @@ done:
     memzero(mine, sizeof mine);
     memzero(&fvk, sizeof fvk);
     memzero(&scratch, sizeof scratch);
-    (void)account;
     return rc;
 }
 
@@ -765,9 +973,20 @@ int32_t zc_pczt_verify_sig(zc_ctx *ctx, const zs_sig *sig)
 {
     static zc_fvk f;
     if (!ctx || !sig) return ZS_ERR_ARG;
-    if (sig->pool != ZS_POOL_ORCHARD && sig->pool != ZS_POOL_IRONWOOD) return ZS_ERR_ARG;
+    if (sig->pool > ZS_POOL_IRONWOOD) return ZS_ERR_ARG;
     int32_t rc = prepare(ctx);
     if (rc != 0) return rc;
+    if (sig->pool == ZS_POOL_TRANSPARENT) {
+        /* As a host applies it: the key is the one the script pays to, and
+         * the signature (low S) verifies over the input's sighash. */
+        uint8_t h[20];
+        if (sig->index >= ctx->z.n_tin) return ZS_E_SIGN;
+        const zc_tin *t = &ctx->z.tin[sig->index];
+        if (!is_p2pkh(&t->script_pubkey)) return ZS_E_SIGN;
+        zc_t_hash160(sig->pubkey, h);
+        if (memcmp(h, t->script_pubkey.p + 3, 20) != 0) return ZS_E_SIGN;
+        return zc_t_verify(sig->pubkey, ctx->tsighash[sig->index], sig->sig) == 0 ? 0 : ZS_E_SIGN;
+    }
     int p = sig->pool == ZS_POOL_ORCHARD ? 0 : 1;
     const zc_obundle *b = bundle_of(&ctx->z, p);
     if (sig->index >= b->n) return ZS_E_SIGN;
