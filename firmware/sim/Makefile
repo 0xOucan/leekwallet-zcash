@@ -168,10 +168,10 @@ $(BUILD)/test_sd_seed: CFLAGS += -DAES_VAR
 $(BUILD)/test_sd_seed: test_sd_seed.c ../src/sd-seed.c ../src/sdcard.c ../src/zkv.c \
                        ../src/zcash-account.c ../src/zcash-worker.c ../../vectors/keys_vectors.h \
                        esp_stubs.c host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
-                       $(ZSIGN)/target/release/libzsign_rust.a \
+                       $(ZSIGN)/target/release/libzsign_rust.a $(BUILD)/libzsign_c.a \
                        $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -DLEEK_HOST_TEST -o $@ \
-	    $(filter %.c,$^) $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -I$(ZSIGNC)/include -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
 # Per-account metadata through the real vault and the fake NVS's power cuts.
 $(BUILD)/test_zcash_meta: CFLAGS += -DAES_VAR
