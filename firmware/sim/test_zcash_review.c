@@ -160,6 +160,54 @@ int main(void)
     CHECK(strstr(p.row[3], "NU7") != NULL, "upgrade name");
     properties(&s, ZS_NET_TEST);
 
+    printf("== shield: two transparent inputs into this wallet (roadmap 10.1)\n");
+    ctx = "shield";
+    memset(&s, 0, sizeof s);
+    s.branch_id = 0x37a5165b;
+    s.tx_version = 6;
+    s.fee = 20000;
+    s.n_tinputs = 2;
+    s.t_in = 1000000;
+    s.tinputs[0] = (zs_tinput){ 600000, 0, 0, {0}, "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd" };
+    s.tinputs[1] = (zs_tinput){ 400000, 1, 3, {0}, "tmBQuXbCk8Etq6tftGe2QrYzmMn2NmJhuLz" };
+    add(&s, ZS_POOL_IRONWOOD, ZS_KIND_CHANGE, 980000, "");
+    dump(&s, ZS_NET_TEST);
+    static const char *const T[5][ZREVIEW_ROWS] = {
+        { "From 1 of 2       1/5", "0.006 TAZ", "Your t-address:", "tmBsTi2xWTjUdEXnuTceL",
+          "7fecEQKeWaPDJd", "Path .../0/0", "(receive address)", "REJECT   ^v      NEXT" },
+        { "From 2 of 2       2/5", "0.004 TAZ", "Your t-address:", "tmBQuXbCk8Etq6tftGe2Q",
+          "rYzmMn2NmJhuLz", "Path .../1/3", "(change address)", "REJECT   ^v      NEXT" },
+        { "Change            3/5", "0.0098 TAZ", "Ironwood (shielded)", "Back to this wallet",
+          "", "", "", "REJECT   ^v      NEXT" },
+        { "Fee & network     4/5", "Fee 0.0002 TAZ", "Network: Testnet", "Upgrade: NU6.3",
+          "Spends: 0", "From t-addr: 2", "", "REJECT   ^v      NEXT" },
+        { "Sign?             5/5", "", "Shield 0.01 TAZ", "fee 0.0002 TAZ", "into this wallet",
+          "", "", "REJECT           SIGN" },
+    };
+    CHECK(zreview_page_count(&s, ZS_NET_TEST) == 5, "%d pages", zreview_page_count(&s, ZS_NET_TEST));
+    for (int i = 0; i < 5; i++) {
+        zreview_render(&s, ZS_NET_TEST, i, &p);
+        CHECK(page_is(&p, T[i]), "page %d differs", i + 1);
+    }
+    properties(&s, ZS_NET_TEST);
+
+    printf("== mixed: a transparent input next to a recipient\n");
+    ctx = "mixed";
+    s.n_tinputs = 1;
+    s.t_in = 500000;
+    s.n_spends = 1;
+    s.n_outputs = 0;
+    s.fee = 15000;
+    add(&s, ZS_POOL_IRONWOOD, ZS_KIND_EXTERNAL, 1200000, UA);
+    add(&s, ZS_POOL_IRONWOOD, ZS_KIND_CHANGE, 285000, "");
+    zreview_render(&s, ZS_NET_TEST, 0, &p);
+    CHECK(strcmp(p.row[0], "From 1 of 1       1/6") == 0, "\"%s\"", p.row[0]);
+    zreview_render(&s, ZS_NET_TEST, 1, &p);
+    CHECK(strncmp(p.row[0], "Send 1 of 1", 11) == 0, "recipient follows the input: \"%s\"", p.row[0]);
+    zreview_render(&s, ZS_NET_TEST, zreview_page_count(&s, ZS_NET_TEST) - 1, &p);
+    CHECK(strcmp(p.row[2], "Send 0.012 TAZ") == 0, "\"%s\"", p.row[2]);
+    properties(&s, ZS_NET_TEST);
+
     printf("== many recipients, long hostile memo, mainnet\n");
     ctx = "many";
     memset(&s, 0, sizeof s);

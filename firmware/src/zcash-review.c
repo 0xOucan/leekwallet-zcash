@@ -81,10 +81,15 @@ static int output_pages(const zs_output *o)
     return text_pages(alen, ADDR_FIRST_ROWS, BODY_ROWS) + memo_pages(o);
 }
 
+static unsigned n_tinputs(const zs_summary *s)
+{
+    return s->n_tinputs < ZS_MAX_T_INPUTS ? s->n_tinputs : ZS_MAX_T_INPUTS;
+}
+
 int zreview_page_count(const zs_summary *s, uint8_t network)
 {
     (void)network;
-    int n = 2;  /* fee and network, final question */
+    int n = 2 + (int)n_tinputs(s);  /* each input, fee and network, final question */
     for (unsigned i = 0; i < s->n_outputs && i < ZS_MAX_OUTPUTS; i++) {
         n += output_pages(&s->outputs[i]);
     }
@@ -191,6 +196,36 @@ static void render_output(const zs_summary *s, uint8_t net, unsigned idx, int su
     }
 }
 
+static const char *scope_name(uint32_t scope)
+{
+    switch (scope) {
+        case 0: return "receive";
+        case 1: return "change";
+        case 2: return "ephemeral";
+    }
+    return "?";
+}
+
+/* A transparent input: the device derived its key at this path and checked
+ * that the coin's script pays to it, so it is shown as this wallet's. */
+static void render_tinput(const zs_summary *s, uint8_t net, unsigned idx, int page, int total,
+                          ZReviewPage *p)
+{
+    const zs_tinput *t = &s->tinputs[idx];
+    char label[40], amount[32];
+    snprintf(label, sizeof label, "From %u of %u", idx + 1, n_tinputs(s));
+    header(p, label, page, total);
+    zreview_amount(t->value, net, amount, sizeof amount);
+    put(p, 1, amount);
+    put(p, 2, "Your t-address:");
+    text_rows(p, 3, 2, t->address, strnlen(t->address, sizeof t->address), 0);
+    snprintf(label, sizeof label, "Path .../%lu/%lu", (unsigned long)t->scope,
+             (unsigned long)t->index);
+    put(p, 5, label);
+    snprintf(label, sizeof label, "(%s address)", scope_name(t->scope));
+    put(p, 6, label);
+}
+
 static void render_fee(const zs_summary *s, uint8_t net, int page, int total, ZReviewPage *p)
 {
     char line[40], amount[32];
@@ -203,6 +238,10 @@ static void render_fee(const zs_summary *s, uint8_t net, int page, int total, ZR
     put(p, 3, line);
     snprintf(line, sizeof line, "Spends: %u", (unsigned)s->n_spends);
     put(p, 4, line);
+    if (n_tinputs(s)) {
+        snprintf(line, sizeof line, "From t-addr: %u", n_tinputs(s));
+        put(p, 5, line);
+    }
     if (s->warnings & ZS_WARN_TRANSPARENT_OUT) put(p, 6, "!Has public output");
 }
 
@@ -218,6 +257,18 @@ static void render_final(const zs_summary *s, uint8_t net, int page, int total, 
     }
     char line[40], amount[32];
     header(p, "Sign?", page, total);
+    if (n == 0 && n_tinputs(s)) {
+        /* Nothing leaves the wallet: transparent funds move to its
+         * shielded pool. */
+        zreview_amount(s->t_in, net, amount, sizeof amount);
+        snprintf(line, sizeof line, "Shield %s", amount);
+        put(p, 2, line);
+        zreview_amount(s->fee, net, amount, sizeof amount);
+        snprintf(line, sizeof line, "fee %s", amount);
+        put(p, 3, line);
+        put(p, 4, "into this wallet");
+        return;
+    }
     zreview_amount(sent, net, amount, sizeof amount);
     snprintf(line, sizeof line, "Send %s", amount);
     put(p, 2, line);
@@ -244,8 +295,14 @@ bool zreview_render(const zs_summary *s, uint8_t network, int page, ZReviewPage 
         return true;
     }
 
-    /* Recipients first, then change, as the user thinks of them. */
-    int at = 0;
+    /* Where the money comes from first (transparent inputs; shielded
+     * spends are counted on the fee page), then recipients, then change,
+     * as the user thinks of them. */
+    if (page < (int)n_tinputs(s)) {
+        render_tinput(s, network, (unsigned)page, page, total, out);
+        return true;
+    }
+    int at = (int)n_tinputs(s);
     for (int pass = 0; pass < 2; pass++) {
         for (unsigned i = 0; i < s->n_outputs && i < ZS_MAX_OUTPUTS; i++) {
             const zs_output *o = &s->outputs[i];

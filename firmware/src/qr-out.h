@@ -35,8 +35,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/** Largest message the return path carries: an xpub or a signature is ~100. */
-#define QR_OUT_MAX_MESSAGE 256
+/** Largest message the return path carries: an xpub is ~100 bytes, a .zsig
+ * 108 per transparent input (roadmap 10.1) and 69 per shielded spend. */
+#define QR_OUT_MAX_MESSAGE 1024
 
 /** Longest part text, which is version 10's alphanumeric capacity. */
 #define QR_OUT_MAX_PART 395

@@ -6,6 +6,8 @@
  * reads them, so what is tested is exactly what the panel shows.
  *
  * Pages, in order:
+ *   - each transparent input, one page: amount, "your t-address" in full
+ *     and its BIP 44 path (the signers re-derived its key);
  *   - each recipient: pool, amount, the whole address (continued over as
  *     many pages as it needs), a warning for a transparent (public) output;
  *     its memo on pages of its own;

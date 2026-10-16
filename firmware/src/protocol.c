@@ -747,13 +747,23 @@ static bool handle_zsign(const char *method, const uint8_t *payload, size_t len,
     cbor_write_text(w, "signatures");
     cbor_write_array(w, n);
     for (uint32_t i = 0; i < n; i++) {
-        cbor_write_map(w, 3);
+        bool t = sigs[i].pool == ZS_POOL_TRANSPARENT;
+        cbor_write_map(w, t ? 4 : 3);
         cbor_write_text(w, "pool");
         cbor_write_uint(w, sigs[i].pool);
         cbor_write_text(w, "index");
         cbor_write_uint(w, sigs[i].index);
         cbor_write_text(w, "sig");
-        cbor_write_bytes(w, sigs[i].sig, sizeof sigs[i].sig);
+        if (t) {
+            /* DER || sighash type, and the key (PROTOCOL.md, roadmap 10.1). */
+            uint8_t der[ZCASH_TSIG_MAX];
+            size_t dl = zcash_tsig_encode(&sigs[i], der);
+            cbor_write_bytes(w, der, dl);
+            cbor_write_text(w, "pubkey");
+            cbor_write_bytes(w, sigs[i].pubkey, sizeof sigs[i].pubkey);
+        } else {
+            cbor_write_bytes(w, sigs[i].sig, sizeof sigs[i].sig);
+        }
     }
     memzero(sigs, sizeof sigs);
     return true;
@@ -1141,8 +1151,10 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_uint(&w, 6);
         /* Spends the signer will sign. Outputs to any pool are reviewed. */
         cbor_write_text(&w, "spendPools");
-        cbor_write_array(&w, 1);
+        cbor_write_array(&w, 3);
         cbor_write_text(&w, "orchard");
+        cbor_write_text(&w, "ironwood");
+        cbor_write_text(&w, "transparent");   /* P2PKH of the account, roadmap 10.1 */
         cbor_write_text(&w, "maxPczt");
         cbor_write_uint(&w, ZCASH_PCZT_MAX);
         cbor_write_text(&w, "maxChunk");

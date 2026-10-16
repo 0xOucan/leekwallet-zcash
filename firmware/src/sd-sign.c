@@ -75,23 +75,42 @@ int sdsign_load(uint32_t account, uint8_t network, const zs_summary **summary)
 size_t sdsign_zsig_encode(const uint8_t sha256[32], const zs_sig *sigs, uint32_t n,
                           uint8_t *out, size_t cap)
 {
-    const size_t len = 4 + 1 + 32 + 2 + (size_t)n * 69;
-    if (n > 0xFFFF || cap < len) return 0;
+    /* Version 1 unless an entry is transparent: a shielded-only file stays
+     * byte for byte what version 1 readers expect. */
+    uint8_t version = 1;
+    for (uint32_t i = 0; i < n; i++)
+        if (sigs[i].pool == ZS_POOL_TRANSPARENT) version = 2;
+    if (n > 0xFFFF || cap < 39) return 0;
     memcpy(out, "ZSIG", 4);
-    out[4] = 1;
+    out[4] = version;
     memcpy(out + 5, sha256, 32);
     out[37] = (uint8_t)n;
     out[38] = (uint8_t)(n >> 8);
-    uint8_t *e = out + 39;
-    for (uint32_t i = 0; i < n; i++, e += 69) {
+    size_t at = 39;
+    for (uint32_t i = 0; i < n; i++) {
+        uint8_t der[ZCASH_TSIG_MAX];
+        size_t dl = 0, need = 69;
+        if (sigs[i].pool == ZS_POOL_TRANSPARENT) {
+            dl = zcash_tsig_encode(&sigs[i], der);
+            need = 1 + 4 + 1 + dl + 33;
+        }
+        if (cap - at < need) return 0;
+        uint8_t *e = out + at;
         e[0] = sigs[i].pool;
         e[1] = (uint8_t)sigs[i].index;
         e[2] = (uint8_t)(sigs[i].index >> 8);
         e[3] = (uint8_t)(sigs[i].index >> 16);
         e[4] = (uint8_t)(sigs[i].index >> 24);
-        memcpy(e + 5, sigs[i].sig, 64);
+        if (sigs[i].pool == ZS_POOL_TRANSPARENT) {
+            e[5] = (uint8_t)dl;
+            memcpy(e + 6, der, dl);
+            memcpy(e + 6 + dl, sigs[i].pubkey, 33);
+        } else {
+            memcpy(e + 5, sigs[i].sig, 64);
+        }
+        at += need;
     }
-    return len;
+    return at;
 }
 
 int sdsign_finish(uint32_t *n_sigs)
@@ -114,7 +133,7 @@ int sdsign_finish(uint32_t *n_sigs)
     rc = zcash_sign_sign(sigs, ZS_MAX_SIGS, &n);
     if (rc != 0) return rc;
 
-    static uint8_t zsig[4 + 1 + 32 + 2 + ZS_MAX_SIGS * 69];
+    static uint8_t zsig[SDSIGN_ZSIG_MAX];
     size_t len = sdsign_zsig_encode(loaded_sha, sigs, n, zsig, sizeof zsig);
     memzero(sigs, sizeof sigs);
     rc = len ? from_sdcard(sdcard_write_replace(SDSIGN_OUT, zsig, len)) : SDSIGN_E_IO;
