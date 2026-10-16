@@ -380,3 +380,30 @@ checked on Xtensa).
 - The `.zsig` the C firmware wrote parsed in zecz's independent Rust
   reader. The hash in it matched the PCZT on the card.
 - Needed for this: FATFS long names on the board (`CONFIG_FATFS_LFN_HEAP`).
+
+### 6 Android app: USB, Bluetooth and QR signing on the board (2026-10-16)
+- The Zodl fork (`android/`, branch `leekwallet`, app "LeekWallet Zcash")
+  imports the board's account and signs testnet sends three ways, all
+  confirmed by the user:
+  - **USB OTG**;
+  - **Bluetooth LE**;
+  - **QR**: `ur:leek-pczt` to the board, `ur:leek-zsig` back.
+- Fixed on the way:
+  - With BLE up, the 64 KB Zcash worker stack no longer fit in internal
+    RAM. The worker now has 24 KB for the C backend, and the QR scan
+    buffers moved to PSRAM.
+  - The top bar and the review screen said Keystone for a LeekWallet
+    account.
+- QR bench, phone to board:
+  - A signer-view PCZT is ~2.8 KB and does not compress (zlib saves 15
+    bytes: ciphertexts and commitments).
+  - Best settings: board at 320x240 with exposure -4 (LeekWallet's
+    defaults, unchanged), tablet at 500 ms, 50-byte fragments (~50
+    frames). 90 bytes also works. 150 and 250 did not read reliably.
+  - The return QR, the .zsig of ~110 bytes, is one frame.
+- Recommendation:
+  - USB or Bluetooth for everyday signing.
+  - QR (or the SD card) when the device must stay off every link.
+- Future, to halve the QR: a "compact PCZT" without the note
+  ciphertexts, which the board can rebuild from recipient, value, rseed
+  and memo (~1.4 KB).
