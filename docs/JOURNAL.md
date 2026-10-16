@@ -356,3 +356,15 @@ checked on Xtensa).
   - The SH1107 needed an address probe and bus scan.
 - Diagnostic used: `~/zecz-test/diag/serial_tap.py`, a PTY relay that
   records the board's log while zecz talks through it.
+
+### 1.4 SD card storage mode on the board (2026-10-15)
+- The 3.7 GB FAT32 card in the S3 CAM board's slot worked: *SD Card → Save
+  open seed* wrote `SEED1.ZKV`. It is 98 bytes: a 24-word seed with no
+  label, birthday 4,506,700 taken from the account metadata zecz recorded,
+  and 20,000 PBKDF2 iterations. The write went through a temporary file
+  plus rename and left no temporary behind.
+- On the PC, `zecz zkv-open` (the Rust implementation) opened the
+  board-written file and showed ZFP 551A1FD4, matching the device.
+- On the board, a wrong passphrase was refused. The right one loaded the
+  seed as a session seed (`TEMP  ZFP 551A1FD4`), and a lock dropped it.
+- The file timestamp reads 1979 because the board has no clock. Harmless.
