@@ -413,6 +413,7 @@ $(BUILD)/test_pin_change: test_pin_change.c esp_stubs.c host_stubs.c \
 PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.c fake_zcash.c \
                 ../src/zcash-sign.c ../src/zcash-worker.c $(ZSIGN)/platform/zsign_platform_host.c \
                 ../src/zcash-meta.c ../src/zcash-fp.c $(CRYPTO)/blake2b.c \
+                ../src/sd-sign.c ../src/sdcard.c \
                 ../src/protocol.c ../src/cbor.c ../src/session.c ../src/pin.c \
                 ../src/ble-chunk.c ../src/ble.c ../src/ble-name.c ../src/transport.c ../src/entropy.c \
                 ../src/blind-signing.c \

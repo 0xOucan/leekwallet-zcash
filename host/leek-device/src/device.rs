@@ -15,7 +15,7 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use ciborium::value::Value;
 use hkdf::Hkdf;
 use leek_transport_serial::{
-    SerialTransport, TransportError, FRAME_ENC_REQUEST, FRAME_ENC_RESPONSE, FRAME_ERROR,
+    TransportError, FRAME_ENC_REQUEST, FRAME_ENC_RESPONSE, FRAME_ERROR,
     FRAME_REQUEST, FRAME_RESPONSE,
 };
 use sha2::{Digest, Sha256};
@@ -189,8 +189,26 @@ fn decode_reply(frame_type: u8, body: &[u8]) -> Result<Value> {
 
 // ------------------------------------------------------------------ device
 
+/// One framed exchange with the device. The desktop serial port implements
+/// it here; the Android app implements it over USB OTG from Kotlin (JNI).
+/// `recv` returns `TransportError::Timeout` when nothing complete arrived.
+pub trait FramePort: Send {
+    fn send(&mut self, frame_type: u8, payload: &[u8]) -> Result<(), TransportError>;
+    fn recv(&mut self, timeout: Duration) -> Result<(u8, Vec<u8>), TransportError>;
+}
+
+#[cfg(feature = "serial")]
+impl FramePort for leek_transport_serial::SerialTransport {
+    fn send(&mut self, frame_type: u8, payload: &[u8]) -> Result<(), TransportError> {
+        leek_transport_serial::SerialTransport::send(self, frame_type, payload)
+    }
+    fn recv(&mut self, timeout: Duration) -> Result<(u8, Vec<u8>), TransportError> {
+        leek_transport_serial::SerialTransport::recv(self, timeout)
+    }
+}
+
 pub struct Device {
-    port: SerialTransport,
+    port: Box<dyn FramePort>,
     session: Option<Session>,
 }
 
@@ -204,9 +222,16 @@ const SHORT: Duration = Duration::from_secs(10);
 const DERIVE: Duration = Duration::from_secs(90);
 
 impl Device {
+    /// The device on a serial port (a board, or zdev's PTY).
+    #[cfg(feature = "serial")]
     pub fn open(path: &str) -> Result<Self> {
-        let port = SerialTransport::open(path).map_err(|e| anyhow!("opening {path}: {e}"))?;
-        Ok(Self { port, session: None })
+        let port = leek_transport_serial::SerialTransport::open(path).map_err(|e| anyhow!("opening {path}: {e}"))?;
+        Ok(Self::with_port(Box::new(port)))
+    }
+
+    /// The device over any framed transport.
+    pub fn with_port(port: Box<dyn FramePort>) -> Self {
+        Self { port, session: None }
     }
 
     fn roundtrip(&mut self, frame_type: u8, payload: &[u8], timeout: Duration) -> Result<(u8, Vec<u8>)> {
