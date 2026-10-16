@@ -12,6 +12,11 @@
  *    paths (43% of these files, and never in the sighash), and every 8th
  *    accepted mutation is also signed and cross-verified. Refusal vectors get
  *    an eighth as many mutations: they mostly probe the parsers.
+ * 3. On the compact (v2) vectors, mutations aimed at the output fields the
+ *    device resolves itself (memo, recipient, rseed, epk, rcv, user_address):
+ *    the backends agree, and an accepted one always changes the sighash.
+ * 4. Signatures over a compact PCZT with a changed memo do not verify for
+ *    the original.
  *
  * ZSIGN_DIFF_N (mutations per valid vector, default 600) and ZSIGN_DIFF_SEED
  * scale the run for longer fuzzing.
@@ -123,6 +128,162 @@ static uint64_t rnd(void)
     return s_rng;
 }
 
+static const zv_pczt_vector *vector_named(const char *name, size_t *idx)
+{
+    for (size_t i = 0; i < ZV_PCZT_COUNT; i++)
+        if (strcmp(ZV_PCZT[i].name, name) == 0) {
+            *idx = i;
+            return &ZV_PCZT[i];
+        }
+    return NULL;
+}
+
+/* One byte of `b` replaced as in the random pass. */
+static uint8_t mutate_byte(uint8_t old)
+{
+    uint8_t nb;
+    uint64_t kind = rnd() % 10;
+    if (kind < 6) {
+        do nb = (uint8_t)rnd(); while (nb == old);
+    } else if (kind < 9) {
+        nb = old ^ (uint8_t)(1u << (rnd() % 8));
+    } else {
+        nb = (uint8_t)(old + ((rnd() & 1) ? 1 : 0xFF));
+    }
+    return nb;
+}
+
+/* 3. Compact vectors, aimed at the output fields the device resolves itself
+ * (memo plaintext, recipient, rseed, epk, rcv, user_address), which random
+ * positions rarely hit. Besides agreement between the backends: an accepted
+ * mutation must change the sighash. Nothing the compact view leaves out may
+ * let the device show one output and sign for another. */
+static void compact_fields(uint8_t seeds[][64], long per_field)
+{
+    static zc_pczt layout;
+    static result res;
+    long runs = 0, acc = 0, bad = 0;
+    printf("== compact output fields: %ld mutations per field per action\n", per_field);
+    for (size_t i = 0; i < ZV_PCZT_COUNT; i++) {
+        const zv_pczt_vector *v = &ZV_PCZT[i];
+        if (v->expect != 0) continue;
+        size_t len;
+        uint8_t *b = slurp(v->file, &len);
+        if (!b || zc_pczt_read(b, len, &layout) != ZC_R_OK) {
+            expect(0, v->name, "vector readable for field mutation");
+            free(b);
+            continue;
+        }
+        int compact = 0;
+        for (int a = 0; a < layout.n_actions; a++)
+            compact |= layout.actions[a].enc_kind == ZC_ENC_MEMO;
+        if (!compact) {
+            free(b);
+            continue;
+        }
+        run_both(b, len, seeds[i], v->account, v->network, 0, &res);
+        uint8_t base[32];
+        memcpy(base, sr.sighash, 32);
+        long runs_here = 0, acc_here = 0;
+        for (int a = 0; a < layout.n_actions; a++) {
+            const zc_action *x = &layout.actions[a];
+            struct { const uint8_t *p; size_t n; } f[] = {
+                { x->enc_kind == ZC_ENC_MEMO ? x->enc.p : NULL, x->enc.len },
+                { x->o_recipient, 43 }, { x->o_rseed, 32 }, { x->epk, 32 },
+                { x->rcv, 32 }, { x->user_address.p, x->user_address.len },
+            };
+            for (size_t k = 0; k < sizeof f / sizeof f[0]; k++) {
+                if (!f[k].p || !f[k].n) continue;
+                for (long m = 0; m < per_field; m++) {
+                    size_t pos = (size_t)(f[k].p - b) + (size_t)(rnd() % f[k].n);
+                    uint8_t old = b[pos], nb = mutate_byte(old);
+                    b[pos] = nb;
+                    run_both(b, len, seeds[i], v->account, v->network, m % 4 == 0, &res);
+                    runs_here++;
+                    if (res.rc_r != res.rc_c) {
+                        bad++;
+                        expect(0, v->name, "field mutation: same verdict and code");
+                        printf("    action %d field %zu byte %zu %02x->%02x: rust %d, c %d\n", a,
+                               k, pos, old, nb, res.rc_r, res.rc_c);
+                    } else if (res.rc_r == 0) {
+                        acc_here++;
+                        if (!summaries_equal()) {
+                            bad++;
+                            expect(0, v->name, "field mutation: identical summaries");
+                            explain_summary();
+                        }
+                        if (memcmp(sr.sighash, base, 32) == 0) {
+                            bad++;
+                            expect(0, v->name, "accepted field mutation changes the sighash");
+                            printf("    action %d field %zu byte %zu %02x->%02x\n", a, k, pos,
+                                   old, nb);
+                        }
+                    }
+                    b[pos] = old;
+                }
+            }
+        }
+        printf("  %-38s %4ld mutations, %4ld accepted by both\n", v->name, runs_here, acc_here);
+        runs += runs_here;
+        acc += acc_here;
+        free(b);
+    }
+    printf("  total %ld: %ld accepted, %ld failures\n", runs, acc, bad);
+}
+
+/* 4. A changed memo is a different transaction, not a refusal: the compact
+ * view carries nothing that commits to the memo but the ciphertext the device
+ * rebuilds from it. So check what makes that safe: the device shows the new
+ * memo (the vector's summary), and neither backend's signature over it
+ * verifies for the original compact PCZT. */
+static void compact_rebinding(uint8_t seeds[][64])
+{
+    static result res;
+    size_t io, ic;
+    const zv_pczt_vector *orig = vector_named("iw_send_shielded_compact", &io);
+    const zv_pczt_vector *chg = vector_named("iw_send_shielded_compact_memo_changed", &ic);
+    printf("== compact memo rebinding\n");
+    expect(orig && chg, "compact_rebinding", "both vectors present");
+    if (!orig || !chg) return;
+    expect(strcmp(orig->outputs[0].memo, chg->outputs[0].memo) != 0, chg->name,
+           "the vector shows a different memo");
+    expect(strcmp(orig->sighash, chg->sighash) != 0, chg->name, "and has a different sighash");
+
+    size_t len;
+    uint8_t *b = slurp(chg->file, &len);
+    expect(b != NULL, chg->name, "vector file readable");
+    if (!b) return;
+    run_both(b, len, seeds[ic], chg->account, chg->network, 1, &res);
+    free(b);
+    expect(res.rc_r == 0 && res.rc_c == 0 && res.n_r >= 1, chg->name, "both backends sign it");
+
+    b = slurp(orig->file, &len);
+    expect(b != NULL, orig->name, "vector file readable");
+    if (!b) return;
+    int32_t e;
+    int verified = 0;
+    zs_ctx *r = zs_pczt_new(b, len, &e);
+    expect(r && zs_pczt_check(r, seeds[io], orig->account, orig->network, &sr) == 0, orig->name,
+           "rust accepts the original");
+    for (uint32_t i = 0; r && i < res.n_r; i++) {
+        verified += zs_pczt_verify_sig(r, &res.sig_r[i]) == 0;
+        verified += zs_pczt_verify_sig(r, &res.sig_c[i]) == 0;
+    }
+    zs_pczt_free(r);
+    zc_ctx *c = zc_pczt_new(b, len, &e);
+    expect(c && zc_pczt_check(c, seeds[io], orig->account, orig->network, &sc) == 0, orig->name,
+           "c accepts the original");
+    for (uint32_t i = 0; c && i < res.n_c; i++) {
+        verified += zc_pczt_verify_sig(c, &res.sig_r[i]) == 0;
+        verified += zc_pczt_verify_sig(c, &res.sig_c[i]) == 0;
+    }
+    zc_pczt_free(c);
+    free(b);
+    printf("  %u+%u signatures over the changed memo, %d verify for the original\n", res.n_r,
+           res.n_c, verified);
+    expect(verified == 0, chg->name, "no signature over the changed memo verifies for the original");
+}
+
 int main(void)
 {
     const char *ns = getenv("ZSIGN_DIFF_N"), *ss = getenv("ZSIGN_DIFF_SEED");
@@ -177,15 +338,7 @@ int main(void)
             size_t pos;
             do pos = (size_t)(rnd() % len);
             while (in_witness[pos] && rnd() % 3);
-            uint8_t old = b[pos], nb;
-            uint64_t kind = rnd() % 10;
-            if (kind < 6) {
-                do nb = (uint8_t)rnd(); while (nb == old);
-            } else if (kind < 9) {
-                nb = old ^ (uint8_t)(1u << (rnd() % 8));
-            } else {
-                nb = (uint8_t)(old + ((rnd() & 1) ? 1 : 0xFF));
-            }
+            uint8_t old = b[pos], nb = mutate_byte(old);
             b[pos] = nb;
             run_both(b, len, seeds[i], v->account, v->network, acc_here % 8 == 0, &res);
             total++;
@@ -222,6 +375,9 @@ int main(void)
     printf("  total %ld: %ld accepted, %ld verdict mismatches, %ld summary mismatches, "
            "%ld refusal-code mismatches\n",
            total, accepted, verdict_mismatch, summary_mismatch, code_mismatch);
+
+    compact_fields(seeds, per_vector / 75 > 0 ? per_vector / 75 : 1);
+    compact_rebinding(seeds);
     for (size_t i = 0; i < ZV_PCZT_COUNT; i++) memzero(seeds[i], 64);
 
     if (fails) {
