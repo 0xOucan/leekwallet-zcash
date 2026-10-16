@@ -5017,6 +5017,8 @@ static volatile SignOutcome sign_outcome = SIGN_PENDING;
 /* A Zcash review requested by the protocol task, not yet on screen. Here
  * rather than with its screen because ui_user_is_answering() reads it. */
 static volatile bool zsign_review_pending = false;
+/* zShowAddress: the address-check screen is wanted (see SCREEN_ADDRESS_CHECK). */
+static volatile bool addr_check_pending = false;
 #endif
 
 /* Raised when the approval window closed with nobody answering, so the UI
@@ -5100,7 +5102,7 @@ bool ui_user_is_answering(void)
         return true;
     }
 #if LEEK_HAS_ZCASH
-    if (zsign_review_pending) {
+    if (zsign_review_pending || addr_check_pending) {
         return true;
     }
 #endif
@@ -5108,6 +5110,7 @@ bool ui_user_is_answering(void)
     switch (ui_get_screen()) {
         case SCREEN_HOST_PASSPHRASE_CONFIRM:
         case SCREEN_ZSIGN_REVIEW:
+        case SCREEN_ADDRESS_CHECK:
         case SCREEN_PASSPHRASE_CONFIRM:
         case SCREEN_WIPE_CONFIRM:
         /* Not questions, but a seed is on the glass and the user is working
@@ -5249,6 +5252,105 @@ static const screen_t screen_zsign_review = {
     .on_button = screen_zsign_review_on_button,
     .exit = NULL,
 };
+
+/* ============================================================================
+ * Address Check (zShowAddress, roadmap 1.7)
+ *
+ * The app shows an address and asks the device to show the same one. The
+ * device derived it itself, from its own seed; the user pages through the
+ * whole UA and answers on the last page. A mismatch is the one way to catch
+ * a companion that would hand out an address the device cannot spend from.
+ * ============================================================================ */
+
+static ZcashAccount  addr_check;
+static int           addr_check_page;
+
+void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
+                             uint8_t network)
+{
+    memset(&addr_check, 0, sizeof addr_check);
+    snprintf(addr_check.keys.ua, sizeof addr_check.keys.ua, "%s", ua);
+    snprintf(addr_check.t_address, sizeof addr_check.t_address, "%s", t_address);
+    addr_check.account = account;
+    addr_check.network = network;
+    sign_outcome = SIGN_PENDING;
+    addr_check_pending = true;
+}
+
+/* The UA's text pages, then the question. */
+static int addr_check_pages(void)
+{
+    return zrecv_page_count(&addr_check) - 3 + 1;
+}
+
+static void screen_address_check_enter(void)
+{
+    addr_check_page = 0;
+}
+
+static void screen_address_check_render(void)
+{
+    oled_clear();
+    const int last = addr_check_pages() - 1;
+    ZRecvPage p;
+    if (addr_check_page < last && zrecv_render(&addr_check, addr_check_page, &p)) {
+        for (int r = 0; r < ZRECV_ROWS - 1; r++) {
+            if (p.row[r][0]) oled_draw_string(r, 0, p.row[r]);
+        }
+        oled_draw_string(7, 0, "NO    UP/DN    NEXT");
+        return;
+    }
+    oled_draw_string_centered(0, "Address check");
+    oled_draw_string_centered(2, "Is this the address");
+    oled_draw_string_centered(3, "the app shows?");
+    char line[22];
+    snprintf(line, sizeof line, "acct %u  %s", (unsigned)(addr_check.account % 100000u),
+             addr_check.network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
+    oled_draw_string_centered(5, line);
+    oled_draw_string(7, 0, "NO               YES");
+}
+
+static void address_check_done(SignOutcome o)
+{
+    sign_outcome = o;
+    memzero(&addr_check, sizeof addr_check);
+    ui_set_screen(SCREEN_MAIN_MENU);
+}
+
+static void screen_address_check_on_button(button_id_t btn)
+{
+    const int last = addr_check_pages() - 1;
+    switch (btn) {
+        case BUTTON_UP:
+            if (addr_check_page > 0) addr_check_page--;
+            break;
+        case BUTTON_DOWN:
+            if (addr_check_page < last) addr_check_page++;
+            break;
+        case BUTTON_ACCEPT:
+            /* YES only on the question page: every page of the address is
+             * passed on the way there. */
+            if (addr_check_page < last) {
+                addr_check_page++;
+                break;
+            }
+            address_check_done(SIGN_APPROVED);
+            return;
+        case BUTTON_CANCEL:
+            address_check_done(SIGN_REJECTED);
+            return;
+        default:
+            return;
+    }
+    ui_invalidate();
+}
+
+static const screen_t screen_address_check = {
+    .enter = screen_address_check_enter,
+    .render = screen_address_check_render,
+    .on_button = screen_address_check_on_button,
+    .exit = NULL,
+};
 #endif /* LEEK_HAS_ZCASH */
 
 /* ============================================================================
@@ -5375,6 +5477,9 @@ void ui_init(void)
     screens[SCREEN_QR_OUT] = &screen_qr_out;
     screens[SCREEN_SHOW_ADDRESS] = &screen_show_address;
     screens[SCREEN_SD_SEED] = &screen_sd_seed;
+#if LEEK_HAS_ZCASH
+    screens[SCREEN_ADDRESS_CHECK] = &screen_address_check;
+#endif
     screens[SCREEN_SCAN] = &screen_scan;
 
     current_screen = SCREEN_BOOT;
@@ -5529,6 +5634,11 @@ static void service_sign_expiry(void)
         ui_set_screen(SCREEN_WALLET_INFO);
         return;
     }
+    if (ui_get_screen() == SCREEN_ADDRESS_CHECK) {
+        memzero(&addr_check, sizeof addr_check);
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
 #endif
     if (ui_get_screen() == SCREEN_HOST_PASSPHRASE_CONFIRM) {
         /* The wallet is the honest place to land: whatever was proposed has
@@ -5609,6 +5719,10 @@ void ui_task(void *pvParameters)
         if (zsign_review_pending) {
             zsign_review_pending = false;
             ui_set_screen(SCREEN_ZSIGN_REVIEW);
+        }
+        if (addr_check_pending) {
+            addr_check_pending = false;
+            ui_set_screen(SCREEN_ADDRESS_CHECK);
         }
 #endif
 
@@ -5760,6 +5874,8 @@ void ui__reset_static_state_for_test(void)
     zsign_review_pending = false;
     zsign_summary = NULL;
     zsign_page = 0;
+    addr_check_pending = false;
+    memzero(&addr_check, sizeof addr_check);
 #endif
 
     lock_timeout_choice = 1;

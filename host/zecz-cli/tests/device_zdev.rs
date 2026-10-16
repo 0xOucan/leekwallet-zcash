@@ -149,3 +149,21 @@ fn the_device_remembers_the_birthday_a_companion_gives_it() {
     let a1 = dev.z_get_account(1, "test").expect("account 1");
     assert!(device::get_uint(&a1, "birthday").is_err(), "account 1 got account 0's birthday");
 }
+
+#[test]
+fn the_user_confirms_the_address_on_the_device() {
+    let z = zdev_or_skip!("show", true);
+    let mut dev = connect(&z);
+    let ua = device::get_text(&dev.z_get_account(0, "test").unwrap(), "ua").unwrap();
+    dev.z_show_address(0, "test", &ua).expect("confirmed");
+    assert!(dev.z_show_address(0, "test", "utest1somethingelse").is_err(), "a different address passed");
+}
+
+#[test]
+fn a_no_on_the_device_fails_the_address_check() {
+    let mut z = zdev_or_skip!("show-no", false);
+    z.child.stdin.as_mut().unwrap().write_all(b"y\nn\n").unwrap();
+    let mut dev = connect(&z);
+    let err = dev.z_show_address(0, "test", "utest1x").expect_err("must fail");
+    assert!(device::is_code(&err, device::ERR_USER_REJECTED), "{err}");
+}

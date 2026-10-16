@@ -294,3 +294,19 @@ checked on Xtensa).
   knows it, and an import records it on the device. An SD load records the
   file's birthday, and an SD save writes the known one into the file.
 - The fingerprint helpers moved to `src/zcash-fp.c`.
+
+### 1.7 zGetFeatures and zShowAddress: done on PC
+- `zGetFeatures` (pre-session) gives the backend mode, the accepted branch
+  IDs, v6 only, Orchard spends only, the PCZT and chunk limits, and the
+  storage modes. `ZCASH_SIGN_BRANCHES` is checked in `test_zcash_sign`: every
+  branch a backend accepted is advertised, and every advertised one was
+  accepted by both.
+- `zShowAddress`: the device derives the address and pages the whole UA on
+  `SCREEN_ADDRESS_CHECK`. YES is only on the last page, NO works from any
+  page, and an expired request takes the question down. The address is
+  returned only after a yes.
+- `zecz device-show-address --port P` runs it, and the zdev tests cover a
+  yes, a no, and an address that differs from the expected one.
+- Phase 1 is now done on PC. Waiting on the board: panel and buttons, the
+  SD card, the KDF and derivation times, and the phone-scan check for the
+  UA QR.

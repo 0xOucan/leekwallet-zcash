@@ -312,7 +312,9 @@ against it.
 | `signTypedData` | keys | **yes** | **removed** in the Zcash fork (roadmap 1.1) |
 | `signTransaction` | keys | **yes** | **removed** in the Zcash fork (roadmap 1.1) |
 | `zGetAccount` | keys | — (viewing key, not spend authority) | implemented |
+| `zGetFeatures` | always | — (describes the firmware, not the wallet) | implemented |
 | `zSetAccountMeta` | keys | — (birthday and label; not secret, not needed to sign) | implemented |
+| `zShowAddress` | keys | **yes — the user compares the address and answers on the device** | implemented |
 | `zSignBegin` / `zSignChunk` / `zSignFinish` | keys | **yes — every review page, ACCEPT on the last** | implemented |
 | `signHash` | keys | **yes**, and refused unless blind signing is enabled on-device | **not implemented** — a host-supplied digest is the one thing this device will not sign, and nothing needs it yet |
 
@@ -356,6 +358,29 @@ fingerprint and the account. That happens only for a stored wallet with no
 BIP39 passphrase. For a passphrase, temporary or SD seed the answer is
 `stored: 0`: the record is held in RAM and dropped on lock, so flash never
 shows that such a seed was used.
+
+### Zcash features and address check
+
+```
+zGetFeatures  {}
+           -> { backend: "both"|"rust"|"c", branchIds: [uint], txVersions: [6],
+                spendPools: ["orchard"], maxPczt: uint, maxChunk: uint,
+                storage: ["vault","stateless","sd"?], showAddress: 1 }
+zShowAddress  { account?: uint, network: "main"|"test" }
+           -> { ua, tAddress }
+```
+
+A companion reads `zGetFeatures` before building a transaction. It can do so
+before pairing: it describes the firmware and says nothing about the wallet.
+`branchIds` is the list both signer backends accept. `test_zcash_sign` checks
+it against what they actually accept.
+
+`zShowAddress` has the device derive the account's address itself and page
+the whole unified address on its screen. The user answers on the last page
+whether it matches what the app shows. The address comes back only after a
+yes. A no is `0x0200` (rejected) and no answer is `0x0201` (timeout).
+`zecz device-show-address` runs the check and also compares the address the
+device confirmed with the one its own copy of the UFVK gives.
 
 ### Zcash signing (PCZT)
 

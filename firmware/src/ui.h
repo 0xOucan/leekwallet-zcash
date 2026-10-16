@@ -80,6 +80,9 @@ typedef enum {
     /* Main menu -> SD Card: load a seed from a .zkv file for this session,
      * or save the open seed to one (roadmap 1.4, sd-seed.h). */
     SCREEN_SD_SEED,
+    /* A host asked to show an address (zShowAddress): the UA in full, then
+     * "same as the app?". Answered through the sign-outcome channel. */
+    SCREEN_ADDRESS_CHECK,
     SCREEN_COUNT
 } screen_id_t;
 
@@ -300,6 +303,16 @@ void ui_request_passphrase_confirm(uint32_t fingerprint);
  * valid until then; it is the summary zcash_sign_check() produced.
  */
 void ui_request_zsign_review(const zs_summary *s, uint8_t network);
+
+/**
+ * A host asked the device to show an address (zShowAddress), so the user can
+ * compare it with what the app displays. The unified address is paged in
+ * full; the last page asks whether it matches. The answer arrives through
+ * ui_sign_outcome(): APPROVED = same address, REJECTED = not. Both strings
+ * are copied.
+ */
+void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
+                             uint8_t network);
 #endif
 
 typedef enum {

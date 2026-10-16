@@ -1001,6 +1001,91 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, "tAddress");
         cbor_write_text(&w, acct.t_address);
 
+    } else if (strcmp(method, "zGetFeatures") == 0) {
+        /* What this device's Zcash signer does, so a companion can decide
+         * before building a transaction, rather than after the device
+         * refuses it. Describes the firmware, not the wallet: readable
+         * before a session, like getFeatures. */
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "result");
+        cbor_write_map(&w, 8);
+        cbor_write_text(&w, "backend");
+        cbor_write_text(&w, zcash_sign_backend_name(zcash_sign_backend()));
+        cbor_write_text(&w, "branchIds");
+        cbor_write_array(&w, ZCASH_SIGN_BRANCH_COUNT);
+        for (size_t i = 0; i < ZCASH_SIGN_BRANCH_COUNT; i++) {
+            cbor_write_uint(&w, ZCASH_SIGN_BRANCHES[i]);
+        }
+        cbor_write_text(&w, "txVersions");
+        cbor_write_array(&w, 1);
+        cbor_write_uint(&w, 6);
+        /* Spends the signer will sign. Outputs to any pool are reviewed. */
+        cbor_write_text(&w, "spendPools");
+        cbor_write_array(&w, 1);
+        cbor_write_text(&w, "orchard");
+        cbor_write_text(&w, "maxPczt");
+        cbor_write_uint(&w, ZCASH_PCZT_MAX);
+        cbor_write_text(&w, "maxChunk");
+        cbor_write_uint(&w, ZSIGN_MAX_CHUNK);
+        cbor_write_text(&w, "storage");
+        cbor_write_array(&w, LEEK_HAS_SDCARD ? 3 : 2);
+        cbor_write_text(&w, "vault");
+        cbor_write_text(&w, "stateless");
+        if (LEEK_HAS_SDCARD) cbor_write_text(&w, "sd");
+        cbor_write_text(&w, "showAddress");
+        cbor_write_uint(&w, 1);
+
+    } else if (strcmp(method, "zShowAddress") == 0) {
+        /* The app shows an address; the device derives its own and pages it
+         * for the user, who answers on the device whether they match. The
+         * reply carries the device's address only after a yes, so a host
+         * cannot use this to skip the user. */
+        if (!request_is_authenticated()) {
+            send_session_error(ERR_SESSION, "session required");
+            return;
+        }
+        if (!pin_is_unlocked()) {
+            send_error(ERR_NOT_UNLOCKED, "device is locked");
+            return;
+        }
+        CborItem item;
+        uint32_t account = 0;
+        if (cbor_map_find(payload, len, "account", &item)) {
+            if (item.type != CBOR_UINT || item.value >= 0x80000000u) {
+                send_error(ERR_MALFORMED, "account out of range");
+                return;
+            }
+            account = (uint32_t)item.value;
+        }
+        char net_name[8];
+        if (!cbor_map_find(payload, len, "network", &item) ||
+            !cbor_text_copy(&item, net_name, sizeof(net_name)) ||
+            (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+            send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+            return;
+        }
+        const uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+        static ZcashAccount shown;
+        if (zcash_account_derive(account, network, &shown) != WALLET_OK) {
+            send_error(ERR_NO_WALLET, "derivation failed");
+            return;
+        }
+        ui_request_show_address(shown.keys.ua, shown.t_address, account, network);
+        SignOutcome outcome = wait_for_user();
+        if (outcome != SIGN_APPROVED) {
+            send_error(outcome == SIGN_PENDING ? ERR_USER_TIMEOUT : ERR_USER_REJECTED,
+                       outcome == SIGN_PENDING ? "no answer on the device"
+                                               : "the address does not match");
+            return;
+        }
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "result");
+        cbor_write_map(&w, 2);
+        cbor_write_text(&w, "ua");
+        cbor_write_text(&w, shown.keys.ua);
+        cbor_write_text(&w, "tAddress");
+        cbor_write_text(&w, shown.t_address);
+
     } else if (strcmp(method, "zSetAccountMeta") == 0) {
         /* A companion records the account's birthday (and label) on the
          * device, so the next companion can import without asking. Not
