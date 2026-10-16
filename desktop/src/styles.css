@@ -41,7 +41,6 @@ body {
   background: var(--surface);
   font-size: var(--text-sm);
   position: sticky; top: 0; z-index: 10;
-  flex-wrap: wrap;
 }
 .statusbar__dot {
   width: 8px; height: 8px; border-radius: 50%;
@@ -51,6 +50,7 @@ body {
 .statusbar__dot[data-state="connecting"] { background: var(--warn); }
 .statusbar__dot[data-state="error"] { background: var(--danger); }
 .statusbar__spacer { flex: 1; }
+#conn { white-space: nowrap; }
 
 .badge {
   font-family: var(--font-mono);
@@ -143,7 +143,12 @@ button.ghost { background: transparent; border-color: transparent; }
   max-width: 62ch;
   margin-bottom: var(--space-3);
 }
-.addr-inline { font-family: var(--font-mono); font-size: var(--text-xs); overflow-wrap: anywhere; }
+/* The server URL is context, not something to verify, so it may be cut
+ * short to keep the bar on one line; the full URL is in its title. */
+.server {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .notice {
   border-left: 2px solid var(--warn);

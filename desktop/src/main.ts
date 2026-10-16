@@ -123,7 +123,7 @@ async function refresh(): Promise<void> {
   net.textContent = s.network === "main" ? "mainnet" : "testnet";
   net.dataset["net"] = s.network;
   $("server").textContent = s.server;
-  $("server").title = `lightwalletd server; wallet data in ${s.dataDir}`;
+  $("server").title = `lightwalletd server ${s.server}; wallet data in ${s.dataDir}`;
   $("netnote").hidden = s.network === "main";
 
   $("import-panel").hidden = s.hasAccount;
