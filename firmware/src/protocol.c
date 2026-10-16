@@ -160,13 +160,69 @@ void protocol_set_writer(ProtocolWriter writer)
  * already delimits every write, so the marker is emitted and required here and
  * nowhere else. See PROTOCOL.md section 2.
  */
+/*
+ * Logs share this port, and a log line written between a frame's bytes
+ * corrupts the frame: seen on the first board, where a watchdog report
+ * landed right after "LK" and the companion waited for a reply it could no
+ * longer parse. So the marker and the frame go out in one write, and task
+ * logs take the same lock (log_vprintf below) so they wait for the frame.
+ * Logs printed from an interrupt cannot wait; nothing should be printing
+ * from one in normal operation.
+ */
+#ifndef LEEK_HOST_TEST
+#include "freertos/semphr.h"
+static SemaphoreHandle_t usb_tx_lock;
+static vprintf_like_t    log_vprintf_next;
+
+static int log_vprintf(const char *fmt, va_list ap)
+{
+    if (usb_tx_lock && xPortCanYield()) {
+        xSemaphoreTakeRecursive(usb_tx_lock, portMAX_DELAY);
+        int n = log_vprintf_next(fmt, ap);
+        xSemaphoreGiveRecursive(usb_tx_lock);
+        return n;
+    }
+    return log_vprintf_next(fmt, ap);
+}
+
+static void usb_tx_lock_init(void)
+{
+    if (!usb_tx_lock) {
+        usb_tx_lock = xSemaphoreCreateRecursiveMutex();
+        log_vprintf_next = esp_log_set_vprintf(log_vprintf);
+    }
+}
+#endif
+
 static void usb_write_frame(const uint8_t *frame, size_t len)
 {
-    static const uint8_t sync[2] = { SYNC0, SYNC1 };
-
-    usb_serial_jtag_write_bytes(sync, sizeof(sync), portMAX_DELAY);
-    usb_serial_jtag_write_bytes(frame, len, portMAX_DELAY);
+    static uint8_t out[2 + MAX_FRAME + 2];
+#ifndef LEEK_HOST_TEST
+    usb_tx_lock_init();
+    xSemaphoreTakeRecursive(usb_tx_lock, portMAX_DELAY);
+#endif
+    if (len > sizeof(out) - 2) {
+        len = sizeof(out) - 2;
+    }
+    out[0] = SYNC0;
+    out[1] = SYNC1;
+    memcpy(out + 2, frame, len);
+    /* In pieces the driver's ring buffer can take: a single larger write is
+     * not queued at all (see PROTOCOL_USB_TX_BUF). */
+    size_t sent = 0, total = len + 2;
+    while (sent < total) {
+        size_t n = total - sent;
+        if (n > PROTOCOL_USB_TX_CHUNK) n = PROTOCOL_USB_TX_CHUNK;
+        int w = usb_serial_jtag_write_bytes(out + sent, n, portMAX_DELAY);
+        if (w <= 0) {
+            break;      /* driver gone; nothing more can be sent */
+        }
+        sent += (size_t)w;
+    }
     usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
+#ifndef LEEK_HOST_TEST
+    xSemaphoreGiveRecursive(usb_tx_lock);
+#endif
 }
 
 static void send_frame(uint8_t type, const uint8_t *payload, size_t len)
@@ -723,6 +779,9 @@ static void dispatch(const uint8_t *payload, size_t len)
         send_error(ERR_MALFORMED, "bad method");
         return;
     }
+    /* One line per request: the method name only, never a field. What the
+     * first board's bring-up needed to tell a lost request from a slow one. */
+    ESP_LOGI(TAG, "request %s", method);
 
     /* Static, not stack: a Zcash account reply (UFVK + UA + t-address) is
      * ~700 bytes, a zSignFinish reply up to ~2.8 KB of signatures, and this
@@ -1462,6 +1521,12 @@ void protocol_reset_rx(void)
 
 #ifdef LEEK_HOST_TEST
 /** Drain whatever the test has queued on the port, then return. */
+/* Send an arbitrary frame down the active writer, for the frame-size test. */
+void protocol__send_frame_for_test(uint8_t type, const uint8_t *payload, size_t len)
+{
+    send_frame(type, payload, len);
+}
+
 void protocol__pump_for_test(void)
 {
     while (rx_pump()) { }
@@ -1477,8 +1542,8 @@ void protocol__reset_for_test(void)
 void protocol_start(void)
 {
     usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-    cfg.rx_buffer_size = 256;
-    cfg.tx_buffer_size = 256;
+    cfg.rx_buffer_size = PROTOCOL_USB_RX_BUF;
+    cfg.tx_buffer_size = PROTOCOL_USB_TX_BUF;
 
     esp_err_t err = usb_serial_jtag_driver_install(&cfg);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {

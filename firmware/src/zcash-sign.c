@@ -66,10 +66,25 @@ static struct {
     zc_ctx   *cctx;
 } S;
 
+/*
+ * The device runs the C backend; the host suites and zdev run BOTH.
+ *
+ * Measured on the first S3 board at 160 MHz: deriving one Orchard account
+ * took 0.75 s in C and 97 s in Rust. pasta_curves works in 64-bit limbs with
+ * 128-bit products, which the 32-bit Xtensa core emulates, and Orchard's
+ * ZIP 32 path validates every intermediate key with full scalar
+ * multiplications. A check-and-sign in Rust would hold the device for
+ * minutes. So BOTH stays the reference everywhere it is affordable: the two
+ * backends agree on every key and PCZT vector and on 3,675 mutations in
+ * test_zsign_diff, and the C backend is the one that runs on the chip.
+ * LEEK_ZCASH_BACKEND_BOTH forces BOTH on a device build, for measurements.
+ */
 #if defined(LEEK_HAS_ZCASH_C_ONLY)
 static ZcashSignBackend backend = ZSIGN_BACKEND_C;
-#else
+#elif defined(LEEK_HOST_TEST) || defined(LEEK_ZCASH_BACKEND_BOTH)
 static ZcashSignBackend backend = ZSIGN_BACKEND_BOTH;
+#else
+static ZcashSignBackend backend = ZSIGN_BACKEND_C;
 #endif
 
 #ifdef LEEK_HOST_TEST

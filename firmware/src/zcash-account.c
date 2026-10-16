@@ -10,6 +10,10 @@
 #include "ecdsa.h"
 #include "memzero.h"
 #include "zcash-worker.h"
+#ifndef LEEK_HOST_TEST
+#include "zsign_c.h"
+#endif
+
 
 #define H(i) (0x80000000u | (i))
 
@@ -55,10 +59,20 @@ static WalletError derive_with_seed(const uint8_t seed[64], void *p)
                        out->t_address, sizeof out->t_address);
 
     /* Orchard half, and the UFVK/UA joining both. */
+/* C on the device, Rust on the host: see the backend note in
+     * zcash-sign.c (0.75 s against 97 s per account on the S3). Both match
+     * every librustzcash key vector (test_zcash_keys). */
+#if defined(LEEK_HOST_TEST)
     if (zs_account_derive(seed, c->account, c->network, out->t_account, out->t_receiver,
                           &out->keys) == ZS_OK) {
         err = WALLET_OK;
     }
+#else
+    if (zc_account_derive(seed, c->account, c->network, out->t_account, out->t_receiver,
+                          &out->keys) == ZS_OK) {
+        err = WALLET_OK;
+    }
+#endif
 
 done:
     memzero(&node, sizeof node);
