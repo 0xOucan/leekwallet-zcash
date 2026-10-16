@@ -15,6 +15,19 @@ size_t zc_encode_ufvk(char *out, size_t cap, uint8_t net, const uint8_t fvk[96],
 size_t zc_encode_ua(char *out, size_t cap, uint8_t net, const uint8_t orchard[43],
                     const uint8_t *p2pkh);
 
+/* The receivers of a UA. `other` is set for any item this device cannot
+ * check: P2SH, Sapling, an unknown typecode, or expiry metadata. */
+typedef struct {
+    int     has_orchard, has_p2pkh, other;
+    uint8_t orchard[43];
+    uint8_t p2pkh[20];
+} zc_ua_items;
+
+/* 1 if `ua` (len bytes, not NUL-terminated) is a well-formed UA on `net`
+ * (ZIP 316: checksum, F4Jumble padding, ordering, item sizes); its
+ * receivers in *out. */
+int zc_ua_parse(const char *ua, size_t len, uint8_t net, zc_ua_items *out);
+
 /* 1 if `ua` (len bytes, not NUL-terminated) is a well-formed revision-0 UA
  * on `net` that contains `raw43` as its Orchard receiver. */
 int zc_ua_contains_orchard(const char *ua, size_t len, uint8_t net, const uint8_t raw43[43]);

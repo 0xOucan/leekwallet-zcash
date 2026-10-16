@@ -214,13 +214,14 @@ static int ua_hrp_network(const char *hrp, uint8_t *net, int *r2, int *r2_ti)
     return 0;
 }
 
-int zc_ua_contains_orchard(const char *ua, size_t len, uint8_t net, const uint8_t raw43[43])
+int zc_ua_parse(const char *ua, size_t len, uint8_t net, zc_ua_items *out)
 {
     static uint8_t buf[(UA_MAX_CHARS * 5) / 8 + 1];
     char hrp[17];
     size_t n;
     uint8_t ua_net;
     int r2, r2_ti;
+    memset(out, 0, sizeof *out);
     if (len > UA_MAX_CHARS || memchr(ua, 0, len)) return 0;
     if (bech32m_decode(ua, len, hrp, buf, sizeof buf, &n) != 0) return 0;
     if (!ua_hrp_network(hrp, &ua_net, &r2, &r2_ti) || ua_net != net) return 0;
@@ -232,7 +233,7 @@ int zc_ua_contains_orchard(const char *ua, size_t len, uint8_t net, const uint8_
 
     size_t end = n - 16, i = 0;
     int64_t prev = -1;
-    int has_data = 0, has_shielded = 0, has_transparent = 0, found = 0;
+    int has_data = 0, has_shielded = 0, has_transparent = 0;
     while (i < end) {
         uint64_t tc, ln;
         if (compact_size(buf, end, &i, &tc) != 0) return 0;
@@ -245,6 +246,7 @@ int zc_ua_contains_orchard(const char *ua, size_t len, uint8_t net, const uint8_
                 if (tc == 0xE0 && ln != 4) return 0;   /* expiry height */
                 if (tc == 0xE1 && ln != 8) return 0;   /* expiry time */
                 if (tc > 0xE1) return 0;
+                out->other = 1;                    /* expiring: not checked here */
             }
         } else {                                   /* data item */
             if ((tc == 0 || tc == 1) && ln != 20) return 0;
@@ -253,7 +255,15 @@ int zc_ua_contains_orchard(const char *ua, size_t len, uint8_t net, const uint8_
             has_data = 1;
             if (tc <= 1) has_transparent = 1;
             else has_shielded = 1;
-            if (tc == 3 && memcmp(buf + i, raw43, 43) == 0) found = 1;
+            if (tc == 3) {
+                out->has_orchard = 1;
+                memcpy(out->orchard, buf + i, 43);
+            } else if (tc == 0) {
+                out->has_p2pkh = 1;
+                memcpy(out->p2pkh, buf + i, 20);
+            } else {
+                out->other = 1;                    /* P2SH, Sapling, unknown */
+            }
         }
         prev = (int64_t)tc;
         i += (size_t)ln;
@@ -261,7 +271,14 @@ int zc_ua_contains_orchard(const char *ua, size_t len, uint8_t net, const uint8_
     if (!has_data) return 0;
     if (!r2 && !has_shielded) return 0;           /* revision 0: one shielded item */
     if (r2 && !r2_ti && has_transparent) return 0; /* "zu": no transparent receiver */
-    return found;
+    return 1;
+}
+
+int zc_ua_contains_orchard(const char *ua, size_t len, uint8_t net, const uint8_t raw43[43])
+{
+    zc_ua_items it;
+    return zc_ua_parse(ua, len, net, &it) && it.has_orchard &&
+           memcmp(it.orchard, raw43, 43) == 0;
 }
 
 /* ---- transparent addresses ---------------------------------------------- */

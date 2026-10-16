@@ -810,6 +810,32 @@ int32_t zc_account_derive(const uint8_t seed[64], uint32_t account, uint8_t net,
     return ZS_OK;
 }
 
+int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t index_out[11],
+                    uint8_t p2pkh_out[20], int *has_p2pkh)
+{
+    static zc_fvk f;
+    zc_ua_items it;
+    int32_t rc;
+    if (!ua || !fvk || !index_out || !p2pkh_out || !has_p2pkh) return ZS_ERR_ARG;
+    if (net != ZS_NET_MAIN && net != ZS_NET_TEST) return ZS_ERR_ARG;
+    *has_p2pkh = 0;
+    if (zc_crypto_init() != 0) return ZS_E_INTERNAL;
+    if (!zc_ua_parse(ua, strlen(ua), net, &it) || !it.has_orchard) return ZS_E_PARSE;
+    if (it.other) return ZS_E_UNSUPPORTED_BUNDLE;
+    if (zc_fvk_from_bytes(&f, fvk) != 0) return ZS_ERR_ARG;
+    if (zc_fvk_external_index(&f, it.orchard, index_out)) {
+        rc = ZS_OK;
+        if (it.has_p2pkh) {
+            memcpy(p2pkh_out, it.p2pkh, 20);
+            *has_p2pkh = 1;
+        }
+    } else {
+        rc = ZS_E_USER_ADDRESS;
+    }
+    memzero(&f, sizeof f);
+    return rc;
+}
+
 int32_t zc_selftest(void)
 {
     return zc_crypto_selftest() == 0 ? 0 : ZS_E_INTERNAL;

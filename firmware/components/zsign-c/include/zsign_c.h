@@ -50,6 +50,19 @@ int32_t zc_pczt_sign(zc_ctx *ctx, const uint8_t seed[64], uint32_t account, uint
 /* Verify one signature against the action's rk and the sighash (as a host does). */
 int32_t zc_pczt_verify_sig(zc_ctx *ctx, const zs_sig *sig);
 
+/* zShowAddress for an address the app shows: is `ua` (NUL-terminated) an
+ * external address of the account with Orchard FVK `fvk` (ak || nk || rivk)?
+ * ZS_OK if its Orchard receiver is ours (pk_d = [ivk] g_d), with that
+ * receiver's diversifier index in index_out (11 bytes, little-endian) and the
+ * P2PKH receiver it carries, if any, in p2pkh_out (*has_p2pkh = 1); the caller
+ * checks that one against the transparent key at the same index.
+ * ZS_E_PARSE: not a well-formed UA on `net`, or no Orchard receiver.
+ * ZS_E_USER_ADDRESS: the Orchard receiver is not this account's.
+ * ZS_E_UNSUPPORTED_BUNDLE: a receiver the device cannot check (Sapling, P2SH,
+ * unknown, expiry metadata). */
+int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t index_out[11],
+                    uint8_t p2pkh_out[20], int *has_p2pkh);
+
 /* Known-answer self test of the primitives the library lacks (Poseidon) and
  * of the embedded Sinsemilla table. 0 on success. */
 int32_t zc_selftest(void);

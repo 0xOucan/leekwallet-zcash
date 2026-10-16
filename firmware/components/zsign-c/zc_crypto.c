@@ -12,6 +12,7 @@
 #include "blake2b.h"
 #include "chacha20poly1305.h"
 #include "memzero.h"
+#include "aes_ct.h"
 #include "orchard.h"
 #include "zc_poseidon_consts.h"
 
@@ -440,14 +441,83 @@ int zc_fvk_scope(const zc_fvk *f, const uint8_t recipient[43])
     return 0;
 }
 
-void zc_fvk_default_address(const zc_fvk *f, uint8_t out[43])
+void zc_fvk_address_at(const zc_fvk *f, const uint8_t j[11], uint8_t out[43])
 {
-    static const uint8_t j0[11];
     zc_pt gd, pk;
-    ff1_aes256_encrypt(f->dk_ext, j0, out);       /* d = FF1-AES256_dk(0) */
+    ff1_aes256_encrypt(f->dk_ext, j, out);        /* d = FF1-AES256_dk(j) */
     zc_diversify_hash(&gd, out);
     zc_pt_mul(&pk, f->ivk_ext, &gd);
     zc_pt_encode(out + 11, &pk);
+}
+
+void zc_fvk_default_address(const zc_fvk *f, uint8_t out[43])
+{
+    static const uint8_t j0[11];
+    zc_fvk_address_at(f, j0, out);
+}
+
+/* FF1 over radix 2, n = 88, empty tweak, as ff1_aes256_encrypt: numeral 0
+ * is bit 0 of byte 0 and the most significant bit of each 44-bit half. */
+static uint64_t ff1_half(const uint8_t *d, int off)
+{
+    uint64_t v = 0;
+    for (int i = 0; i < 44; i++) {
+        if (d[(off + i) / 8] & (1 << ((off + i) % 8))) v |= 1ULL << (43 - i);
+    }
+    return v;
+}
+
+static void ff1_put_half(uint8_t *d, int off, uint64_t v)
+{
+    for (int i = 0; i < 44; i++) {
+        uint8_t bit = (uint8_t)(1 << ((off + i) % 8));
+        if (v & (1ULL << (43 - i))) d[(off + i) / 8] |= bit;
+        else d[(off + i) / 8] &= (uint8_t)~bit;
+    }
+}
+
+void zc_ff1_decrypt(const uint8_t key[32], const uint8_t in[11], uint8_t out[11])
+{
+    const uint64_t mask = (1ULL << 44) - 1;
+    aes_ct_256_ctx ctx;
+    uint8_t P[16] = {1, 2, 1, 0, 0, 2, 10, 44, 0, 0, 0, 88, 0, 0, 0, 0};
+    uint8_t prf_p[16], R[16], S[16];
+    aes_ct_256_keysched(key, &ctx);
+    aes_ct_256_ecb_encrypt(&ctx, P, prf_p);
+
+    /* Encryption round i maps (A, B) to (B, A + F_i(B)); undo it from the
+     * last round down: B was the new A, and A = new B - F_i(B). */
+    uint64_t a = ff1_half(in, 0), b = ff1_half(in, 44);
+    for (int i = 9; i >= 0; i--) {
+        uint64_t prev_b = a;
+        memset(R, 0, sizeof R);
+        R[9] = (uint8_t)i;
+        for (int k = 0; k < 6; k++) R[10 + k] = (uint8_t)(prev_b >> (8 * (5 - k)));
+        for (int k = 0; k < 16; k++) R[k] ^= prf_p[k];
+        aes_ct_256_ecb_encrypt(&ctx, R, S);
+        uint64_t y = 0;
+        for (int k = 6; k < 12; k++) y = (y << 8) | S[k];
+        y |= (uint64_t)(S[5] & 0x0F) << 48;
+        y &= mask;
+        a = (b - y) & mask;
+        b = prev_b;
+    }
+    memcpy(out, in, 11);
+    ff1_put_half(out, 0, a);
+    ff1_put_half(out, 44, b);
+    memzero(&ctx, sizeof ctx);
+    memzero(prf_p, sizeof prf_p);
+}
+
+int zc_fvk_external_index(const zc_fvk *f, const uint8_t recipient[43], uint8_t j[11])
+{
+    uint8_t again[43];
+    if (zc_fvk_scope(f, recipient) != 1) return 0;
+    zc_ff1_decrypt(f->dk_ext, recipient, j);
+    /* FF1 is a permutation, so this holds by construction; checked anyway,
+     * since a wrong j here would put a wrong t-address on the screen. */
+    zc_fvk_address_at(f, j, again);
+    return memcmp(again, recipient, 43) == 0;
 }
 
 /* ---- RedPallas ------------------------------------------------------------ */
