@@ -43,7 +43,7 @@ A seed sealed under a passphrase, for the SD storage mode (roadmap 1.4).
 Written by the device (Main menu > SD Card > Save open seed) or by
 `zecz zkv-new` on an offline computer. Read by the device (load as the
 session's seed: nothing reaches flash) and by `zecz zkv-open`. Two independent
-implementations, `firmware/src/zkv.c` and `host/zecz-cli/src/zkv.rs`, both
+implementations, `firmware/src/zkv.c` and `host/zecz-core/src/zkv.rs`, both
 reproduce `vectors/zkv/golden-v1.zkv` byte for byte.
 
 All integers little-endian.

@@ -21,5 +21,5 @@ ciborium = "0.2"
 hex = "0.4"
 
 [dev-dependencies]
-zecz-cli = { path = "../zecz-cli" }
+zecz-core = { path = "../zecz-core" }
 rand = { version = "0.10", features = ["sys_rng"] }

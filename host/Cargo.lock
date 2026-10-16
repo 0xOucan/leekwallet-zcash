@@ -1589,7 +1589,7 @@ dependencies = [
  "rand 0.10.3",
  "sha2 0.10.8",
  "zcash_protocol",
- "zecz-cli",
+ "zecz-core",
 ]
 
 [[package]]
@@ -3949,13 +3949,23 @@ dependencies = [
 name = "zecz-cli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "tokio",
+ "zecz-core",
+]
+
+[[package]]
+name = "zecz-core"
+version = "0.1.0"
+dependencies = [
  "aes-gcm",
  "anyhow",
  "async-trait",
  "bip39",
  "chacha20poly1305 0.10.1",
  "ciborium",
- "clap",
  "getrandom 0.3.4",
  "hex",
  "hkdf",

@@ -26,29 +26,45 @@ pub fn apply_zsig(pczt: Pczt, zsig: &Zsig) -> Result<Pczt> {
     Ok(signer.finish())
 }
 
+/// What [`prove_with`] is doing. Proving takes seconds, so a front end
+/// shows these.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProveEvent {
+    /// Loading (or building, the first time) a proving key: the pool and
+    /// the circuit version, as debug names.
+    LoadingKey { pool: String, circuit: String },
+    /// Creating the proof for a pool's bundle ("Orchard" or "Ironwood").
+    Proving { pool: &'static str },
+}
+
 /// The Prover role for the Orchard-protocol bundles, using the cached proving
 /// key for the circuit that governs each pool under the PCZT's consensus
 /// branch. Sapling is refused: the device account has no Sapling key.
 pub fn prove(pczt: Pczt) -> Result<Pczt> {
+    prove_with(pczt, |_| {})
+}
+
+/// [`prove`], reporting each step to `on_event`.
+pub fn prove_with(pczt: Pczt, mut on_event: impl FnMut(ProveEvent)) -> Result<Pczt> {
     let branch = BranchId::try_from(*pczt.global().consensus_branch_id()).map_err(|e| anyhow!("PCZT branch: {e}"))?;
     let mut prover = Prover::new(pczt);
     if prover.requires_sapling_proofs() {
         bail!("PCZT needs Sapling proofs; not supported");
     }
-    let pk_for = |pool| -> Result<&'static orchard::circuit::ProvingKey> {
+    let pk_for = |pool: orchard::ValuePool, on_event: &mut dyn FnMut(ProveEvent)| -> Result<&'static orchard::circuit::ProvingKey> {
         let version = zcash_primitives::transaction::components::orchard::bundle_version_for_branch(branch, pool)
             .ok_or_else(|| anyhow!("branch {branch:?} has no {pool:?} pool"))?;
-        eprintln!("Loading the {:?} proving key ({:?}) ...", pool, version.circuit_version());
+        on_event(ProveEvent::LoadingKey { pool: format!("{pool:?}"), circuit: format!("{:?}", version.circuit_version()) });
         Ok(zcash_primitives::transaction::builder::cached_orchard_proving_key(version.circuit_version()))
     };
     if prover.requires_orchard_proof() {
-        let pk = pk_for(orchard::ValuePool::Orchard)?;
-        eprintln!("Proving the Orchard bundle ...");
+        let pk = pk_for(orchard::ValuePool::Orchard, &mut on_event)?;
+        on_event(ProveEvent::Proving { pool: "Orchard" });
         prover = prover.create_orchard_proof(UnwrapErr(SysRng), pk).map_err(|e| anyhow!("Orchard proof: {e:?}"))?;
     }
     if prover.requires_ironwood_proof() {
-        let pk = pk_for(orchard::ValuePool::Ironwood)?;
-        eprintln!("Proving the Ironwood bundle ...");
+        let pk = pk_for(orchard::ValuePool::Ironwood, &mut on_event)?;
+        on_event(ProveEvent::Proving { pool: "Ironwood" });
         prover = prover.create_ironwood_proof(UnwrapErr(SysRng), pk).map_err(|e| anyhow!("Ironwood proof: {e:?}"))?;
     }
     Ok(prover.finish())

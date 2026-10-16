@@ -45,20 +45,37 @@ impl std::fmt::Display for CacheError {
 
 impl std::error::Error for CacheError {}
 
+/// A range of blocks `start..end` that `sync::run` has finished scanning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScannedRange {
+    pub start: u32,
+    pub end: u32,
+    /// The chain tip when the sync started, if known.
+    pub tip: Option<u32>,
+}
+
 /// In-memory compact block cache that reports progress as ranges are
 /// downloaded and scanned.
 #[derive(Default)]
-pub struct MemBlockCache {
+pub struct MemBlockCache<'a> {
     blocks: Mutex<BTreeMap<u32, CompactBlock>>,
-    /// Chain tip, for progress output only.
+    /// Chain tip, for progress reports only.
     pub tip: Mutex<Option<u32>>,
+    on_scanned: Option<Box<dyn Fn(ScannedRange) + Send + Sync + 'a>>,
+}
+
+impl<'a> MemBlockCache<'a> {
+    /// A cache that calls `on_scanned` each time a range has been scanned.
+    pub fn with_progress(on_scanned: impl Fn(ScannedRange) + Send + Sync + 'a) -> Self {
+        MemBlockCache { on_scanned: Some(Box::new(on_scanned)), ..Default::default() }
+    }
 }
 
 fn h(b: &CompactBlock) -> u32 {
     b.height as u32
 }
 
-impl BlockSource for MemBlockCache {
+impl BlockSource for MemBlockCache<'_> {
     type Error = CacheError;
 
     fn with_blocks<F, WalletErrT>(
@@ -87,7 +104,7 @@ impl BlockSource for MemBlockCache {
 }
 
 #[async_trait]
-impl BlockCache for MemBlockCache {
+impl BlockCache for MemBlockCache<'_> {
     fn get_tip_height(&self, range: Option<&ScanRange>) -> Result<Option<BlockHeight>, Self::Error> {
         let blocks = self.blocks.lock().unwrap();
         let tip = match range {
@@ -126,9 +143,8 @@ impl BlockCache for MemBlockCache {
         self.blocks.lock().unwrap().retain(|k, _| *k < s || *k >= e);
         // `sync::run` deletes a range once it has been scanned.
         let tip = *self.tip.lock().unwrap();
-        match tip {
-            Some(t) => eprintln!("  scanned {s}..{e} ({} blocks behind tip {t})", t.saturating_sub(e.saturating_sub(1))),
-            None => eprintln!("  scanned {s}..{e}"),
+        if let Some(f) = &self.on_scanned {
+            f(ScannedRange { start: s, end: e, tip });
         }
         Ok(())
     }
