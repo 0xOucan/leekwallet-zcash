@@ -368,3 +368,15 @@ checked on Xtensa).
 - On the board, a wrong passphrase was refused. The right one loaded the
   seed as a session seed (`TEMP  ZFP 551A1FD4`), and a lock dropped it.
 - The file timestamp reads 1979 because the board has no clock. Harmless.
+
+### 5 SD card airgap: a testnet send signed from the card (2026-10-15)
+- `zecz send --out /media/…/LEEKZ/unsigned.pczt` wrote 0.005 TAZ to self
+  with a memo. On the board, *SD Card → Sign transaction* ran the same
+  check and review as USB. ACCEPT on the last page wrote
+  `LEEKZ/signed.zsig`.
+- `zecz finish --pczt …/unsigned.pczt --sigs …/signed.zsig` applied one
+  signature (verified against rk), proved, and broadcast **txid
+  30cdefb47286f2e3397dd13eaaba88fa772910ca41578a99baaf271adab993a4**.
+- The `.zsig` the C firmware wrote parsed in zecz's independent Rust
+  reader. The hash in it matched the PCZT on the card.
+- Needed for this: FATFS long names on the board (`CONFIG_FATFS_LFN_HEAP`).

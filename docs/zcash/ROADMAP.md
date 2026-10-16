@@ -199,6 +199,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 - Menu → SD → pick a file → the same checks and review as USB → sign → write `signed.zsig`.
 - Refuse if the file changed between review and signing.
 - Done when: a full testnet send uses only the SD card, with no USB data.
+- Status: done on the board, 2026-10-15. `zecz send` wrote `LEEKZ/unsigned.pczt` straight to the card. The board checked it, showed the review and wrote `LEEKZ/signed.zsig`. `zecz finish` read the card and broadcast testnet txid `30cdefb47286f2e3397dd13eaaba88fa772910ca41578a99baaf271adab993a4`.
 
 ---
 
