@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeekWallet Zcash</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="statusbar">
+        <span class="statusbar__dot" id="dot" data-state="disconnected" aria-hidden="true"></span>
+        <span id="conn" role="status">Starting</span>
+        <span class="statusbar__spacer"></span>
+        <span class="muted addr-inline" id="server" title="lightwalletd server"></span>
+        <span class="badge" id="network" title="Which chain this wallet follows">—</span>
+        <button class="ghost" id="theme" aria-label="Toggle theme">◐</button>
+      </header>
+
+      <main id="main">
+        <h1 class="visually-hidden">LeekWallet Zcash</h1>
+        <div class="notice notice--danger" role="note" id="netnote">
+          Testnet, watch-only. This build imports a viewing key and shows
+          balances; it cannot spend.
+        </div>
+
+        <section class="panel" id="import-panel" hidden aria-labelledby="import-h">
+          <h2 id="import-h">Import a viewing key</h2>
+          <p>
+            A unified full viewing key (<span class="mono">uviewtest1…</span>) lets
+            this app see the account's funds without being able to spend them.
+          </p>
+          <form id="import-form" novalidate>
+            <label class="field">
+              <span>Unified full viewing key</span>
+              <textarea id="ufvk" rows="4" spellcheck="false" autocomplete="off" required></textarea>
+            </label>
+            <label class="field">
+              <span>Birthday height (the first block that can hold its funds)</span>
+              <input id="birthday" type="number" inputmode="numeric" min="1" step="1" required />
+            </label>
+            <div class="row">
+              <button class="primary" id="import-btn" type="submit">Import</button>
+              <button id="tip-btn" type="button" title="Use the current chain tip as the birthday">Use chain tip</button>
+            </div>
+            <p class="formerr" id="import-err" role="alert"></p>
+          </form>
+        </section>
+
+        <section class="panel" id="sync-panel" hidden aria-labelledby="sync-h">
+          <h2 id="sync-h">Sync</h2>
+          <progress id="sync-bar" max="1" value="0" aria-labelledby="sync-status"></progress>
+          <p id="sync-status" role="status">Not synced yet.</p>
+          <div class="row">
+            <button class="primary" id="sync-btn" type="button">Sync</button>
+          </div>
+          <p class="formerr" id="sync-err" role="alert"></p>
+        </section>
+
+        <section class="panel" id="balance-panel" hidden aria-labelledby="balance-h">
+          <h2 id="balance-h">Balance</h2>
+          <dl class="kv" id="balances">
+            <dt>Orchard</dt><dd id="bal-orchard">—</dd>
+            <dt>Ironwood</dt><dd id="bal-ironwood">—</dd>
+            <dt>Transparent</dt><dd id="bal-transparent">—</dd>
+            <dt>Total</dt><dd id="bal-total">—</dd>
+            <dt>Spendable</dt><dd id="bal-spendable">—</dd>
+          </dl>
+          <p class="muted" id="balance-note"></p>
+        </section>
+
+        <section class="panel" id="receive-panel" hidden aria-labelledby="receive-h">
+          <h2 id="receive-h">Receive</h2>
+          <p>Unified address (Orchard and transparent receivers).</p>
+          <div class="addr" id="ua"></div>
+          <div class="row receive-actions">
+            <button id="copy-ua" type="button">Copy</button>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
