@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_stubs.h"
@@ -910,6 +911,83 @@ static void test_sd_card_save_and_load(void)
     snprintf(p, sizeof p, "%s/SEED1.ZKV", card);
     unlink(p);
     rmdir(card);
+}
+
+/* Roadmap 5: a PCZT on the card is reviewed on the same pages as over USB,
+ * and ACCEPT writes LEEKZ/signed.zsig; BACK writes nothing. */
+#include "../../vectors/pczt_vectors.h"
+
+static void put_card_file(const char *card, const char *rel, const char *src)
+{
+    char p[256];
+    snprintf(p, sizeof p, "%s/LEEKZ", card);
+    mkdir(p, 0755);
+    snprintf(p, sizeof p, "%s/%s", card, rel);
+    FILE *in = fopen(src, "rb"), *out = fopen(p, "wb");
+    uint8_t b[4096];
+    size_t n;
+    while (in && out && (n = fread(b, 1, sizeof b, in)) > 0) fwrite(b, 1, n, out);
+    if (in) fclose(in);
+    if (out) fclose(out);
+}
+
+static bool card_has_file(const char *card, const char *rel)
+{
+    char p[256];
+    struct stat st;
+    snprintf(p, sizeof p, "%s/%s", card, rel);
+    return stat(p, &st) == 0;
+}
+
+static void test_sd_card_signing(void)
+{
+    printf("== SD card: a transaction on the card is reviewed and signed to signed.zsig\n");
+    const zv_pczt_vector *v = &ZV_PCZT[0];   /* iw_send_shielded, testnet */
+    char card[64] = "/tmp/leek-ui-sign-XXXXXX";
+    CHECK(mkdtemp(card) != NULL, "setup: card");
+
+    boot_device();
+    CHECK(pin_set("1234") && pin_verify("1234"), "setup: PIN");
+    CHECK(fake_wallet_preload(v->mnemonic) == 1, "setup: seed");
+    go(SCREEN_SETTINGS);
+    select_menu_item("Net Mainnet");
+    press(BUTTON_ACCEPT);   /* testnet: the vector's network */
+    sdcard__set_root_for_test(card);
+
+    /* No transaction on the card: not offered. */
+    open_sd_screen();
+    CHECK_SCREEN(!fake_oled_contains("Sign transaction"), "offered with nothing to sign");
+
+    put_card_file(card, "LEEKZ/unsigned.pczt", v->file);
+    open_sd_screen();
+    CHECK_SCREEN(fake_oled_contains("> Sign transaction"), "the transaction is not offered first");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_ZSIGN_REVIEW, "did not open the review (screen %d)", ui_get_screen());
+    for (int i = 0; i < 40 && ui_get_screen() == SCREEN_ZSIGN_REVIEW; i++) {
+        CHECK(!card_has_file(card, "LEEKZ/signed.zsig"), "signed before the last page");
+        press(BUTTON_ACCEPT);
+    }
+    CHECK(ui_get_screen() == SCREEN_SD_SEED, "did not come back to the SD screen");
+    CHECK_SCREEN(fake_oled_contains("Signed: 1 signature"), "the result is not said");
+    CHECK(card_has_file(card, "LEEKZ/signed.zsig"), "no signed.zsig on the card");
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "a card signature answered a host");
+
+    /* BACK on the review: nothing written. */
+    char p[256];
+    snprintf(p, sizeof p, "%s/LEEKZ/signed.zsig", card);
+    unlink(p);
+    press(BUTTON_ACCEPT);   /* result -> list */
+    press(BUTTON_ACCEPT);   /* Sign transaction */
+    CHECK(ui_get_screen() == SCREEN_ZSIGN_REVIEW, "second review did not open");
+    press(BUTTON_DOWN);
+    press(BUTTON_CANCEL);
+    CHECK_SCREEN(fake_oled_contains("Rejected"), "a rejection is not said");
+    CHECK(!card_has_file(card, "LEEKZ/signed.zsig"), "a rejected transaction was signed");
+
+    sdcard__set_root_for_test(NULL);
+    char cmd[128];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", card);
+    CHECK(system(cmd) == 0, "cleanup");
 }
 
 /* ============================================================================
@@ -2687,6 +2765,7 @@ int main(void)
     test_receive_shows_the_whole_address();
     test_sd_card_save_and_load();
     test_address_check();
+    test_sd_card_signing();
     test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
     test_blind_signing_takes_a_deliberate_act();

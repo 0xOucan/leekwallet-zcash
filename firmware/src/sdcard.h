@@ -59,6 +59,36 @@ int sdcard_write_new(const char *name, const uint8_t *buf, size_t len);
  */
 bool sdcard_free_name(const char *prefix, const char *ext, char out[SDCARD_NAME_MAX + 1]);
 
+/*
+ * Files by relative path, for the airgap folder (FORMATS.md, "SD-card airgap
+ * layout"): "LEEKZ/unsigned.pczt" and the like. Long names, so the firmware
+ * needs FATFS long-name support (CONFIG_FATFS_LFN_HEAP). A path is at most
+ * one folder deep, of [A-Za-z0-9_.-], with no "..".
+ */
+#define SDCARD_PATH_MAX 48
+
+/** Size of the file at `path`. */
+int sdcard_size(const char *path, size_t *size);
+
+/** Read up to `n` bytes at `offset`; `*got` is how many. */
+int sdcard_read_at(const char *path, size_t offset, uint8_t *buf, size_t n, size_t *got);
+
+/** SHA-256 of the whole file, streamed; `*size` (optional) its length. */
+int sdcard_sha256(const char *path, uint8_t out[32], size_t *size);
+
+/** Create a folder if it does not exist. */
+int sdcard_mkdir(const char *path);
+
+/**
+ * Write `path`, replacing any file there, through a temporary and a rename,
+ * so a power cut leaves the old file or the new one. For files that are not
+ * secrets and may be overwritten (a .zsig); seed files use sdcard_write_new.
+ */
+int sdcard_write_replace(const char *path, const uint8_t *buf, size_t len);
+
+/** Remove `path`; SDCARD_OK if it was not there. */
+int sdcard_remove(const char *path);
+
 #ifdef LEEK_HOST_TEST
 /** Use a host directory as the card; NULL means "no card inserted". */
 void sdcard__set_root_for_test(const char *dir);

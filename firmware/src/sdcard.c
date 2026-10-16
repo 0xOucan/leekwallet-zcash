@@ -14,6 +14,7 @@
 
 #include "board.h"
 #include "esp_log.h"
+#include "sha2.h"
 
 #if LEEK_HAS_SDCARD && !defined(LEEK_HOST_TEST)
 #include "driver/sdmmc_host.h"
@@ -231,4 +232,125 @@ bool sdcard_free_name(const char *prefix, const char *ext, char out[SDCARD_NAME_
         }
     }
     return false;
+}
+
+/* ------------------------------------------------------- relative paths */
+
+static bool path_ok(const char *path)
+{
+    size_t n = strlen(path), slashes = 0;
+    if (n == 0 || n > SDCARD_PATH_MAX || path[0] == '/' || path[n - 1] == '/' ||
+        strstr(path, "..")) {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        char c = path[i];
+        if (c == '/') {
+            slashes++;
+        } else if (!(isalnum((unsigned char)c) || c == '_' || c == '.' || c == '-')) {
+            return false;
+        }
+    }
+    return slashes <= 1;
+}
+
+static int full_path(const char *path, char *out, size_t cap)
+{
+    if (!mounted) return SDCARD_E_NOCARD;
+    if (!path_ok(path)) return SDCARD_E_NAME;
+    snprintf(out, cap, "%s/%s", root(), path);
+    return SDCARD_OK;
+}
+
+int sdcard_size(const char *path, size_t *size)
+{
+    char p[320];
+    int rc = full_path(path, p, sizeof p);
+    if (rc != SDCARD_OK) return rc;
+    struct stat st;
+    if (stat(p, &st) != 0) return errno == ENOENT ? SDCARD_E_NOTFOUND : SDCARD_E_IO;
+    if (!S_ISREG(st.st_mode)) return SDCARD_E_NOTFOUND;
+    *size = (size_t)st.st_size;
+    return SDCARD_OK;
+}
+
+int sdcard_read_at(const char *path, size_t offset, uint8_t *buf, size_t n, size_t *got)
+{
+    char p[320];
+    int rc = full_path(path, p, sizeof p);
+    if (rc != SDCARD_OK) return rc;
+    FILE *f = fopen(p, "rb");
+    if (!f) return errno == ENOENT ? SDCARD_E_NOTFOUND : SDCARD_E_IO;
+    rc = SDCARD_OK;
+    if (fseek(f, (long)offset, SEEK_SET) != 0) {
+        rc = SDCARD_E_IO;
+    } else {
+        *got = fread(buf, 1, n, f);
+        if (ferror(f)) rc = SDCARD_E_IO;
+    }
+    fclose(f);
+    return rc;
+}
+
+int sdcard_sha256(const char *path, uint8_t out[32], size_t *size)
+{
+    char p[320];
+    int rc = full_path(path, p, sizeof p);
+    if (rc != SDCARD_OK) return rc;
+    FILE *f = fopen(p, "rb");
+    if (!f) return errno == ENOENT ? SDCARD_E_NOTFOUND : SDCARD_E_IO;
+    SHA256_CTX ctx;
+    sha256_Init(&ctx);
+    uint8_t buf[512];
+    size_t n, total = 0;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
+        sha256_Update(&ctx, buf, n);
+        total += n;
+    }
+    rc = ferror(f) ? SDCARD_E_IO : SDCARD_OK;
+    fclose(f);
+    sha256_Final(&ctx, out);
+    if (size) *size = total;
+    return rc;
+}
+
+int sdcard_mkdir(const char *path)
+{
+    char p[320];
+    int rc = full_path(path, p, sizeof p);
+    if (rc != SDCARD_OK) return rc;
+    if (mkdir(p, 0755) == 0 || errno == EEXIST) return SDCARD_OK;
+    return SDCARD_E_IO;
+}
+
+int sdcard_remove(const char *path)
+{
+    char p[320];
+    int rc = full_path(path, p, sizeof p);
+    if (rc != SDCARD_OK) return rc;
+    if (unlink(p) == 0 || errno == ENOENT) return SDCARD_OK;
+    return SDCARD_E_IO;
+}
+
+int sdcard_write_replace(const char *path, const uint8_t *buf, size_t len)
+{
+    char dst[320], tmp[330];
+    int rc = full_path(path, dst, sizeof dst);
+    if (rc != SDCARD_OK) return rc;
+    snprintf(tmp, sizeof tmp, "%s.tmp", dst);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) return SDCARD_E_IO;
+    bool ok = fwrite(buf, 1, len, f) == len && fflush(f) == 0 && fsync(fileno(f)) == 0;
+    ok = (fclose(f) == 0) && ok;
+    /* FAT cannot rename over an existing name, so the old file goes first;
+     * a cut between the two leaves the complete .tmp beside nothing. */
+    if (ok) {
+        unlink(dst);
+        ok = rename(tmp, dst) == 0;
+    }
+    if (!ok) {
+        unlink(tmp);
+        return SDCARD_E_IO;
+    }
+    return SDCARD_OK;
 }
