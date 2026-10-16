@@ -15,7 +15,17 @@
 
 #include <stdbool.h>
 
+/* 64 KB was for the Rust backend (~50 KB measured). The device runs the C
+ * backend (zcash-sign.c), whose check and sign peak near 5 KB, and with
+ * Bluetooth up a 64 KB internal-RAM stack no longer fits: the worker failed
+ * to start on the first board and every derivation failed. 24 KB leaves the
+ * C backend and trezor-crypto's BIP32 work wide margins. A build that runs
+ * BOTH on the device (LEEK_ZCASH_BACKEND_BOTH) still gets 64 KB. */
+#if defined(LEEK_ZCASH_BACKEND_BOTH) || defined(LEEK_HOST_TEST)
 #define ZCASH_WORKER_STACK (64 * 1024)
+#else
+#define ZCASH_WORKER_STACK (24 * 1024)
+#endif
 
 typedef void (*ZcashJobFn)(void *ctx);
 

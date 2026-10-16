@@ -3,7 +3,11 @@
 #include "airgap.h"
 
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
+#ifndef LEEK_HOST_TEST
+#include "esp_heap_caps.h"
+#endif
 
 #include "esp_log.h"
 
@@ -28,8 +32,13 @@ static const char *TAG = "airgap";
    decoder refuses anything that would not fit at the first part, so a sender
    cannot walk it past these. Mixed parts as before: up to 512-byte fragments,
    larger than any frame a phone animates. */
-static uint8_t  scan_fragments[16384];
-static uint8_t  scan_mixed[UR_DECODER_MIXED * 512];
+#define SCAN_FRAGMENTS_LEN 16384
+#define SCAN_MIXED_LEN     (UR_DECODER_MIXED * 512)
+/* In PSRAM where there is some: internal RAM is what Bluetooth and the Zcash
+ * worker's stack compete for, and 20 KB of scan buffers cost the worker its
+ * stack on the first board. Allocated on first use; a scan is not a secret. */
+static uint8_t *scan_fragments;
+static uint8_t *scan_mixed;
 static UrDecoder scan;
 static bool     scan_ready;
 
@@ -38,17 +47,35 @@ void airgap_start(void)
     /* No worker yet: nothing scanned is signable. Phase 5 starts one here. */
 }
 
+static bool scan_buffers(void)
+{
+    if (scan_fragments && scan_mixed) return true;
+#if defined(LEEK_HOST_TEST)
+    scan_fragments = calloc(1, SCAN_FRAGMENTS_LEN);
+    scan_mixed = calloc(1, SCAN_MIXED_LEN);
+#else
+    scan_fragments = heap_caps_calloc(1, SCAN_FRAGMENTS_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!scan_fragments) scan_fragments = calloc(1, SCAN_FRAGMENTS_LEN);
+    scan_mixed = heap_caps_calloc(1, SCAN_MIXED_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!scan_mixed) scan_mixed = calloc(1, SCAN_MIXED_LEN);
+#endif
+    return scan_fragments && scan_mixed;
+}
+
 void airgap_scan_reset(void)
 {
+    if (!scan_buffers()) {
+        ESP_LOGE(TAG, "no memory for the scan buffers");
+        return;
+    }
     if (!scan_ready) {
-        ur_decoder_init(&scan, scan_fragments, sizeof scan_fragments,
-                        scan_mixed, sizeof scan_mixed);
+        ur_decoder_init(&scan, scan_fragments, SCAN_FRAGMENTS_LEN, scan_mixed, SCAN_MIXED_LEN);
         scan_ready = true;
     } else {
         ur_decoder_reset(&scan);
     }
-    memzero(scan_fragments, sizeof scan_fragments);
-    memzero(scan_mixed, sizeof scan_mixed);
+    memzero(scan_fragments, SCAN_FRAGMENTS_LEN);
+    memzero(scan_mixed, SCAN_MIXED_LEN);
 }
 
 uint32_t airgap_scan_remaining(void)
@@ -60,6 +87,7 @@ AirgapScan airgap_scan_feed(const char *ur, size_t len)
 {
     if (!scan_ready) {
         airgap_scan_reset();
+        if (!scan_ready) return AIRGAP_SCAN_UNREADABLE;   /* no buffers */
     }
     const UrPartResult r = ur_decoder_receive(&scan, ur, len);
     if (r == UR_PART_ACCEPTED) {
