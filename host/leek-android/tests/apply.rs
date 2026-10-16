@@ -93,3 +93,30 @@ fn a_compact_view_of_another_transaction_is_refused() {
     let err = leek_android::apply_signatures_to(&full, &other, &zsig).unwrap_err();
     assert!(err.contains("different transaction"), "{err}");
 }
+
+#[test]
+fn the_compact_vectors_are_what_the_app_sends() {
+    use pczt::roles::signer::Signer;
+    let sh = |b: &[u8]| Signer::new(Pczt::parse(b).unwrap()).unwrap().shielded_sighash();
+    for name in ["iw_send_transparent", "iw_send_nu7", "orchard_to_ironwood"] {
+        let full = v(&format!("pczt/{name}.pczt"));
+        let compact = v(&format!("pczt/{name}_compact.pczt"));
+        assert_eq!(leek_android::compact_view(&full).unwrap(), compact, "{name}");
+        assert_eq!(sh(&compact), sh(&full), "{name}");
+    }
+}
+
+#[test]
+fn signatures_over_a_changed_memo_are_refused() {
+    // The device accepts this one: it shows the changed memo and signs that
+    // transaction. The host must not apply those signatures to its own.
+    let full = v("pczt/iw_send_shielded.pczt");
+    let changed = v("pczt/iw_send_shielded_compact_memo_changed.pczt");
+    let zsig = soft_sign(&changed);
+    let err = leek_android::apply_signatures_to(&full, &changed, &zsig).unwrap_err();
+    assert!(err.contains("different transaction"), "{err}");
+    // Named as the honest compact view, the hash check refuses it instead.
+    let honest = leek_android::compact_view(&full).unwrap();
+    let err = leek_android::apply_signatures_to(&full, &honest, &zsig).unwrap_err();
+    assert!(err.contains("different PCZT"), "{err}");
+}
