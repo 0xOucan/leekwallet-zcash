@@ -27,6 +27,9 @@ incrementalmerkletree = "0.9"
 rand = { version = "0.10", features = ["sys_rng"] }
 rand_chacha = "0.10"
 postcard = { version = "1", features = ["alloc"] }
+# Already in the tree through zcash_transparent; the transparent vectors
+# need its key types.
+secp256k1 = "0.33"
 
 [[bin]]
 name = "vectors-gen"
