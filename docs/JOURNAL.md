@@ -482,3 +482,39 @@ checked on Xtensa).
   488 mutations, 193 accepted, and every accepted one changed the sighash.
 - `make -C firmware/sim test` and `cargo test` in `host/` (33 tests)
   pass.
+
+### 8.1 Desktop skeleton (2026-10-16)
+- `desktop/`: the Tauri v2 app "LeekWallet Zcash", built from the
+  structure of `firmware/app` (pnpm, Vite, plain TypeScript over the
+  global Tauri API, the same design tokens and a subset of its styles)
+  without its EVM code. One screen: network and server, an "import
+  viewing key" form (UFVK and birthday, or the chain tip), Sync with a
+  progress bar, the balance per pool and the unified address.
+- Backend: `src-tauri/src/backend.rs` wraps `zecz::wallet` as blocking
+  calls with serializable results; `lib.rs` exposes `profile_status`,
+  `init_watch_only`, `sync` (emits `sync://progress`), `balances`,
+  `addresses` and `tip`, each on a worker thread with its own
+  current-thread runtime. One sync or import at a time. The wallet is a
+  zecz data dir at `<app data>/wallets/<test|main>`; testnet unless
+  `LEEKZ_NETWORK=main`.
+- `src-tauri` is its own Cargo workspace, not a member of `host/`, so
+  Tauri stays out of the host lock. Seeding its lock from host's did not
+  work: host's carries Tauri 2.3 (the optional Android feature of
+  leek-transport-serial), which does not build against current
+  tauri-runtime. A fresh lock resolves the librustzcash stack the same
+  (pinned git rev; orchard 0.16.0, halo2_proofs 0.4.0).
+- zecz-core: `AccountSpec.origin` is now an `Option<KeyOrigin>`; none
+  imports a view-only account rather than inventing a ZIP 32 derivation
+  no device could sign for. `Wallet::birthday` added for the progress
+  count. The CLI is unchanged in behavior.
+- Built here: `cargo build` in `src-tauri`, and `pnpm tauri build --debug`
+  (.deb and AppImage). The app starts and draws the import screen.
+- Tests: `desktop/src-tauri/tests/backend.rs`, one offline (empty
+  profile, refusals, the progress JSON) and one `#[ignore]`d on testnet:
+  the abandon-art UFVK imported watch-only about 2,500 blocks below the
+  tip and synced; progress rose 0.40, 0.80, 1.0 and it found a
+  10,000-zat Ironwood note. Both pass; host tests pass with a new
+  offline view-only import test.
+- CI: `.github/workflows/desktop.yml` builds on Ubuntu, Windows and
+  macOS and runs the host and backend tests on Ubuntu. Not run yet (not
+  pushed).

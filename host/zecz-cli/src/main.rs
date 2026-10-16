@@ -237,9 +237,11 @@ async fn cmd_init(profile: Profile, spec: &AccountSpec, birthday: u32) -> Result
         }
         InitOutcome::Imported(a) => {
             println!("Imported account {:?} ({}), birthday {}", a.name, a.uuid, a.birthday);
-            println!("Seed fingerprint {}, ZIP 32 account {}", hex::encode(a.seed_fingerprint), a.account_index);
-            // The short form the device shows on its home and wallet screens.
-            println!("ZFP {} (compare with the device)", a.short_fingerprint());
+            if let Some(o) = a.origin {
+                println!("Seed fingerprint {}, ZIP 32 account {}", hex::encode(o.seed_fingerprint), o.account_index);
+                // The short form the device shows on its home and wallet screens.
+                println!("ZFP {} (compare with the device)", o.short_fingerprint());
+            }
             print_addresses(&a.addresses);
         }
     }
@@ -405,7 +407,7 @@ async fn cmd_device_init(profile: Profile, port: &str, account: u32, birthday: O
     if derived.unified != device_ua {
         bail!("the device's address does not match its own viewing key; refusing to import");
     }
-    let spec = AccountSpec { ufvk, seed_fingerprint: fp, account_index: account, name: name.to_string() };
+    let spec = AccountSpec::device(ufvk, fp, account, name);
     cmd_init(profile, &spec, birthday).await?;
     if device_birthday != Some(birthday) {
         let stored = dev.z_set_birthday(account, birthday)?;
@@ -487,7 +489,7 @@ async fn main() -> Result<()> {
                 .ok()
                 .and_then(|b| b.try_into().ok())
                 .ok_or_else(|| anyhow!("--seed-fingerprint must be 32 bytes of hex"))?;
-            let spec = AccountSpec { ufvk, seed_fingerprint: fp, account_index, name };
+            let spec = AccountSpec::device(ufvk, fp, account_index, &name);
             cmd_init(profile, &spec, birthday).await
         }
         Cmd::InitDev { mnemonic, passphrase, account, birthday, name } => {

@@ -1,0 +1,177 @@
+/* LeekWallet Zcash desktop. tokens.css is a copy of firmware/app/src/tokens.css
+ * and the rules below are the subset of firmware/app/src/styles.css this
+ * screen needs, so the two apps look like one family. */
+@import "./tokens.css";
+
+*, *::before, *::after { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+:where(a, button, select, input, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------ layout */
+
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+
+.statusbar {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  position: sticky; top: 0; z-index: 10;
+}
+.statusbar__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); flex: none;
+}
+.statusbar__dot[data-state="connected"] { background: var(--ok); }
+.statusbar__dot[data-state="connecting"] { background: var(--warn); }
+.statusbar__dot[data-state="error"] { background: var(--danger); }
+.statusbar__spacer { flex: 1; }
+#conn { white-space: nowrap; }
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.badge[data-net="test"] { color: var(--warn); border-color: var(--warn); }
+.badge[data-net="main"] { color: var(--danger); border-color: var(--danger); }
+
+main { flex: 1; width: 100%; max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4); }
+
+h1 { font-size: var(--text-lg); font-weight: 500; margin: 0 0 var(--space-4); }
+h2 { font-size: var(--text-base); font-weight: 500; margin: 0 0 var(--space-3); }
+p  { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-sm); }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+button {
+  font: inherit; font-size: var(--text-sm);
+  height: 36px; padding: 0 var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--control-border);
+  background: var(--surface); color: var(--text);
+  cursor: pointer;
+  transition: background var(--motion) ease-out, border-color var(--motion) ease-out;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+button.ghost { background: transparent; border-color: transparent; }
+
+.row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+
+/* ------------------------------------------------------------------ fields */
+
+.field { display: block; margin-bottom: var(--space-3); }
+.field > span {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin-bottom: var(--space-1);
+}
+.field input, .field textarea {
+  width: 100%;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+}
+.field input { height: 36px; padding: 0 var(--space-3); }
+.field textarea { padding: var(--space-2) var(--space-3); resize: vertical; overflow-wrap: anywhere; }
+.field [aria-invalid="true"] { border-color: var(--danger); }
+::placeholder { color: var(--muted); opacity: 1; }
+
+.formerr { color: var(--danger); margin: var(--space-3) 0 0; }
+.formerr:empty { display: none; }
+
+/* ------------------------------------------------------------ data & text */
+
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--muted); }
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); font-size: var(--text-sm); margin: 0 0 var(--space-3); }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; text-align: right; }
+.kv dt:nth-last-of-type(-n+2), .kv dd:nth-last-of-type(-n+2) { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+
+/* Mono and chunked in groups of four, never truncated: an address is
+ * compared character by character. */
+.addr {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  letter-spacing: 0.02em;
+  max-width: 62ch;
+  margin-bottom: var(--space-3);
+}
+/* The server URL is context, not something to verify, so it may be cut
+ * short to keep the bar on one line; the full URL is in its title. */
+.server {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.notice {
+  border-left: 2px solid var(--warn);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+  background: var(--surface);
+}
+.notice--danger { border-left-color: var(--danger); }
+
+/* ---------------------------------------------------------------- progress */
+
+progress {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%; height: 6px;
+  margin: 0 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+progress::-webkit-progress-bar { background: var(--surface-2); border-radius: var(--radius); }
+progress::-webkit-progress-value { background: var(--accent); border-radius: var(--radius); transition: width var(--motion) ease-out; }
+progress::-moz-progress-bar { background: var(--accent); }

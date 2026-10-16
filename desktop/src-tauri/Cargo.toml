@@ -1,0 +1,51 @@
+[package]
+name = "leekwallet-zcash-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "LeekWallet Zcash desktop app (Tauri v2) over the zecz wallet library"
+
+# Its own workspace, not a member of host/: the Tauri tree (webkit2gtk,
+# tao, wry) has no business in the lock file the CLI and the Android
+# library build from, and `tauri build` / tauri-action expect src-tauri to
+# be a self-contained Cargo project. host/Cargo.lock cannot seed this one:
+# it carries an old Tauri (leek-transport-serial's optional Android
+# feature) that no longer builds against current tauri-runtime. The
+# librustzcash stack is the same either way: its git rev is pinned in
+# zecz-core, and orchard, halo2 and pczt resolve to the same versions.
+[workspace]
+
+# A plain rlib: desktop only (Android is the Zodl fork, Phase 6), so no
+# cdylib/staticlib for a mobile shell.
+[lib]
+name = "leekwallet_zcash_lib"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
+zecz-core = { path = "../../host/zecz-core" }
+
+[dev-dependencies]
+serde_json = "1"
+
+# Scanning (trial decryption) and Halo 2 proving are unbearably slow
+# unoptimized, so dependencies are always optimized; the app crate itself
+# stays quick to rebuild.
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test]
+opt-level = 1
+
+[profile.release]
+strip = true
