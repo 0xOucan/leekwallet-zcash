@@ -425,3 +425,14 @@ checked on Xtensa).
   A PCZT lives ~40 blocks, and the board was on its Bluetooth link, so
   the USB request went unanswered until it was switched. Not a compact
   issue; build the PCZT just before signing.
+
+### 7.4 Compact PCZT in the app: USB, Bluetooth and QR on the board (2026-10-16)
+- The user signed with the app over all three links with the compact
+  view on (the default).
+- QR at 50-byte fragments: 28 frames, about half of before. Still slow
+  next to USB and Bluetooth, so the docs now recommend USB or Bluetooth
+  in a trusted place for everyday use, and QR or SD only when the board
+  must stay off every link.
+- The Android app is now pushed to a private repo,
+  github.com/0xOucan/leekwallet-zcash-android (branch `leekwallet`,
+  default; `upstream` = zodl-inc/zodl-android).
