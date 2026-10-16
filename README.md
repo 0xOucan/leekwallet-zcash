@@ -43,7 +43,7 @@ outputs.
 | Keys | BIP39 seed + optional passphrase entered on the device, ZIP 32 accounts, unified addresses, seed fingerprint (ZFP) |
 | Storage | PIN vault in flash, stateless (seed typed each boot), or an encrypted `.zkv` file on the microSD card |
 | Signing | Ironwood and Orchard spends, to shielded or transparent outputs, with memos. Two independent signers: C (on the device) and Rust (host and QEMU), cross-checked against each other |
-| Links | USB serial, Bluetooth LE, animated QR (UR fountain codes, camera on the board), SD card |
+| Links | USB serial and Bluetooth LE for everyday signing; animated QR (UR fountain codes, the board's camera) and the SD card when the board must stay off every link |
 | Screen | 128×128 SH1107 OLED, EC11 rotary encoder + buttons; receive address as text and QR, "verify address on device" |
 | Companions | `zecz` CLI (PC), LeekWallet Zcash for Android (a [Zodl](https://github.com/zodl-inc/zodl-android) fork) |
 
@@ -53,6 +53,16 @@ over USB) and `30cdefb47286f2e3397dd13eaaba88fa772910ca41578a99baaf271adab993a4`
 (SD card airgap), and
 `f7f6ad4b01be8650c9dc5f78e7d844133e5f53c4daf6b3cc1131a802bae2f2cb` (the first
 compact PCZT, 1,430 B instead of ~2.8 KB).
+
+### Which link to use
+
+- **USB or Bluetooth**, in a place you trust: fast (a few seconds) and
+  reliable. The session is encrypted and the board shows every output before
+  it signs, so the link carries nothing it could change unseen.
+- **QR** keeps the board off every cable and radio, but it is slow: a send
+  takes about 28 frames at 50 bytes each, and the camera needs steady light.
+  Use it when that isolation matters more than speed.
+- **SD card**: also fully offline, for the PC companion.
 
 ## Hardware
 
@@ -77,8 +87,10 @@ Everything runs at 3.3 V.
 | `docs/zcash/` | [ANALYSIS](docs/zcash/ANALYSIS.md), [PLAN](docs/zcash/PLAN.md), [ROADMAP](docs/zcash/ROADMAP.md), [FORMATS](docs/zcash/FORMATS.md) |
 | `docs/JOURNAL.md` | What was done at each step, what broke, what was measured |
 
-The Android app lives in its own repository (a fork of `zodl-android`, branch
-`leekwallet`); `android/` is ignored here.
+The Android app lives in its own repository,
+[leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android)
+(a fork of `zodl-android`, branch `leekwallet`). Clone it into `android/`,
+which is ignored here.
 
 ## Build and test
 
