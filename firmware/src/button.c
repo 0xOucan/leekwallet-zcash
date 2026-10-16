@@ -5,6 +5,7 @@
 
 #include "button.h"
 #include "board.h"
+#include "encoder.h"
 #include <string.h>
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -90,6 +91,31 @@ static int64_t button_last_change[4] = {0, 0, 0, 0}; /* Time of last raw change 
 static const gpio_num_t buttons[] = {PIN_K1, PIN_K2, PIN_K3, PIN_K4};
 static const button_id_t button_ids[] = {BUTTON_K1, BUTTON_K2, BUTTON_K3, BUTTON_K4};
 
+#if LEEK_HAS_ENCODER
+/* The EC11: a turn is UP or DOWN, one event per detent. Its push switch is
+ * wired to K4 (ACCEPT) with the button, so it needs nothing here. Sampled
+ * every pass, which is every millisecond on a board with an encoder: the
+ * state machine rejects bounce, but only if it sees every transition. */
+static Encoder encoder;
+
+static void encoder_poll_once(int64_t now)
+{
+    int step = encoder_feed(&encoder, (uint8_t)gpio_get_level(PIN_ENC_CLK),
+                            (uint8_t)gpio_get_level(PIN_ENC_DT));
+    if (step == 0) {
+        return;
+    }
+    if (BOARD_ENC_REVERSE) {
+        step = -step;
+    }
+    button_event_t event = {
+        .id = step > 0 ? BUTTON_DOWN : BUTTON_UP,
+        .timestamp = now,
+    };
+    button_queue_press(&event);
+}
+#endif
+
 /**
  * One debounce pass over all four buttons. Split out of the task loop so host
  * tests can step it against a fake clock instead of a real 10 ms tick.
@@ -124,6 +150,9 @@ static void button_poll_once(void)
             }
         }
     }
+#if LEEK_HAS_ENCODER
+    encoder_poll_once(now);
+#endif
 }
 
 /**
@@ -136,8 +165,9 @@ static void button_poll_task(void *pvParameters)
     while (1) {
         button_poll_once();
 
-        /* Poll every 10ms */
-        vTaskDelay(pdMS_TO_TICKS(10));
+        /* Every 10 ms for buttons alone; every 1 ms with an encoder, which
+         * must not miss a quadrature transition. */
+        vTaskDelay(pdMS_TO_TICKS(LEEK_HAS_ENCODER ? 1 : 10));
     }
 }
 
@@ -165,6 +195,18 @@ esp_err_t button_init(void)
         ESP_LOGE(TAG, "GPIO config failed: %s", esp_err_to_name(err));
         return err;
     }
+#if LEEK_HAS_ENCODER
+    /* The module has its own 10k pull-ups to its "+" pin; the internal ones
+     * keep the lines defined if it is unplugged. */
+    io_conf.pin_bit_mask = (1ULL << PIN_ENC_CLK) | (1ULL << PIN_ENC_DT);
+    err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "encoder GPIO config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    encoder_init(&encoder);
+    ESP_LOGI(TAG, "Encoder: CLK=%d DT=%d, push on K4", PIN_ENC_CLK, PIN_ENC_DT);
+#endif
 
     /* Start button polling task */
     BaseType_t ret = xTaskCreate(

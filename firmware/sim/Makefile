@@ -179,6 +179,15 @@ $(BUILD)/test_zcash_meta: test_zcash_meta.c ../src/zcash-meta.c ../src/zcash-fp.
                           $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $(filter %.c,$^)
 
+# The S3CAM screen kit: the EC11 decoder, and the 128x128 SH1107 image with
+# every QR redrawn full-panel and scanned back.
+$(BUILD)/test_encoder: test_encoder.c ../src/encoder.c ../src/encoder.h | $(BUILD)
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
+
+$(BUILD)/test_panel128: test_panel128.c ../src/panel128.c ../src/oled-core.c ../src/qrcode.c \
+                        host_stubs.c ../../vectors/keys_vectors.h | $(BUILD)
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
+
 .PHONY: FORCE
 FORCE:
 
@@ -247,8 +256,8 @@ $(BUILD)/test_zkv: test_zkv.c ../src/zkv.c ../src/zkv.h host_stubs.c ../../vecto
                    $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(filter %.c,$^)
 
-TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta
-all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta
+TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta test_encoder test_panel128
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta $(BUILD)/test_encoder $(BUILD)/test_panel128
 
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \

@@ -139,6 +139,13 @@ static const uint8_t font_5x7[][5] = {
 };
 
 static uint8_t framebuffer[OLED_WIDTH * OLED_PAGES];
+
+/* The last code drawn, for a taller panel to redraw at its own scale
+ * (panel128.h). Valid until the next oled_clear(). */
+static QRCode last_qr;
+static bool   last_qr_valid;
+static bool   last_qr_inverted;
+
 static uint8_t cursor_page = 0;
 static uint8_t cursor_col = 0;
 
@@ -167,6 +174,7 @@ esp_err_t oled_clear(void)
     memset(framebuffer, 0, sizeof(framebuffer));
     cursor_page = 0;
     cursor_col = 0;
+    last_qr_valid = false;
     return ESP_OK;
 }
 
@@ -311,8 +319,17 @@ static uint8_t qr_modules[((OLED_QR_MAX_VERSION * 4 + 17) *
 /* How the space around a QR is drawn. See render_qr. */
 enum { QR_STYLE_FILL, QR_STYLE_FRAMED, QR_STYLE_INVERTED };
 
+const QRCode *oled_core_last_qr(bool *inverted)
+{
+    if (inverted) *inverted = last_qr_inverted;
+    return last_qr_valid ? &last_qr : NULL;
+}
+
 static esp_err_t render_qr(QRCode *qrcode, uint8_t scale, int style)
 {
+    last_qr = *qrcode;
+    last_qr_valid = true;
+    last_qr_inverted = (style == QR_STYLE_INVERTED);
     const bool inverted = (style == QR_STYLE_INVERTED);
     uint8_t qr_size = qrcode->size;
 

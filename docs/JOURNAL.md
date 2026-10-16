@@ -310,3 +310,24 @@ checked on Xtensa).
 - Phase 1 is now done on PC. Waiting on the board: panel and buttons, the
   SD card, the KDF and derivation times, and the phone-scan check for the
   UA QR.
+
+### S3 CAM screen kit: 128x128 SH1107, EC11 encoder, four-button module
+- Wiring in `firmware/docs/WIRING-S3CAM.md`:
+  - OLED on I2C (GPIO47 SDA, GPIO21 SCL).
+  - Buttons on GPIO1, 41, 14 and 42.
+  - Encoder CLK on GPIO44 and DT on GPIO43 through 1 kΩ. Its switch is in
+    parallel with OK (GPIO42).
+  - Everything on 3V3.
+- `src/panel128.c`: the 128x64 UI frame centred on the 128x128 panel. The
+  last QR drawn (remembered by oled-core) is redrawn full-panel: UA at
+  2 px per module, t-address at 3. `test_panel128` scans 32 of them back
+  with zbarimg.
+- `src/encoder.c`: full-step quadrature state machine, polled every 1 ms in
+  the button task. `test_encoder` covers a detent each way, bounce, a
+  half-turn back, noise and random input.
+- `oled.c` has an SH1107 path (Adafruit's 128x128 init values; page mode).
+  `BOARD_SH1107_FLIP`, `BOARD_ENC_REVERSE` and `ENCODER_HALF_STEP` are the
+  bring-up switches. esp32s3cam, esp32s3 and pixie build.
+- Testnet: a private test seed was generated into `~/zecz-test/testnet-seed.txt`
+  (mode 600, outside the repo). Imported via zdev into `~/zecz-test/wallet`
+  with birthday 4,506,500 and ZFP 57F3A27A.
