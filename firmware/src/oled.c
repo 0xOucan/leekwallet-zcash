@@ -24,8 +24,10 @@ static const char *TAG = "oled";
 #define I2C_PORT            I2C_NUM_0
 #define I2C_FREQ_HZ         400000
 
-/* SSD1306 I2C address */
-#define OLED_ADDR           0x3C
+/* Panel I2C address: 0x3C on most modules, 0x3D where the module's address
+ * strap is moved. Probed in that order at init (oled_probe_address). */
+static uint8_t oled_addr = 0x3C;
+#define OLED_ADDR           oled_addr
 
 /* 5x7 font for basic ASCII (32-127), stored as columns */
 
@@ -81,6 +83,42 @@ static esp_err_t ssd1306_send_data(const uint8_t *data, size_t len)
  * Public API
  * ============================================================================ */
 
+/* Does anything ACK at `addr`? A bare address write, no payload. */
+static bool i2c_present(uint8_t addr)
+{
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (uint8_t)(addr << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(I2C_PORT, cmd, pdMS_TO_TICKS(20));
+    i2c_cmd_link_delete(cmd);
+    return err == ESP_OK;
+}
+
+/* Pick the panel's address, or log every device on the bus when it is at
+ * neither, so a bring-up shows what is actually wired there. */
+static bool oled_probe_address(void)
+{
+    static const uint8_t candidates[] = { 0x3C, 0x3D };
+    for (size_t i = 0; i < sizeof candidates; i++) {
+        if (i2c_present(candidates[i])) {
+            oled_addr = candidates[i];
+            return true;
+        }
+    }
+    int found = 0;
+    for (uint8_t a = 0x08; a < 0x78; a++) {
+        if (i2c_present(a)) {
+            ESP_LOGW(TAG, "I2C scan: device at 0x%02X", a);
+            found++;
+        }
+    }
+    ESP_LOGE(TAG, "I2C scan on SDA=%d SCL=%d: %d device(s), no panel at 0x3C/0x3D%s",
+             PIN_SDA, PIN_SCL, found,
+             found ? "" : " - check power, GND, and that SDA/SCL are not swapped");
+    return false;
+}
+
 esp_err_t oled_i2c_init(void)
 {
     i2c_config_t conf = {
@@ -127,6 +165,9 @@ static uint8_t panel_image[PANEL128_BYTES];
 
 esp_err_t oled_init(void)
 {
+    if (!oled_probe_address()) {
+        return ESP_ERR_NOT_FOUND;
+    }
     panel_ready = true;
     const uint8_t init_cmds[] = {
         0xAE,                                   /* display off */
@@ -216,6 +257,9 @@ esp_err_t oled_draw_raw(const uint8_t *data, size_t len)
 
 esp_err_t oled_init(void)
 {
+    if (!oled_probe_address()) {
+        return ESP_ERR_NOT_FOUND;
+    }
     /* Opened before the sequence below, because that sequence goes through the
        same guarded path. Closed again on any failure, so a panel that did not
        answer cannot leave the driver believing it is there. */
