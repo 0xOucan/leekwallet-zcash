@@ -518,3 +518,17 @@ checked on Xtensa).
 - CI: `.github/workflows/desktop.yml` builds on Ubuntu, Windows and
   macOS and runs the host and backend tests on Ubuntu. Not run yet (not
   pushed).
+
+### 6.9 Verify address on the device, with rotating addresses (2026-10-16)
+- The Receive screen has "Verify on device" for a LeekWallet account
+  (USB or Bluetooth). Confirmed by the user on the board over Bluetooth.
+- First attempt failed by design gap: Zodl shows a new diversified
+  address each time Receive opens, and the device knew only its
+  default address, so it reported a mismatch between two valid
+  addresses of the same wallet.
+- Fix: zShowAddress takes the app's address. The device proves it is
+  the account's (Orchard receiver pk_d = [ivk] g_d, index recovered by
+  FF1 decryption of the diversifier, any P2PKH receiver checked against
+  the transparent key at that index) and only then shows it. Foreign,
+  mixed, Sapling-bearing and malformed addresses are refused before the
+  screen. Vectors from librustzcash at indices 1, 7, 2^31+5 and 88 bits.

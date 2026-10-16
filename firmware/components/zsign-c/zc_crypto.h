@@ -86,6 +86,14 @@ int zc_account_keys(const uint8_t seed[64], uint32_t coin_type, uint32_t account
 int zc_fvk_scope(const zc_fvk *f, const uint8_t recipient[43]);
 /* The external address at diversifier index 0. */
 void zc_fvk_default_address(const zc_fvk *f, uint8_t out[43]);
+/* The external address at diversifier index j (11 bytes, little-endian). */
+void zc_fvk_address_at(const zc_fvk *f, const uint8_t j[11], uint8_t out[43]);
+/* 1 if `recipient` is an external address of `f`, with its diversifier
+ * index in j (FF1 decryption of the diversifier under dk); 0 otherwise. */
+int zc_fvk_external_index(const zc_fvk *f, const uint8_t recipient[43], uint8_t j[11]);
+/* FF1-AES256 decryption of an 88-bit diversifier: the inverse of the
+ * vendored ff1_aes256_encrypt. */
+void zc_ff1_decrypt(const uint8_t key[32], const uint8_t in[11], uint8_t out[11]);
 
 /* rk = ak + [alpha] G. 0 on success, -1 if ak is invalid or alpha >= q. */
 int zc_randomize_ak(uint8_t rk[32], const uint8_t ak[32], const uint8_t alpha[32]);

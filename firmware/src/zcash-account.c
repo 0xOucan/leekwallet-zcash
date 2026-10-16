@@ -10,9 +10,7 @@
 #include "ecdsa.h"
 #include "memzero.h"
 #include "zcash-worker.h"
-#ifndef LEEK_HOST_TEST
 #include "zsign_c.h"
-#endif
 
 
 #define H(i) (0x80000000u | (i))
@@ -107,4 +105,69 @@ WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount
         memset(out, 0, sizeof *out);
     }
     return err;
+}
+
+/* The account's P2PKH key at m/44'/coin'/account'/0/index, from the account
+ * key the derivation kept (chain code || compressed pubkey). */
+static bool t_receiver_at(const ZcashAccount *a, uint32_t index, uint8_t hash160[20],
+                          char *addr, size_t addr_cap)
+{
+    HDNode node;
+    bool ok = hdnode_from_xpub(3, 0x80000000u | a->account, a->t_account, a->t_account + 32,
+                               SECP256K1_NAME, &node) == 1 &&
+              hdnode_public_ckd(&node, 0) == 1 && hdnode_public_ckd(&node, index) == 1;
+    if (ok) {
+        ecdsa_get_pubkeyhash(node.public_key, HASHER_SHA2_RIPEMD, hash160);
+        hdnode_get_address(&node, a->network == ZCASH_NET_MAIN ? ZCASH_T1_PREFIX : ZCASH_TM_PREFIX,
+                           addr, addr_cap);
+    }
+    memzero(&node, sizeof node);
+    return ok;
+}
+
+typedef struct {
+    const ZcashAccount *a;
+    const char         *ua;
+    uint8_t            *index_le;
+    uint8_t             p2pkh[20];
+    int                 has_p2pkh;
+    int32_t             rc;
+} UaCheckJob;
+
+static void ua_check_job(void *p)
+{
+    UaCheckJob *job = p;
+    job->rc = zc_ua_owned(job->ua, job->a->network, job->a->keys.orchard_fvk, job->index_le,
+                          job->p2pkh, &job->has_p2pkh);
+}
+
+ZcashUaCheck zcash_ua_check(const ZcashAccount *a, const char *ua, uint8_t index_le[11],
+                            char t_address_out[ZCASH_TADDR_MAX])
+{
+    t_address_out[0] = 0;
+    if (!a || !ua) return ZCASH_UA_MALFORMED;
+    UaCheckJob job = { a, ua, index_le, {0}, 0, ZS_E_INTERNAL };
+    if (!zcash_worker_run(ua_check_job, &job)) return ZCASH_UA_MALFORMED;
+    switch (job.rc) {
+    case ZS_OK: break;
+    case ZS_E_USER_ADDRESS: return ZCASH_UA_NOT_OURS;
+    case ZS_E_UNSUPPORTED_BUNDLE: return ZCASH_UA_UNSUPPORTED;
+    default: return ZCASH_UA_MALFORMED;
+    }
+    if (!job.has_p2pkh) return ZCASH_UA_OURS;
+
+    /* ZIP 316: a P2PKH receiver at diversifier index j is the external
+     * transparent key j, so only indices below 2^31 carry one. */
+    for (int i = 4; i < 11; i++) {
+        if (index_le[i]) return ZCASH_UA_NOT_OURS;
+    }
+    uint32_t j = (uint32_t)index_le[0] | (uint32_t)index_le[1] << 8 |
+                 (uint32_t)index_le[2] << 16 | (uint32_t)index_le[3] << 24;
+    if (j >= 0x80000000u) return ZCASH_UA_NOT_OURS;
+    uint8_t mine[20];
+    char addr[ZCASH_TADDR_MAX];
+    if (!t_receiver_at(a, j, mine, addr, sizeof addr)) return ZCASH_UA_MALFORMED;
+    if (memcmp(mine, job.p2pkh, 20) != 0) return ZCASH_UA_NOT_OURS;
+    memcpy(t_address_out, addr, sizeof addr);
+    return ZCASH_UA_OURS;
 }

@@ -1636,6 +1636,22 @@ static size_t zshow_request(uint8_t *buf, size_t cap, uint32_t account, const ch
     return cbor_writer_ok(&w) ? w.length : 0;
 }
 
+static size_t zshow_ua_request(uint8_t *buf, size_t cap, const char *ua)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 4);
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zShowAddress");
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, 0);
+    cbor_write_text(&w, "network");
+    cbor_write_text(&w, "test");
+    cbor_write_text(&w, "ua");
+    cbor_write_text(&w, ua);
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
 /* Seen on the first board: every Zcash account reply (~700 bytes) vanished,
  * because one write larger than the USB driver's TX ring buffer is not
  * queued at all, and the fake now refuses it the same way. A frame near the
@@ -1750,6 +1766,34 @@ static void test_zshow_address(void)
     expect_error(T_ENC_ERROR, E_MALFORMED, "an unknown network");
     send_encrypted(payload, zshow_request(payload, sizeof payload, 0x80000000u, "test"));
     expect_error(T_ENC_ERROR, E_MALFORMED, "a hardened account");
+
+    printf("== zShowAddress with the app's address: shown only if it is the wallet's\n");
+    /* Wallets rotate diversified addresses: the app sends the one it shows,
+     * and the device shows that one, after checking it is its own. */
+    static uint8_t big[512];
+    address_checks = 0;
+    scripted_outcome = SIGN_APPROVED;
+    send_encrypted(big, zshow_ua_request(big, sizeof big, v->ua_orchard_only));
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len) &&
+          cbor_map_find(body, body_len, "ua", &it) && cbor_text_copy(&it, text, sizeof text) &&
+          strcmp(text, v->ua_orchard_only) == 0, "the app's address was not confirmed back");
+    CHECK(address_checks == 1 && strcmp(shown_ua, v->ua_orchard_only) == 0,
+          "the device showed \"%s\", not the app's address", shown_ua);
+
+    const zv_key_vector *other = &ZV_KEYS[ZV_KEYS_COUNT - 1];
+    for (size_t i = 0; i < ZV_KEYS_COUNT; i++) {
+        if (ZV_KEYS[i].network == 1 && ZV_KEYS[i].account == 1 && !ZV_KEYS[i].passphrase[0]) {
+            other = &ZV_KEYS[i];
+        }
+    }
+    address_checks = 0;
+    send_encrypted(big, zshow_ua_request(big, sizeof big, other->ua));
+    expect_error(T_ENC_ERROR, E_ZSIGN(-14), "someone else's address");
+    CHECK(address_checks == 0, "a foreign address reached the screen");
+    send_encrypted(big, zshow_ua_request(big, sizeof big, "utest1nope"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "not an address");
+    CHECK(address_checks == 0, "garbage reached the screen");
     scripted_outcome = SIGN_APPROVED;
 }
 

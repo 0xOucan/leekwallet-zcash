@@ -255,7 +255,7 @@ One codebase for both: our app is the Zodl fork with our branding. The hardware 
 
 **6.8 Compact PCZT in the app (S, after Phase 7).** Send the compact view over every link: half the QR frames, and faster USB and Bluetooth.
 
-**6.9 Verify address on the device (S).** A Receive button that runs `zShowAddress`, so the user checks on the board's screen that the app's address is theirs.
+**6.9 Verify address on the device (S). Done (2026-10-16), rotating addresses included.** A Receive button that runs `zShowAddress`, so the user checks on the board's screen that the app's address is theirs.
 
 **6.10 A proper account type (M).**
 - Replace "Keystone-shaped account with key source `leekwallet`" with a `LeekWalletAccount` in the sealed hierarchy, plus the account-type switches it needs. About 80 sites.

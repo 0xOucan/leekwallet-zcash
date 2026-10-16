@@ -381,10 +381,28 @@ impl Device {
     /// matches. Errors if they say it does not, or if the device's address
     /// differs from the one expected.
     pub fn z_show_address(&mut self, account: u32, network: &str, expected_ua: &str) -> Result<()> {
+        // The app's address goes along: wallets rotate diversified addresses,
+        // and the device shows this one only after its keys prove it is the
+        // account's. Firmware without that check ignores the field and shows
+        // its default address, which the comparison below then catches.
         let r = self.call("zShowAddress", vec![
             ("account", Value::Integer(account.into())),
             ("network", Value::Text(network.into())),
-        ], USER_TIMEOUT)?;
+            ("ua", Value::Text(expected_ua.into())),
+        ], USER_TIMEOUT).map_err(|e| {
+            // Context keeps the DeviceError underneath, so is_code still works.
+            let why = match e.downcast_ref::<DeviceError>().map(|d| d.code) {
+                Some(c) if c == ERR_ZSIGN_BASE | 14 => {
+                    "The device says this address is NOT from its wallet. Do not use it to receive: this app may be compromised."
+                }
+                Some(c) if c == ERR_ZSIGN_BASE | 16 => {
+                    "This address has a receiver the device cannot check (for example Sapling), so it was not shown."
+                }
+                Some(ERR_USER_REJECTED) => "You answered on the device that the addresses do not match.",
+                _ => return e,
+            };
+            e.context(why)
+        })?;
         let ua = get_text(&r, "ua")?;
         if ua != expected_ua {
             bail!("the device confirmed {ua}, but this wallet expects {expected_ua}");
