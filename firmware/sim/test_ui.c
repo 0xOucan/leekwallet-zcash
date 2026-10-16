@@ -990,6 +990,44 @@ static void test_sd_card_signing(void)
     CHECK(system(cmd) == 0, "cleanup");
 }
 
+/* QR air gap: a ur:leek-pczt animated by the companion, scanned part by part,
+ * reviewed on the usual pages; ACCEPT shows ur:leek-zsig. */
+#include "ur-encoder.h"
+
+static void test_qr_airgap_signing(void)
+{
+    printf("== QR: a scanned ur:leek-pczt is reviewed and answered with ur:leek-zsig\n");
+    const zv_pczt_vector *v = &ZV_PCZT[0];
+    boot_device();
+    CHECK(pin_set("1234") && pin_verify("1234"), "setup: PIN");
+    CHECK(fake_wallet_preload(v->mnemonic) == 1, "setup: seed");
+    go(SCREEN_SETTINGS);
+    select_menu_item("Net Mainnet");
+    press(BUTTON_ACCEPT);
+
+    FILE *f = fopen(v->file, "rb");
+    static uint8_t cbor[8192];
+    size_t n = f ? fread(cbor + 3, 1, sizeof cbor - 3, f) : 0;
+    if (f) fclose(f);
+    cbor[0] = 0x59;   /* CBOR byte string, 2-byte length */
+    cbor[1] = (uint8_t)(n >> 8);
+    cbor[2] = (uint8_t)n;
+    static UrEncoder enc;
+    CHECK(ur_encoder_init(&enc, "leek-pczt", cbor, n + 3, 200), "encoder");
+    go(SCREEN_SCAN);
+    char part[600];
+    for (int i = 0; i < 400 && ui_get_screen() == SCREEN_SCAN; i++) {
+        size_t pl = ur_encoder_next_part(&enc, part, sizeof part);
+        ui__scan_feed_for_test(part);
+        (void)pl;
+    }
+    CHECK(ui_get_screen() == SCREEN_ZSIGN_REVIEW, "the scanned PCZT did not reach the review (%d)", ui_get_screen());
+    for (int i = 0; i < 40 && ui_get_screen() == SCREEN_ZSIGN_REVIEW; i++) press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_QR_OUT, "no signature QR (%d)", ui_get_screen());
+    CHECK(strncmp(fake_oled_qr_data(), "UR:LEEK-ZSIG/", 13) == 0, "QR shows \"%.20s\"", fake_oled_qr_data());
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "a QR signature answered a host");
+}
+
 /* ============================================================================
  * The Wi-Fi test fixture is gone from release builds (AUDIT S8g, T17)
  * ============================================================================ */
@@ -2745,14 +2783,14 @@ static void test_scan_assembles_then_refuses_every_type(void)
     scan_it("bytes", big, sizeof big);
     idle_pump();
     CHECK(ui_get_screen() == SCREEN_SCAN, "a complete UR moved the screen");
-    CHECK(strcmp(ui__scan_status_for_test(), "Not supported yet") == 0,
+    CHECK(strcmp(ui__scan_status_for_test(), "Not a Zcash request") == 0,
           "a complete UR read as \"%s\"", ui__scan_status_for_test());
 
     /* The sign-request type LeekWallet accepted gets no special treatment. */
     const uint8_t req[] = { 0xA1, 0x01, 0x41, 0x02 };
     scan_it("eth-sign-request", req, sizeof req);
     idle_pump();
-    CHECK(ui_get_screen() == SCREEN_SCAN && fake_oled_contains("Not supported yet"),
+    CHECK(ui_get_screen() == SCREEN_SCAN && fake_oled_contains("Not a Zcash request"),
           "an old sign request was not refused like any other UR");
 
     press(BUTTON_CANCEL);
@@ -2766,6 +2804,7 @@ int main(void)
     test_sd_card_save_and_load();
     test_address_check();
     test_sd_card_signing();
+    test_qr_airgap_signing();
     test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
     test_blind_signing_takes_a_deliberate_act();

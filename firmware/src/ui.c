@@ -30,6 +30,9 @@
 #include "esp_timer.h"
 #include "qr-out.h"
 #include "airgap.h"
+#if LEEK_HAS_ZCASH
+#include "zcash-sign.h"
+#endif
 #include "board.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
@@ -613,6 +616,10 @@ static int zsign_page = 0;
 /* True when the review on screen came from the SD card: its answer goes to
  * sd_sign_review_done() rather than to a waiting host. */
 static bool zsign_from_sd = false;
+/* Likewise for a PCZT scanned off the companion's screen (ur:leek-pczt):
+ * the answer goes to qr_sign_review_done(), which shows ur:leek-zsig. */
+static bool zsign_from_qr = false;
+static void qr_sign_review_done(bool approved);
 #endif
 
 static char mnemonic_buffer[256];
@@ -1053,6 +1060,8 @@ static void lock_device(void)
     /* A card transaction under review is not signed by whoever unlocks next. */
     sdsign_cancel();
     zsign_from_sd = false;
+    airgap_cancel();
+    zsign_from_qr = false;
 #endif
 
     /* wallet_lock() has just destroyed any temporary seed, so the longer
@@ -3821,11 +3830,65 @@ static void scan_handle(const char *ur, size_t len)
             snprintf(scan_status, sizeof scan_status, "Not a UR part");
             break;
         case AIRGAP_SCAN_WRONG_TYPE:
-            snprintf(scan_status, sizeof scan_status, "Not supported yet");
+            snprintf(scan_status, sizeof scan_status, "Not a Zcash request");
             break;
+        case AIRGAP_SCAN_PCZT: {
+#if LEEK_HAS_ZCASH
+            /* The same check and the same review as a USB upload. */
+            const zs_summary *summary = NULL;
+            snprintf(scan_status, sizeof scan_status, "Checking...");
+            ui_render();
+            int rc = ensure_wallet_unlocked()
+                         ? airgap_load_pczt(hd_account, zcash_network, &summary)
+                         : ZSIGN_E_LOCKED;
+            button_drain();
+            if (rc != 0 || !summary) {
+                snprintf(scan_status, sizeof scan_status, "%.21s", zcash_sign_strerror(rc));
+                break;
+            }
+            zsign_summary = summary;
+            zsign_network = zcash_network;
+            zsign_from_sd = false;
+            zsign_from_qr = true;
+            ui_set_screen(SCREEN_ZSIGN_REVIEW);
+            return;
+#else
+            snprintf(scan_status, sizeof scan_status, "No Zcash here");
+            break;
+#endif
+        }
     }
     ui_invalidate();
 }
+
+#if LEEK_HAS_ZCASH
+/* The review's answer for a scanned PCZT: on ACCEPT sign and show the
+ * signatures as ur:leek-zsig for the companion to scan; BACK there returns
+ * to the menu. */
+static void qr_sign_review_done(bool approved)
+{
+#if LEEK_HAS_ZCASH
+    zsign_from_qr = false;
+    if (approved) {
+        static uint8_t cbor[QR_OUT_MAX_MESSAGE];
+        size_t len = 0;
+        int rc = airgap_sign(cbor, sizeof cbor, &len);
+        button_drain();
+        if (rc == 0 && ui_show_ur(AIRGAP_UR_ZSIG, cbor, len, SCREEN_MAIN_MENU)) {
+            memzero(cbor, sizeof cbor);
+            return;
+        }
+        memzero(cbor, sizeof cbor);
+        ESP_LOGE(TAG, "QR signing failed: %d", rc);
+    } else {
+        airgap_cancel();
+    }
+#else
+    (void)approved;
+#endif
+    ui_set_screen(SCREEN_MAIN_MENU);
+}
+#endif
 
 static void screen_scan_enter(void)
 {
@@ -5277,6 +5340,7 @@ void ui_request_zsign_review(const zs_summary *s, uint8_t network)
     zsign_summary = s;
     zsign_network = network;
     zsign_from_sd = false;
+    zsign_from_qr = false;
     sign_outcome = SIGN_PENDING;
     zsign_review_pending = true;
 }
@@ -5317,6 +5381,10 @@ static void screen_zsign_review_on_button(button_id_t btn)
                 break;
             }
             zsign_summary = NULL;
+            if (zsign_from_qr) {
+                qr_sign_review_done(last >= 0);
+                return;
+            }
 #if UI_HAS_SD_SEED
             if (zsign_from_sd) {
                 sd_sign_review_done(last >= 0);
@@ -5328,6 +5396,10 @@ static void screen_zsign_review_on_button(button_id_t btn)
             return;
         case BUTTON_CANCEL:
             zsign_summary = NULL;
+            if (zsign_from_qr) {
+                qr_sign_review_done(false);
+                return;
+            }
 #if UI_HAS_SD_SEED
             if (zsign_from_sd) {
                 sd_sign_review_done(false);
@@ -5974,6 +6046,7 @@ void ui__reset_static_state_for_test(void)
     addr_check_pending = false;
     memzero(&addr_check, sizeof addr_check);
     zsign_from_sd = false;
+    zsign_from_qr = false;
 #endif
 
     lock_timeout_choice = 1;

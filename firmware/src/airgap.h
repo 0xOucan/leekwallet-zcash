@@ -29,9 +29,33 @@ typedef enum {
     AIRGAP_SCAN_REDUNDANT,     /* a repeat; keep scanning */
     AIRGAP_SCAN_UNREADABLE,    /* not a UR part this assembly can use */
     AIRGAP_SCAN_WRONG_TYPE,    /* a complete UR of a type this device refuses */
+    AIRGAP_SCAN_PCZT,          /* a complete ur:leek-pczt: call airgap_load_pczt */
 } AirgapScan;
 
-/** Start the air gap. Once, at boot. Nothing to start until Phase 5. */
+/*
+ * The QR air gap for Zcash (FORMATS.md): the companion shows the signer-view
+ * PCZT as ur:leek-pczt (a CBOR byte string, multi-part), the device checks it
+ * exactly as a USB upload, the user reviews the same pages, and the device
+ * shows its signatures as ur:leek-zsig (a CBOR byte string holding a .zsig).
+ */
+#define AIRGAP_UR_PCZT "leek-pczt"
+#define AIRGAP_UR_ZSIG "leek-zsig"
+
+#include "zsign_rust.h"
+
+/** Check the scanned PCZT for `account` on `network`; `*summary` is the review. */
+int airgap_load_pczt(uint32_t account, uint8_t network, const zs_summary **summary);
+
+/**
+ * After the user approved: sign, and put the CBOR of ur:leek-zsig in `out`.
+ * `*len` is its length. The scanned PCZT is consumed either way.
+ */
+int airgap_sign(uint8_t *out, size_t cap, size_t *len);
+
+/** Drop a scanned PCZT without signing. */
+void airgap_cancel(void);
+
+/** Start the air gap. Once, at boot. */
 void airgap_start(void);
 
 /** Forget any partial assembly. The scan screen calls this on entry. */
