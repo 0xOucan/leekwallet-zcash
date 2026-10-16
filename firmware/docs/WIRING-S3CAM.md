@@ -62,6 +62,14 @@ input polarity becomes a board setting.
   a few milliseconds, though, and if the encoder contact happened to be
   closed then, the pin would be driving into a short. The 1 kΩ resistor
   takes that instead.
+- No 1 kΩ to hand? Anything from 220 Ω to 2.2 kΩ works, for example 330,
+  470 or 2.2k, or two 2.2k in parallel. Do not use 4.7 kΩ or more: with the
+  module's 10 kΩ pull-up the pin would no longer read a clean low. For
+  bring-up, DT can also go straight to GPIO43. A standard EC11 has both
+  contacts open at every detent, so if the knob rests on a click at power-up
+  nothing is shorted. A multimeter from DT to GND with the knob on a click
+  should read open. Add the resistor when you have one; the firmware is the
+  same either way.
 - If clockwise scrolls up rather than down, build with
   `-DBOARD_ENC_REVERSE=1`.
 - A common EC11 gives one quadrature cycle per detent (20 detents, 20
