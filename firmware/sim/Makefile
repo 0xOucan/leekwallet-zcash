@@ -188,6 +188,16 @@ $(BUILD)/test_panel128: test_panel128.c ../src/panel128.c ../src/oled-core.c ../
                         host_stubs.c ../../vectors/keys_vectors.h | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
 
+# SD airgap signing: a PCZT on a directory "card", both real backends.
+$(BUILD)/test_sd_sign: CFLAGS += -DAES_VAR
+$(BUILD)/test_sd_sign: test_sd_sign.c ../src/sd-sign.c ../src/sdcard.c ../src/zcash-sign.c \
+                       ../src/zcash-worker.c ../../vectors/pczt_vectors.h esp_stubs.c host_stubs.c \
+                       $(ZSIGN)/platform/zsign_platform_host.c $(VAULT_SRC) $(VAULT_CRYPTO) \
+                       $(ZSIGN)/target/release/libzsign_rust.a $(BUILD)/libzsign_c.a | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -I$(ZSIGNC)/include -DLEEK_HOST_TEST \
+	    -o $@ $(sort $(filter %.c,$^)) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a \
+	    -lpthread -ldl -lm
+
 .PHONY: FORCE
 FORCE:
 
@@ -256,8 +266,8 @@ $(BUILD)/test_zkv: test_zkv.c ../src/zkv.c ../src/zkv.h host_stubs.c ../../vecto
                    $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(filter %.c,$^)
 
-TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta test_encoder test_panel128
-all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta $(BUILD)/test_encoder $(BUILD)/test_panel128
+TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta test_encoder test_panel128 test_sd_sign
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta $(BUILD)/test_encoder $(BUILD)/test_panel128 $(BUILD)/test_sd_sign
 
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
@@ -364,7 +374,8 @@ $(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
                   ../src/ui.c ../src/zcash-review.c ../src/zcash-receive.c ../src/zcash-fp.c \
                   ../src/zcash-meta.c fake_zcash.c \
                   ../src/pin.c ../src/mnemonic-entry.c $(CRYPTO)/blake2b.c \
-                  ../src/sd-seed.c ../src/sdcard.c ../src/zkv.c \
+                  ../src/sd-seed.c ../src/sdcard.c ../src/zkv.c ../src/sd-sign.c \
+                  ../src/zcash-sign.c ../src/zcash-worker.c $(ZSIGN)/platform/zsign_platform_host.c \
                   $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/aescrypt.c $(CRYPTO)/aes/aeskey.c \
                   $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/gf128mul.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
@@ -382,8 +393,10 @@ $(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
                   $(CRYPTO)/chacha20poly1305/chacha20poly1305.c \
                   $(CRYPTO)/chacha20poly1305/chacha_merged.c \
                   $(CRYPTO)/chacha20poly1305/poly1305-donna.c \
-                  $(CRYPTO)/chacha20poly1305/rfc7539.c | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $^
+                  $(CRYPTO)/chacha20poly1305/rfc7539.c \
+                  $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
 # The only suite that links the real components/leek-wallet.c. It has to: the
 # crash-safety of a PIN change is entirely a property of that file's write

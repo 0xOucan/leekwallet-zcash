@@ -40,6 +40,7 @@
 #endif
 #if LEEK_HAS_SDCARD && LEEK_HAS_ZCASH
 #include "sd-seed.h"
+#include "sd-sign.h"
 #define UI_HAS_SD_SEED 1
 #else
 #define UI_HAS_SD_SEED 0
@@ -603,6 +604,17 @@ static uint32_t hd_account = 0;
 /* The network the receive screens show addresses for; see UI_KEY_NETWORK. */
 static uint8_t zcash_network = 0;
 
+#if LEEK_HAS_ZCASH
+/* The transaction review (SCREEN_ZSIGN_REVIEW). Up here because two flows
+ * open it: a host's zSignFinish, and a PCZT read from the SD card. */
+static const zs_summary *zsign_summary = NULL;
+static uint8_t zsign_network = ZS_NET_TEST;
+static int zsign_page = 0;
+/* True when the review on screen came from the SD card: its answer goes to
+ * sd_sign_review_done() rather than to a waiting host. */
+static bool zsign_from_sd = false;
+#endif
+
 static char mnemonic_buffer[256];
 static int mnemonic_word_count = 0;
 
@@ -1036,6 +1048,11 @@ static void lock_device(void)
 #if LEEK_HAS_ZCASH
     /* Session-only metadata belongs to seeds the lock just destroyed. */
     zmeta_forget_session();
+#endif
+#if UI_HAS_SD_SEED
+    /* A card transaction under review is not signed by whoever unlocks next. */
+    sdsign_cancel();
+    zsign_from_sd = false;
 #endif
 
     /* wallet_lock() has just destroyed any temporary seed, so the longer
@@ -3277,14 +3294,26 @@ static char      sd_names[SDCARD_FILES_MAX][SDCARD_NAME_MAX + 1];
 static int       sd_count;          /* -1: no card */
 static int       sd_sel;
 static bool      sd_can_save;
+static bool      sd_can_sign;       /* LEEKZ/unsigned.pczt is on the card */
 static bool      sd_go_home;        /* RESULT: OK goes to the home screen */
 static TextEntry sd_entry;
 static char      sd_first[TEXT_ENTRY_MAX + 1];
 static char      sd_msg[4][22];
+static int       sd_load_index = -1;  /* which seed file the passphrase is for */
 
+/* Items, in order: "Sign transaction" when there is one, the seed files,
+ * then "Save open seed". */
 static int sd_items(void)
 {
-    return (sd_count > 0 ? sd_count : 0) + (sd_can_save && sd_count >= 0 ? 1 : 0);
+    if (sd_count < 0) return 0;
+    return (sd_can_sign ? 1 : 0) + sd_count + (sd_can_save ? 1 : 0);
+}
+
+/* The seed file at list position `idx`, or -1 for the two actions. */
+static int sd_file_at(int idx)
+{
+    if (sd_can_sign) idx--;
+    return (idx >= 0 && idx < sd_count) ? idx : -1;
 }
 
 static void sd_rescan(void)
@@ -3294,6 +3323,8 @@ static void sd_rescan(void)
     sd_count = sdseed_list(sd_names, SDCARD_FILES_MAX);
     WalletStatus st = wallet_get_status();
     sd_can_save = st.wallet_count > 0 || wallet_has_temporary_mnemonic();
+    /* Signing needs a seed as much as saving does. */
+    sd_can_sign = sd_count >= 0 && sd_can_save && sdsign_available();
     sd_sel = 0;
 }
 
@@ -3321,7 +3352,7 @@ static void sd_forget(void)
 
 static void sd_load(void)
 {
-    const char *name = sd_names[sd_sel];
+    const char *name = sd_names[sd_load_index >= 0 ? sd_load_index : 0];
     if (!ensure_wallet_unlocked()) {
         sd_forget();
         sd_result(false, "Not loaded", "Unlock failed", NULL, NULL);
@@ -3384,6 +3415,55 @@ static void sd_save(void)
     snprintf(l1, sizeof l1, "Saved %s", name);
     sd_result(false, l1, "Keep the card and", "the passphrase:", "both are needed");
 }
+/* Airgap signing (roadmap 5): read LEEKZ/unsigned.pczt, check it as a USB
+ * upload is checked, and hand it to the same review screen. */
+static void sd_sign_start(void)
+{
+    if (!ensure_wallet_unlocked()) {
+        sd_result(false, "Not signed", "Unlock failed", NULL, NULL);
+        ui_invalidate();
+        return;
+    }
+    sd_busy("Checking...");
+    const zs_summary *summary = NULL;
+    int rc = sdsign_load(hd_account, zcash_network, &summary);
+    button_drain();
+    if (rc != 0 || !summary) {
+        sd_result(false, "Not signed", sdsign_strerror(rc), NULL, NULL);
+        ui_invalidate();
+        return;
+    }
+    zsign_summary = summary;
+    zsign_network = zcash_network;
+    zsign_from_sd = true;
+    ui_set_screen(SCREEN_ZSIGN_REVIEW);
+}
+
+/* The review's answer for a card transaction. */
+static void sd_sign_review_done(bool approved)
+{
+    zsign_from_sd = false;
+    if (!approved) {
+        sdsign_cancel();
+        sd_result(false, "Not signed", "Rejected", NULL, NULL);
+        ui_set_screen(SCREEN_SD_SEED);
+        sd_stage = SD_RESULT;
+        return;
+    }
+    sd_busy("Signing...");
+    uint32_t n = 0;
+    int rc = sdsign_finish(&n);
+    button_drain();
+    if (rc != 0) {
+        sd_result(false, "Not signed", sdsign_strerror(rc), NULL, NULL);
+    } else {
+        char l1[40];
+        snprintf(l1, sizeof l1, "Signed: %u signature%s", (unsigned)n, n == 1 ? "" : "s");
+        sd_result(false, l1, "Wrote LEEKZ/", "signed.zsig", "Take the card to the PC");
+    }
+    ui_set_screen(SCREEN_SD_SEED);
+    sd_stage = SD_RESULT;
+}
 #endif /* UI_HAS_SD_SEED */
 
 static void screen_sd_seed_enter(void)
@@ -3425,8 +3505,10 @@ static void screen_sd_seed_render(void)
             for (int i = 0; i < 4 && start + i < n; i++) {
                 const int idx = start + i;
                 char line[22];
+                const int file = sd_file_at(idx);
                 snprintf(line, sizeof line, "%s %s", idx == sd_sel ? ">" : " ",
-                         idx < sd_count ? sd_names[idx] : "Save open seed");
+                         file >= 0 ? sd_names[file]
+                         : (sd_can_sign && idx == 0) ? "Sign transaction" : "Save open seed");
                 oled_draw_string(2 + i, 0, line);
             }
             oled_draw_string(7, 0, "BACK  UP/DN     OK");
@@ -3486,9 +3568,14 @@ static void screen_sd_seed_on_button(button_id_t btn)
             if (btn == BUTTON_ACCEPT) {
                 if (sd_count < 0 || n == 0) {
                     sd_rescan();
+                } else if (sd_can_sign && sd_sel == 0) {
+                    sd_sign_start();
+                    return;
                 } else {
                     text_entry_reset(&sd_entry);
-                    sd_stage = sd_sel < sd_count ? SD_PASS_LOAD : SD_PASS_NEW;
+                    const int file = sd_file_at(sd_sel);
+                    sd_load_index = file;
+                    sd_stage = file >= 0 ? SD_PASS_LOAD : SD_PASS_NEW;
                 }
             }
             break;
@@ -5184,14 +5271,12 @@ static const screen_t screen_host_passphrase = {
  * ============================================================================ */
 
 #if LEEK_HAS_ZCASH
-static const zs_summary *zsign_summary = NULL;
-static uint8_t zsign_network = ZS_NET_TEST;
-static int zsign_page = 0;
 
 void ui_request_zsign_review(const zs_summary *s, uint8_t network)
 {
     zsign_summary = s;
     zsign_network = network;
+    zsign_from_sd = false;
     sign_outcome = SIGN_PENDING;
     zsign_review_pending = true;
 }
@@ -5231,13 +5316,25 @@ static void screen_zsign_review_on_button(button_id_t btn)
                 zsign_page++;
                 break;
             }
-            sign_outcome = last >= 0 ? SIGN_APPROVED : SIGN_REJECTED;
             zsign_summary = NULL;
+#if UI_HAS_SD_SEED
+            if (zsign_from_sd) {
+                sd_sign_review_done(last >= 0);
+                return;
+            }
+#endif
+            sign_outcome = last >= 0 ? SIGN_APPROVED : SIGN_REJECTED;
             ui_set_screen(SCREEN_WALLET_INFO);
             return;
         case BUTTON_CANCEL:
-            sign_outcome = SIGN_REJECTED;
             zsign_summary = NULL;
+#if UI_HAS_SD_SEED
+            if (zsign_from_sd) {
+                sd_sign_review_done(false);
+                return;
+            }
+#endif
+            sign_outcome = SIGN_REJECTED;
             ui_set_screen(SCREEN_WALLET_INFO);
             return;
         default:
@@ -5876,6 +5973,7 @@ void ui__reset_static_state_for_test(void)
     zsign_page = 0;
     addr_check_pending = false;
     memzero(&addr_check, sizeof addr_check);
+    zsign_from_sd = false;
 #endif
 
     lock_timeout_choice = 1;
