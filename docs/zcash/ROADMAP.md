@@ -203,67 +203,239 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 
 ---
 
-## Phase 6: Android (Zodl fork)
+## Where things stand (2026-10-16)
 
-**6.1 Fork and baseline**
-- Fork `zodl-android` (MIT).
-- New `applicationId`, name and icons; Zodl trademarks removed.
-- Done when: the rebranded APK builds and runs as a normal software wallet on testnet.
+**Done and tested on the board (S3 CAM + SH1107 + EC11 + OV5640):**
+- Phases 0-5: keys, the three storage modes (vault, stateless, SD `.zkv`), the C and Rust signers in agreement, review on the device, testnet sends over USB (`zecz`) and over the SD card with no link.
+- Android (the Zodl fork, `android/` branch `leekwallet`): a LeekWallet account imported from the board, and testnet sends signed over **USB OTG**, **Bluetooth LE** and **QR**.
 
-**6.2 Signature insertion**
-- Read the Android SDK to see whether it can apply external signatures to a PCZT.
-- If not, add a JNI function in a local SDK build (`settings.gradle.kts` L377 `includeBuild`), or switch the device to returning a full signed PCZT (Rust backend).
-- Done when: we have a decision and a working proof of concept.
+**Signing paths:**
 
-**6.3 `feature-hw` module**
-- Copy `feature-ledger/`'s structure. Its flow is already wired: `createPcztFromProposal` → proof generation in parallel → signer → `submitTransaction(proven, signed)`.
-- Transport: USB OTG serial, with the session ported to Kotlin and checked against the conformance vectors.
-- Done when: the app pairs with the device (import UFVK + fingerprint via the Keystone account path).
+| | CLI (`zecz`) | Android | Desktop | Chrome |
+|---|---|---|---|---|
+| USB | done | done | Phase 8 | Phase 9 |
+| Bluetooth | - | done | Phase 8 | Phase 9 |
+| QR | - | done (slow, see 7) | Phase 8 | Phase 9 |
+| SD card | done | not planned (see 6.x) | Phase 8 | - |
 
-**6.4** Send and receive from the app; the device signs. Done when: a testnet send is confirmed from the phone.
+**Recommendation to users:** USB or Bluetooth for everyday signing. QR or the SD card when the device must stay off every link.
 
-**6.5 Passphrase restore** (§P): add an optional passphrase field to the fork's software-wallet restore. Done when: the passphrase key vectors restore to the same addresses in the app.
+**Order of work:**
+1. Phase 7, the compact PCZT: small, and it halves the QR.
+2. Finish Android for the demo (6.5-6.9).
+3. Desktop (8).
+4. Chrome (9), whose engine is the largest risk, so it starts with a spike.
+5. The Zodl contribution (6.11), in parallel once Android is stable.
+6. Firmware follow-ups (10).
+7. Testing infrastructure (11), which runs alongside everything.
 
-**6.6 NEAR confidential swap**
-- Add `"confidentiality"` to the 1Click quote.
-- The device signs the deposit send and shows the deposit address (likely a t-address, with a warning).
-- Done when: a mainnet swap of a small amount completes.
-
-**6.7** BLE transport (LeekWallet GATT UUIDs + chunking).
-
----
-
-## Phase 7: Desktop (Linux / Windows / macOS)
-
-**7.1** A Tauri v2 app based on LeekWallet `app/`. The `zecz-host` crate does the backend work (sync, PCZT, proving, broadcast).
-
-**7.2** Screens: pair, balance, receive (with "verify on device"), send, history. Done when: a testnet send works on all three operating systems.
-
-**7.3** NEAR swap screen.
-
-**7.4** Optional: SD airgap helper (write `unsigned.pczt` to the card, read `signed.zsig`).
+Sizes: S = a day or two, M = about a week, L = several weeks.
 
 ---
 
-## Phase 8: Chrome extension (thin)
+## Phase 6: Android - LeekWallet Zcash app, and a contribution to Zodl
 
-**8.1** MV3 extension that catches `zcash:` ZIP 321 links and "Pay with ZEC" buttons and forwards them to the desktop app over **native messaging**. No keys, no wallet in the browser.
+One codebase for both: our app is the Zodl fork with our branding. The hardware support lives in `feature-leekwallet` plus a few ui-lib hooks, so the same module can be offered to Zodl without our branding.
 
-**8.2** A confirm popup with the amount and destination; the desktop app does the build/sign/send. Done when: payment to a demo web page works end to end.
+**Done:**
+- 6.1 Fork and rebrand.
+- 6.2 Signature insertion (`host/leek-android`: Rust over JNI applies the `.zsig`).
+- 6.3 Pairing and import.
+- 6.4 A testnet send signed over USB.
+- 6.7 Bluetooth LE.
+- QR signing (`ur:leek-pczt` / `ur:leek-zsig`).
+
+**6.5 Passphrase restore (S).** An optional BIP39 passphrase field on software-wallet restore (§P). Done when: the passphrase key vectors restore to the same addresses in the app.
+
+**6.6 NEAR Intents from a LeekWallet account (M).**
+- Zodl already ships 1Click swaps (`NearSwapDataSource`), and a LeekWallet account already goes through the Keystone proposal path that swaps use.
+- First test a ZEC to USDC swap signed by the board. Then fix what breaks; the deposit is usually a transparent output, which the device already reviews with a warning.
+- Then add the `confidentiality` option to the quote.
+- Done when: a small mainnet swap completes, signed on the board.
+
+**6.8 Compact PCZT in the app (S, after Phase 7).** Send the compact view over every link: half the QR frames, and faster USB and Bluetooth.
+
+**6.9 Verify address on the device (S).** A Receive button that runs `zShowAddress`, so the user checks on the board's screen that the app's address is theirs.
+
+**6.10 A proper account type (M).**
+- Replace "Keystone-shaped account with key source `leekwallet`" with a `LeekWalletAccount` in the sealed hierarchy, plus the account-type switches it needs. About 80 sites.
+- Needed before 6.11, and it removes the label bugs for good.
+
+**6.11 Contribution to Zodl (M, then their timeline).**
+- Open a discussion with Zodl first: hardware wallets are a policy decision for them.
+- Prepare a branch `upstream/leekwallet-hw` from their `main`: the module, the ui-lib hooks, the native library build, tests, their detekt and ktlint rules, and no LeekWallet branding.
+- If they decline, nothing is lost: our app carries the same code.
+
+**6.12 Release (S).**
+- A signed mainnet APK (our keystore), reproducible-build notes, and a GitHub release.
+- F-Droid later, since the FOSS flavor exists.
+
+**6.13 Staying current with Zodl (ongoing).**
+- Rebase `leekwallet` on each Zodl release.
+- The diff outside `feature-leekwallet` stays small on purpose.
+
+Not planned: SD card in the app. Android's removable-storage rules and missing slots make it worse than QR there. If it is ever wanted, it becomes "export/import file" through the system picker.
 
 ---
 
-## Phase 9: Hackathon submission (Wildcard / hardware)
+## Phase 7: Compact PCZT (cross-cutting, S)
 
-**9.1** README: architecture diagram, a security model stated honestly (unburned, experimental, stateless/SD modes), and build and flash instructions.
+**Finding.** The Ironwood librustzcash already defines `SignerView::Compact` (the v2 PCZT encoding). It drops the note ciphertexts the signer can rebuild from recipient, value, rseed and memo, plus proofs and anchors.
 
-**9.2** A demo script that runs fully on the simulator as a fallback and on the board as the main demo. Show:
-- dual-signer agreement;
-- a refused tampered PCZT;
-- an SD airgap send;
-- a confidential swap.
+- Measured on our real sends: Full view 2,791 B, Compact view **1,426 B (-49 %)**.
+- The firmware already handles it. The C signer rebuilds `enc_ciphertext` from the memo (`zc_note_encrypt`). Through zdev in BOTH mode, both backends accepted a compact vector with the expected sighash (466827d9...).
+- A security bonus: the device now encrypts the memo it shows.
 
-**9.3** Video, repository cleanup, licences (LeekWallet's own, MIT for the Zodl fork and libzcash-ironwood-c, MIT/Apache for librustzcash).
+**7.1** Companions build the compact view.
+- `zecz` gets a `--compact` option on `send`.
+- `leek-android` gets `compactView(pczt)`, using the pczt redactor role as `compact_signer_view` does.
+
+**7.2** The signed PCZT.
+- The device's `.zsig` names the hash of the compact bytes. `PcztSignatures.apply` takes the compact bytes to check that hash, and applies the signatures to the Full view.
+- The SDK combines that with the proven PCZT exactly as today.
+- Test: compact -> device -> apply -> prove -> extract verifies (as `tests/device_zdev.rs`).
+
+**7.3** Vectors.
+- Add compact versions of the PCZT vectors.
+- `test_zsign_diff` mutates them too.
+- Firmware tests for a memo that does not re-encrypt to the carried commitment.
+
+**7.4** Make it the default on every link, after a board test over each. Done when: a QR signing takes about half the frames on the board.
+
+---
+
+## Phase 8: Desktop - LeekWallet Zcash for Linux, Windows and macOS
+
+**Architecture.**
+- **Tauri v2**, starting from LeekWallet's `app/` already in `firmware/app`.
+- **The backend is Rust and reuses what exists:**
+  - `zecz` as a library: wallet database per profile (`zcash_client_sqlite`), lightwalletd sync, proposals, PCZT, proving with cached parameters, and broadcast.
+  - `leek-device` (serial port).
+  - `leek-transport-ble` (btleplug).
+  - The webcam exposure code (`app/src-tauri/src/camera.rs`).
+- **The frontend is TypeScript.** No protocol code in the webview.
+
+**8.1 Skeleton (M).** `zecz` split into a library crate and a CLI. The Tauri app builds on Linux, Windows and macOS in CI, and opens and syncs a watch-only testnet account.
+
+**8.2 Software wallets (M).**
+- Create or restore a 24-word seed with an optional passphrase.
+- The seed is encrypted under the user's password (Argon2id, AES-GCM), and the key may also be held in the OS keychain.
+- Several wallets and accounts.
+
+**8.3 Hardware accounts (M).**
+- Pair and import over USB and Bluetooth, sign over both.
+- Address verification on the device.
+- `.zkv` card creation as in `zecz zkv-new`.
+
+**8.4 Wallet screens (M).** Balance (Orchard, Ironwood, transparent), receive (UA, QR, "verify on device"), send with memo, history, contacts.
+
+**8.5 Air gap (M).**
+- QR both ways with the webcam: the large-QR rules from Android, plus LeekWallet's manual exposure.
+- SD card: write `LEEKZ/unsigned.pczt`, read `LEEKZ/signed.zsig`.
+
+**8.6 NEAR Intents (M).**
+- The 1Click API: tokens, quote (with `confidentiality`), the deposit send signed by software or the board, status polling, refunds.
+- Done when: a small mainnet swap completes from desktop.
+
+**8.7 Packaging (M).**
+- Linux: AppImage and .deb.
+- Windows: MSI, code signing optional.
+- macOS: .dmg, notarized. This needs an Apple developer account.
+- Auto-update off by default.
+
+---
+
+## Phase 9: Chrome extension - a full wallet in the browser
+
+Not the thin forwarder planned before: its own software wallets, the board over USB and Bluetooth, and NEAR Intents from the browser.
+
+**Architecture.**
+- **MV3.** The service worker only routes.
+- **Device and long-running work in an offscreen document,** LeekWallet's proven pattern: a service worker has no `navigator.serial` and is evicted.
+- **Device protocol:** the TypeScript `session.ts` and `framing.ts` from LeekWallet's `app/packages/core`, checked against the firmware's conformance vectors. Or `leek-device` compiled to WASM, decided in 9.1.
+- **Transports:** Web Serial for USB, Web Bluetooth for BLE (from an extension page; it needs a user gesture), and a popup QR page.
+- **Wallet engine:** the hard part. Sync and proving in WASM.
+
+**9.1 Engine spike (M, the largest risk).**
+- Evaluate ChainSafe's WebZjs, a Zcash wallet in WASM used by the Zcash MetaMask Snap:
+  - Ironwood support;
+  - gRPC-web access to lightwalletd (which needs a proxy);
+  - Orchard proving time in the browser, single- and multi-threaded;
+  - storage size.
+- Alternatives: `zecz` compiled to WASM, or a local helper over native messaging (the old thin design) as a fallback.
+- Done when: a decision with measured numbers.
+
+**9.2 Software wallets (M).** Create or restore with a passphrase, encrypted with WebCrypto (Argon2id in WASM), auto-lock, several accounts.
+
+**9.3 The board (M).**
+- Pair and sign over Web Serial and Web Bluetooth, and QR through the webcam.
+- Done when: a testnet send signed by the board from the extension.
+
+**9.4 Dapp interface (M).**
+- Zcash has no EIP-1193. Offer `window.zcash`: connect, accounts, `sendTransaction(zip321)`, `signPczt`.
+- Handle `zcash:` ZIP 321 links.
+- Propose the interface publicly so other wallets can implement it.
+
+**9.5 NEAR Intents from the browser (M).** A swap screen in the popup (1Click), and swaps requested by web pages through the provider.
+
+**9.6 Store release (S).** The Chrome Web Store listing, permissions justified (serial, bluetooth, storage), a privacy policy.
+
+---
+
+## Phase 10: Firmware follow-ups
+
+- **10.1 Transparent inputs (L):**
+  - Sign P2PKH spends (ZIP 244 transparent digests; secp256k1 ECDSA) in both backends, with review pages.
+  - Needed to shield funds received on a t-address, and for some swap refunds.
+- **10.2 Measured timings on the board (S).** Roadmap 4.5: check and sign times per backend (C on the device; Rust only as a reference build).
+- **10.3 Mainnet (S).** A small mainnet send over each link before any release.
+- **10.4 Several accounts (S).** Account selection carried by every companion, not only account 0.
+- **10.5 Bluetooth bonding (M).** Today every connection pairs with the six digits; optionally remember a host.
+- **10.6 Security review (M).**
+  - An honest threat model (no eFuses burned, experimental).
+  - Fuzzing the PCZT readers on the board build.
+  - Review of the new USB, BLE and QR paths.
+- **10.7 Optional:** secure element, other screens (ST7735S, e-ink).
+
+---
+
+## Phase 11: Testing and debugging infrastructure (continuous)
+
+- **11.1 CI (M).** GitHub Actions on every push:
+  - firmware host suites and the esp32s3cam/pixie builds;
+  - host crates;
+  - the Android unit tests and the testnet APK;
+  - the desktop builds on three operating systems;
+  - the extension's unit tests.
+- **11.2 Device in the loop (M).**
+  - A script that flashes the board, pairs, imports and signs the vector PCZTs over USB and BLE, and checks the signatures.
+  - The serial-relay log capture (`serial_tap.py`) made a tool.
+- **11.3 End-to-end matrix (ongoing).**
+  - Links (USB, BLE, QR, SD) times companions (CLI, Android, desktop, Chrome), each a testnet send checked on an explorer.
+  - Results kept in `docs/JOURNAL.md`.
+- **11.4 Testnet funds (S).** A faucet routine and a funded test account per companion; a small mainnet budget for 6.6, 8.6 and 10.3.
+
+---
+
+## Phase 12: Hackathon submission (Wildcard / hardware)
+
+- **12.1 README:**
+  - an architecture diagram (board, signers, companions);
+  - a security model stated honestly;
+  - build and flash instructions;
+  - the wiring guide.
+- **12.2 Demo:**
+  1. Wallet created on the board.
+  2. Import in the Android app.
+  3. Sends over USB, Bluetooth and QR.
+  4. SD airgap with `zecz`.
+  5. A NEAR swap if 6.6 is done.
+
+  The simulator is the fallback.
+- **12.3 Video, repository cleanup, licences:**
+  - LeekWallet's own;
+  - MIT for the Zodl fork and libzcash-ironwood-c;
+  - MIT/Apache for librustzcash.
 
 ---
 
