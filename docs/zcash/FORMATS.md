@@ -17,19 +17,37 @@ device signs.
 ## Signatures: `*.zsig`
 The device returns signatures only. The host applies them with
 `Signer::apply_orchard_signature` / `apply_ironwood_signature`, which verify
-each one against the action's rk before storing it.
+each one against the action's rk before storing it, and, for a transparent
+input, `Signer::append_transparent_signature`, which verifies it against the
+input's own sighash and the pubkey the input's script pays to.
 
 ```
 offset  size  field
 0       4     magic "ZSIG"
-4       1     version = 1
+4       1     version: 1 if every entry is shielded, 2 if any is transparent
 5       32    SHA-256 of the exact .pczt bytes the device checked and signed
 37      2     count N (u16 LE)
-39      N*69  entries:
-                1   pool   (1 = Orchard, 2 = Ironwood, 0 = transparent, reserved)
+39      ...   N entries, each:
+                1   pool   (0 = transparent, 1 = Orchard, 2 = Ironwood)
                 4   action/input index (u32 LE)
+              pool 1, 2 (69 bytes in all):
                 64  signature (RedPallas: R ‖ S)
+              pool 0 (version 2 only; 1 + 4 + 1 + L + 33 bytes):
+                1   L, 9..73
+                L   DER ECDSA signature (secp256k1, low S) ‖ sighash type
+                33  compressed public key it verifies under
 ```
+
+A version 1 file is byte for byte what it always was, so a shielded-only
+`.zsig` still reads in a version 1 reader. A version 2 reader reads both.
+In version 1 a pool 0 entry is an error; in version 2 the pool decides the
+entry's length. The sighash type is always `SIGHASH_ALL` (0x01): the device
+refuses any input that asks for another one.
+
+The pubkey lets a host build the P2PKH scriptSig (and the pczt crate's
+`hash160_preimages` entry that `append_transparent_signature` needs) without
+trusting anything but the signature check: the host must still verify the
+signature against its own sighash, which the pczt Signer does.
 
 The host refuses a `.zsig` whose hash does not match the PCZT it sent.
 Signing the wrong file must fail loudly; it must not merely produce an
@@ -37,6 +55,44 @@ invalid transaction.
 
 Pool and error codes match `components/zsign-rust/include/zsign_rust.h`
 (`ZS_POOL_*`, `ZS_E_*`).
+
+### Transparent inputs (roadmap 10.1)
+The device signs P2PKH inputs of its own account only. For each transparent
+input of a PCZT, both signer backends check, in this order, and refuse the
+whole PCZT otherwise:
+
+1. The input parses as the pczt crate parses it (value at most 21M ZEC,
+   scripts well formed, a known sighash type, lock-time ranges): else
+   `ZS_E_PARSE`.
+2. `sighash_type` is `SIGHASH_ALL`; `script_pubkey` is exactly P2PKH
+   (`76 a9 14 <20> 88 ac`); there is no `redeem_script`, `script_sig`,
+   partial signature or required lock time: else `ZS_E_UNSUPPORTED_BUNDLE`.
+3. `bip32_derivation` has an entry: else `ZS_E_MISSING_DATA`. More than one
+   is `ZS_E_UNSUPPORTED_BUNDLE`.
+4. That entry is ours: the ZIP 32 seed fingerprint of this seed, the path
+   `m/44'/coin'/account'/scope/index` with this network's coin type and the
+   account being signed for, scope 0 (external), 1 (internal) or 2
+   (ephemeral), index non-hardened; the pubkey the device derives at that
+   path is the entry's key; and HASH160 of that key is the hash in
+   `script_pubkey`. Any failure is `ZS_E_SPEND_NOT_OURS`.
+
+The review then lists every input as "from your t-address" with its value
+and address, and the fee counts transparent inputs:
+fee = shielded spends + transparent inputs − shielded outputs − transparent
+outputs (`ZS_E_VALUE_BALANCE` if negative). The input values cannot be
+misstated to the device: ZIP 244 commits every input's amount and
+script_pubkey into each transparent sighash and into the shielded sighash,
+so a PCZT that lies about them yields signatures the network rejects.
+
+Each input is signed over its ZIP 244 transparent signature digest (S.2,
+`SIGHASH_ALL`, v6 digest tree) with the key at its path: secp256k1 ECDSA,
+RFC 6979 nonces, low S. Both backends derive the same RFC 6979 nonce, so
+their signatures are byte-identical (`test_zsign_diff` checks it).
+
+Memo recovery also tries the account's transparent outgoing viewing keys
+(ZIP 316: `PRF^expand(chain code, [0xd0] ‖ account pubkey)`, internal then
+external half), which is what a wallet uses for outputs funded only by
+transparent inputs.
 
 ## Seed card: `*.zkv`
 A seed sealed under a passphrase, for the SD storage mode (roadmap 1.4).

@@ -364,7 +364,7 @@ shows that such a seed was used.
 ```
 zGetFeatures  {}
            -> { backend: "both"|"rust"|"c", branchIds: [uint], txVersions: [6],
-                spendPools: ["orchard"], maxPczt: uint, maxChunk: uint,
+                spendPools: ["orchard", "ironwood", "transparent"], maxPczt: uint, maxChunk: uint,
                 storage: ["vault","stateless","sd"?], showAddress: 1 }
 zShowAddress  { account?: uint, network: "main"|"test" }
            -> { ua, tAddress }
@@ -394,7 +394,9 @@ zSignBegin  { len: uint, sha256: h'32', account: uint, network: "main"|"test" }
 zSignChunk  { offset: uint, data: h'1..maxChunk' }      offset = bytes so far
          -> { received: uint }
 zSignFinish {}
-         -> { sighash: h'32', signatures: [ { pool: 1|2, index: uint, sig: h'64' } ] }
+         -> { sighash: h'32',
+              signatures: [ { pool: 1|2, index: uint, sig: h'64' }
+                          | { pool: 0, index: uint, sig: h'9..73', pubkey: h'33' } ] }
 ```
 
 `zSignFinish` refuses unless every byte arrived and they hash to `sha256`,
@@ -404,7 +406,16 @@ The device then shows the review pages (`src/zcash-review.c`) and waits for
 the user. Only ACCEPT on the last page signs; every signature is verified by
 both backends before it leaves. The reply carries the sighash the user
 reviewed, so the host can check it against its own. A rejection, timeout or
-lock drops the upload. Pools: 1 Orchard, 2 Ironwood (`ZS_POOL_*`).
+lock drops the upload. Pools: 0 transparent, 1 Orchard, 2 Ironwood
+(`ZS_POOL_*`).
+
+A transparent entry (roadmap 10.1) carries the input index, the DER
+signature followed by the sighash type byte (always 0x01, `SIGHASH_ALL`),
+and the compressed pubkey it verifies under: the same fields as a version 2
+`.zsig` entry (docs/zcash/FORMATS.md, which also lists the checks the device
+makes on each input before it shows it as "from your t-address"). `sighash`
+stays the shielded sighash; each transparent signature commits to its own
+input's ZIP 244 digest, which the host recomputes when it applies it.
 
 A refusal is error `0x05xx`, where the low byte is the reason: `-ZS_E_*`
 from the signers (`zsign_types.h`: 0x0A parse, 0x0B branch, 0x0C foreign
