@@ -162,6 +162,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 - CLI builds the transaction, proves it in parallel, the device signs, then the CLI combines and broadcasts.
 - First run through the sim, then through the board, on **testnet**.
 - Done when: a testnet txid is confirmed. 🎉
+- Status: done on the board, 2026-10-15. The S3 CAM board signed testnet txid `1daaff6366fccbd6ea50f137a975a5013b2632083446b5220205ad16057b1ef0`: 0.01 TAZ with a memo, an Ironwood spend, reviewed on the SH1107 and accepted with the encoder.
 
 ---
 

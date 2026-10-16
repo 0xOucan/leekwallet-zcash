@@ -331,3 +331,28 @@ checked on Xtensa).
 - Testnet: a private test seed was generated into `~/zecz-test/testnet-seed.txt`
   (mode 600, outside the repo). Imported via zdev into `~/zecz-test/wallet`
   with birthday 4,506,500 and ZFP 57F3A27A.
+
+### 3.6 First real transaction: signed on the board, broadcast on testnet (2026-10-15)
+- Board: ESP32-S3-N16R8 CAM with the screen kit (SH1107 128x128, EC11,
+  OV5640), firmware `esp32s3cam`, C signer backend.
+- Wallet created on the device (ZFP 551A1FD4). `zecz device-init` imported
+  it with birthday 4,506,700, and `device-show-address` was confirmed on
+  the device.
+- A faucet sent 0.125 TAZ (txid aba1ae7b…2ce18995), received into the
+  Ironwood pool and spendable after 10 confirmations (ZIP 315 default for
+  untrusted notes).
+- `zecz send` made 0.01 TAZ to self with a memo: a 2,791-byte signer-view
+  PCZT. `sign-device` sent `zSignBegin`, one `zSignChunk` and
+  `zSignFinish`. The device reviewed the transaction and signed one
+  Ironwood action. `finish` applied the signature (verified against rk),
+  proved, and broadcast **txid
+  1daaff6366fccbd6ea50f137a975a5013b2632083446b5220205ad16057b1ef0**.
+- Bugs this bring-up found, all fixed on main:
+  - The USB driver silently dropped writes over 256 bytes.
+  - Rust derivation took 97 s on the chip (C: 0.75 s).
+  - The vault opens about 1.5 s after the PIN is accepted.
+  - Logs could interleave with frames.
+  - `zecz`'s 10 s timeout was too short for derivation.
+  - The SH1107 needed an address probe and bus scan.
+- Diagnostic used: `~/zecz-test/diag/serial_tap.py`, a PTY relay that
+  records the board's log while zecz talks through it.
