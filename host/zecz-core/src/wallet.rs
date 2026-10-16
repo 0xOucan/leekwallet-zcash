@@ -108,30 +108,52 @@ impl Profile {
     }
 }
 
-/// The account to import: a UFVK exported by the device and where it came
-/// from.
-#[derive(Clone, Debug)]
-pub struct AccountSpec {
-    /// Unified full viewing key (Orchard + P2PKH, no Sapling).
-    pub ufvk: String,
+/// Where a spending key lives: the ZIP 32 seed fingerprint and account
+/// index the device uses to find its key for a spend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyOrigin {
     /// ZIP 32 seed fingerprint of the device seed.
     pub seed_fingerprint: [u8; 32],
     /// ZIP 32 account index.
     pub account_index: u32,
+}
+
+impl KeyOrigin {
+    /// The short seed fingerprint the device shows ("ZFP").
+    pub fn short_fingerprint(&self) -> String {
+        short_fingerprint(&self.seed_fingerprint)
+    }
+}
+
+/// The account to import: a UFVK and, for a device account, where its
+/// spending key lives.
+#[derive(Clone, Debug)]
+pub struct AccountSpec {
+    /// Unified full viewing key (Orchard + P2PKH, no Sapling).
+    pub ufvk: String,
+    /// The device key behind the UFVK. None imports a view-only account:
+    /// it syncs and shows balances, but its PCZTs carry no ZIP 32
+    /// derivation, so no device can sign them.
+    pub origin: Option<KeyOrigin>,
     /// Account name in the wallet database.
     pub name: String,
 }
 
 impl AccountSpec {
+    /// A device account: the UFVK it exported and its ZIP 32 origin.
+    pub fn device(ufvk: String, seed_fingerprint: [u8; 32], account_index: u32, name: &str) -> Self {
+        AccountSpec { ufvk, origin: Some(KeyOrigin { seed_fingerprint, account_index }), name: name.to_string() }
+    }
+
+    /// A view-only account from a bare UFVK.
+    pub fn view_only(ufvk: String, name: &str) -> Self {
+        AccountSpec { ufvk, origin: None, name: name.to_string() }
+    }
+
     /// DEV ONLY: the spec for an account derived on the host from a
     /// mnemonic (as `zecz init-dev` does).
     pub fn from_dev_account(network: Network, acct: &DevAccount, name: &str) -> Result<Self> {
-        Ok(AccountSpec {
-            ufvk: acct.ufvk.encode(&network)?,
-            seed_fingerprint: acct.seed_fingerprint.to_bytes(),
-            account_index: u32::from(acct.account),
-            name: name.to_string(),
-        })
+        Ok(AccountSpec::device(acct.ufvk.encode(&network)?, acct.seed_fingerprint.to_bytes(), u32::from(acct.account), name))
     }
 }
 
@@ -162,16 +184,9 @@ pub struct ImportedAccount {
     /// The account's UUID in the wallet database.
     pub uuid: String,
     pub birthday: u32,
-    pub seed_fingerprint: [u8; 32],
-    pub account_index: u32,
+    /// The device key behind it; None for a view-only account.
+    pub origin: Option<KeyOrigin>,
     pub addresses: Addresses,
-}
-
-impl ImportedAccount {
-    /// The short seed fingerprint the device shows ("ZFP").
-    pub fn short_fingerprint(&self) -> String {
-        short_fingerprint(&self.seed_fingerprint)
-    }
 }
 
 /// Progress of [`Wallet::init`].
@@ -473,18 +488,23 @@ impl Wallet {
     }
 
     fn import(&mut self, ufvk: &UnifiedFullViewingKey, spec: &AccountSpec, birthday: &AccountBirthday) -> Result<InitOutcome> {
-        let account_index = zip32::AccountId::try_from(spec.account_index).map_err(|_| anyhow!("bad account index"))?;
-        let fp = SeedFingerprint::from_bytes(spec.seed_fingerprint);
-        // Recording the ZIP 32 derivation makes create_pczt_from_proposal put
-        // zip32_derivation on our spends; the device uses it to find its key.
-        let purpose = AccountPurpose::Spending { derivation: Some(Zip32Derivation::new(fp, account_index)) };
+        let purpose = match spec.origin {
+            Some(o) => {
+                let account_index = zip32::AccountId::try_from(o.account_index).map_err(|_| anyhow!("bad account index"))?;
+                let fp = SeedFingerprint::from_bytes(o.seed_fingerprint);
+                // Recording the ZIP 32 derivation makes create_pczt_from_proposal
+                // put zip32_derivation on our spends; the device uses it to find
+                // its key.
+                AccountPurpose::Spending { derivation: Some(Zip32Derivation::new(fp, account_index)) }
+            }
+            None => AccountPurpose::ViewOnly,
+        };
         let acct = self.db.import_account_ufvk(&spec.name, ufvk, birthday, purpose, Some("leekwallet"))?;
         Ok(InitOutcome::Imported(ImportedAccount {
             name: spec.name.clone(),
             uuid: acct.id().expose_uuid().to_string(),
             birthday: u32::from(birthday.height()),
-            seed_fingerprint: spec.seed_fingerprint,
-            account_index: spec.account_index,
+            origin: spec.origin,
             addresses: addresses_of(self.profile.network, ufvk)?,
         }))
     }
@@ -505,6 +525,12 @@ impl Wallet {
     /// The account's UFVK, encoded.
     pub fn ufvk(&self) -> Result<String> {
         Ok(self.the_account()?.1.encode(&self.profile.network)?)
+    }
+
+    /// The account's birthday height: where scanning starts.
+    pub fn birthday(&self) -> Result<u32> {
+        let (id, _) = self.the_account()?;
+        Ok(u32::from(self.db.get_account_birthday(id)?))
     }
 
     /// The account's default addresses.

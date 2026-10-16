@@ -121,15 +121,16 @@ fn init_dev_imports_the_test_account_offline() {
     let kv = key_vector("test/abandon-art/pp0/acct0");
     let spec = dev_spec(0);
     assert_eq!(spec.ufvk, kv["ufvk"].as_str().unwrap());
-    assert_eq!(hex_of(&spec.seed_fingerprint), kv["seed_fingerprint"].as_str().unwrap());
+    assert_eq!(hex_of(&spec.origin.unwrap().seed_fingerprint), kv["seed_fingerprint"].as_str().unwrap());
 
     let profile = Profile::new(TEST, d.join("w"), None);
     let (w, outcome) = Wallet::init_with_birthday(profile.clone(), &spec, &offline_birthday()).unwrap();
     let InitOutcome::Imported(a) = outcome else { panic!("expected a fresh import") };
     assert_eq!(a.name, "leekwallet-dev");
-    assert_eq!(a.account_index, 0);
+    let origin = a.origin.expect("a device account has an origin");
+    assert_eq!(origin.account_index, 0);
     assert_eq!(a.birthday, u32::from(TEST_NU5));
-    assert_eq!(a.short_fingerprint(), "E62855DC");
+    assert_eq!(origin.short_fingerprint(), "E62855DC");
     assert_eq!(a.addresses.unified, kv["ua"].as_str().unwrap());
     assert_eq!(a.addresses.orchard_only, kv["ua_orchard_only"].as_str().unwrap());
     assert_eq!(a.addresses.transparent.as_deref(), kv["transparent_address"].as_str());
@@ -150,6 +151,20 @@ fn init_dev_imports_the_test_account_offline() {
     assert!(matches!(again, InitOutcome::AlreadyImported { addresses } if addresses == a.addresses));
     let e = err_text(Wallet::init_with_birthday(profile, &dev_spec(1), &offline_birthday()));
     assert!(e.contains("already tracks a different account"), "{e}");
+}
+
+#[test]
+fn a_bare_ufvk_imports_view_only() {
+    let d = TempDir::new();
+    let kv = key_vector("test/abandon-art/pp0/acct0");
+    let spec = AccountSpec::view_only(kv["ufvk"].as_str().unwrap().to_string(), "watch");
+    let profile = Profile::new(TEST, d.join("w"), None);
+    let (w, outcome) = Wallet::init_with_birthday(profile, &spec, &offline_birthday()).unwrap();
+    let InitOutcome::Imported(a) = outcome else { panic!("expected a fresh import") };
+    assert_eq!(a.origin, None);
+    assert_eq!(w.birthday().unwrap(), TEST_NU5);
+    assert_eq!(a.addresses.unified, kv["ua"].as_str().unwrap());
+    assert_eq!(w.ufvk().unwrap(), spec.ufvk);
 }
 
 const TEST_NU5: u32 = 1_842_420;
