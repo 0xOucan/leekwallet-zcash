@@ -70,7 +70,8 @@ fn watch_only_import_and_sync_on_testnet() {
 
     let tip = backend::tip(&profile.server).unwrap();
     assert_eq!(tip.chain_name, "test");
-    let birthday = tip.height as u32 - 300;
+    // A few batches back, so progress is reported more than once.
+    let birthday = tip.height as u32 - 3 * backend::SYNC_BATCH + 500;
 
     let imported = backend::init_watch_only(&profile, ufvk, birthday).unwrap();
     assert!(!imported.already_imported);
@@ -96,12 +97,12 @@ fn watch_only_import_and_sync_on_testnet() {
             _ => None,
         })
         .collect();
-    assert!(!fractions.is_empty(), "no progress reported");
+    assert!(fractions.len() >= 2, "too little progress reported: {fractions:?}");
     assert!(fractions.windows(2).all(|w| w[0] <= w[1]), "progress went backwards: {fractions:?}");
     assert!(fractions.iter().all(|f| (0.0..=1.0).contains(f)));
     assert!(done.fully_scanned >= birthday);
     assert!(done.chain_tip >= tip.height as u32);
-    println!("synced {} events, done {done:?}", events.len());
+    println!("synced from {birthday}: progress {fractions:?}, done {done:?}");
 
     let b = backend::balances(&profile).unwrap().expect("balances after sync");
     assert_eq!(b.chain_tip, done.chain_tip);
