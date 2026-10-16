@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pczt = { path = "../../../referencialeekwallet/zec references/librustzcash/pczt", features = ["orchard", "signer"] }
+zcash_protocol = { path = "../../../referencialeekwallet/zec references/librustzcash/components/zcash_protocol" }
 orchard = { version = "0.16", default-features = false, features = ["std"] }
 sha2 = "0.10"
 jni = { version = "0.21", default-features = false }

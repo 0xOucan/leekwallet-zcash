@@ -1586,6 +1586,7 @@ dependencies = [
  "pczt",
  "rand 0.10.3",
  "sha2 0.10.8",
+ "zcash_protocol",
  "zecz-cli",
 ]
 

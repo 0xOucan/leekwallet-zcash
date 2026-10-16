@@ -154,6 +154,10 @@ enum Cmd {
         /// Where to write the signer view for the device.
         #[arg(long)]
         out: PathBuf,
+        /// Write the compact signer view (v2 PCZT, about half the bytes and
+        /// QR frames). The device rebuilds the fields it leaves out.
+        #[arg(long)]
+        compact: bool,
     },
     /// Pair with the device, export its account (UFVK) and run `init`.
     DeviceInit {
@@ -435,7 +439,7 @@ fn cmd_address(ctx: &Ctx) -> Result<()> {
     print_addresses(&ctx.params, &ufvk)
 }
 
-fn cmd_send(ctx: &Ctx, to: &str, amount: &str, zec: bool, memo: Option<&str>, out: &Path) -> Result<()> {
+fn cmd_send(ctx: &Ctx, to: &str, amount: &str, zec: bool, memo: Option<&str>, out: &Path, compact: bool) -> Result<()> {
     let mut db = ctx.open_db(false)?;
     let (account_id, _) = the_account(&db)?;
 
@@ -510,7 +514,7 @@ fn cmd_send(ctx: &Ctx, to: &str, amount: &str, zec: bool, memo: Option<&str>, ou
         bail!("PCZT has Sapling spends; refusing");
     }
 
-    let view = redact_pczt_for_signer(&pczt, SignerView::Full);
+    let view = redact_pczt_for_signer(&pczt, if compact { SignerView::Compact } else { SignerView::Full });
     let view_bytes = view.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
     let full_bytes = pczt.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
     let hash = zsig::sha256(&view_bytes);
@@ -534,7 +538,12 @@ fn cmd_send(ctx: &Ctx, to: &str, amount: &str, zec: bool, memo: Option<&str>, ou
         println!("  change {} [{}]", fmt_zec(c.value()), c.output_pool());
     }
     println!("  fee  {}", fmt_zec(step.balance().fee_required()));
-    println!("Unsigned PCZT (signer view, {} B) -> {}", view_bytes.len(), out.display());
+    println!(
+        "Unsigned PCZT ({} signer view, {} B) -> {}",
+        if compact { "compact" } else { "full" },
+        view_bytes.len(),
+        out.display()
+    );
     println!("  sha256 {}", hex::encode(hash));
     println!("Full PCZT kept for proving -> {}", pending.display());
     Ok(())
@@ -778,7 +787,7 @@ async fn main() -> Result<()> {
         Cmd::Tip => cmd_tip(&ctx).await,
         Cmd::Balance => cmd_balance(&ctx),
         Cmd::Address => cmd_address(&ctx),
-        Cmd::Send { to, amount, zec, memo, out } => cmd_send(&ctx, &to, &amount, zec, memo.as_deref(), &out),
+        Cmd::Send { to, amount, zec, memo, out, compact } => cmd_send(&ctx, &to, &amount, zec, memo.as_deref(), &out, compact),
         Cmd::DeviceInit { port, account, birthday, name } => cmd_device_init(&ctx, &port, account, birthday, &name).await,
         Cmd::DeviceShowAddress { port, account } => cmd_device_show_address(&ctx, &port, account),
         Cmd::SignDevice { port, account, input, out } => cmd_sign_device(&ctx, &port, account, &input, &out),

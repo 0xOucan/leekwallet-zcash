@@ -46,3 +46,50 @@ fn a_bad_signature_is_refused() {
     assert!(apply_signatures(&pczt, &wrong_index).is_err(), "a signature applied to another action");
     assert!(apply_signatures(&pczt, b"ZSIG").is_err(), "truncated");
 }
+
+/// Signs `sent` as the device would: with the vectors' sender seed.
+fn soft_sign(sent: &[u8]) -> Vec<u8> {
+    let params = zcash_protocol::consensus::TEST_NETWORK;
+    let acct = zecz::keys::DevAccount::from_mnemonic(&params, SENDER, "", 0).unwrap();
+    zecz::soft_signer::sign(sent, &acct, 1).unwrap().to_bytes().unwrap()
+}
+
+const SENDER: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+#[test]
+fn the_compact_view_is_about_half_and_keeps_the_sighash() {
+    use pczt::roles::signer::Signer;
+    let full = v("pczt/iw_send_shielded.pczt");
+    let compact = leek_android::compact_view(&full).unwrap();
+    assert!(compact.len() * 10 < full.len() * 6, "compact {} B vs full {} B", compact.len(), full.len());
+    assert_eq!(&compact[..8], b"PCZT\x02\x00\x00\x00", "v2 encoding");
+    let sh = |b: &[u8]| Signer::new(Pczt::parse(b).unwrap()).unwrap().shielded_sighash();
+    assert_eq!(sh(&compact), sh(&full));
+    // Compacting twice changes nothing.
+    assert_eq!(leek_android::compact_view(&compact).unwrap(), compact);
+}
+
+#[test]
+fn signatures_on_the_compact_view_apply_to_the_full_pczt() {
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
+    let full = v("pczt/iw_send_shielded.pczt");
+    let compact = leek_android::compact_view(&full).unwrap();
+    let zsig = soft_sign(&compact);
+    // The signatures name the compact bytes, not the full ones.
+    assert!(apply_signatures(&full, &zsig).unwrap_err().contains("different PCZT"));
+    let signed = leek_android::apply_signatures_to(&full, &compact, &zsig).expect("applies");
+    let proven = zecz::authorize::prove(Pczt::parse(&signed).unwrap()).unwrap();
+    let finalized = pczt::roles::spend_finalizer::SpendFinalizer::new(proven).finalize_spends().unwrap();
+    pczt::roles::tx_extractor::TransactionExtractor::new(finalized)
+        .extract(UnwrapErr(SysRng))
+        .expect("the extracted transaction's signatures verify");
+}
+
+#[test]
+fn a_compact_view_of_another_transaction_is_refused() {
+    let full = v("pczt/iw_send_shielded.pczt");
+    let other = leek_android::compact_view(&v("pczt/iw_send_nu7.pczt")).unwrap();
+    let zsig = soft_sign(&other);
+    let err = leek_android::apply_signatures_to(&full, &other, &zsig).unwrap_err();
+    assert!(err.contains("different transaction"), "{err}");
+}
