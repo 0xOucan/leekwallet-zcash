@@ -319,7 +319,9 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 - **The frontend is TypeScript.** No protocol code in the webview.
 
 **8.1 Skeleton (M).** `zecz` split into a library crate and a CLI. The Tauri app builds on Linux, Windows and macOS in CI, and opens and syncs a watch-only testnet account.
-- Library split done: `host/zecz-core` (lib `zecz`) holds the wallet API (`zecz::wallet`: profile, init, sync with progress, tip, balances, addresses, propose a send, finish) and prints nothing; `host/zecz-cli` is the `zecz` binary over it, with the same commands and output. Next: the Tauri skeleton and CI.
+- Library split done: `host/zecz-core` (lib `zecz`) holds the wallet API (`zecz::wallet`: profile, init, sync with progress, tip, balances, addresses, propose a send, finish) and prints nothing; `host/zecz-cli` is the `zecz` binary over it, with the same commands and output.
+- Tauri skeleton done: `desktop/` imports a UFVK as a watch-only account, syncs it with a progress bar, and shows balances per pool and the unified address. It builds and bundles on Linux (`tauri build --debug`), and its testnet sync test passes.
+- CI written (`.github/workflows/desktop.yml`: Linux, Windows, macOS builds; host and backend tests). Left: its first green run once pushed.
 
 **8.2 Software wallets (M).**
 - Create or restore a 24-word seed with an optional passphrase.
