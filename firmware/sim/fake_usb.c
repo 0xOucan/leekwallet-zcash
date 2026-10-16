@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "driver/usb_serial_jtag.h"
+#include "protocol.h"
 #include "freertos/task.h"
 
 #define PIPE_CAP 16384
@@ -71,6 +72,12 @@ esp_err_t usb_serial_jtag_driver_install(usb_serial_jtag_driver_config_t *config
 int usb_serial_jtag_write_bytes(const void *src, size_t size, TickType_t ticks)
 {
     (void)ticks;
+    /* As the real driver: a write larger than the TX ring buffer is not
+     * queued at all. Without this the host never saw the bug that ate every
+     * Zcash reply on the first board. */
+    if (size > PROTOCOL_USB_TX_BUF) {
+        return 0;
+    }
     if (to_host.len + size > PIPE_CAP) {
         return 0;
     }

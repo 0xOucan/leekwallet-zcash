@@ -1636,6 +1636,26 @@ static size_t zshow_request(uint8_t *buf, size_t cap, uint32_t account, const ch
     return cbor_writer_ok(&w) ? w.length : 0;
 }
 
+/* Seen on the first board: every Zcash account reply (~700 bytes) vanished,
+ * because one write larger than the USB driver's TX ring buffer is not
+ * queued at all, and the fake now refuses it the same way. A frame near the
+ * protocol's maximum must still arrive whole. */
+void protocol__send_frame_for_test(uint8_t type, const uint8_t *payload, size_t len);
+static void test_large_frames_cross_the_usb_driver(void)
+{
+    printf("== a frame larger than the USB TX buffer arrives whole\n");
+    fresh_device();
+    static uint8_t big[PROTOCOL_MAX_FRAME - 16];
+    for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)(i * 7 + 1);
+    drop_pending();
+    protocol__send_frame_for_test(T_RESPONSE, big, sizeof big);
+    collect_output();
+    Frame f = next_frame();
+    CHECK(f.present && f.type == T_RESPONSE && f.len == sizeof big &&
+          memcmp(f.payload, big, sizeof big) == 0,
+          "a %zu-byte frame did not arrive whole (got %zu)", sizeof big, f.present ? f.len : 0);
+}
+
 /* Seen on the first board: the PIN gate opens before the UI has decrypted
  * the vault, and a companion asking at once was told "derivation failed".
  * The request now waits for the wallet, and says what is missing. */
@@ -3158,6 +3178,7 @@ static int run_all_tests(void)
     test_select_wallet();
     test_zget_account();
     test_zset_account_meta();
+    test_large_frames_cross_the_usb_driver();
     test_zcash_waits_for_the_wallet();
     test_zget_features();
     test_zshow_address();

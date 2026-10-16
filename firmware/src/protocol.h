@@ -28,6 +28,18 @@
  */
 #define PROTOCOL_MAX_FRAME 4096
 
+/*
+ * USB-Serial-JTAG driver buffers. The driver drops (returns 0 for) any single
+ * write larger than its TX ring buffer, and its RX interrupt drops bytes when
+ * the RX ring is full. At 256 each - LeekWallet's values, sized for short
+ * Ethereum replies - every Zcash account reply (~700 bytes) vanished on the
+ * first board. Frames now go out in pieces of at most PROTOCOL_USB_TX_CHUNK,
+ * and RX holds two whole frames.
+ */
+#define PROTOCOL_USB_TX_BUF    1024
+#define PROTOCOL_USB_TX_CHUNK  512
+#define PROTOCOL_USB_RX_BUF    (2 * PROTOCOL_MAX_FRAME)
+
 /**
  * The wire protocol this firmware speaks, offered and required in `hello`.
  *

@@ -305,7 +305,14 @@ impl Device {
     pub fn call(&mut self, method: &str, fields: Vec<(&str, Value)>, timeout: Duration) -> Result<Value> {
         let plain = cbor(&request(method, fields))?;
         let sealed = self.session.as_ref().ok_or_else(|| anyhow!("not paired"))?.seal(&plain)?;
+        let debug = std::env::var_os("ZECZ_DEBUG").is_some();
+        if debug {
+            eprintln!("[zecz] -> {method} ({} bytes, timeout {}s)", sealed.len(), timeout.as_secs());
+        }
         let (t, body) = self.roundtrip(FRAME_ENC_REQUEST, &sealed, timeout)?;
+        if debug {
+            eprintln!("[zecz] <- frame 0x{t:02X} ({} bytes)", body.len());
+        }
         match t {
             FRAME_ENC_RESPONSE | FRAME_ENC_ERROR => {
                 let opened = self.session.as_mut().unwrap().open(&body)?;

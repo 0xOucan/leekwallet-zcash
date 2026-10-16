@@ -75,6 +75,12 @@ int usb_serial_jtag_read_bytes(void *buf, size_t size, TickType_t ticks)
 int usb_serial_jtag_write_bytes(const void *src, size_t size, TickType_t ticks)
 {
     (void)ticks;
+    /* As the real driver: a write larger than the TX ring buffer is not
+     * queued at all. Without this the host never saw the bug that ate every
+     * Zcash reply on the first board. */
+    if (size > PROTOCOL_USB_TX_BUF) {
+        return 0;
+    }
     const uint8_t *p = src;
     size_t left = size;
     while (left) {
