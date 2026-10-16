@@ -1,0 +1,19 @@
+[package]
+name = "pczt-jni"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "Apply a LeekWallet device's .zsig signatures to a PCZT, for the Android app (JNI)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pczt = { path = "../../../referencialeekwallet/zec references/librustzcash/pczt", features = ["orchard", "signer"] }
+orchard = { version = "0.16", default-features = false, features = ["std"] }
+sha2 = "0.10"
+jni = { version = "0.21", default-features = false }
+
+[dev-dependencies]
+zecz-cli = { path = "../zecz-cli" }
+rand = { version = "0.10", features = ["sys_rng"] }
