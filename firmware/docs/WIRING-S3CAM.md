@@ -50,9 +50,17 @@ input polarity becomes a board setting.
 |---|---|---|
 | GND | GND | |
 | + | 3V3 | supply for the module's pull-ups |
-| CLK | GPIO44 | encoder A |
-| DT | GPIO43 **through a 1 kΩ resistor** | encoder B |
-| SW | GPIO42 (same pin as button 4) | press = OK |
+| CLK | GPIO44, the header pin labelled **RX** | encoder A |
+| DT | GPIO43, the header pin labelled **TX**, **through a 1 kΩ resistor** | encoder B |
+| SW | GPIO42 (same pin as button 4; join the wires) | press = OK |
+
+The board's silkscreen labels GPIO43 and GPIO44 **TX** and **RX**, not with
+their numbers. They are the top two pins on the right of the header.
+
+Other header pins look free but are not. 4-13 and 15-18 are the camera;
+38-40 the microSD; 35-37 the PSRAM; 19-20 USB. 0, 3, 45 and 46 are
+strapping pins (a module's pull-up there can stop the board booting or
+flashing). 2 is the power LED and 48 the RGB LED.
 
 - Turning the knob is UP and DOWN, one step per detent. Pressing it is OK.
   It is wired in parallel with button 4, which works because both pull the
@@ -86,8 +94,8 @@ LeekWallet. Nothing changes.
 ```
 GPIO47 SDA ── OLED SDA          GPIO1  ── BTN 1 (UP)
 GPIO21 SCL ── OLED SCL          GPIO41 ── BTN 2 (DOWN)
-GPIO44     ── ENC CLK           GPIO14 ── BTN 3 (BACK)
-GPIO43 ─1k─ ENC DT              GPIO42 ── BTN 4 (OK) + ENC SW
+RX(GPIO44) ── ENC CLK          GPIO14 ── BTN 3 (BACK)
+TX(GPIO43) ─1k─ ENC DT             GPIO42 ── BTN 4 (OK) + ENC SW
 3V3 ── OLED VCC, BTN V, ENC +   GND ── OLED GND, BTN G, ENC GND
 GPIO38/39/40 microSD (on board)  GPIO4-18 camera (on board)
 ```
