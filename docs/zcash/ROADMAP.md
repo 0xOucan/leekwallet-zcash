@@ -286,7 +286,7 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 - The firmware already handles it. The C signer rebuilds `enc_ciphertext` from the memo (`zc_note_encrypt`). Through zdev in BOTH mode, both backends accepted a compact vector with the expected sighash (466827d9...).
 - A security bonus: the device now encrypts the memo it shows.
 
-**Status:** 7.1, 7.2 and 7.4 done and tested on the board over USB, Bluetooth and QR (tx `f7f6ad4b...`). 7.3 open.
+**Status:** done. 7.1, 7.2 and 7.4 tested on the board over USB, Bluetooth and QR (tx `f7f6ad4b...`); 7.3 vectors on PC.
 
 **7.1** Companions build the compact view.
 - `zecz` gets a `--compact` option on `send`.
@@ -301,6 +301,7 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 - Add compact versions of the PCZT vectors.
 - `test_zsign_diff` mutates them too.
 - Firmware tests for a memo that does not re-encrypt to the carried commitment.
+- Result: no commitment the compact view carries covers the memo, so a changed memo is a different transaction, not a refusal. The device shows it and signs a different sighash, and the host refuses those signatures. Output fields that disagree (epk, user_address, value balance) are refused.
 
 **7.4** Make it the default on every link, after a board test over each. Done when: a QR signing takes about half the frames on the board.
 - Result: 1,430 B; QR at 50-byte fragments went from ~56 frames to 28. Still slow, so the apps and docs present USB and Bluetooth (in a trusted place) as the everyday links, and QR and SD as the isolation options, not the efficient ones.
