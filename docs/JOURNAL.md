@@ -407,3 +407,21 @@ checked on Xtensa).
 - Future, to halve the QR: a "compact PCZT" without the note
   ciphertexts, which the board can rebuild from recipient, value, rseed
   and memo (~1.4 KB).
+
+### 7.1-7.2 Compact PCZT: signed on the board over USB (2026-10-16)
+- `zecz send --compact` writes the compact signer view
+  (`SignerView::Compact`, v2 PCZT). On the board's wallet, a send with a
+  memo plus change: **1,430 B** instead of ~2.8 KB.
+- The board signed it unchanged: the C signer rebuilds the left-out
+  fields. `finish` applied the signatures to the kept full PCZT, proved,
+  and broadcast testnet tx
+  `f7f6ad4b01be8650c9dc5f78e7d844133e5f53c4daf6b3cc1131a802bae2f2cb`.
+- `leek-android`: `compact_view` (the same redactions with the pczt
+  Redactor) and `apply_signatures_to(pczt, sent, zsig)`, which refuses a
+  sent view of another transaction (sighash). Tests prove, extract and
+  verify the result. The app sends the compact view over USB, Bluetooth
+  and QR, with a "PCZT: compact / full" switch on the sign screen.
+- Broke on the way: the first attempt expired (`expiry height` exceeded).
+  A PCZT lives ~40 blocks, and the board was on its Bluetooth link, so
+  the USB request went unanswered until it was switched. Not a compact
+  issue; build the PCZT just before signing.
