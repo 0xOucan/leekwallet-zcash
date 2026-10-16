@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use pczt::Pczt;
-use pczt_jni::apply_signatures;
+use leek_android::apply_signatures;
 
 fn v(p: &str) -> Vec<u8> {
     std::fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vectors").join(p)).unwrap()

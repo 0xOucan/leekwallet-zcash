@@ -10,6 +10,8 @@
 //! The `.zsig` names the SHA-256 of the PCZT the device checked; signatures
 //! are only applied to those exact bytes.
 
+pub mod device;
+
 use pczt::roles::signer::Signer;
 use pczt::Pczt;
 use sha2::{Digest, Sha256};

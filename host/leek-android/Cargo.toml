@@ -1,9 +1,9 @@
 [package]
-name = "pczt-jni"
+name = "leek-android"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-description = "Apply a LeekWallet device's .zsig signatures to a PCZT, for the Android app (JNI)."
+description = "Native code for the LeekWallet Zcash Android app (JNI): the device client over a Kotlin-owned USB link, and applying a device .zsig to a PCZT."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -13,6 +13,11 @@ pczt = { path = "../../../referencialeekwallet/zec references/librustzcash/pczt"
 orchard = { version = "0.16", default-features = false, features = ["std"] }
 sha2 = "0.10"
 jni = { version = "0.21", default-features = false }
+leek-device = { path = "../leek-device", default-features = false }
+leek-transport-serial = { path = "../../firmware/app/transport-serial", default-features = false }
+anyhow = "1"
+ciborium = "0.2"
+hex = "0.4"
 
 [dev-dependencies]
 zecz-cli = { path = "../zecz-cli" }
