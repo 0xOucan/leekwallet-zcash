@@ -33,6 +33,22 @@ static const zv_pczt_vector ZV_PCZT[] = {
     "466827d957076588ab8cb898b89d44abf32a0c140fb811370dbc37b4022dcc7e", 0x37a5165b, 10000, 2, {
       { 2, 0, 400000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "LeekWallet Zcash test" },
       { 2, 1, 590000, "", "" }, } },
+  { "iw_send_transparent_compact", "../../vectors/pczt/iw_send_transparent_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "1ec3b8ffd0598c2f4a33d6b217a4fbaa96da0c6719acd3c58121675a6d48dde6", 0x37a5165b, 15000, 2, {
+      { 0, 0, 300000, "tmFkhJaNXuoMeKKBHp8EE9oiFW4uXKAPWnH", "" },
+      { 2, 1, 685000, "", "" }, } },
+  { "iw_send_nu7_compact", "../../vectors/pczt/iw_send_nu7_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "325396ca15726bd524b1b729e08133393e2fa4620c1eae3d4ea372767c78199d", 0x77190ad9, 10000, 2, {
+      { 2, 0, 250000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "NU7 branch" },
+      { 2, 1, 740000, "", "" }, } },
+  { "orchard_to_ironwood_compact", "../../vectors/pczt/orchard_to_ironwood_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "21585fb04d46428ff34297a9580e3b7cc78299837909ed7f20810df5199636de", 0x37a5165b, 20000, 2, {
+      { 2, 0, 500000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "out of Orchard" },
+      { 2, 1, 1480000, "", "" }, } },
+  { "iw_send_shielded_compact_memo_changed", "../../vectors/pczt/iw_send_shielded_compact_memo_changed.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "9e47d3ccf6ab711673263d7b475487721e83cdc55737fb7734c70e94c50f4e12", 0x37a5165b, 10000, 2, {
+      { 2, 0, 400000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "LeekWallet Zcash TEST" },
+      { 2, 1, 590000, "", "" }, } },
   { "r_foreign_spend", "../../vectors/pczt/r_foreign_spend.pczt", "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote", "", 0, 1, -12,
     0, 0x00000000, 0, 0, { } },
   { "r_output_value_tampered", "../../vectors/pczt/r_output_value_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -13,
@@ -50,6 +66,10 @@ static const zv_pczt_vector ZV_PCZT[] = {
   { "r_compact_value_tampered", "../../vectors/pczt/r_compact_value_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -15,
     0, 0x00000000, 0, 0, { } },
   { "r_v1_nu6_2", "../../vectors/pczt/r_v1_nu6_2.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -11,
+    0, 0x00000000, 0, 0, { } },
+  { "r_compact_recipient_tampered", "../../vectors/pczt/r_compact_recipient_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -14,
+    0, 0x00000000, 0, 0, { } },
+  { "r_compact_diversifier_tampered", "../../vectors/pczt/r_compact_diversifier_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -10,
     0, 0x00000000, 0, 0, { } },
 };
 #define ZV_PCZT_COUNT (sizeof ZV_PCZT / sizeof ZV_PCZT[0])

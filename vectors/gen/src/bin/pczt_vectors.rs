@@ -347,6 +347,38 @@ fn build_orchard_send(
     Built { pczt, outputs, fee }
 }
 
+/// The v2 compact signer view, as `zcash_client_backend`'s
+/// `redact_pczt_for_signer(.., SignerView::Compact)` builds it for both
+/// Orchard-protocol pools: no proof, bsk, witnesses or dummy keys; cv_net, cmx
+/// and decryptable ciphertexts compacted; v6 anchors absent. These vectors are
+/// unproven and carry no proprietary fields, so those steps are no-ops here.
+fn compact_view(b: &Built) -> Built {
+    let v6 = *b.pczt.global().tx_version() == 6;
+    let bundle = |mut r: pczt::roles::redactor::orchard::OrchardRedactor<'_>| {
+        r.clear_zkproof();
+        r.clear_bsk();
+        r.redact_actions(|mut a| {
+            a.clear_spend_witness();
+            a.clear_spend_dummy_sk();
+        });
+        r.compact_resolvable_fields();
+        if v6 {
+            r.clear_anchor();
+        }
+    };
+    let pczt = Redactor::new(b.pczt.clone())
+        .redact_sapling_with(|mut r| {
+            r.clear_bsk();
+            if v6 {
+                r.clear_anchor();
+            }
+        })
+        .redact_orchard_with(bundle)
+        .redact_ironwood_with(bundle)
+        .finish();
+    Built { pczt, outputs: b.outputs.clone(), fee: b.fee }
+}
+
 fn write(dir: &str, name: &str, bytes: &[u8]) -> String {
     let file = format!("pczt/{name}.pczt");
     fs::write(format!("{dir}/{file}"), bytes).unwrap();
@@ -496,6 +528,26 @@ fn main() {
     let e = Built { pczt: compact, outputs: a.outputs.clone(), fee: a.fee };
     let e_bytes = push_ok("iw_send_shielded_compact", "Vector iw_send_shielded with cv_net, cmx and memo ciphertext compacted (v2)", &e, &mut vs);
 
+    // 6-8. The other valid vectors as a companion sends them: the compact
+    // signer view (no witnesses either), Orchard and Ironwood bundles alike.
+    push_ok("iw_send_transparent_compact", "Vector iw_send_transparent in the compact signer view (v2)", &compact_view(&b), &mut vs);
+    push_ok("iw_send_nu7_compact", "Vector iw_send_nu7 in the compact signer view (v2)", &compact_view(&c), &mut vs);
+    push_ok("orchard_to_ironwood_compact", "Vector orchard_to_ironwood in the compact signer view, both bundles compacted (v2)", &compact_view(&d), &mut vs);
+
+    // 9. The memo is in no commitment the compact view carries (cmx and epk
+    // do not cover it), so a changed memo is a different, self-consistent
+    // transaction: the device must show the new memo and sign the new
+    // sighash, which the host then refuses to apply to its own PCZT.
+    let memo_b = b"LeekWallet Zcash test";
+    let memo_t = b"LeekWallet Zcash TEST";
+    let g_bytes = patch_unique(&e_bytes, memo_b, memo_t);
+    let mut g_outputs = a.outputs.clone();
+    g_outputs[0].memo = String::from_utf8(memo_t.to_vec()).unwrap();
+    let g = Built { pczt: Pczt::parse(&g_bytes).unwrap(), outputs: g_outputs, fee: a.fee };
+    let g_round = push_ok("iw_send_shielded_compact_memo_changed", "Vector iw_send_shielded_compact with the memo plaintext changed: a different transaction, shown and signed as such", &g, &mut vs);
+    assert_eq!(g_round, g_bytes, "the patched compact PCZT reserializes unchanged");
+    assert_ne!(vs.last().unwrap().sighash, vs.iter().find(|v| v.name == "iw_send_shielded_compact").unwrap().sighash);
+
     // Refusals.
     vs.push(refuse("r_foreign_spend", "Valid PCZT, but the spend belongs to another seed", &a_bytes, RECIPIENT, "spend_not_ours"));
 
@@ -555,6 +607,23 @@ fn main() {
     let f_bytes = f.pczt.clone().serialize().unwrap();
     assert_eq!(&f_bytes[4..8], &1u32.to_le_bytes(), "a v5 Orchard PCZT serializes as v1");
     vs.push(refuse("r_v1_nu6_2", "v1-encoded Orchard PCZT on the NU6.2 branch", &f_bytes, SENDER, "unsupported_branch"));
+
+    // Compact output fields that no longer agree. With cmx absent it is
+    // recomputed from whatever recipient is carried, so the commitment cannot
+    // catch a swap; the displayed user_address and the carried epk must.
+    let mut needle = rb.to_vec();
+    needle.push(0x01);
+    let mut with = rb2.to_vec();
+    with.push(0x01);
+    vs.push(refuse("r_compact_recipient_tampered", "Compact PCZT: external output pk_d changed, cmx absent; user_address no longer matches", &patch_unique(&e_bytes, &needle, &with), SENDER, "user_address_mismatch"));
+
+    // A new diversifier moves g_d, so the carried epk = [esk] g_d no longer
+    // matches what re-encrypting the memo plaintext gives.
+    let mut rb3 = rb;
+    rb3[0] ^= 1;
+    let mut with = rb3.to_vec();
+    with.push(0x01);
+    vs.push(refuse("r_compact_diversifier_tampered", "Compact PCZT: external output diversifier changed; memo re-encryption gives a different epk", &patch_unique(&e_bytes, &needle, &with), SENDER, "parse_error"));
 
     fs::write(format!("{dir}/pczt.json"), serde_json::to_string_pretty(&vs).unwrap() + "\n").unwrap();
     fs::write(format!("{dir}/pczt_vectors.h"), c_header(&vs)).unwrap();
