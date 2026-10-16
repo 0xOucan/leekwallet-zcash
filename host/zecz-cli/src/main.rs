@@ -171,6 +171,14 @@ enum Cmd {
         #[arg(long, default_value = "leekwallet")]
         name: String,
     },
+    /// Show this wallet's address on the device; the user confirms there
+    /// that it is the same one.
+    DeviceShowAddress {
+        #[arg(long)]
+        port: String,
+        #[arg(long, default_value_t = 0)]
+        account: u32,
+    },
     /// Have the device check, show and sign a PCZT; write its .zsig.
     SignDevice {
         #[arg(long)]
@@ -632,6 +640,20 @@ async fn cmd_device_init(ctx: &Ctx, port: &str, account: u32, birthday: Option<u
     Ok(())
 }
 
+fn cmd_device_show_address(ctx: &Ctx, port: &str, account: u32) -> Result<()> {
+    let mut dev = connect_device(port)?;
+    // The address this wallet would hand out, from the device's own UFVK.
+    let a = dev.z_get_account(account, ctx.net_name())?;
+    let ufvk = UnifiedFullViewingKey::decode(&ctx.params, &device::get_text(&a, "ufvk")?)
+        .map_err(|e| anyhow!("device UFVK: {e}"))?;
+    let (ua, _) = ufvk.default_address(ua_request()).map_err(|e| anyhow!("address derivation: {e:?}"))?;
+    let ua = ua.encode(&ctx.params);
+    println!("This wallet's address:\n  {ua}\nCompare it with the device and answer there.");
+    dev.z_show_address(account, ctx.net_name(), &ua)?;
+    println!("Confirmed on the device.");
+    Ok(())
+}
+
 fn cmd_sign_device(ctx: &Ctx, port: &str, account: u32, input: &Path, out: &Path) -> Result<()> {
     let bytes = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
     let mut dev = connect_device(port)?;
@@ -758,6 +780,7 @@ async fn main() -> Result<()> {
         Cmd::Address => cmd_address(&ctx),
         Cmd::Send { to, amount, zec, memo, out } => cmd_send(&ctx, &to, &amount, zec, memo.as_deref(), &out),
         Cmd::DeviceInit { port, account, birthday, name } => cmd_device_init(&ctx, &port, account, birthday, &name).await,
+        Cmd::DeviceShowAddress { port, account } => cmd_device_show_address(&ctx, &port, account),
         Cmd::SignDevice { port, account, input, out } => cmd_sign_device(&ctx, &port, account, &input, &out),
         Cmd::SignSoft { mnemonic, passphrase, account, input, out } => {
             cmd_sign_soft(&ctx, &mnemonic, &passphrase, account, &input, &out)

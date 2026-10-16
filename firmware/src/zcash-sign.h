@@ -42,6 +42,12 @@
 #define ZSIGN_E_LOCKED     (-38)   /* no seed available (device locked) */
 #define ZSIGN_E_VERIFY     (-39)   /* a fresh signature failed verification */
 
+/* Consensus branch IDs both backends accept (each checks its own copy:
+ * zsign-rust ALLOWED_BRANCHES, zsign-c BRANCH_NU6_3/BRANCH_NU7; the host suite
+ * checks this list against both). Reported by zGetFeatures. */
+#define ZCASH_SIGN_BRANCH_COUNT 2u
+static const uint32_t ZCASH_SIGN_BRANCHES[ZCASH_SIGN_BRANCH_COUNT] = { 0x37a5165bu, 0x77190ad9u };
+
 typedef enum {
     ZSIGN_BACKEND_RUST = 0,
     ZSIGN_BACKEND_C    = 1,

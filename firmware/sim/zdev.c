@@ -162,6 +162,15 @@ void ui_request_zsign_review(const zs_summary *s, uint8_t network)
     outcome = SIGN_PENDING;
 }
 
+void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
+                             uint8_t network)
+{
+    printf("\n[device] Address check, account %u, %s:\n  %s\n  (t-address %s)\n",
+           (unsigned)account, network == ZS_NET_MAIN ? "mainnet" : "testnet", ua, t_address);
+    question_pending = true;
+    outcome = SIGN_PENDING;
+}
+
 /* Polled by protocol.c's wait_for_user(); the first poll asks. */
 SignOutcome ui_sign_outcome(void)
 {

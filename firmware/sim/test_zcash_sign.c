@@ -22,6 +22,7 @@
 
 void wallet__reset_static_state_for_test(void);
 
+static bool branch_seen[ZCASH_SIGN_BRANCH_COUNT];
 static int failures;
 static const char *ctx = "setup";
 #define CHECK(c, ...) do { if (!(c)) { printf("  FAIL %s: ", ctx); printf(__VA_ARGS__); \
@@ -89,6 +90,16 @@ static void run_vector(const zv_pczt_vector *v, ZcashSignBackend be)
         hex32(s->sighash, sh);
         CHECK(strcmp(sh, v->sighash) == 0, "sighash");
         CHECK(s->fee == v->fee && s->branch_id == v->branch_id, "fee or branch");
+        /* zGetFeatures advertises ZCASH_SIGN_BRANCHES: every branch a backend
+         * accepted must be in it, and every entry must be accepted. */
+        bool listed = false;
+        for (size_t k = 0; k < ZCASH_SIGN_BRANCH_COUNT; k++) {
+            if (ZCASH_SIGN_BRANCHES[k] == s->branch_id) {
+                listed = true;
+                branch_seen[k] = true;
+            }
+        }
+        CHECK(listed, "branch %08x accepted but not advertised", s->branch_id);
         CHECK(s->n_outputs == v->n_outputs, "outputs %u", s->n_outputs);
         /* Action order is shuffled by the builder, so match by content. */
         for (unsigned i = 0; i < v->n_outputs; i++) {
@@ -211,6 +222,9 @@ int main(void)
 
     free(b);
     zcash_sign_reset();
+    for (size_t k = 0; k < ZCASH_SIGN_BRANCH_COUNT; k++) {
+        CHECK(branch_seen[k], "advertised branch %08x was never accepted", ZCASH_SIGN_BRANCHES[k]);
+    }
     if (failures) {
         printf("\nFAILED (%d failures)\n", failures);
         return 1;

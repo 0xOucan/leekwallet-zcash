@@ -748,6 +748,48 @@ static void test_receive_shows_the_whole_address(void)
     CHECK(ui_zcash_network() == 0, "could not switch back");
 }
 
+/* zShowAddress (roadmap 1.7): the whole UA, then the question; YES only on
+ * the question page, NO from anywhere. */
+static void test_address_check(void)
+{
+    printf("== zShowAddress: the device pages the UA and asks whether it matches\n");
+    boot_unlocked_with_seed();
+    const zv_key_vector *v = &ZV_KEYS[1];
+
+    ui_request_show_address(v->ua, v->transparent_address, 0, ZS_NET_TEST);
+    go(SCREEN_ADDRESS_CHECK);
+    char ua[ZS_UA_MAX] = {0};
+    int pages = 0;
+    while (!fake_oled_contains("Is this the address") && pages < 8) {
+        CHECK_SCREEN(fake_oled_row_contains(0, "UA ") && fake_oled_row_contains(0, "TEST"),
+                     "page %d title", pages);
+        for (int r = 1; r <= 6; r++) strcat(ua, fake_oled_row(r));
+        CHECK(ui_sign_outcome() == SIGN_PENDING, "answered before the question page");
+        press(BUTTON_ACCEPT);   /* NEXT */
+        pages++;
+    }
+    CHECK(strcmp(ua, v->ua) == 0, "the UA does not reassemble:\n  %s\n  %s", ua, v->ua);
+    CHECK(pages == 2, "%d address pages", pages);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_sign_outcome() == SIGN_APPROVED, "YES on the question page did not approve");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "did not go home after the answer");
+    ui_sign_clear();
+
+    ui_request_show_address(v->ua, v->transparent_address, 0, ZS_NET_TEST);
+    go(SCREEN_ADDRESS_CHECK);
+    press(BUTTON_DOWN);
+    press(BUTTON_CANCEL);
+    CHECK(ui_sign_outcome() == SIGN_REJECTED, "NO did not reject");
+    ui_sign_clear();
+
+    /* The host gave up: the question comes off the screen. */
+    ui_request_show_address(v->ua, v->transparent_address, 0, ZS_NET_TEST);
+    go(SCREEN_ADDRESS_CHECK);
+    ui_sign_expire();
+    ui__service_sign_expiry_for_test();
+    CHECK(ui_get_screen() != SCREEN_ADDRESS_CHECK, "an expired question stayed up");
+}
+
 /* ============================================================================
  * Roadmap 1.4 - SD card storage mode, through the real buttons
  * ============================================================================ */
@@ -2644,6 +2686,7 @@ int main(void)
     test_the_seed_fingerprint_is_shown();
     test_receive_shows_the_whole_address();
     test_sd_card_save_and_load();
+    test_address_check();
     test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
     test_blind_signing_takes_a_deliberate_act();

@@ -339,6 +339,22 @@ impl Device {
         ], SHORT)
     }
 
+    /// `zShowAddress`: the device shows its own unified address for the user
+    /// to compare with `expected_ua`, and answers only once they say it
+    /// matches. Errors if they say it does not, or if the device's address
+    /// differs from the one expected.
+    pub fn z_show_address(&mut self, account: u32, network: &str, expected_ua: &str) -> Result<()> {
+        let r = self.call("zShowAddress", vec![
+            ("account", Value::Integer(account.into())),
+            ("network", Value::Text(network.into())),
+        ], USER_TIMEOUT)?;
+        let ua = get_text(&r, "ua")?;
+        if ua != expected_ua {
+            bail!("the device confirmed {ua}, but this wallet expects {expected_ua}");
+        }
+        Ok(())
+    }
+
     /// `zSetAccountMeta`: record the account's birthday on the device, so
     /// the next companion can import without asking. True if the device
     /// stored it in flash (a stored wallet with no passphrase), false if it

@@ -108,6 +108,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 **1.7 Protocol: accounts**
 - `zGetFeatures` (backends, branch IDs, storage mode), `zGetAccount` (UFVK + fingerprint + birthday), `zShowAddress`.
 - Done when: they work through the PTY from a test script.
+- Status: done on PC. All three work through zdev's PTY in `tests/device_zdev.rs`. `zGetAccount` also returns the birthday, and `zSetAccountMeta` records it.
 
 ---
 

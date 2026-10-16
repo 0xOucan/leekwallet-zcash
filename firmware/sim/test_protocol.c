@@ -139,6 +139,18 @@ void ui_request_zsign_review(const zs_summary *s, uint8_t network)
     shown_zsign = *s;
 }
 
+/* zShowAddress: what the device was asked to show, for the test to compare
+ * with the vector. */
+static int  address_checks;
+static char shown_ua[256];
+void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
+                             uint8_t network)
+{
+    (void)t_address; (void)account; (void)network;
+    address_checks++;
+    snprintf(shown_ua, sizeof shown_ua, "%s", ua);
+}
+
 /* Counted, because the timeout path answering the host is only half of what it
  * owes: the confirmation screen has to come down too, and for a long time it
  * did not. */
@@ -1598,6 +1610,103 @@ static void test_zset_account_meta(void)
     CHECK(zget_birthday(0) == 3000000, "the base wallet saw the hidden wallet's birthday");
 }
 
+/* ------------------------------------------- zGetFeatures, zShowAddress */
+
+static size_t method_only(uint8_t *buf, size_t cap, const char *method)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 1);
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, method);
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+static size_t zshow_request(uint8_t *buf, size_t cap, uint32_t account, const char *network)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 3);
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zShowAddress");
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, account);
+    cbor_write_text(&w, "network");
+    cbor_write_text(&w, network);
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+static void test_zget_features(void)
+{
+    printf("== zGetFeatures: before a session, what the signer accepts\n");
+    fresh_device();
+    uint8_t payload[64];
+    send_plain(payload, method_only(payload, sizeof payload, "zGetFeatures"));
+    Frame f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    CHECK(f.present && f.type == T_RESPONSE && result_body(&f, &body, &body_len),
+          "zGetFeatures was not answered in plaintext");
+    if (!(f.present && result_body(&f, &body, &body_len))) return;
+    char text[16];
+    CHECK(cbor_map_find(body, body_len, "backend", &it) && cbor_text_copy(&it, text, sizeof text) &&
+          strcmp(text, "both") == 0, "backend is not BOTH by default");
+    CHECK(cbor_map_find(body, body_len, "branchIds", &it) && it.type == CBOR_ARRAY &&
+          it.value == ZCASH_SIGN_BRANCH_COUNT, "branchIds");
+    CHECK(cbor_map_find(body, body_len, "maxPczt", &it) && it.value == ZCASH_PCZT_MAX, "maxPczt");
+    CHECK(cbor_map_find(body, body_len, "storage", &it) && it.type == CBOR_ARRAY &&
+          it.value == (LEEK_HAS_SDCARD ? 3u : 2u), "storage modes");
+    CHECK(cbor_map_find(body, body_len, "showAddress", &it) && it.value == 1, "showAddress");
+}
+
+static void test_zshow_address(void)
+{
+    printf("== zShowAddress: shown on the device; the address only after a yes\n");
+    fresh_device();
+    device_has_a_wallet();
+    uint8_t payload[96];
+    size_t len = zshow_request(payload, sizeof payload, 0, "test");
+
+    send_plain(payload, len);
+    expect_error(T_ERROR, E_SESSION, "zShowAddress before any handshake");
+    confirmed_session(25);
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "zShowAddress while locked");
+    pin_set("123456");
+    pin_verify("123456");
+
+    const zv_key_vector *v = &ZV_KEYS[1];   /* test/abandon-art/pp0/acct0 */
+    address_checks = 0;
+    scripted_outcome = SIGN_REJECTED;
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_REJECTED, "a mismatch on the device");
+    CHECK(address_checks == 1 && strcmp(shown_ua, v->ua) == 0, "the device showed \"%s\"", shown_ua);
+
+    sign_expiries = 0;
+    scripted_outcome = SIGN_PENDING;
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_TIMEOUT, "nobody answered");
+    CHECK(sign_expiries == 1, "the question was left on the screen");
+
+    scripted_outcome = SIGN_APPROVED;
+    send_encrypted(payload, len);
+    Frame f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    char text[256];
+    CHECK(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len) &&
+          cbor_map_find(body, body_len, "ua", &it) && cbor_text_copy(&it, text, sizeof text) &&
+          strcmp(text, v->ua) == 0, "the confirmed address was not returned");
+
+    send_encrypted(payload, zshow_request(payload, sizeof payload, 0, "regtest"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "an unknown network");
+    send_encrypted(payload, zshow_request(payload, sizeof payload, 0x80000000u, "test"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "a hardened account");
+    scripted_outcome = SIGN_APPROVED;
+}
+
 /* ----------------------------------------------------------- selectWallet */
 
 static size_t select_wallet_request(uint8_t *buf, size_t cap, uint64_t index)
@@ -3023,6 +3132,8 @@ static int run_all_tests(void)
     test_select_wallet();
     test_zget_account();
     test_zset_account_meta();
+    test_zget_features();
+    test_zshow_address();
     test_zsign();
     test_set_passphrase();
     test_ble_carries_the_same_frames();
