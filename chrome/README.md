@@ -11,20 +11,23 @@ numbers behind it: [docs/zcash/CHROME-ENGINE.md](../docs/zcash/CHROME-ENGINE.md)
 | `extension/` | The MV3 extension: service worker, offscreen document, engine worker, popup. Plain ES modules, no bundler. |
 | `engine-spike/` | The 9.1 spike, kept for its benchmarks. |
 
-Status (9.2): watch-only and device accounts, sync, balances, addresses,
-and the whole send path in the engine's API (propose, apply a `.zsig`,
-prove, extract, broadcast). No board link yet (9.3) and no software
-wallets yet (9.4); the popup has no send screen until then.
+Status (9.3): watch-only and device accounts, sync, balances, addresses,
+and the board over USB (Web Serial) and Bluetooth (Web Bluetooth): pair
+with the six digits, import the board's account, check an address on its
+screen, and send or shield signed on it, proven and broadcast here.
+Tested against zdev (the firmware's protocol on a PTY), not yet on a
+board; no software wallets yet (9.4), no QR yet.
 
 ## How it fits together
 
 ```
 popup.html ──port "engine"──> offscreen.html ──postMessage──> engine-worker.js
  (closes on blur)              (lives until the browser closes)  (dedicated worker)
-                                                                   │ WASM engine (threads:
-service worker: only creates the offscreen document                │ wasm-bindgen-rayon pool)
-                                                                   ├─ OPFS: /<net>/wallet.sqlite, /<net>/leek.sqlite
-                                                                   └─ fetch: gRPC-web proxy -> lightwalletd
+                                 │ BoardHost (USB)                 │ WASM engine (threads:
+                                 └─ Web Serial ── board            │ wasm-bindgen-rayon pool)
+popup.html?tab (a tab)                                             ├─ OPFS: /<net>/wallet.sqlite, /<net>/leek.sqlite
+ └─ BoardHost (Bluetooth) ── Web Bluetooth ── board                └─ fetch: gRPC-web proxy -> lightwalletd
+service worker: only creates the offscreen document
 ```
 
 - **Worker, not page:** the threads build blocks in `Atomics.wait` (rayon
@@ -52,6 +55,49 @@ service worker: only creates the offscreen document                │ wasm-bind
   restates its operations over OPFS and gRPC-web, naming the zecz-core
   function each one follows.
 
+## The board
+
+`extension/src/board/` is the board's protocol in plain ES modules, the
+JavaScript twin of `host/leek-device/src/device.rs` (zecz, the desktop app
+and Android use that one) and of LeekWallet's `session.ts`/`framing.ts`:
+
+| File | What |
+|---|---|
+| `framing.js` | USB frames with the `LK` marker among console text; BLE frames in 1-byte-header chunks (MTU 23: Web Bluetooth does not expose the negotiated MTU) |
+| `cbor.js` | The protocol's CBOR subset, canonical |
+| `session.js` | v2 pairing crypto: X25519, SHA-256 and HKDF from WebCrypto (Chrome 133+), ChaCha20-Poly1305 from `@noble/ciphers` (vendored at build time from the pinned npm package) |
+| `device.js` | `hello`/`helloReveal` with the commitment check, the passkey, waiting for ALLOW and the PIN, then `zGetFeatures`, `zGetAccount`, `zSetAccountMeta` (with `network`), `zShowAddress` (with `ua`: any rotated address of the account), `zSignBegin/Chunk/Finish` |
+| `zsig.js` | Writes the `.zsig` (v1, or v2 with transparent signatures) the engine's `finish` applies |
+| `serial-link.js`, `ble-link.js` | The two links. Serial: DTR/RTS low after open, boot noise drained (LeekWallet's lessons) |
+| `host.js` | `BoardHost`: connect, import the account into the engine (the board's birthday for this network, or ask and record it), verify an address, sign and finish |
+
+Where it runs, and why:
+
+- **USB: the offscreen document.** Web Serial needs a document, and a
+  signature must outlive the popup (it closes on blur). `requestPort()`
+  needs a click in a tab: the toolbar popup closes when Chrome's chooser
+  takes focus, so the first USB connection opens the wallet in a tab once.
+  The grant is kept for the extension's origin, so from then on the
+  offscreen document's `getPorts()` finds the board (Espressif VID 0x303a).
+  Its state reaches every page as `{ board }` on the engine port, and its
+  operations are `board.<op>` calls on that port (`board.connect`,
+  `board.importAccount`, `board.showAddress`, `board.signAndFinish`,
+  `board.cancel`, `board.disconnect`, `board.state`).
+- **Bluetooth: the tab that chose the device.** A `BluetoothDevice` cannot
+  be handed to another document, `requestDevice()` needs a click in a tab,
+  and `navigator.bluetooth.getDevices()` (to find it again elsewhere) is
+  still behind a flag. So a Bluetooth board is driven from that tab, which
+  stays open while it signs; the engine is still the offscreen one.
+
+The popup: Connect over USB / Bluetooth, the six digits to compare (press
+ALLOW on the board), "Enter your PIN on the board", Import the board's
+account (account 0 of the network chosen in the header), Verify on the
+board (the address shown, rotated or not), a send form (to, amount, memo)
+and a Shield button when there are transparent funds. Both build a compact
+proposal, show a review (payments, fee, change), require a real-funds tick
+on mainnet, then sign on the board and prove, extract and broadcast in the
+engine, showing the txid.
+
 ## Build
 
 Prerequisites (once):
@@ -70,7 +116,7 @@ build uses `-Z build-std` on stable through `RUSTC_BOOTSTRAP=1`.
 ```sh
 chrome/engine/build.sh            # -> chrome/engine/pkg/ (JOBS=2 by default)
 cd chrome/extension
-npm install                       # playwright-core, for the tests only
+npm install                       # @noble/ciphers (vendored into dist), playwright-core (tests)
 node build.mjs                    # -> chrome/extension/dist/
 ```
 
@@ -94,9 +140,25 @@ sync. The popup can also be opened as a tab:
 
 ```sh
 cd chrome/extension
+node --test test/board.test.mjs    # the board protocol in Node against zdev (no browser, no board)
 node test/e2e.mjs                  # headless Chromium (Playwright's, ~/.cache/ms-playwright)
 BROADCAST=1 node test/e2e.mjs      # opt-in: also sends 1,000 zat to itself and broadcasts
+BROADCAST=board node test/e2e.mjs  # the same, signed by zdev through the board code
 ```
+
+`board.test.mjs` builds zdev (`make -C firmware/sim build/zdev`), starts
+it on a PTY with the abandon-art seed and talks to it as the extension
+talks to a board: over the USB framing, and over Bluetooth through a fake
+GATT server that chunks at MTU 23 as the board does. It checks the
+passkey against the one zdev prints, every `z*` call against
+`vectors/` (accounts on both networks, birthdays per network, address
+check and refusal, compact and full sends, a shield with transparent
+signatures and a version 2 `.zsig`, mainnet, refusals), a rejection on
+the "device", and `BoardHost` with a stand-in engine. The `.zsig` writer
+re-encodes `vectors/zsig/iw_send_shielded.zsig` byte for byte.
+
+`e2e.mjs` also drives zdev from an extension page (step 5b) through a
+bridge to its PTY: the same modules, with Chromium's WebCrypto.
 
 `e2e.mjs` loads `dist/`, imports the abandon-art testnet account 0 UFVK
 from `vectors/keys.json` as a device account (birthday `BIRTHDAY`, default
@@ -158,7 +220,7 @@ wallet's first account.
 | `broadcast` | `txid` | `{ txid, broadcast: true }` (SendTransaction through the endpoint) |
 | `finish` | `signerView`, `zsig`, `broadcast?` | applyZsig + prove + extract (+ broadcast), as `zecz finish` |
 | `warmProver` | | `{ built, ms }`: builds the proving key ahead of a send |
-| `signSoft` | `signerView`, `mnemonic`, `accountIndex?` | `{ zsig }`. DEV ONLY, testnet only: zecz's soft signer, standing in for the board until 9.3 |
+| `signSoft` | `signerView`, `mnemonic`, `accountIndex?` | `{ zsig }`. DEV ONLY, testnet only: zecz's soft signer, for tests without a board |
 | `devAccountSpec` | `mnemonic`, `accountIndex?` | `{ ufvk, origin }`. DEV ONLY, testnet only |
 
 Events (`{ event }` to every connected page):
@@ -176,8 +238,8 @@ document `hostState`.
 
 ## Not yet
 
-- 9.3: the board over Web Serial / Web Bluetooth / QR, verify-address on
-  the device; the send screen.
+- 9.3: a send signed on a real board from the extension (USB, then
+  Bluetooth); QR through the webcam. Account 0 only.
 - 9.4: software wallets (create/restore, passphrase, WebCrypto), several
   accounts in the popup.
 - The proving key is not cached across sessions; wasm-opt is used only

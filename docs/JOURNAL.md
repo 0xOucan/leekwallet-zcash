@@ -882,3 +882,87 @@ checked on Xtensa).
   known to the user and deliberately not recorded here.
 - Fixed: `zecz balance` still said the device could not sign transparent
   inputs.
+
+### 9.3 Chrome extension with the board (2026-10-17)
+- `chrome/extension/src/board/`: the board's protocol in plain ES modules,
+  the JavaScript twin of `host/leek-device/src/device.rs`, with
+  LeekWallet's `session.ts`, `framing.ts` and `serial-transport.ts` as
+  the source for the session rules and the Web Serial lessons (DTR/RTS
+  low after open, boot log drained, `reader.cancel()` before close).
+  - Crypto: X25519, SHA-256 and HKDF from WebCrypto (X25519 needs
+    Chrome 133, now the manifest's minimum); ChaCha20-Poly1305, which
+    WebCrypto lacks, from `@noble/ciphers` 1.3.0 (LeekWallet's version),
+    copied from node_modules at build time (only relative imports, so
+    still no bundler).
+  - The host's send counter moves only when a reply opens, and the
+    session refuses to seal a different message under a held counter. A
+    timeout or a dropped link ends the session (no request ids: a late
+    reply would pair with the next request); a plaintext 0x0401 resends
+    the same frame.
+  - BLE: 1-byte-header chunks at MTU 23 (Web Bluetooth does not expose
+    the negotiated MTU), written with response.
+- Where it runs (MV3):
+  - USB in the offscreen document: Web Serial needs a document and the
+    popup closes on blur. `requestPort()` needs a click in a tab (the
+    toolbar popup closes when the chooser takes focus), so the first USB
+    connection opens the wallet in a tab; then the offscreen document's
+    `getPorts()` finds the board (VID 0x303a). `board.<op>` calls go over
+    the engine port, the state comes back as `{ board }`.
+  - Bluetooth in the tab that chose the device: a `BluetoothDevice`
+    cannot move between documents, and `navigator.bluetooth.getDevices()`
+    is still behind a flag. The tab stays open while it signs.
+  - `BoardHost` (`host.js`) is the same in both: connect (passkey, ALLOW,
+    PIN), import (zGetAccount -> importAccount with the ZIP 32 origin;
+    the board's birthday for the network, or ask and record it with
+    zSetAccountMeta incl. `network`), verify (zShowAddress with `ua`),
+    sign and finish (zSign* on the compact view -> `.zsig` -> the
+    engine's finish: apply, prove, extract, broadcast). Mainnet needs
+    the real-funds tick, and the engine must have the same network open.
+- Popup: Board section (USB, Bluetooth, the six digits, PIN), Import
+  the board's account, Verify on the board, a send form and Shield when
+  there are transparent funds, a review (payments, fee, change), the
+  mainnet tick like the desktop app's, progress, the txid.
+- Tests, all without a board:
+  - `node --test test/board.test.mjs`: 23/23 against zdev, about 7 s.
+    Over the USB framing: the passkey equals zdev's, both networks'
+    accounts equal `vectors/keys.json`, a birthday per network, address
+    confirmed and a foreign one refused (-14), compact and full sends,
+    a shield with transparent signatures (`.zsig` v2), mainnet, refusals
+    (-13 and a network mismatch) with the session surviving them, a
+    rejection on the "device", a refused pairing. Over Bluetooth through
+    a fake GATT server chunking at MTU 23 (writes of at most 20 bytes): a
+    mixed compact send. `BoardHost` with a stand-in engine. The `.zsig`
+    writer re-encodes `vectors/zsig/iw_send_shielded.zsig` byte for byte.
+  - `node test/e2e.mjs`: 35/35 (the 9.2 checks plus 9). Step 5b pairs
+    with zdev from an extension page through a bridge to its PTY (1.2 s),
+    so WebCrypto X25519 and the vendored cipher run in Chromium against
+    the firmware's protocol: the board's account imports as the same
+    device account (birthday asked, then recorded, then read back), the
+    engine's default address is the board's, a rotated address (index 1)
+    is confirmed and another account's refused. The popup shows the
+    board, send and verify controls, and Connect over USB with no port
+    granted asks for the chooser.
+  - CI: a `board` job in `chrome.yml` builds zdev and runs the Node tests.
+- Not done: a send from the extension signed on a real board (the
+  abandon-art account holds 10,000 zat, below amount plus fee, so not
+  even zdev could sign a real proposal here; `BROADCAST=board` does it
+  given funds); QR through the webcam; accounts other than 0.
+- To try on the board, testnet first (the board's link set to USB):
+  1. `chrome/engine/build.sh`, then in `chrome/extension`: `npm install`,
+     `node build.mjs`; load `chrome/extension/dist` unpacked.
+  2. Popup: Testnet. Connect over USB: the first time a tab opens; press
+     "Choose the board (USB)" and pick the Espressif port. Compare the
+     six digits, press ALLOW on the board, enter the PIN there.
+  3. Import the board's account (the board already has the testnet
+     birthday from zecz; otherwise enter it). Wait for the sync.
+  4. Receive: Verify on the board; press New address and verify again.
+  5. Send a small amount to yourself with a memo: Review, Sign on the
+     board, read the pages and ACCEPT. The popup shows the txid after
+     proving (about 10 s) and the broadcast. Close the popup during the
+     review once: the signature still lands (the offscreen document holds
+     USB), and the txid shows when it reopens.
+  6. Shield: when transparent funds show, Shield, sign on the board.
+  7. Bluetooth: set the board's link to Bluetooth, press Bluetooth in the
+     popup (a tab opens), choose the board, then steps 4-6 from that tab.
+  8. Mainnet the same way with a tiny amount, after testnet works: the
+     red bar, and Sign stays refused until the real-funds box is ticked.

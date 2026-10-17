@@ -404,6 +404,11 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 **9.3 The board (M).**
 - Pair and sign over Web Serial and Web Bluetooth, and QR through the webcam.
 - Done when: a testnet send signed by the board from the extension.
+- **USB and Bluetooth in the extension: done on PC (2026-10-17), not yet on the board.**
+  - `chrome/extension/src/board/`: the protocol in plain ES modules (framing, CBOR, the v2 session with WebCrypto X25519/HKDF and vendored ChaCha20-Poly1305, every `z*` call, the `.zsig` writer), a twin of `leek-device`.
+  - USB lives in the offscreen document (granted once from a tab); Bluetooth in the tab that chose the device. The popup connects, shows the six digits, imports the board's account (its birthday per network, or asks and records it), verifies the shown address on the board, sends and shields with a review and the mainnet real-funds tick.
+  - Tested against zdev: Node over the USB framing and a fake GATT server at MTU 23, and from an extension page in headless Chromium with the real engine.
+  - Left: the first testnet send signed on the board from the extension, over USB and over Bluetooth (the steps are in the 9.3 journal entry); QR through the webcam; accounts other than 0.
 
 **9.4 Dapp interface (M).**
 - Zcash has no EIP-1193. Offer `window.zcash`: connect, accounts, `sendTransaction(zip321)`, `signPczt`.

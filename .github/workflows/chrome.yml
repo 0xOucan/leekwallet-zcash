@@ -1,7 +1,9 @@
 # Builds the Chrome extension: the WASM engine (chrome/engine, threads) and
 # the unpacked extension (chrome/extension/dist), uploaded as an artifact.
-# The end-to-end test needs a live testnet gRPC-web endpoint, so it runs
-# only on demand (workflow_dispatch with e2e = true).
+# The board protocol module (chrome/extension/src/board) is tested in Node
+# against zdev, the firmware's protocol on a PTY (firmware/sim). The
+# end-to-end test needs a live testnet gRPC-web endpoint, so it runs only on
+# demand (workflow_dispatch with e2e = true).
 name: chrome
 
 on:
@@ -15,6 +17,9 @@ on:
       - "host/zecz-core/src/soft_signer.rs"
       - "host/leek-device/src/zsig.rs"
       - "firmware/app/src/tokens.css"
+      - "firmware/src/**"
+      - "firmware/sim/**"
+      - "firmware/components/**"
       - ".github/workflows/chrome.yml"
   pull_request:
     paths:
@@ -25,6 +30,9 @@ on:
       - "host/zecz-core/src/soft_signer.rs"
       - "host/leek-device/src/zsig.rs"
       - "firmware/app/src/tokens.css"
+      - "firmware/src/**"
+      - "firmware/sim/**"
+      - "firmware/components/**"
       - ".github/workflows/chrome.yml"
   workflow_dispatch:
     inputs:
@@ -41,6 +49,27 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  board:
+    name: board protocol vs zdev
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: firmware/components/zsign-rust
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build zdev
+        run: make -C firmware/sim build/zdev
+      - name: Board protocol tests (framing, session, every z* call, BLE chunks)
+        working-directory: chrome/extension
+        run: |
+          npm ci
+          node --test test/board.test.mjs
+
   build:
     name: engine + extension
     runs-on: ubuntu-latest
