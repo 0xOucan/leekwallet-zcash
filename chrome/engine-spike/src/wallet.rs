@@ -88,7 +88,7 @@ impl tracing::Subscriber for ConsoleTracing {
     fn exit(&self, _: &tracing::span::Id) {}
 }
 
-type Db = WalletDb<rusqlite::Connection, zcash_protocol::consensus::Network, JsClock, UnwrapErr<SysRng>>;
+type Db<'c> = WalletDb<&'c mut rusqlite::Connection, zcash_protocol::consensus::Network, JsClock, UnwrapErr<SysRng>>;
 
 #[derive(Debug)]
 pub struct CacheError(String);
@@ -187,6 +187,8 @@ pub struct WalletRun {
     pub propose_ms: f64,
     pub pczt: Vec<u8>,
     pub fee_zat: u64,
+    /// Size of the wallet database after sync and propose.
+    pub db_bytes: u64,
     /// Set when sync worked but propose / create PCZT did not (e.g. no funds).
     pub propose_error: Option<String>,
 }
@@ -210,7 +212,9 @@ pub async fn run(url: &str, mnemonic: &str, blocks_back: u32, send_zat: u64) -> 
     // ":memory:" is SQLite's in-memory database; the extension would use
     // sqlite-wasm-rs's OPFS VFS from a dedicated worker instead.
     log("wallet: opening sqlite");
-    let mut db: Db = WalletDb::for_path(":memory:", NETWORK, JsClock, UnwrapErr(SysRng)).map_err(e)?;
+    let mut conn = rusqlite::Connection::open_in_memory().map_err(e)?;
+    rusqlite::vtab::array::load_module(&conn).map_err(e)?;
+    let mut db: Db = WalletDb::from_connection(&mut conn, NETWORK, JsClock, UnwrapErr(SysRng));
     log("wallet: migrating schema");
     init_wallet_db(&mut db, None).map_err(|x| format!("init_wallet_db: {x}"))?;
     log("wallet: schema ready");
@@ -250,12 +254,16 @@ pub async fn run(url: &str, mnemonic: &str, blocks_back: u32, send_zat: u64) -> 
     if let Err(x) = propose(&mut db, &ufvk, account_id, send_zat, &mut r) {
         r.propose_error = Some(x);
     }
+    drop(db);
+    let pages: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0)).map_err(e)?;
+    let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0)).map_err(e)?;
+    r.db_bytes = (pages * page_size) as u64;
     Ok(r)
 }
 
 /// `propose_transfer` + `create_pczt_from_proposal` for `send_zat` to self.
 fn propose(
-    db: &mut Db,
+    db: &mut Db<'_>,
     ufvk: &zcash_keys::keys::UnifiedFullViewingKey,
     account_id: zcash_client_sqlite::AccountUuid,
     send_zat: u64,
@@ -285,9 +293,9 @@ fn propose(
         ShieldedPool::Orchard
     };
     log("wallet: proposing");
-    let input_selector = GreedyInputSelector::<Db>::new();
+    let input_selector = GreedyInputSelector::<Db<'_>>::new();
     let change_strategy =
-        SingleOutputChangeStrategy::<Db>::new(StandardFeeRule::Zip317, None, change_pool, DustOutputPolicy::default());
+        SingleOutputChangeStrategy::<Db<'_>>::new(StandardFeeRule::Zip317, None, change_pool, DustOutputPolicy::default());
     let proposal = propose_transfer::<_, _, _, _, Infallible>(
         db,
         &NETWORK,

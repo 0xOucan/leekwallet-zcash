@@ -139,9 +139,9 @@ mod wallet_web {
         let r = crate::wallet::run(&url, &mnemonic, blocks_back, send_zat).await.map_err(|e| JsError::new(&e))?;
         let hex: String = r.pczt.iter().map(|b| format!("{b:02x}")).collect();
         Ok(format!(
-            r#"{{"birthday":{},"tip":{},"init_ms":{},"sync_ms":{},"scanned_blocks":{},"spendable_zat":{},"total_zat":{},"propose_ms":{},"fee_zat":{},"propose_error":{:?},"pczt_len":{},"pczt_hex":"{}"}}"#,
+            r#"{{"birthday":{},"tip":{},"init_ms":{},"sync_ms":{},"scanned_blocks":{},"spendable_zat":{},"total_zat":{},"propose_ms":{},"fee_zat":{},"propose_error":{:?},"db_bytes":{},"pczt_len":{},"pczt_hex":"{}"}}"#,
             r.birthday, r.tip, r.init_ms, r.sync_ms, r.scanned_blocks, r.spendable_zat, r.total_zat, r.propose_ms, r.fee_zat,
-            r.propose_error.as_deref().unwrap_or(""), r.pczt.len(), hex
+            r.propose_error.as_deref().unwrap_or(""), r.db_bytes, r.pczt.len(), hex
         ))
     }
 }
