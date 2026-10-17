@@ -424,7 +424,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
   - Done when: a testnet `zecz shield` signed on the board confirms, and the
     Android app applies a version 2 `.zsig`.
 - **10.2 Measured timings on the board (S).** Roadmap 4.5: check and sign times per backend (C on the device; Rust only as a reference build).
-- **10.3 Mainnet (S). Done on PC; the board paired and imported on mainnet (2026-10-17); the first funded send is next.** A small mainnet send over each link before any release.
+- **10.3 Mainnet (S). Done (2026-10-17): a send and a shield signed on the board and accepted on mainnet, over USB with zecz.** Still to try on mainnet: the desktop app and the Android mainnet app. A small mainnet send over each link before any release.
   - Done on PC: mainnet PCZT vectors (a send and a shield, compact views,
     four cross-network refusals) through both signers, the sim, the soft
     signer and zdev; zShowAddress and the review pages on mainnet; zecz

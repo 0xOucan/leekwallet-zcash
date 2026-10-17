@@ -308,7 +308,7 @@ fn cmd_balance(profile: Profile) -> Result<()> {
     println!("Total:     {}", format_zec(b.total));
     println!("Spendable: {}", format_zec(b.spendable));
     if b.transparent.total > 0 {
-        println!("Note: the device does not sign transparent inputs yet; transparent funds cannot be sent from here.");
+        println!("Transparent funds are public on the chain: `zecz shield` moves them into the shielded pool.");
     }
     Ok(())
 }
