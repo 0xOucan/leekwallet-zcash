@@ -745,3 +745,51 @@ checked on Xtensa).
   an error looks like an empty 200.
 - Not done: broadcast, OPFS persistence, wasm-opt, and sync from an old
   birthday.
+
+### 10.3 Mainnet readiness (2026-10-17): done on PC, the board send pending
+- Audit: coin type 133 and the u1 / uview1 / t1 encodings were already
+  right in both signers, zcash-account, zecz-core and zecz; the device
+  takes the network per request and the PCZT names it only by its
+  global coin type (branch ids are shared), which both signers check
+  (-17). Mainnet lightwalletd (zec.rocks) is on NU6.3 (37a5165b, tip
+  ~3,520,580), in ZCASH_SIGN_BRANCHES.
+- Bug found: `zecz --network main --server <testnet>` sync went ahead
+  and started storing testnet blocks in the mainnet wallet; it stopped
+  only on a commitment-tree root conflict. zecz-core now asks
+  GetLightdInfo and refuses a server whose `chain_name` is not the
+  wallet's before init, sync and broadcast (`check_chain`,
+  `broadcast_on`); `zecz tip` warns.
+- Vectors (8 new, 40 in all; the 32 existing files regenerate
+  byte-identical): `main_iw_send_shielded`, `main_t_shield` and their
+  compact views at a mainnet NU6.3 height, and `r_main_on_test`,
+  `r_main_shield_on_test`, `r_test_on_main`, `r_test_shield_on_main`
+  (network_mismatch).
+- Sim: zShowAddress on mainnet through the real vault (u1 ours, account
+  1 foreign, a testnet address malformed, the coin type 1 receiver as
+  u1 foreign) and through the protocol (shown as MAIN); every vector's
+  review names its network and unit (Mainnet/ZEC, Testnet/TAZ).
+  `make -C firmware/sim test` passes; test_zsign_diff 12,450 mutations,
+  0 mismatches.
+- Host: `tests/mainnet.rs` (account, addresses, chain check, mainnet
+  vectors soft-signed, proven, extracted); zdev signs the mainnet compact
+  vectors for "main" (applied to the full PCZTs, proven, extracted),
+  exports and confirms the u1 account, and refuses each cross-network
+  PCZT with -17.
+- Mainnet sync, run with `--ignored`: the public test account
+  (abandon-art, `main/abandon-art/pp0/acct0`) imported watch-only 1,000
+  blocks below the tip synced to 3,520,585 in 12.7 s; balances 0;
+  propose_send refused "Insufficient balance (have 0, need 20000
+  including fee)", shield "Insufficient funds"; a testnet server refused
+  for a mainnet wallet. With the CLI from birthday 3,520,000: 579 blocks
+  in 4 s, the same refusals.
+- Desktop: "Network and server" switch (Testnet default, Mainnet after
+  a confirmation), saved in `settings.json` with a server per network;
+  wallets/test and wallets/main and the contacts stay apart; a switch
+  closes the device session and drops a pending send; a session paired
+  for one network is refused for the other. On mainnet: a red
+  "MAINNET — real funds" bar and a tick box after the review before
+  Sign (also enforced by `sign_and_send`). Tests: `tests/settings.rs`
+  (5) and a zdev mainnet flow; `pnpm typecheck`, `pnpm build` and
+  `cargo test` pass.
+- Checklist for the board: `docs/zcash/MAINNET.md`. Left: the first real
+  mainnet receive, address check, send and shield on the board.
