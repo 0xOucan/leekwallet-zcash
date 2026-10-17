@@ -329,7 +329,7 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 - The seed is encrypted under the user's password (Argon2id, AES-GCM), and the key may also be held in the OS keychain.
 - Several wallets and accounts.
 
-**8.3 Hardware accounts (M).**
+**8.3 Hardware accounts (M). Done, tested on the board over USB and Bluetooth (2026-10-16).**
 - Pair and import over USB and Bluetooth, sign over both.
 - Address verification on the device.
 - `.zkv` card creation as in `zecz zkv-new`.

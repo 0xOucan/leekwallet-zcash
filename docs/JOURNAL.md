@@ -620,3 +620,17 @@ checked on Xtensa).
 - Open: the board (shield review pages on the panel, timing of five
   secp256k1 derivations per input), a testnet `zecz shield`, the Android
   app UI for shielding, and the Chrome/desktop companions.
+
+### 8.3 Desktop with the board: tested on the board (2026-10-16)
+- USB: pair, import (birthday from the device), sync, verify address,
+  and a send signed on the board: tx
+  `2c6a4ff856f554837d90eeac0e0e6b114b65a9580c941c2b35d991bb10c1eed1`.
+- Bluetooth: first attempt panicked ("the worker thread panicked"):
+  bluez-async spawns a cleanup task when its message stream is dropped,
+  and the scan results and the closed transport were dropped outside
+  the Tokio runtime. Fixed by keeping every btleplug object inside it.
+  Then verify address and a send over Bluetooth: tx
+  `b6366dccdbed53d7cb8dd0ffa00870b2d572c33fbeeb4dc51d7c3d616a6f22a9`.
+- Also funded the board's t-address (tx
+  `dbfce8b9edd0bf33faa1287e2de417c8359eda0cb0bb45bc198d5e4dccfb9232`)
+  for the shield test of 10.1.
