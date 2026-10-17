@@ -24,7 +24,7 @@ pub const WATCH_ONLY_NAME: &str = "watch-only";
 pub const SYNC_BATCH: u32 = 1000;
 
 /// Runs a future to completion on a fresh current-thread runtime.
-fn block_on<F: Future>(f: F) -> Result<F::Output> {
+pub(crate) fn block_on<F: Future>(f: F) -> Result<F::Output> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().context("tokio runtime")?;
     Ok(rt.block_on(f))
 }
@@ -41,6 +41,10 @@ pub struct ProfileStatus {
     pub birthday: Option<u32>,
     pub fully_scanned: Option<u32>,
     pub chain_tip: Option<u32>,
+    /// The account was imported from a LeekWallet and can be signed for.
+    pub hardware: bool,
+    /// Its short seed fingerprint ("ZFP"), for a hardware account.
+    pub zfp: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -135,6 +139,8 @@ pub fn profile_status(profile: &Profile) -> Result<ProfileStatus> {
         birthday: None,
         fully_scanned: None,
         chain_tip: None,
+        hardware: false,
+        zfp: None,
     };
     if !profile.exists() {
         return Ok(s);
@@ -143,6 +149,10 @@ pub fn profile_status(profile: &Profile) -> Result<ProfileStatus> {
     if w.has_account()? {
         s.has_account = true;
         s.birthday = Some(w.birthday()?);
+        if let Some(o) = w.key_origin()? {
+            s.hardware = true;
+            s.zfp = Some(o.short_fingerprint());
+        }
         if let Some(st) = w.sync_status()? {
             s.fully_scanned = Some(st.fully_scanned);
             s.chain_tip = Some(st.chain_tip);
@@ -170,7 +180,7 @@ pub fn init_watch_only(profile: &Profile, ufvk: &str, birthday: u32) -> Result<I
     })
 }
 
-fn sapling_activation(network: Network) -> u32 {
+pub(crate) fn sapling_activation(network: Network) -> u32 {
     use zecz::wallet::Network as N;
     match network {
         N::MainNetwork => 419_200,

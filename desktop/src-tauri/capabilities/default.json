@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Everything the main window may invoke. Tauri denies by default; the app's own commands (profile_status, init_watch_only, sync, balances, addresses, tip) are always reachable, and core:default adds the event listener the sync progress uses. No plugins, no shell, no filesystem.",
+  "description": "Everything the main window may invoke. Tauri denies by default; the app's own commands (the wallet: profile_status, init_watch_only, sync, balances, addresses, tip; the device: list_ports, ble_scan, device_pair, device_session, device_disconnect, device_import, verify_address, propose_send, sign_and_send) are always reachable, and core:default adds the event listener the sync and device progress events use. No plugins, no shell, no filesystem.",
   "windows": ["main"],
   "permissions": ["core:default"]
 }
