@@ -1,4 +1,5 @@
 /target/
+/target-threads*/
 /pkg*/
-/node_modules/
+node_modules/
 *.wasm

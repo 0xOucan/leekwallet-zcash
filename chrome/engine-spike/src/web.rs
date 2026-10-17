@@ -30,6 +30,14 @@ pub fn threads_enabled() -> bool {
     cfg!(feature = "threads")
 }
 
+/// Size of the WASM linear memory (it only grows): the engine's peak heap.
+#[wasm_bindgen]
+pub fn wasm_memory_mb() -> f64 {
+    let mem: js_sys::WebAssembly::Memory = wasm_bindgen::memory().unchecked_into();
+    let buf: js_sys::Object = mem.buffer().unchecked_into();
+    js_sys::Reflect::get(&buf, &"byteLength".into()).unwrap().as_f64().unwrap() / 1e6
+}
+
 #[cfg(feature = "engine")]
 mod engine_web {
     use super::*;
