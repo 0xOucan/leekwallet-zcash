@@ -43,11 +43,11 @@ outputs.
 | Component | State |
 |---|---|
 | **Board + firmware** | Done and tested on real hardware: signs shielded and transparent spends (shielding) over USB, Bluetooth, QR and SD; compact PCZT; verifies any of its addresses |
-| **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; testnet sends signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen |
+| **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; sends and shielding signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen; a mainnet app and a testnet app side by side |
 | **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
 | **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
 | **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, import, sync, balances, address. Board link and software wallets next ([chrome/README.md](chrome/README.md)) |
-| **Mainnet** | Ready on the PC: mainnet vectors and tests, servers of the wrong chain refused, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation. Testnet stays the default. First real send: [MAINNET.md](docs/zcash/MAINNET.md) |
+| **Mainnet** | Ready: mainnet vectors and tests, servers of the wrong chain refused, one birthday per network on the board, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation; the board has paired and imported on mainnet. Testnet stays the default. First funded send: [MAINNET.md](docs/zcash/MAINNET.md) |
 | **NEAR Intents** | Planned, after the first mainnet send |
 
 ## What works
