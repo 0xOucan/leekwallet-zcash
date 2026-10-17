@@ -282,6 +282,10 @@ async fn cmd_sync(profile: Profile, batch: u32) -> Result<()> {
 async fn cmd_tip(profile: &Profile) -> Result<()> {
     let t = wallet::tip(&profile.server).await?;
     println!("{}: chain {:?}, tip {} ({}), server {} {}", t.server, t.chain_name, t.height, t.consensus_branch_id, t.vendor, t.version);
+    // Shown, not refused: `tip` is how one finds out what a server is.
+    if let Err(e) = wallet::check_chain(profile.network, &t.chain_name) {
+        eprintln!("WARNING: {e}");
+    }
     Ok(())
 }
 
