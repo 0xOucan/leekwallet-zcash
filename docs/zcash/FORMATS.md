@@ -89,10 +89,15 @@ Each input is signed over its ZIP 244 transparent signature digest (S.2,
 RFC 6979 nonces, low S. Both backends derive the same RFC 6979 nonce, so
 their signatures are byte-identical (`test_zsign_diff` checks it).
 
-Memo recovery also tries the account's transparent outgoing viewing keys
-(ZIP 316: `PRF^expand(chain code, [0xd0] ‖ account pubkey)`, internal then
-external half), which is what a wallet uses for outputs funded only by
+When a PCZT spends transparent inputs, memo recovery also tries the
+account's transparent outgoing viewing keys after the Orchard ones (ZIP 316:
+`PRF^expand(chain code, [0xd0] ‖ account pubkey)`, the first 32 bytes as
+the external key and the last 32 as the internal one, as `zcash_transparent`
+splits them), which is what a wallet uses for outputs funded only by
 transparent inputs.
+
+The C reader keeps at most 16 transparent inputs (`ZS_MAX_T_INPUTS`, what a
+summary holds); a PCZT with more is refused with `ZS_E_TOO_MANY`.
 
 ## Seed card: `*.zkv`
 A seed sealed under a passphrase, for the SD storage mode (roadmap 1.4).

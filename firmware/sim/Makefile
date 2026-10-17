@@ -205,7 +205,8 @@ FORCE:
 # Zcash C signer (zsign-c, Phase 4). Built as one archive with its own flags:
 # no trezor-crypto include path, and every vendored libzcash-ironwood-c symbol
 # renamed zcv_* (vendor/zc_vendor_prefix.h), so it links next to trezor-crypto
-# and zsign-rust without sharing a line of code with either.
+# and zsign-rust without sharing a line of code with either. The one
+# exception, zc_secp.c (transparent inputs), is built further down.
 ZSIGNC := ../components/zsign-c
 ZCV    := $(ZSIGNC)/vendor/libzcash-ironwood-c
 ZC_CFLAGS := -O2 -g -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Wno-unused-parameter \

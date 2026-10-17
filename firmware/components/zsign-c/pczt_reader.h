@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-/* Caps on what the reader stores. Everything it only skips (inputs, Sapling,
+/* Caps on what the reader stores. Everything it only skips (Sapling,
  * maps, derivation paths) is bounded by the input length alone. A PCZT over
  * a cap is refused with ZS_E_TOO_MANY; the Rust side has no cap, so this is
  * a known difference, in the refusing direction only. */
