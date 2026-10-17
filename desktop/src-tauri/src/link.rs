@@ -60,8 +60,13 @@ pub fn open_usb(port: &str) -> Result<Device> {
 /// Lists LeekWallets advertising over Bluetooth.
 pub fn ble_scan() -> Result<Vec<BleDeviceDto>> {
     let rt = ble_runtime()?;
-    let found = rt.block_on(BleTransport::scan(BLE_SCAN)).map_err(ble_err)?;
-    Ok(found.into_iter().map(|d| BleDeviceDto { id: d.id, name: d.name }).collect())
+    // Everything btleplug made is dropped inside the runtime: BlueZ's event
+    // streams spawn a cleanup task on drop, which panics outside one.
+    let _in_rt = rt.enter();
+    rt.block_on(async {
+        let found = BleTransport::scan(BLE_SCAN).await.map_err(ble_err)?;
+        Ok(found.into_iter().map(|d| BleDeviceDto { id: d.id, name: d.name }).collect())
+    })
 }
 
 /// Connects over Bluetooth: to `id` from [`ble_scan`], or to the first
@@ -95,6 +100,7 @@ pub struct BlePort {
 impl BlePort {
     pub fn connect(id: Option<&str>) -> Result<Self> {
         let rt = ble_runtime()?;
+        let _in_rt = rt.enter();
         let transport = rt
             .block_on(async {
                 match id {
@@ -129,11 +135,13 @@ fn to_transport(e: BleError) -> TransportError {
 impl FramePort for BlePort {
     fn send(&mut self, frame_type: u8, payload: &[u8]) -> Result<(), TransportError> {
         let (rt, t) = self.parts()?;
+        let _in_rt = rt.enter();
         rt.block_on(t.send(frame_type, payload)).map_err(to_transport)
     }
 
     fn recv(&mut self, timeout: Duration) -> Result<(u8, Vec<u8>), TransportError> {
         let (rt, t) = self.parts()?;
+        let _in_rt = rt.enter();
         rt.block_on(t.recv(timeout)).map_err(to_transport)
     }
 }
@@ -144,8 +152,13 @@ impl Drop for BlePort {
     /// connection hears nothing; and the device serves one peer at a time.
     fn drop(&mut self) {
         let (Some(rt), Some(mut t)) = (self.rt.take(), self.transport.take()) else { return };
-        let mut close = move || {
-            let _ = rt.block_on(async { tokio::time::timeout(Duration::from_secs(5), t.disconnect()).await });
+        let close = move || {
+            // The transport is dropped inside the runtime too (see ble_scan).
+            let _in_rt = rt.enter();
+            rt.block_on(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(5), t.disconnect()).await;
+                drop(t);
+            });
         };
         // A runtime can be neither blocked on nor dropped from inside
         // another one; the app drops sessions on worker threads, but if this
