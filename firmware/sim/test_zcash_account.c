@@ -134,6 +134,48 @@ static void test_address_check(void)
     CHECK(zcash_ua_check(&a, mixed, j, t) == ZCASH_UA_NOT_OURS, "t-receiver at another index");
 }
 
+/* The same on mainnet (roadmap 10.3): coin type 133 keys, u1 / t1 strings.
+ * A testnet address is not even an address on a mainnet account. */
+static void test_address_check_main(void)
+{
+    printf("== zShowAddress on mainnet: u1 addresses of the coin type 133 account\n");
+    ctx = "address check main";
+    const zv_key_vector *m = find_vector("main/abandon-art/pp0/acct0");
+    const zv_key_vector *m1 = find_vector("main/abandon-art/pp0/acct1");
+    const zv_key_vector *t = find_vector("test/abandon-art/pp0/acct0");
+    CHECK(m && m1 && t, "vectors missing");
+    if (!m || !m1 || !t) return;
+    fresh_device();
+    CHECK(wallet_use_temporary_mnemonic(m->mnemonic) == WALLET_OK, "not adopted");
+    static ZcashAccount a;
+    CHECK(zcash_account_derive(0, ZCASH_NET_MAIN, &a) == WALLET_OK, "derive failed");
+    CHECK(strncmp(a.keys.ua, "u1", 2) == 0 && strcmp(a.keys.ua, m->ua) == 0, "mainnet UA");
+    CHECK(strncmp(a.keys.ufvk, "uview1", 6) == 0, "mainnet UFVK");
+    CHECK(strncmp(a.t_address, "t1", 2) == 0, "mainnet t-address");
+
+    uint8_t j[11];
+    char taddr[ZCASH_TADDR_MAX];
+    static const uint8_t j0[11];
+    CHECK(zcash_ua_check(&a, m->ua, j, taddr) == ZCASH_UA_OURS, "the default address");
+    CHECK(memcmp(j, j0, 11) == 0, "the default address is not index 0");
+    CHECK(strcmp(taddr, m->transparent_address) == 0, "default t-address");
+    CHECK(zcash_ua_check(&a, m->ua_orchard_only, j, taddr) == ZCASH_UA_OURS && taddr[0] == 0,
+          "the Orchard-only default address");
+    CHECK(zcash_ua_check(&a, m1->ua, j, taddr) == ZCASH_UA_NOT_OURS, "another account's address");
+    CHECK(zcash_ua_check(&a, t->ua, j, taddr) == ZCASH_UA_MALFORMED, "a testnet address");
+    CHECK(zcash_ua_check(&a, t->ua_orchard_only, j, taddr) == ZCASH_UA_MALFORMED,
+          "a testnet Orchard-only address");
+
+    /* The testnet account's Orchard receiver re-encoded as u1: same seed,
+     * other coin type, so not ours. */
+    char mixed[512];
+    CHECK(zc_encode_ua(mixed, sizeof mixed, 0, t->orchard_address_raw, NULL) > 0, "encode");
+    CHECK(zcash_ua_check(&a, mixed, j, taddr) == ZCASH_UA_NOT_OURS, "the coin type 1 receiver");
+    CHECK(zc_encode_ua(mixed, sizeof mixed, 0, m->orchard_address_raw, m1->transparent_receiver) > 0,
+          "encode");
+    CHECK(zcash_ua_check(&a, mixed, j, taddr) == ZCASH_UA_NOT_OURS, "a foreign t-receiver");
+}
+
 int main(void)
 {
     printf("== test_zcash_account\n== %zu vectors through the real vault\n", ZV_KEYS_COUNT);
@@ -171,6 +213,7 @@ int main(void)
     CHECK(memcmp(&a, &zero, sizeof a) == 0, "output not cleared on failure");
 
     test_address_check();
+    test_address_check_main();
 
     printf("== bad arguments are refused\n");
     ctx = "args";

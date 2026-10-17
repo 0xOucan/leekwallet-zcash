@@ -257,6 +257,7 @@ $(BUILD)/test_zsign_diff: test_zsign_diff.c ../../vectors/pczt_vectors.h $(ZC_TE
 # PCZT intake and signing through the real vault, both backends and BOTH.
 $(BUILD)/test_zcash_sign: CFLAGS += -DAES_VAR
 $(BUILD)/test_zcash_sign: test_zcash_sign.c ../src/zcash-sign.c ../src/zcash-sign.h ../src/zcash-worker.c \
+                          ../src/zcash-review.c ../src/zcash-review.h \
                           ../../vectors/pczt_vectors.h esp_stubs.c host_stubs.c \
                           $(ZSIGN)/platform/zsign_platform_host.c $(VAULT_SRC) $(VAULT_CRYPTO) \
                           $(ZSIGN)/target/release/libzsign_rust.a $(BUILD)/libzsign_c.a | $(BUILD)

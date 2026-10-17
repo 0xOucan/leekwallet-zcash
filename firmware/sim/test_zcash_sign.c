@@ -16,6 +16,7 @@
 #include "fake_nvs.h"
 #include "leek-wallet.h"
 #include "sha2.h"
+#include "zcash-review.h"
 #include "zcash-sign.h"
 #include "zsign_c.h"
 #include "../../vectors/pczt_vectors.h"
@@ -112,6 +113,19 @@ static void run_vector(const zv_pczt_vector *v, ZcashSignBackend be)
             }
             CHECK(found, "expected output %u not shown", i);
         }
+        /* The review names the network the request asked for, and its
+         * amounts are in that network's unit: Mainnet and ZEC, or Testnet
+         * and TAZ, on every page. */
+        bool main_net = v->network == ZS_NET_MAIN, named = false, wrong_unit = false;
+        ZReviewPage pg;
+        for (int k = 0; zreview_render(s, v->network, k, &pg); k++) {
+            for (int r = 0; r < ZREVIEW_ROWS; r++) {
+                named |= strcmp(pg.row[r], main_net ? "Network: Mainnet" : "Network: Testnet") == 0;
+                wrong_unit |= strstr(pg.row[r], main_net ? " TAZ" : " ZEC") != NULL;
+            }
+        }
+        CHECK(named, "the review does not name the %s", main_net ? "mainnet" : "testnet");
+        CHECK(!wrong_unit, "the review shows the other network's unit");
 
         static zs_sig sigs[ZS_MAX_SIGS];
         uint32_t n = 0;
