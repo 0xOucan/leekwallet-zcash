@@ -32,6 +32,9 @@ zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0
 pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
 orchard = { version = "0.16", default-features = false, features = ["std", "circuit"] }
 zip32 = "0.3"
+# The same libsecp256k1 the pczt transparent signer uses: DER signatures of
+# transparent inputs (roadmap 10.1).
+secp256k1 = "0.33"
 
 tonic = { version = "0.14", default-features = false, features = ["transport", "tls-ring", "tls-webpki-roots"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

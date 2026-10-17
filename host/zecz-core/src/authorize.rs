@@ -9,21 +9,75 @@ use zcash_protocol::consensus::BranchId;
 
 use crate::zsig::{Pool, Zsig};
 
-/// Applies `.zsig` signatures with the Signer role, which verifies each one
-/// against its action's rk before storing it.
+/// Applies `.zsig` signatures with the Signer role, which verifies each
+/// shielded one against its action's rk, and each transparent one against
+/// its input's own ZIP 244 sighash and the key the input's script pays to,
+/// before storing it.
 pub fn apply_zsig(pczt: Pczt, zsig: &Zsig) -> Result<Pczt> {
+    let pczt = add_transparent_preimages(pczt, zsig)?;
     let mut signer = Signer::new(pczt).map_err(|e| anyhow!("Signer: {e:?}"))?;
     for e in &zsig.entries {
-        let sig = orchard::primitives::redpallas::Signature::<orchard::primitives::redpallas::SpendAuth>::from(e.sig);
         let idx = e.index as usize;
         match e.pool {
-            Pool::Orchard => signer.apply_orchard_signature(idx, sig),
-            Pool::Ironwood => signer.apply_ironwood_signature(idx, sig),
-            Pool::Transparent => bail!("transparent signatures are not supported yet"),
+            Pool::Orchard | Pool::Ironwood => {
+                let sig = orchard::primitives::redpallas::Signature::<orchard::primitives::redpallas::SpendAuth>::from(e.sig);
+                if e.pool == Pool::Orchard {
+                    signer.apply_orchard_signature(idx, sig)
+                } else {
+                    signer.apply_ironwood_signature(idx, sig)
+                }
+                .map_err(|err| anyhow!("{:?} signature for action {idx} rejected: {err:?}", e.pool))?;
+            }
+            Pool::Transparent => {
+                let sig = transparent_signature(e)?;
+                signer
+                    .append_transparent_signature(idx, sig)
+                    .map_err(|err| anyhow!("transparent signature for input {idx} rejected: {err:?}"))?;
+            }
         }
-        .map_err(|err| anyhow!("{:?} signature for action {idx} rejected: {err:?}", e.pool))?;
     }
     Ok(signer.finish())
+}
+
+/// The DER signature of a transparent `.zsig` entry, which must be for
+/// SIGHASH_ALL, the only type the device signs.
+pub fn transparent_signature(e: &crate::zsig::Entry) -> Result<secp256k1::ecdsa::Signature> {
+    let t = e.transparent.as_ref().ok_or_else(|| anyhow!("transparent entry without a signature"))?;
+    if t.sighash_type() != 0x01 {
+        bail!("transparent signature for input {} is not SIGHASH_ALL", e.index);
+    }
+    secp256k1::ecdsa::Signature::from_der(t.der()).map_err(|err| anyhow!("transparent signature for input {}: {err}", e.index))
+}
+
+/// The pczt Signer finds a P2PKH input's key through `hash160_preimages`,
+/// which wallets do not fill in. Add each transparent entry's pubkey there
+/// (an Updater step); a key that does not hash to the input's script is then
+/// simply not found, and its signature is refused.
+pub fn add_transparent_preimages(pczt: Pczt, zsig: &Zsig) -> Result<Pczt> {
+    let ts: Vec<_> = zsig
+        .entries
+        .iter()
+        .filter_map(|e| e.transparent.as_ref().map(|t| (e.index as usize, t.pubkey)))
+        .collect();
+    if ts.is_empty() {
+        return Ok(pczt);
+    }
+    let n = pczt.transparent().inputs().len();
+    if let Some((i, _)) = ts.iter().find(|(i, _)| *i >= n) {
+        bail!("transparent signature for input {i}, but the PCZT has {n} inputs");
+    }
+    Ok(pczt::roles::updater::Updater::new(pczt)
+        .update_transparent_with(|mut u| {
+            for (i, pk) in &ts {
+                u.update_input_with(*i, |mut iu| {
+                    iu.set_hash160_preimage(pk.to_vec());
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })
+        .map_err(|e| anyhow!("PCZT transparent update: {e:?}"))?
+        .finish())
 }
 
 /// What [`prove_with`] is doing. Proving takes seconds, so a front end

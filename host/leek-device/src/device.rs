@@ -460,14 +460,27 @@ impl Device {
         };
         let mut entries = Vec::with_capacity(sigs.len());
         for s in sigs {
+            let index = get_uint(s, "index")? as u32;
             let pool = match get_uint(s, "pool")? {
+                0 => Pool::Transparent,
                 1 => Pool::Orchard,
                 2 => Pool::Ironwood,
                 p => bail!("device returned a signature for pool {p}, which this host cannot apply"),
             };
+            if pool == Pool::Transparent {
+                // DER || sighash type, and the key (PROTOCOL.md, roadmap 10.1).
+                let sig = get_bytes(s, "sig")?;
+                if !(9..=crate::zsig::TSIG_MAX).contains(&sig.len()) {
+                    bail!("transparent signature of {} bytes", sig.len());
+                }
+                let pubkey: [u8; 33] = get_bytes(s, "pubkey")?
+                    .try_into().map_err(|_| anyhow!("pubkey is not 33 bytes"))?;
+                entries.push(Entry::transparent(index, sig, pubkey));
+                continue;
+            }
             let sig: [u8; 64] = get_bytes(s, "sig")?
                 .try_into().map_err(|_| anyhow!("signature is not 64 bytes"))?;
-            entries.push(Entry { pool, index: get_uint(s, "index")? as u32, sig });
+            entries.push(Entry::shielded(pool, index, sig));
         }
         Ok((sighash, entries))
     }

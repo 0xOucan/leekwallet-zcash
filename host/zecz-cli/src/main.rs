@@ -138,6 +138,16 @@ enum Cmd {
         #[arg(long)]
         compact: bool,
     },
+    /// Build an unsigned PCZT that moves every transparent coin of the
+    /// account into its shielded pool (Ironwood from NU6.3).
+    Shield {
+        /// Where to write the signer view for the device.
+        #[arg(long)]
+        out: PathBuf,
+        /// Write the compact signer view (v2 PCZT).
+        #[arg(long)]
+        compact: bool,
+    },
     /// Pair with the device, export its account (UFVK) and run `init`.
     DeviceInit {
         /// Serial port of the device (e.g. /dev/ttyACM0), or a zdev PTY.
@@ -308,6 +318,16 @@ fn cmd_send(profile: Profile, to: &str, amount: &str, zec: bool, memo: Option<&s
     let mut w = Wallet::open(profile)?;
     let amount_zat = if zec { parse_zec(amount)? } else { amount.parse::<u64>().context("amount must be zatoshis (or pass --zec)")? };
     let p = w.propose_send(&SendRequest { to: to.to_string(), amount_zat, memo: memo.map(str::to_string), compact })?;
+    write_proposal(&p, out)
+}
+
+fn cmd_shield(profile: Profile, out: &Path, compact: bool) -> Result<()> {
+    let mut w = Wallet::open(profile)?;
+    let p = w.propose_shield(compact)?;
+    write_proposal(&p, out)
+}
+
+fn write_proposal(p: &zecz::wallet::SendProposal, out: &Path) -> Result<()> {
     fs::write(out, &p.signer_view).with_context(|| format!("writing {}", out.display()))?;
 
     println!("Proposal (target height {}):", p.target_height);
@@ -508,6 +528,7 @@ async fn main() -> Result<()> {
         Cmd::Balance => cmd_balance(profile),
         Cmd::Address => cmd_address(profile),
         Cmd::Send { to, amount, zec, memo, out, compact } => cmd_send(profile, &to, &amount, zec, memo.as_deref(), &out, compact),
+        Cmd::Shield { out, compact } => cmd_shield(profile, &out, compact),
         Cmd::DeviceInit { port, account, birthday, name } => cmd_device_init(profile, &port, account, birthday, &name).await,
         Cmd::DeviceShowAddress { port, account } => cmd_device_show_address(&profile, &port, account),
         Cmd::SignDevice { port, account, input, out } => cmd_sign_device(&profile, &port, account, &input, &out),

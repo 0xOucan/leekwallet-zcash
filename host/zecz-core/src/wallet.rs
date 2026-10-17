@@ -655,10 +655,62 @@ impl Wallet {
         )
         .map_err(|e| anyhow!("cannot propose the transfer: {e}"))?;
 
-        let step = proposal.steps().first();
-        if !step.transparent_inputs().is_empty() {
-            bail!("the proposal spends transparent inputs; the device does not sign those yet");
+        self.build_proposed(account_id, &proposal, target_h, req.compact)
+    }
+
+    /// Proposes moving every transparent coin of the account (on any of its
+    /// addresses, receive, change or ephemeral) into its own shielded pool:
+    /// Ironwood once NU6.3 is active, Orchard before. The device signs each
+    /// coin after re-deriving its key (roadmap 10.1). Coins below the ZIP 317
+    /// marginal fee are left alone as dust.
+    pub fn propose_shield(&mut self, compact: bool) -> Result<SendProposal> {
+        use zcash_client_backend::data_api::{wallet::propose_shielding, CoinbaseFilter};
+        let params = self.profile.network;
+        let (account_id, _) = self.the_account()?;
+        let (target, _) = self
+            .db
+            .get_target_and_anchor_heights(ConfirmationsPolicy::default().trusted())?
+            .ok_or_else(|| anyhow!("wallet is not synced; run `zecz sync`"))?;
+        let target_h = BlockHeight::from(target);
+        let pool = if params.is_nu_active(NetworkUpgrade::Nu6_3, target_h) {
+            ShieldedPool::Ironwood
+        } else {
+            ShieldedPool::Orchard
+        };
+        let from: Vec<_> = self.db.get_transparent_receivers(account_id, true, true)?.into_keys().collect();
+        if from.is_empty() {
+            bail!("the account has no transparent addresses");
         }
+        let input_selector = GreedyInputSelector::<Db>::new();
+        let change_strategy =
+            SingleOutputChangeStrategy::<Db>::new(StandardFeeRule::Zip317, None, pool, DustOutputPolicy::default());
+        let proposal = propose_shielding::<_, _, _, _, Infallible>(
+            &mut self.db,
+            &params,
+            &input_selector,
+            &change_strategy,
+            Zatoshis::const_from_u64(10_000),
+            &from,
+            account_id,
+            ConfirmationsPolicy::default(),
+            CoinbaseFilter::AllTransparentOutputs,
+            None,
+        )
+        .map_err(|e| anyhow!("nothing to shield: {e}"))?;
+        self.build_proposed(account_id, &proposal, target_h, compact)
+    }
+
+    /// Builds the PCZT of a one-step proposal, keeps the full PCZT in
+    /// `pending/` and returns the signer view.
+    fn build_proposed<N: std::fmt::Display>(
+        &mut self,
+        account_id: AccountUuid,
+        proposal: &zcash_client_backend::proposal::Proposal<StandardFeeRule, N>,
+        target_h: BlockHeight,
+        compact: bool,
+    ) -> Result<SendProposal> {
+        let params = self.profile.network;
+        let step = proposal.steps().first();
         if step.input_in_pool(PoolType::SAPLING) {
             bail!("the proposal spends Sapling notes; not supported");
         }
@@ -671,7 +723,7 @@ impl Wallet {
             &mut rng,
             account_id,
             OvkPolicy::Sender,
-            &proposal,
+            proposal,
             None,
             BundlePadding::DEFAULT,
         )
@@ -681,7 +733,7 @@ impl Wallet {
             bail!("PCZT has Sapling spends; refusing");
         }
 
-        let view = redact_pczt_for_signer(&pczt, if req.compact { SignerView::Compact } else { SignerView::Full });
+        let view = redact_pczt_for_signer(&pczt, if compact { SignerView::Compact } else { SignerView::Full });
         let view_bytes = view.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
         let full_bytes = pczt.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
         let hash = zsig::sha256(&view_bytes);
@@ -713,7 +765,7 @@ impl Wallet {
             change,
             fee_zat: u64::from(step.balance().fee_required()),
             signer_view: view_bytes,
-            compact: req.compact,
+            compact,
             sha256: hash,
             pending_path: pending,
         })
