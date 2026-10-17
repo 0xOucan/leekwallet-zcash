@@ -2,10 +2,14 @@
 // runs the bench in an extension tab or in an offscreen document.
 //
 //   node chromium.mjs <where>:<pkg>[:<threads>] ...   e.g.
-//   node chromium.mjs tab:pkg-prover offscreen:pkg-threads:4 offscreen:pkg-engine
+//   node chromium.mjs tab:pkg-prover offscreen:pkg-threads:4 worker:pkg-threads-sqlite:4
+//
+// `worker` is a dedicated worker inside an offscreen document.
 //
 // Env: LWD (gRPC-web URL, default https://zcash-testnet.chainsafe.dev),
-//      SCAN (blocks to fetch and scan, default 1000), ONLY_LWD=1 (skip proving), HEADED=1.
+//      SCAN (blocks to fetch and scan, default 1000; for the sqlite pkgs the
+//      wallet birthday's distance below the tip), SEND (zat the sqlite wallet
+//      sends to itself, default 1000), ONLY_LWD=1 (skip proving), HEADED=1.
 import { chromium } from 'playwright-core';
 import { cpSync, existsSync, mkdirSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,7 +24,7 @@ mkdirSync(ext, { recursive: true });
 cpSync(join(here, 'ext'), ext, { recursive: true });
 cpSync(join(here, 'bench.mjs'), join(ext, 'bench.mjs'));
 cpSync(join(root, '../../vectors/pczt/iw_send_shielded.pczt'), join(ext, 'iw_send_shielded.pczt'));
-for (const p of ['pkg-prover', 'pkg-engine', 'pkg-threads', 'pkg-threads-engine']) {
+for (const p of ['pkg-prover', 'pkg-engine', 'pkg-threads', 'pkg-threads-engine', 'pkg-sqlite', 'pkg-threads-sqlite']) {
   if (existsSync(join(root, p))) cpSync(join(root, p), join(ext, p), { recursive: true });
 }
 
@@ -41,11 +45,17 @@ if (!sw) sw = await ctx.waitForEvent('serviceworker');
 const id = new URL(sw.url()).host;
 console.log(`extension ${id}, ${await ctx.browser()?.version?.() ?? 'chromium'}`);
 
+// Everything below goes through an extension page, which stays alive; the
+// service worker is stopped by Chrome when idle.
+const control = await ctx.newPage();
+await control.goto(`chrome-extension://${id}/control.html`);
+const results = () => control.evaluate(async () => (await chrome.storage.session.get({ results: [] })).results);
+
 // `rawgrpc`: plain gRPC (application/grpc, no proxy) to testnet.zec.rocks
-// with fetch() from the extension's service worker. host_permissions lift
+// with fetch() from an extension page. host_permissions lift
 // CORS; the question is what fetch can read of an HTTP/2 gRPC response.
 async function rawGrpc() {
-  return sw.evaluate(async () => {
+  return control.evaluate(async () => {
     const call = async (method, body) => {
       const r = await fetch(`https://testnet.zec.rocks/cash.z.wallet.sdk.rpc.CompactTxStreamer/${method}`, {
         method: 'POST',
@@ -77,19 +87,33 @@ for (const spec of process.argv.slice(2)) {
     pkg, lwd, scan,
     ...(threads ? { threads } : {}),
     ...(process.env.ONLY_LWD ? { only_lwd: '1' } : {}),
+    ...(process.env.SEND ? { send: process.env.SEND } : {}),
   }).toString();
-  const before = await sw.evaluate(() => globalThis.results.length);
+  const before = (await results()).length;
+  let shown = (await control.evaluate(async () => (await chrome.storage.session.get({ log: [] })).log)).length;
   const t = Date.now();
   let page;
-  if (where === 'offscreen') {
-    await sw.evaluate((q) => globalThis.runOffscreen(q), query);
+  if (where === 'offscreen' || where === 'worker') {
+    await control.evaluate(async (q) => {
+      if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument();
+      await chrome.offscreen.createDocument({
+        url: `bench.html?${q}`,
+        reasons: ['WORKERS'],
+        justification: 'engine spike: sync and proving',
+      });
+    }, `${query}&where=${where}`);
   } else {
     page = await ctx.newPage();
     page.on('console', (m) => console.log(`  [${pkg}] ${m.text()}`));
     await page.goto(`chrome-extension://${id}/bench.html?${query}&where=tab`);
   }
   let result;
-  while (!(result = await sw.evaluate((n) => globalThis.results[n], before))) {
+  while (!(result = (await results())[before])) {
+    if (!page) {
+      const lines = await control.evaluate(async () => (await chrome.storage.session.get({ log: [] })).log);
+      for (const l of lines.slice(shown)) console.log(`  [${where}:${pkg}] ${l.slice(0, 400)}`);
+      shown = lines.length;
+    }
     if (Date.now() - t > 30 * 60e3) throw new Error(`${spec}: timed out`);
     await new Promise((r) => setTimeout(r, 2000));
   }
