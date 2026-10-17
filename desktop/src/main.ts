@@ -34,6 +34,65 @@ interface ProfileStatus {
   birthday: number | null;
   fullyScanned: number | null;
   chainTip: number | null;
+  /** Imported from a LeekWallet: the device signs for it. */
+  hardware: boolean;
+  zfp: string | null;
+}
+
+interface PortInfo {
+  name: string;
+  description: string;
+  likelyDevice: boolean;
+}
+
+interface BleDevice {
+  id: string;
+  name: string | null;
+}
+
+interface Paired {
+  transport: "usb" | "ble" | string;
+  port: string;
+  account: number;
+  zfp: string;
+  ua: string;
+  tAddress: string;
+  birthday: number | null;
+  matchesWallet: boolean | null;
+}
+
+interface DeviceStatus {
+  step: string;
+  message: string;
+  done: number | null;
+  total: number | null;
+}
+
+interface DeviceImported {
+  alreadyImported: boolean;
+  birthday: number;
+  birthdayFrom: "user" | "device" | "wallet";
+  birthdayStored: boolean | null;
+  zfp: string;
+  addresses: Addresses;
+}
+
+interface Proposal {
+  id: string;
+  targetHeight: number;
+  payments: { recipient: string; amountZat: number; pool: string; hasMemo: boolean }[];
+  change: { valueZat: number; pool: string }[];
+  feeZat: number;
+  totalZat: number;
+  signerViewBytes: number;
+  compact: boolean;
+}
+
+interface Sent {
+  txid: string;
+  signatures: number;
+  size: number;
+  broadcast: boolean;
 }
 
 interface Addresses {
@@ -113,12 +172,16 @@ function setConn(state: "connected" | "connecting" | "error" | "disconnected", t
 }
 
 let ticker = "TAZ";
+let profile: ProfileStatus | null = null;
+let paired: Paired | null = null;
 
 // ------------------------------------------------------------------- render
 
 async function refresh(): Promise<void> {
   const s = await invoke<ProfileStatus>("profile_status");
+  profile = s;
   ticker = s.network === "main" ? "ZEC" : "TAZ";
+  $("send-amount-label").textContent = `Amount (${ticker})`;
   const net = $("network");
   net.textContent = s.network === "main" ? "mainnet" : "testnet";
   net.dataset["net"] = s.network;
@@ -126,10 +189,15 @@ async function refresh(): Promise<void> {
   $("server").title = `lightwalletd server ${s.server}; wallet data in ${s.dataDir}`;
   $("netnote").hidden = s.network === "main";
 
+  // A watch-only account has no device; an empty wallet offers both ways in.
+  $("device-panel").hidden = s.hasAccount && !s.hardware;
   $("import-panel").hidden = s.hasAccount;
   $("sync-panel").hidden = !s.hasAccount;
   $("balance-panel").hidden = !s.hasAccount;
   $("receive-panel").hidden = !s.hasAccount;
+  $("send-panel").hidden = !(s.hasAccount && s.hardware);
+  $("verify-btn").hidden = !s.hardware;
+  renderDevice();
   if (!s.hasAccount) {
     setConn("disconnected", "No account yet");
     return;
@@ -140,8 +208,41 @@ async function refresh(): Promise<void> {
   } else {
     $("sync-status").textContent = `Not synced yet. Scanning starts at the birthday, block ${s.birthday ?? "?"}.`;
   }
-  setConn("connected", "Watch-only account");
+  setConn("connected", s.hardware ? `LeekWallet account · ZFP ${s.zfp ?? "?"}` : "Watch-only account");
   await Promise.all([renderAddresses(), renderBalances()]);
+}
+
+/** The device panel: the link chooser, or the connected device. */
+function renderDevice(): void {
+  const s = profile;
+  const p = paired;
+  $("device-pick").hidden = p !== null;
+  $("device-connected").hidden = p === null;
+  $("device-hint").hidden = p !== null;
+  if (p) {
+    const via = p.transport === "ble" ? "Bluetooth" : `USB ${p.port}`;
+    let line = `Connected over ${via} · ZFP ${p.zfp}`;
+    if (p.matchesWallet === false) line += " · not this wallet's seed";
+    $("device-line").textContent = line;
+  }
+  // Import once paired and the wallet is still empty.
+  const importing = p !== null && s !== null && !s.hasAccount;
+  $("device-import-form").hidden = !importing;
+  if (importing && p) {
+    $("dev-zfp").textContent = p.zfp;
+    $("dev-ua").textContent = chunk(p.ua);
+    const bday = $<HTMLInputElement>("dev-birthday");
+    if (p.birthday !== null && bday.value === "") bday.value = String(p.birthday);
+    $("dev-bday-label").textContent =
+      p.birthday !== null
+        ? `Birthday height (from the device: ${p.birthday})`
+        : "Birthday height (the first block that can hold its funds; the device does not know it)";
+  }
+  if (p?.matchesWallet === false) {
+    $("device-err").textContent = `This LeekWallet holds another seed (ZFP ${p.zfp}) than this wallet's account (ZFP ${s?.zfp ?? "?"}).`;
+  } else if (p) {
+    $("device-err").textContent = "";
+  }
 }
 
 function showScanned(scanned: number, tip: number, birthday: number): void {
@@ -270,6 +371,319 @@ $("copy-ua").addEventListener("click", async () => {
   }
 });
 
+// ------------------------------------------------------------------- device
+
+// Device calls wait on a person: the backend runs one at a time and reports
+// each step on `device://status`. Whichever flow is running owns the status
+// line those steps are written to.
+let statusLine = "device-status";
+let uploadBar: HTMLProgressElement | null = null;
+
+void tauri?.event?.listen?.<DeviceStatus>("device://status", ({ payload: st }) => {
+  $(statusLine).textContent = st.message;
+  if (uploadBar && st.step === "upload" && st.total) {
+    uploadBar.hidden = false;
+    uploadBar.value = (st.done ?? 0) / st.total;
+  }
+});
+
+void tauri?.event?.listen?.<string>("device://passkey", ({ payload: passkey }) => {
+  $("passkey").textContent = `${passkey.slice(0, 3)} ${passkey.slice(3)}`;
+  $("pairing").hidden = false;
+});
+
+/** Runs one device flow with its status line, its button disabled. */
+async function deviceFlow<T>(line: string, btn: HTMLButtonElement, f: () => Promise<T>): Promise<T> {
+  statusLine = line;
+  btn.disabled = true;
+  $(line).textContent = "";
+  try {
+    return await f();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** A device call failed: if the backend closed the session, show the chooser again. */
+async function afterDeviceError(): Promise<void> {
+  try {
+    paired = await invoke<Paired | null>("device_session");
+  } catch {
+    /* busy: leave the panel as it is */
+  }
+  renderDevice();
+}
+
+/** The link chooser: serial ports (the board's first), then Bluetooth. */
+let bleFound: BleDevice[] = [];
+
+async function loadLinks(): Promise<void> {
+  const sel = $<HTMLSelectElement>("link");
+  const keep = sel.value;
+  let ports: PortInfo[] = [];
+  try {
+    ports = await invoke<PortInfo[]>("list_ports");
+  } catch (e) {
+    $("device-err").textContent = errText(e);
+  }
+  sel.replaceChildren();
+  const add = (value: string, label: string) => {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    sel.append(o);
+  };
+  for (const p of ports) {
+    add(`usb:${p.name}`, `USB · ${p.name} · ${p.description}${p.likelyDevice ? " (LeekWallet?)" : ""}`);
+  }
+  if (ports.length === 0) add("usb:", "USB · no serial port found (plug in the board, then Refresh)");
+  for (const d of bleFound) add(`ble:${d.id}`, `Bluetooth · ${d.name ?? "LeekWallet"} · ${d.id}`);
+  add("ble:", "Bluetooth · first LeekWallet found");
+  if (Array.from(sel.options).some((o) => o.value === keep)) sel.value = keep;
+}
+
+$("link-refresh").addEventListener("click", () => void loadLinks());
+
+$("ble-scan").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("ble-scan");
+  $("device-err").textContent = "";
+  try {
+    await deviceFlow("device-status", btn, async () => {
+      $("device-status").textContent = "Scanning for LeekWallets over Bluetooth…";
+      bleFound = await invoke<BleDevice[]>("ble_scan");
+      $("device-status").textContent =
+        bleFound.length === 0
+          ? "No LeekWallet is advertising. Select Bluetooth as the link on the device, then scan again."
+          : `Found ${bleFound.length} over Bluetooth.`;
+    });
+    await loadLinks();
+    if (bleFound[0]) $<HTMLSelectElement>("link").value = `ble:${bleFound[0].id}`;
+  } catch (e) {
+    $("device-status").textContent = "";
+    $("device-err").textContent = errText(e);
+  }
+});
+
+$("pair-btn").addEventListener("click", async () => {
+  const choice = $<HTMLSelectElement>("link").value;
+  const sep = choice.indexOf(":");
+  const transport = choice.slice(0, sep);
+  const port = choice.slice(sep + 1);
+  if (transport === "usb" && port === "") {
+    $("device-err").textContent = "No serial port to connect to. Plug in the board and press Refresh, or choose Bluetooth.";
+    return;
+  }
+  $("device-err").textContent = "";
+  $("passkey").textContent = "";
+  setConn("connecting", "Connecting to LeekWallet…");
+  try {
+    paired = await deviceFlow("device-status", $<HTMLButtonElement>("pair-btn"), () =>
+      invoke<Paired>("device_pair", { transport, port: port === "" ? null : port, account: 0 }),
+    );
+    $("device-status").textContent = "";
+    $("pairing").hidden = true;
+    await refresh();
+  } catch (e) {
+    $("pairing").hidden = true;
+    $("device-status").textContent = "";
+    $("device-err").textContent = errText(e);
+    setConn("error", "Not connected");
+    await afterDeviceError();
+  }
+});
+
+$("unpair-btn").addEventListener("click", async () => {
+  try {
+    await invoke("device_disconnect");
+    paired = null;
+    $("device-status").textContent = "";
+    renderDevice();
+  } catch (e) {
+    $("device-err").textContent = errText(e);
+  }
+});
+
+$<HTMLFormElement>("device-import-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const bdayEl = $<HTMLInputElement>("dev-birthday");
+  const err = $("dev-import-err");
+  err.textContent = "";
+  const raw = bdayEl.value.trim();
+  const birthday = raw === "" ? null : Number(raw);
+  const bad = birthday !== null && (!Number.isInteger(birthday) || birthday <= 0);
+  bdayEl.setAttribute("aria-invalid", String(bad));
+  if (bad || (birthday === null && paired?.birthday == null)) {
+    bdayEl.setAttribute("aria-invalid", "true");
+    err.textContent = "Enter a birthday height: the first block that can hold this account's funds.";
+    return;
+  }
+  setConn("connecting", "Importing…");
+  try {
+    const r = await deviceFlow("device-status", $<HTMLButtonElement>("dev-import-btn"), () =>
+      invoke<DeviceImported>("device_import", { birthday }),
+    );
+    const where =
+      r.birthdayStored === true
+        ? " It is now recorded on the device too."
+        : r.birthdayStored === false
+          ? " The device keeps it until it locks (passphrase or temporary seed)."
+          : "";
+    $("device-status").textContent = `Imported ZFP ${r.zfp}, born at block ${r.birthday}.${where} Sync to see the balance.`;
+    bdayEl.value = "";
+    await refresh();
+  } catch (e) {
+    err.textContent = errText(e);
+    setConn("error", "Import failed");
+    await afterDeviceError();
+  }
+});
+
+$("dev-tip-btn").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("dev-tip-btn");
+  btn.disabled = true;
+  try {
+    const t = await invoke<Tip>("tip");
+    $<HTMLInputElement>("dev-birthday").value = String(t.height);
+  } catch (e) {
+    $("dev-import-err").textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("verify-btn").addEventListener("click", async () => {
+  $("verify-err").textContent = "";
+  if (!paired) {
+    $("verify-err").textContent = "Connect the LeekWallet first (above).";
+    return;
+  }
+  const ua = $("ua").dataset["raw"] ?? "";
+  try {
+    await deviceFlow("verify-status", $<HTMLButtonElement>("verify-btn"), () => invoke("verify_address", { ua }));
+    $("verify-status").textContent = "Confirmed on the device: this address is your LeekWallet's.";
+  } catch (e) {
+    $("verify-status").textContent = "";
+    $("verify-err").textContent = errText(e);
+    await afterDeviceError();
+  }
+});
+
+// --------------------------------------------------------------------- send
+
+let proposal: Proposal | null = null;
+
+function showSendStage(stage: "form" | "review" | "sent"): void {
+  $("send-form").hidden = stage !== "form";
+  $("review").hidden = stage !== "review";
+  $("sent").hidden = stage !== "sent";
+}
+
+function renderReview(p: Proposal): void {
+  const kv = $("review-kv");
+  kv.replaceChildren();
+  const row = (k: string, v: string, wrap = false) => {
+    const dt = document.createElement("dt");
+    dt.textContent = k;
+    const dd = document.createElement("dd");
+    dd.textContent = v;
+    if (wrap) dd.style.textAlign = "left";
+    kv.append(dt, dd);
+  };
+  for (const pay of p.payments) {
+    row("To", chunk(pay.recipient), true);
+    row("Amount", `${formatZec(pay.amountZat, ticker)} · ${pay.pool}${pay.hasMemo ? " · with memo" : ""}`);
+  }
+  for (const c of p.change) row("Change", `${formatZec(c.valueZat, ticker)} · ${c.pool}`);
+  row("Fee", formatZec(p.feeZat, ticker));
+  row("Total", formatZec(p.totalZat, ticker));
+  $("review-note").textContent =
+    `Check these against the device's review pages. The device receives a ${p.compact ? "compact" : "full"} PCZT of ` +
+    `${p.signerViewBytes.toLocaleString("en-US")} bytes. Sign soon: a built transaction expires about 40 blocks after ${p.targetHeight}.`;
+}
+
+$<HTMLFormElement>("send-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const err = $("send-err");
+  err.textContent = "";
+  const to = $<HTMLTextAreaElement>("send-to").value.trim();
+  const amount = $<HTMLInputElement>("send-amount").value.trim();
+  const memo = $<HTMLTextAreaElement>("send-memo").value;
+  $("send-to").setAttribute("aria-invalid", String(to === ""));
+  const badAmount = !/^\d*(\.\d{0,8})?$/.test(amount) || amount === "" || amount === ".";
+  $("send-amount").setAttribute("aria-invalid", String(badAmount));
+  if (to === "" || badAmount) {
+    err.textContent = `Enter an address and an amount in ${ticker} (at most 8 decimals).`;
+    return;
+  }
+  const btn = $<HTMLButtonElement>("review-btn");
+  btn.disabled = true;
+  try {
+    proposal = await invoke<Proposal>("propose_send", { to, amount, memo: memo.trim() === "" ? null : memo });
+    renderReview(proposal);
+    $("sign-status").textContent = "";
+    $("sign-err").textContent = "";
+    $<HTMLProgressElement>("sign-bar").hidden = true;
+    showSendStage("review");
+  } catch (e) {
+    err.textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("cancel-btn").addEventListener("click", () => {
+  proposal = null;
+  showSendStage("form");
+});
+
+$("sign-btn").addEventListener("click", async () => {
+  if (!proposal) return;
+  $("sign-err").textContent = "";
+  if (!paired) {
+    $("sign-err").textContent = "Connect the LeekWallet first (above).";
+    return;
+  }
+  const bar = $<HTMLProgressElement>("sign-bar");
+  bar.value = 0;
+  uploadBar = bar;
+  $<HTMLButtonElement>("cancel-btn").disabled = true;
+  setConn("connecting", "Signing on LeekWallet…");
+  try {
+    const sent = await deviceFlow("sign-status", $<HTMLButtonElement>("sign-btn"), () =>
+      invoke<Sent>("sign_and_send", { proposalId: proposal?.id }),
+    );
+    proposal = null;
+    const txid = $("txid");
+    txid.textContent = sent.txid;
+    txid.dataset["raw"] = sent.txid;
+    $<HTMLFormElement>("send-form").reset();
+    showSendStage("sent");
+    setConn("connected", "Sent");
+    await renderBalances();
+  } catch (e) {
+    $("sign-status").textContent = "";
+    $("sign-err").textContent = errText(e);
+    setConn("error", "Not sent");
+    await afterDeviceError();
+  } finally {
+    uploadBar = null;
+    bar.hidden = true;
+    $<HTMLButtonElement>("cancel-btn").disabled = false;
+  }
+});
+
+$("new-send-btn").addEventListener("click", () => showSendStage("form"));
+
+$("copy-txid").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("txid").dataset["raw"] ?? "");
+    $("copy-txid").textContent = "Copied";
+    setTimeout(() => ($("copy-txid").textContent = "Copy"), 1500);
+  } catch {
+    /* the txid is on screen to select by hand */
+  }
+});
+
 // -------------------------------------------------------------------- theme
 
 type Theme = "system" | "light" | "dark";
@@ -311,3 +725,4 @@ applyTheme(currentTheme());
 refresh().catch((e) => {
   setConn("error", errText(e));
 });
+void loadLinks();

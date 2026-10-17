@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
-use ciborium::value::Value;
+// Re-exported: the replies of `call` and `z_get_account` are CBOR values.
+pub use ciborium::value::Value;
 use hkdf::Hkdf;
 use leek_transport_serial::{
     TransportError, FRAME_ENC_REQUEST, FRAME_ENC_RESPONSE, FRAME_ERROR,

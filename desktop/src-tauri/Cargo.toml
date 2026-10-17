@@ -29,11 +29,24 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-tokio = { version = "1", features = ["rt", "macros", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 zecz-core = { path = "../../host/zecz-core" }
+# The device links: LeekWallet's serial transport (port listing; zecz's
+# Device opens the port through it) and its btleplug Bluetooth transport,
+# which src/link.rs adapts to leek-device's FramePort.
+leek-transport-serial = { path = "../../firmware/app/transport-serial" }
+leek-transport-ble = { path = "../../firmware/app/transport-ble" }
 
 [dev-dependencies]
 serde_json = "1"
+hex = "0.4"
+# The device tests build a wallet birthday offline and prove what the
+# device signed, as host/zecz-core's tests do (the same pinned revision).
+pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
+zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+rand = { version = "0.10", features = ["sys_rng"] }
 
 # Scanning (trial decryption) and Halo 2 proving are unbearably slow
 # unoptimized, so dependencies are always optimized; the app crate itself

@@ -533,6 +533,17 @@ impl Wallet {
         Ok(u32::from(self.db.get_account_birthday(id)?))
     }
 
+    /// Where the account's spending key lives: the ZIP 32 origin a device
+    /// account was imported with. None for a view-only account.
+    pub fn key_origin(&self) -> Result<Option<KeyOrigin>> {
+        let (id, _) = self.the_account()?;
+        let acct = self.db.get_account(id)?.ok_or_else(|| anyhow!("account vanished"))?;
+        Ok(acct.source().key_derivation().map(|d| KeyOrigin {
+            seed_fingerprint: d.seed_fingerprint().to_bytes(),
+            account_index: u32::from(d.account_index()),
+        }))
+    }
+
     /// The account's default addresses.
     pub fn addresses(&self) -> Result<Addresses> {
         let (_, ufvk) = self.the_account()?;
