@@ -13,8 +13,9 @@ pub mod backend;
 pub mod contacts;
 pub mod hardware;
 pub mod link;
+pub mod settings;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -33,11 +34,16 @@ pub const DEVICE_STATUS_EVENT: &str = "device://status";
 const WALLET_BUSY: &str = "the wallet is busy (a sync, an import or a send is running)";
 const DEVICE_BUSY: &str = "the LeekWallet is busy with another request; finish that one first";
 
-/// The app's one profile, fixed at startup, and the device session.
+/// The selected network's wallet, the saved settings, and the device session.
 pub struct AppState {
-    profile: Profile,
-    /// The address book file, `<app data dir>/contacts-<test|main>.json`.
-    contacts: PathBuf,
+    /// `<app data dir>`: settings.json, wallets/<test|main>, contacts-<net>.json.
+    app_data: PathBuf,
+    /// The wallet the commands act on: the selected network's directory
+    /// and server. Replaced only by `set_network` / `set_server`, which hold
+    /// both busy flags (or the wallet's) while they do.
+    profile: Arc<Mutex<Profile>>,
+    /// LEEKZ_NETWORK or LEEKZ_SERVER chose this run's network or server.
+    from_environment: Arc<AtomicBool>,
     /// A sync, import or send is running; another is refused meanwhile.
     busy: Arc<AtomicBool>,
     /// A device call is running. The device answers one request at a time
@@ -49,20 +55,38 @@ pub struct AppState {
     proposal: Arc<Mutex<Option<(String, Vec<u8>)>>>,
 }
 
-/// The network: testnet unless `LEEKZ_NETWORK=main`. A switch in the UI
-/// comes with software wallets (8.2); until then mainnet is opt-in from
-/// the environment only.
-fn network_from_env() -> Network {
-    match std::env::var("LEEKZ_NETWORK").as_deref() {
-        Ok("main") | Ok("mainnet") => Network::MainNetwork,
-        _ => Network::TestNetwork,
+impl AppState {
+    fn profile(&self) -> Profile {
+        self.profile.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// The address book of the selected network.
+    fn contacts_path(&self) -> PathBuf {
+        contacts::path_in(&self.app_data, self.profile().network)
+    }
+
+    fn network_dto(&self) -> settings::NetworkDto {
+        let saved = settings::load(&settings::path_in(&self.app_data)).unwrap_or_default();
+        settings::NetworkDto::of(&self.profile(), &saved, self.from_environment.load(Ordering::SeqCst))
     }
 }
 
-/// `<app data dir>/wallets/<test|main>`: one wallet directory per network,
-/// since a zecz data directory is bound to one.
-fn data_dir(app: &AppHandle, network: Network) -> tauri::Result<PathBuf> {
-    Ok(app.path().app_data_dir()?.join("wallets").join(zecz::wallet::network_name(network)))
+/// The profile this run starts with: the saved network and server
+/// (testnet and its default server the first time), unless LEEKZ_NETWORK
+/// (test or main) or LEEKZ_SERVER says otherwise for this run. The
+/// environment is never saved. Returns whether it decided anything.
+fn startup_profile(app_data: &Path) -> (Profile, bool) {
+    let path = settings::path_in(app_data);
+    let saved = settings::load(&path).unwrap_or_else(|e| {
+        eprintln!("LeekWallet Zcash: {e:#}; using the defaults (testnet)");
+        settings::Settings::default()
+    });
+    let env_net = std::env::var("LEEKZ_NETWORK").ok().and_then(|n| settings::parse_network(&n).ok());
+    let env_server = std::env::var("LEEKZ_SERVER").ok().filter(|s| !s.trim().is_empty());
+    let network = env_net.or_else(|| saved.network().ok()).unwrap_or(Network::TestNetwork);
+    let server = env_server.clone().unwrap_or_else(|| saved.server_for(network));
+    let p = Profile::new(network, settings::wallet_dir(app_data, network), Some(server));
+    (p, env_net.is_some() || env_server.is_some())
 }
 
 /// Runs `f` on a fresh thread and waits for it without blocking the async
@@ -105,14 +129,14 @@ impl Drop for BusyGuard {
 
 #[tauri::command]
 async fn profile_status(state: State<'_, AppState>) -> Result<backend::ProfileStatus, String> {
-    let p = state.profile.clone();
+    let p = state.profile();
     off_thread(move || backend::profile_status(&p)).await
 }
 
 #[tauri::command]
 async fn init_watch_only(state: State<'_, AppState>, ufvk: String, birthday: u32) -> Result<backend::Imported, String> {
     let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
-    let p = state.profile.clone();
+    let p = state.profile();
     off_thread(move || {
         let _guard = guard;
         backend::init_watch_only(&p, &ufvk, birthday)
@@ -123,7 +147,7 @@ async fn init_watch_only(state: State<'_, AppState>, ufvk: String, birthday: u32
 #[tauri::command]
 async fn sync(app: AppHandle, state: State<'_, AppState>) -> Result<backend::SyncDone, String> {
     let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
-    let p = state.profile.clone();
+    let p = state.profile();
     off_thread(move || {
         let _guard = guard;
         backend::sync(&p, |e| {
@@ -135,13 +159,13 @@ async fn sync(app: AppHandle, state: State<'_, AppState>) -> Result<backend::Syn
 
 #[tauri::command]
 async fn balances(state: State<'_, AppState>) -> Result<Option<backend::BalancesDto>, String> {
-    let p = state.profile.clone();
+    let p = state.profile();
     off_thread(move || backend::balances(&p)).await
 }
 
 #[tauri::command]
 async fn addresses(state: State<'_, AppState>) -> Result<backend::AddressesDto, String> {
-    let p = state.profile.clone();
+    let p = state.profile();
     off_thread(move || backend::addresses(&p)).await
 }
 
@@ -150,7 +174,7 @@ async fn addresses(state: State<'_, AppState>) -> Result<backend::AddressesDto, 
 /// The address book for this network, sorted by name.
 #[tauri::command]
 async fn contacts_list(state: State<'_, AppState>) -> Result<Vec<contacts::Contact>, String> {
-    let path = state.contacts.clone();
+    let path = state.contacts_path();
     off_thread(move || contacts::list(&path)).await
 }
 
@@ -162,21 +186,21 @@ async fn contact_save(
     address: String,
     replacing: Option<String>,
 ) -> Result<Vec<contacts::Contact>, String> {
-    let (path, network) = (state.contacts.clone(), state.profile.network);
+    let (path, network) = (state.contacts_path(), state.profile().network);
     off_thread(move || contacts::save(&path, network, &name, &address, replacing.as_deref())).await
 }
 
 /// Removes the contact called `name`. Returns the book.
 #[tauri::command]
 async fn contact_remove(state: State<'_, AppState>, name: String) -> Result<Vec<contacts::Contact>, String> {
-    let path = state.contacts.clone();
+    let path = state.contacts_path();
     off_thread(move || contacts::remove(&path, &name)).await
 }
 
 /// The account's transactions, newest first.
 #[tauri::command]
 async fn history(state: State<'_, AppState>) -> Result<Vec<backend::TxDto>, String> {
-    let p = state.profile.clone();
+    let p = state.profile();
     off_thread(move || backend::history(&p)).await
 }
 
@@ -184,7 +208,7 @@ async fn history(state: State<'_, AppState>) -> Result<Vec<backend::TxDto>, Stri
 #[tauri::command]
 async fn next_address(state: State<'_, AppState>) -> Result<backend::NewAddressDto, String> {
     let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
-    let p = state.profile.clone();
+    let p = state.profile();
     off_thread(move || {
         let _guard = guard;
         backend::next_address(&p)
@@ -200,7 +224,7 @@ fn qr_svg(text: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn tip(state: State<'_, AppState>) -> Result<backend::TipDto, String> {
-    let server = state.profile.server.clone();
+    let server = state.profile().server;
     off_thread(move || backend::tip(&server)).await
 }
 
@@ -261,7 +285,7 @@ async fn device_pair(
     account: Option<u32>,
 ) -> Result<hardware::PairedDto, String> {
     let guard = BusyGuard::take(&state.device_busy, DEVICE_BUSY)?;
-    let (slot, profile) = (state.device.clone(), state.profile.clone());
+    let (slot, profile) = (state.device.clone(), state.profile());
     off_thread(move || {
         let _guard = guard;
         // Closed first: a serial port opens once, and the device serves one
@@ -291,7 +315,7 @@ async fn device_pair(
 /// The paired device, if any. Never waits on a running device call.
 #[tauri::command]
 async fn device_session(state: State<'_, AppState>) -> Result<Option<hardware::PairedDto>, String> {
-    let (slot, profile) = (state.device.clone(), state.profile.clone());
+    let (slot, profile) = (state.device.clone(), state.profile());
     off_thread(move || {
         let r = match slot.try_lock() {
             Ok(s) => s.as_ref().map(|s| s.describe(&profile)).transpose(),
@@ -325,7 +349,7 @@ async fn device_import(
 ) -> Result<hardware::DeviceImported, String> {
     let dguard = BusyGuard::take(&state.device_busy, DEVICE_BUSY)?;
     let wguard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
-    let (slot, profile) = (state.device.clone(), state.profile.clone());
+    let (slot, profile) = (state.device.clone(), state.profile());
     off_thread(move || {
         let _guards = (dguard, wguard);
         let status = status_emitter(&app);
@@ -338,7 +362,7 @@ async fn device_import(
 #[tauri::command]
 async fn verify_address(app: AppHandle, state: State<'_, AppState>, ua: String) -> Result<(), String> {
     let guard = BusyGuard::take(&state.device_busy, DEVICE_BUSY)?;
-    let (slot, profile) = (state.device.clone(), state.profile.clone());
+    let (slot, profile) = (state.device.clone(), state.profile());
     off_thread(move || {
         let _guard = guard;
         let status = status_emitter(&app);
@@ -357,7 +381,7 @@ async fn propose_send(
     memo: Option<String>,
 ) -> Result<hardware::ProposalDto, String> {
     let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
-    let (profile, slot) = (state.profile.clone(), state.proposal.clone());
+    let (profile, slot) = (state.profile(), state.proposal.clone());
     off_thread(move || {
         let _guard = guard;
         let (dto, view) = hardware::propose_send(&profile, &to, &amount, memo.as_deref())?;
@@ -373,7 +397,7 @@ async fn propose_send(
 #[tauri::command]
 async fn propose_shield(state: State<'_, AppState>) -> Result<hardware::ProposalDto, String> {
     let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
-    let (profile, slot) = (state.profile.clone(), state.proposal.clone());
+    let (profile, slot) = (state.profile(), state.proposal.clone());
     off_thread(move || {
         let _guard = guard;
         let (dto, view) = hardware::propose_shield(&profile)?;
@@ -384,18 +408,22 @@ async fn propose_shield(state: State<'_, AppState>) -> Result<hardware::Proposal
 }
 
 /// Signs the reviewed proposal on the device, then proves, stores and
-/// broadcasts it; progress on `device://status`. Returns the txid.
+/// broadcasts it; progress on `device://status`. Returns the txid. On
+/// mainnet, `confirmMainnet` must be true: the user ticked the real-funds
+/// confirmation under the review.
 #[tauri::command]
 async fn sign_and_send(
     app: AppHandle,
     state: State<'_, AppState>,
     proposal_id: String,
+    confirm_mainnet: Option<bool>,
 ) -> Result<hardware::SentDto, String> {
     let dguard = BusyGuard::take(&state.device_busy, DEVICE_BUSY)?;
     let wguard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
-    let (slot, profile, proposal) = (state.device.clone(), state.profile.clone(), state.proposal.clone());
+    let (slot, profile, proposal) = (state.device.clone(), state.profile(), state.proposal.clone());
     off_thread(move || {
         let _guards = (dguard, wguard);
+        hardware::check_mainnet_confirmed(&profile, confirm_mainnet.unwrap_or(false))?;
         let view = match &*proposal.lock().unwrap_or_else(|p| p.into_inner()) {
             Some((id, view)) if *id == proposal_id => view.clone(),
             _ => anyhow::bail!("this send is no longer pending; build it again"),
@@ -409,17 +437,68 @@ async fn sign_and_send(
     .await
 }
 
+// ----------------------------------------------------------------- network
+
+/// The network the app is on and its lightwalletd server.
+#[tauri::command]
+async fn network_settings(state: State<'_, AppState>) -> Result<settings::NetworkDto, String> {
+    Ok(state.network_dto())
+}
+
+/// Switches to `network` ("test" or "main") and saves the choice. The other
+/// network's wallet stays in its own directory, untouched. The device
+/// session and any pending send are dropped: both belong to the old
+/// network. Refused while a wallet or device call runs.
+#[tauri::command]
+async fn set_network(state: State<'_, AppState>, network: String) -> Result<settings::NetworkDto, String> {
+    let dguard = BusyGuard::take(&state.device_busy, DEVICE_BUSY)?;
+    let wguard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
+    let (app_data, slot, proposal) = (state.app_data.clone(), state.device.clone(), state.proposal.clone());
+    let (current, from_env) = (state.profile.clone(), state.from_environment.clone());
+    off_thread(move || {
+        let _guards = (dguard, wguard);
+        let network = settings::parse_network(&network)?;
+        let (_, p) = settings::switch_network(&settings::path_in(&app_data), &app_data, network)?;
+        // After the save succeeded, and before the guards let another
+        // command in: no session or proposal of the old network survives.
+        *slot.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *proposal.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *current.lock().unwrap_or_else(|p| p.into_inner()) = p;
+        from_env.store(false, Ordering::SeqCst);
+        Ok(())
+    })
+    .await?;
+    Ok(state.network_dto())
+}
+
+/// Sets the lightwalletd server of the current network and saves it; an
+/// empty one goes back to the default. Its chain is checked when it is
+/// used (sync, import, broadcast).
+#[tauri::command]
+async fn set_server(state: State<'_, AppState>, server: Option<String>) -> Result<settings::NetworkDto, String> {
+    let wguard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
+    let (app_data, current) = (state.app_data.clone(), state.profile.clone());
+    off_thread(move || {
+        let _guard = wguard;
+        let network = current.lock().unwrap_or_else(|p| p.into_inner()).network;
+        let saved = settings::save_server(&settings::path_in(&app_data), network, server.as_deref())?;
+        current.lock().unwrap_or_else(|p| p.into_inner()).server = saved.server_for(network);
+        Ok(())
+    })
+    .await?;
+    Ok(state.network_dto())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let network = network_from_env();
-            let server = std::env::var("LEEKZ_SERVER").ok().filter(|s| !s.is_empty());
-            let profile = Profile::new(network, data_dir(app.handle(), network)?, server);
-            let contacts_file = contacts::path_in(&app.path().app_data_dir()?, network);
+            let app_data = app.path().app_data_dir()?;
+            let (profile, from_env) = startup_profile(&app_data);
             app.manage(AppState {
-                profile,
-                contacts: contacts_file,
+                app_data,
+                profile: Arc::new(Mutex::new(profile)),
+                from_environment: Arc::new(AtomicBool::new(from_env)),
                 busy: Arc::new(AtomicBool::new(false)),
                 device_busy: Arc::new(AtomicBool::new(false)),
                 device: Arc::new(Mutex::new(None)),
@@ -449,7 +528,10 @@ pub fn run() {
             sign_and_send,
             contacts_list,
             contact_save,
-            contact_remove
+            contact_remove,
+            network_settings,
+            set_network,
+            set_server
         ])
         .run(tauri::generate_context!())
         .expect("error while running LeekWallet Zcash");

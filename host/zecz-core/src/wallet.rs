@@ -471,9 +471,42 @@ pub async fn tip(server: &str) -> Result<TipInfo> {
     })
 }
 
-/// Sends a raw transaction through lightwalletd.
-pub async fn broadcast(server: &str, raw: &[u8]) -> Result<()> {
+/// Checks that a lightwalletd serving `chain_name` (from GetLightdInfo:
+/// "main", "test" or "regtest") follows `network`. A wallet synced from
+/// another chain would store that chain's blocks and tree states as its
+/// own, and a transaction broadcast there is lost.
+pub fn check_chain(network: Network, chain_name: &str) -> Result<()> {
+    let want = network_name(network);
+    if chain_name != want {
+        bail!(
+            "the lightwalletd server follows the {chain_name:?} chain, but this wallet is on {want:?}; use a {} server",
+            if want == "main" { "mainnet" } else { "testnet" }
+        );
+    }
+    Ok(())
+}
+
+/// Connects to lightwalletd and checks that it serves `network`'s chain.
+async fn connect_for(network: Network, server: &str) -> Result<lwd::Client> {
     let mut client = lwd::connect(server).await?;
+    let info = client.get_lightd_info(Empty {}).await.context("GetLightdInfo")?.into_inner();
+    check_chain(network, &info.chain_name).with_context(|| format!("server {server}"))?;
+    Ok(client)
+}
+
+/// Sends a raw transaction through lightwalletd. Prefer [`broadcast_on`],
+/// which first checks the server's chain.
+pub async fn broadcast(server: &str, raw: &[u8]) -> Result<()> {
+    send_raw(lwd::connect(server).await?, raw).await
+}
+
+/// Sends a raw transaction through lightwalletd, after checking that the
+/// server follows `network`.
+pub async fn broadcast_on(network: Network, server: &str, raw: &[u8]) -> Result<()> {
+    send_raw(connect_for(network, server).await?, raw).await
+}
+
+async fn send_raw(mut client: lwd::Client, raw: &[u8]) -> Result<()> {
     let resp = client
         .send_transaction(RawTransaction { data: raw.to_vec(), height: 0 })
         .await
@@ -530,7 +563,7 @@ impl Wallet {
         }
         let height = birthday.saturating_sub(1);
         on_event(InitEvent::FetchingTreeState { height, server: w.profile.server.clone() });
-        let mut client = lwd::connect(&w.profile.server).await?;
+        let mut client = connect_for(w.profile.network, &w.profile.server).await?;
         let ts = client
             .get_tree_state(BlockId { height: u64::from(height), hash: vec![] })
             .await
@@ -783,7 +816,7 @@ impl Wallet {
     /// `batch` blocks at a time.
     pub async fn sync(&mut self, batch: u32, on_event: impl Fn(SyncEvent) + Send + Sync) -> Result<Option<SyncStatus>> {
         self.the_account()?;
-        let mut client = lwd::connect(&self.profile.server).await?;
+        let mut client = connect_for(self.profile.network, &self.profile.server).await?;
         let tip = client.get_latest_block(ChainSpec {}).await.context("GetLatestBlock")?.into_inner();
         on_event(SyncEvent::Started { server: self.profile.server.clone(), tip: tip.height });
         let cache = MemBlockCache::with_progress(|r| on_event(SyncEvent::Scanned(r)));
@@ -1068,7 +1101,7 @@ impl Wallet {
         on_event(FinishEvent::Stored { txid: txid.clone(), size: raw.len(), raw_path: raw_path.clone() });
 
         if broadcast {
-            self::broadcast(&self.profile.server, &raw).await?;
+            self::broadcast_on(self.profile.network, &self.profile.server, &raw).await?;
         }
         Ok(Finished { txid, signatures: z.entries.len(), raw, raw_path, broadcast })
     }

@@ -172,6 +172,15 @@ interface Tip {
   version: string;
 }
 
+interface NetworkSettings {
+  network: "test" | "main" | string;
+  server: string;
+  defaultServer: string;
+  customServer: boolean;
+  /** LEEKZ_NETWORK / LEEKZ_SERVER chose this run's network or server. */
+  fromEnvironment: boolean;
+}
+
 // ------------------------------------------------------------------ helpers
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
@@ -217,7 +226,11 @@ async function refresh(): Promise<void> {
   net.dataset["net"] = s.network;
   $("server").textContent = s.server;
   $("server").title = `lightwalletd server ${s.server}; wallet data in ${s.dataDir}`;
-  $("netnote").hidden = s.network === "main";
+  const main = s.network === "main";
+  $("netnote").hidden = main;
+  $("mainnote").hidden = !main;
+  $("ufvk-hrp").textContent = main ? "uview1…" : "uviewtest1…";
+  document.querySelectorAll<HTMLElement>(".confirm-main").forEach((el) => (el.hidden = !main));
 
   // A watch-only account has no device; an empty wallet offers both ways in.
   $("device-panel").hidden = s.hasAccount && !s.hardware;
@@ -721,6 +734,7 @@ $<HTMLFormElement>("send-form").addEventListener("submit", async (ev) => {
     $("sign-status").textContent = "";
     $("sign-err").textContent = "";
     $<HTMLProgressElement>("sign-bar").hidden = true;
+    armMainnetConfirm("send-main-confirm", "sign-btn");
     showSendStage("review");
   } catch (e) {
     err.textContent = errText(e);
@@ -734,6 +748,25 @@ $("cancel-btn").addEventListener("click", () => {
   showSendStage("form");
 });
 
+function isMainnet(): boolean {
+  return profile?.network === "main";
+}
+
+/** On mainnet the sign button waits for the real-funds tick, cleared for each new review. */
+function armMainnetConfirm(box: string, sign: string): void {
+  $<HTMLInputElement>(box).checked = false;
+  $<HTMLButtonElement>(sign).disabled = isMainnet();
+}
+
+for (const [box, sign] of [
+  ["send-main-confirm", "sign-btn"],
+  ["shield-main-confirm", "shield-sign-btn"],
+] as const) {
+  $(box).addEventListener("change", () => {
+    $<HTMLButtonElement>(sign).disabled = isMainnet() && !$<HTMLInputElement>(box).checked;
+  });
+}
+
 /** The elements of one review: the send's or the shielding's. */
 interface SignUi {
   sign: string;
@@ -741,6 +774,8 @@ interface SignUi {
   bar: string;
   status: string;
   err: string;
+  /** The mainnet real-funds checkbox. */
+  confirm: string;
 }
 
 /**
@@ -754,6 +789,13 @@ async function signOnDevice(p: Proposal, ui: SignUi): Promise<Sent | null> {
     $(ui.err).textContent = "Connect the LeekWallet first (above).";
     return null;
   }
+  // Mainnet: the extra step before the device. The backend refuses the
+  // call without it too.
+  const confirmMainnet = $<HTMLInputElement>(ui.confirm).checked;
+  if (isMainnet() && !confirmMainnet) {
+    $(ui.err).textContent = "This moves real ZEC on mainnet. Tick the confirmation above first.";
+    return null;
+  }
   const bar = $<HTMLProgressElement>(ui.bar);
   bar.value = 0;
   uploadBar = bar;
@@ -761,7 +803,7 @@ async function signOnDevice(p: Proposal, ui: SignUi): Promise<Sent | null> {
   setConn("connecting", "Signing on LeekWallet…");
   try {
     const sent = await deviceFlow(ui.status, $<HTMLButtonElement>(ui.sign), () =>
-      invoke<Sent>("sign_and_send", { proposalId: p.id }),
+      invoke<Sent>("sign_and_send", { proposalId: p.id, confirmMainnet }),
     );
     setConn("connected", p.kind === "shield" ? "Shielded" : "Sent");
     return sent;
@@ -786,6 +828,7 @@ $("sign-btn").addEventListener("click", async () => {
     bar: "sign-bar",
     status: "sign-status",
     err: "sign-err",
+    confirm: "send-main-confirm",
   });
   if (!sent) return;
   proposal = null;
@@ -847,6 +890,7 @@ $("shield-btn").addEventListener("click", async () => {
       `It receives a compact PCZT of ${p.signerViewBytes.toLocaleString("en-US")} bytes. Sign soon: the transaction expires about 40 blocks after ${p.targetHeight}.`;
     $("shield-status").textContent = "";
     $("shield-sign-err").textContent = "";
+    armMainnetConfirm("shield-main-confirm", "shield-sign-btn");
     showShieldStage("review");
   } catch (e) {
     // E.g. the fee would take the whole transparent balance.
@@ -870,6 +914,7 @@ $("shield-sign-btn").addEventListener("click", async () => {
     bar: "shield-bar",
     status: "shield-status",
     err: "shield-sign-err",
+    confirm: "shield-main-confirm",
   });
   if (!sent) return;
   shieldProposal = null;
@@ -1117,6 +1162,93 @@ async function removeContact(c: Contact): Promise<void> {
   }
 }
 
+// ------------------------------------------------------------------ network
+
+let network: NetworkSettings | null = null;
+
+function renderNetwork(n: NetworkSettings): void {
+  network = n;
+  $<HTMLInputElement>(n.network === "main" ? "net-main" : "net-test").checked = true;
+  $("net-confirm").hidden = true;
+  $<HTMLInputElement>("server-input").value = n.server;
+  $("server-label").textContent = `lightwalletd server for ${n.network === "main" ? "mainnet" : "testnet"}`;
+  $("network-summary").textContent = `Network: ${n.network === "main" ? "Mainnet" : "Testnet"} · ${n.server}`;
+  let note = `Default: ${n.defaultServer}. Each network keeps its own wallet and contacts in the app data folder.`;
+  if (n.fromEnvironment) note += " This run's network or server comes from LEEKZ_NETWORK / LEEKZ_SERVER.";
+  $("net-note").textContent = note;
+}
+
+async function loadNetwork(): Promise<void> {
+  try {
+    renderNetwork(await invoke<NetworkSettings>("network_settings"));
+  } catch (e) {
+    $("net-err").textContent = errText(e);
+  }
+}
+
+/** Forgets everything on screen that belonged to the other network's wallet. */
+function resetForNetwork(): void {
+  paired = null;
+  proposal = null;
+  shieldProposal = null;
+  rotated = null;
+  contactList = [];
+  $("pairing").hidden = true;
+  for (const id of ["device-status", "device-err", "dev-import-err", "import-err", "sync-err", "shield-err",
+    "verify-status", "verify-err", "send-err", "history-err", "contact-err"]) {
+    $(id).textContent = "";
+  }
+  for (const id of ["send-form", "import-form", "device-import-form", "contact-form"]) $<HTMLFormElement>(id).reset();
+  showSendStage("form");
+  showShieldStage("idle");
+  $<HTMLProgressElement>("sync-bar").value = 0;
+}
+
+async function switchNetwork(to: "test" | "main"): Promise<void> {
+  $("net-err").textContent = "";
+  const radios = document.querySelectorAll<HTMLInputElement>('input[name="net"]');
+  radios.forEach((r) => (r.disabled = true));
+  try {
+    const n = await invoke<NetworkSettings>("set_network", { network: to });
+    resetForNetwork();
+    renderNetwork(n);
+    await refresh();
+  } catch (e) {
+    // E.g. a sync or a device call is running: stay where we are.
+    $("net-err").textContent = errText(e);
+    if (network) renderNetwork(network);
+  } finally {
+    radios.forEach((r) => (r.disabled = false));
+  }
+}
+
+$("net-test").addEventListener("change", () => {
+  if (network?.network !== "test") void switchNetwork("test");
+});
+
+// Mainnet takes one more step: the switch opens another wallet, for real funds.
+$("net-main").addEventListener("change", () => {
+  if (network?.network === "main") return;
+  $("net-confirm").hidden = false;
+});
+$("net-confirm-btn").addEventListener("click", () => void switchNetwork("main"));
+$("net-cancel-btn").addEventListener("click", () => {
+  if (network) renderNetwork(network);
+});
+
+async function saveServer(server: string | null): Promise<void> {
+  $("net-err").textContent = "";
+  try {
+    renderNetwork(await invoke<NetworkSettings>("set_server", { server }));
+    await refresh();
+  } catch (e) {
+    $("net-err").textContent = errText(e);
+  }
+}
+
+$("server-save").addEventListener("click", () => void saveServer($<HTMLInputElement>("server-input").value.trim()));
+$("server-default").addEventListener("click", () => void saveServer(null));
+
 // -------------------------------------------------------------------- theme
 
 type Theme = "system" | "light" | "dark";
@@ -1155,6 +1287,7 @@ $("theme").addEventListener("click", () => {
 
 applyTheme(currentTheme());
 
+void loadNetwork();
 refresh().catch((e) => {
   setConn("error", errText(e));
 });

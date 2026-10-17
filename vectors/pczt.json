@@ -701,5 +701,195 @@
     "consensus_branch_id": null,
     "fee": null,
     "outputs": []
+  },
+  {
+    "name": "main_iw_send_shielded",
+    "description": "Mainnet: Ironwood note to an external u1 address with memo, change back to self (v6, NU6.3, coin type 133)",
+    "file": "pczt/main_iw_send_shielded.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "ok",
+    "sighash": "7b1644b2641b8cc3364413f5556fb14dff28c1eaa5b389e31db795c65f97955f",
+    "consensus_branch_id": "37a5165b",
+    "fee": 10000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "external",
+        "address": "u1yr0x0lh5svjdqqq20rfgwzkyzy3wv94740zjgr07yjkngmpquc4gjzlsp32kscwtw6z43rtx9xzvf96l597m7ctv3v93m87tkqwzs2m9",
+        "value": 100000,
+        "memo": "LeekWallet Zcash mainnet"
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 890000,
+        "memo": ""
+      }
+    ]
+  },
+  {
+    "name": "main_iw_send_shielded_compact",
+    "description": "Vector main_iw_send_shielded in the compact signer view (v2)",
+    "file": "pczt/main_iw_send_shielded_compact.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "ok",
+    "sighash": "7b1644b2641b8cc3364413f5556fb14dff28c1eaa5b389e31db795c65f97955f",
+    "consensus_branch_id": "37a5165b",
+    "fee": 10000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "external",
+        "address": "u1yr0x0lh5svjdqqq20rfgwzkyzy3wv94740zjgr07yjkngmpquc4gjzlsp32kscwtw6z43rtx9xzvf96l597m7ctv3v93m87tkqwzs2m9",
+        "value": 100000,
+        "memo": "LeekWallet Zcash mainnet"
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 890000,
+        "memo": ""
+      }
+    ]
+  },
+  {
+    "name": "main_t_shield",
+    "description": "Mainnet: two transparent t1 coins of this account shielded to its Ironwood change address (v6, NU6.3, m/44'/133')",
+    "file": "pczt/main_t_shield.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "ok",
+    "sighash": "25026aaa3f1c321609935645065be2cc0c10ffa02635f53d60d12183ed6226fd",
+    "consensus_branch_id": "37a5165b",
+    "fee": 20000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 480000,
+        "memo": ""
+      }
+    ],
+    "t_inputs": [
+      {
+        "address": "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F",
+        "value": 300000,
+        "scope": 0,
+        "index": 0,
+        "sighash": "75324940c2ef0e88077846eedada83aedb17fe22ba9b9acaa1ad797bb7a93284"
+      },
+      {
+        "address": "t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v",
+        "value": 200000,
+        "scope": 1,
+        "index": 1,
+        "sighash": "ac6bb191d6b1d97874d41ecdd67d7cd6f9b54e469afeeb108a80ef44d5721135"
+      }
+    ]
+  },
+  {
+    "name": "main_t_shield_compact",
+    "description": "Vector main_t_shield in the compact signer view (v2)",
+    "file": "pczt/main_t_shield_compact.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "ok",
+    "sighash": "25026aaa3f1c321609935645065be2cc0c10ffa02635f53d60d12183ed6226fd",
+    "consensus_branch_id": "37a5165b",
+    "fee": 20000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 480000,
+        "memo": ""
+      }
+    ],
+    "t_inputs": [
+      {
+        "address": "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F",
+        "value": 300000,
+        "scope": 0,
+        "index": 0,
+        "sighash": "75324940c2ef0e88077846eedada83aedb17fe22ba9b9acaa1ad797bb7a93284"
+      },
+      {
+        "address": "t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v",
+        "value": 200000,
+        "scope": 1,
+        "index": 1,
+        "sighash": "ac6bb191d6b1d97874d41ecdd67d7cd6f9b54e469afeeb108a80ef44d5721135"
+      }
+    ]
+  },
+  {
+    "name": "r_main_on_test",
+    "description": "Mainnet PCZT (main_iw_send_shielded) in a testnet request",
+    "file": "pczt/r_main_on_test.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "network_mismatch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_main_shield_on_test",
+    "description": "Mainnet shield PCZT (main_t_shield) in a testnet request",
+    "file": "pczt/r_main_shield_on_test.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "network_mismatch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_test_on_main",
+    "description": "Testnet PCZT (iw_send_shielded) in a mainnet request",
+    "file": "pczt/r_test_on_main.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "network_mismatch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_test_shield_on_main",
+    "description": "Testnet shield PCZT (t_shield) in a mainnet request",
+    "file": "pczt/r_test_shield_on_main.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "network_mismatch",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
   }
 ]

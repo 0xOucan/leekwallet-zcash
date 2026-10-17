@@ -143,11 +143,13 @@ void ui_request_zsign_review(const zs_summary *s, uint8_t network)
  * with the vector. */
 static int  address_checks;
 static char shown_ua[256];
+static uint8_t shown_network = 0xFF;
 void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
                              uint8_t network)
 {
-    (void)t_address; (void)account; (void)network;
+    (void)t_address; (void)account;
     address_checks++;
+    shown_network = network;
     snprintf(shown_ua, sizeof shown_ua, "%s", ua);
 }
 
@@ -1636,7 +1638,7 @@ static size_t zshow_request(uint8_t *buf, size_t cap, uint32_t account, const ch
     return cbor_writer_ok(&w) ? w.length : 0;
 }
 
-static size_t zshow_ua_request(uint8_t *buf, size_t cap, const char *ua)
+static size_t zshow_ua_request_on(uint8_t *buf, size_t cap, const char *ua, const char *network)
 {
     CborWriter w;
     cbor_writer_init(&w, buf, cap);
@@ -1646,10 +1648,15 @@ static size_t zshow_ua_request(uint8_t *buf, size_t cap, const char *ua)
     cbor_write_text(&w, "account");
     cbor_write_uint(&w, 0);
     cbor_write_text(&w, "network");
-    cbor_write_text(&w, "test");
+    cbor_write_text(&w, network);
     cbor_write_text(&w, "ua");
     cbor_write_text(&w, ua);
     return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+static size_t zshow_ua_request(uint8_t *buf, size_t cap, const char *ua)
+{
+    return zshow_ua_request_on(buf, cap, ua, "test");
 }
 
 /* Seen on the first board: every Zcash account reply (~700 bytes) vanished,
@@ -1795,6 +1802,38 @@ static void test_zshow_address(void)
     expect_error(T_ENC_ERROR, E_MALFORMED, "not an address");
     CHECK(address_checks == 0, "garbage reached the screen");
     scripted_outcome = SIGN_APPROVED;
+
+    printf("== zShowAddress on mainnet: the u1 address, shown as mainnet\n");
+    const zv_key_vector *m = &ZV_KEYS[0];   /* main/abandon-art/pp0/acct0 */
+    CHECK(m->network == 0 && strncmp(m->ua, "u1", 2) == 0, "ZV_KEYS[0] is not the mainnet vector");
+    address_checks = 0;
+    shown_network = 0xFF;
+    send_encrypted(payload, zshow_request(payload, sizeof payload, 0, "main"));
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len) &&
+          cbor_map_find(body, body_len, "ua", &it) && cbor_text_copy(&it, text, sizeof text) &&
+          strcmp(text, m->ua) == 0, "the mainnet address was not returned");
+    CHECK(address_checks == 1 && strcmp(shown_ua, m->ua) == 0 && shown_network == ZS_NET_MAIN,
+          "the device showed \"%s\" on network %u", shown_ua, shown_network);
+
+    address_checks = 0;
+    send_encrypted(big, zshow_ua_request_on(big, sizeof big, m->ua_orchard_only, "main"));
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len) &&
+          cbor_map_find(body, body_len, "ua", &it) && cbor_text_copy(&it, text, sizeof text) &&
+          strcmp(text, m->ua_orchard_only) == 0, "the app's mainnet address was not confirmed back");
+    CHECK(address_checks == 1 && shown_network == ZS_NET_MAIN, "not shown as mainnet");
+
+    /* An address of the other network is never the wallet's, and never
+     * reaches the screen. (The fake calls any other vector's address "not
+     * ours"; the real check, which refuses it as no address at all on that
+     * network, is test_zcash_account's.) */
+    address_checks = 0;
+    send_encrypted(big, zshow_ua_request_on(big, sizeof big, v->ua, "main"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(-14), "a testnet address on a mainnet request");
+    send_encrypted(big, zshow_ua_request_on(big, sizeof big, m->ua, "test"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(-14), "a mainnet address on a testnet request");
+    CHECK(address_checks == 0, "an address of the other network reached the screen");
 }
 
 /* ----------------------------------------------------------- selectWallet */

@@ -235,3 +235,68 @@ fn someone_elses_address_is_refused_before_the_screen() {
     assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 14), "{err}");
     assert!(err.to_string().contains("NOT from its wallet"), "{err}");
 }
+
+// --- mainnet (roadmap 10.3) ---
+
+fn key_vector(name: &str) -> Value {
+    let all: Vec<Value> = serde_json::from_slice(&std::fs::read(repo().join("vectors/keys.json")).unwrap()).unwrap();
+    all.into_iter().find(|v| v["name"] == name).expect("key vector")
+}
+
+/// Asked for "main", the device exports the coin type 133 account (u1, t1,
+/// uview1) and shows and confirms its addresses; a testnet address is not
+/// an address on mainnet, and is refused before the screen.
+#[test]
+fn the_device_serves_the_mainnet_account() {
+    let z = zdev_or_skip!("main-account", true);
+    let mut dev = connect(&z);
+    let v = key_vector("main/abandon-art/pp0/acct0");
+    let a = dev.z_get_account(0, "main").expect("account");
+    assert_eq!(device::get_text(&a, "network").unwrap(), "main");
+    assert_eq!(device::get_text(&a, "ufvk").unwrap(), v["ufvk"].as_str().unwrap());
+    assert_eq!(device::get_text(&a, "ua").unwrap(), v["ua"].as_str().unwrap());
+    assert_eq!(device::get_text(&a, "tAddress").unwrap(), v["transparent_address"].as_str().unwrap());
+    assert_eq!(hex::encode(device::get_bytes(&a, "seedFingerprint").unwrap()), v["seed_fingerprint"].as_str().unwrap());
+
+    dev.z_show_address(0, "main", v["ua"].as_str().unwrap()).expect("the default u1 address");
+    dev.z_show_address(0, "main", v["ua_orchard_only"].as_str().unwrap()).expect("the Orchard-only u1 address");
+    let t = key_vector("test/abandon-art/pp0/acct0");
+    assert!(dev.z_show_address(0, "main", t["ua"].as_str().unwrap()).is_err(), "a testnet address shown on mainnet");
+    assert!(dev.z_show_address(0, "test", v["ua"].as_str().unwrap()).is_err(), "a mainnet address shown on testnet");
+    let m1 = key_vector("main/abandon-art/pp0/acct1");
+    let err = dev.z_show_address(0, "main", m1["ua"].as_str().unwrap()).expect_err("account 1's address");
+    assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 14), "{err}");
+}
+
+/// The mainnet vectors in the compact view, signed by the device for a
+/// "main" request; the signatures apply to the full PCZTs, which prove and
+/// extract. The same bytes are refused for "test" (code -17), and a testnet
+/// PCZT for "main".
+#[test]
+fn the_device_signs_mainnet_and_refuses_the_other_network() {
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
+
+    let z = zdev_or_skip!("main-sign", true);
+    let mut dev = connect(&z);
+    for name in ["main_iw_send_shielded_compact", "main_t_shield_compact"] {
+        let (v, sent) = vector(name);
+        assert_eq!(v["network"], "main");
+        let (sighash, entries) = dev.z_sign(&sent, 0, "main", |_, _| {}).expect("device signs");
+        assert_eq!(hex::encode(sighash), v["sighash"].as_str().unwrap(), "{name}: device sighash");
+        let (_, full) = vector(name.trim_end_matches("_compact"));
+        let zsig = Zsig::new(&sent, entries);
+        let signed = leek_android_like_apply(&full, &Zsig::parse_for(&zsig.to_bytes().unwrap(), &sent).unwrap());
+        let proven = prove(signed).unwrap();
+        let finalized = pczt::roles::spend_finalizer::SpendFinalizer::new(proven).finalize_spends().unwrap();
+        pczt::roles::tx_extractor::TransactionExtractor::new(finalized)
+            .extract(UnwrapErr(SysRng))
+            .expect("extraction verifies proofs and the device's signatures");
+    }
+    for name in ["r_main_on_test", "r_main_shield_on_test", "r_test_on_main", "r_test_shield_on_main"] {
+        let (v, bytes) = vector(name);
+        let net = v["network"].as_str().unwrap();
+        let err = dev.z_sign(&bytes, 0, net, |_, _| {}).expect_err("must refuse");
+        // ZS_E_NETWORK = -17.
+        assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 17), "{name}: {err}");
+    }
+}

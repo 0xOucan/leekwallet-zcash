@@ -25,9 +25,11 @@ desktop/
     src/hardware.rs       the device flows: pair, import, verify, sign, finish
     src/link.rs           USB serial and Bluetooth LE links to the device
     src/contacts.rs       the address book (JSON in the app data dir)
+    src/settings.rs       the network switch and servers (settings.json)
     src/lib.rs            the Tauri commands; work runs on worker threads
     tests/backend.rs      backend tests (one #[ignore]d, on testnet)
     tests/device_zdev.rs  the device flows against zdev (one #[ignore]d)
+    tests/settings.rs     the network switch: what is saved, which wallet opens
     tauri.conf.json, capabilities/, icons/
 ```
 
@@ -37,6 +39,9 @@ library build from. It depends on `host/zecz-core` by path.
 
 Commands:
 
+- Network: `network_settings`, `set_network(network)` ("test" or
+  "main"; refused while a wallet or device call runs),
+  `set_server(server?)` (none: the default).
 - Wallet: `profile_status`, `init_watch_only(ufvk, birthday)`, `sync`
   (emits `sync://progress`), `balances`, `addresses`, `next_address`,
   `qr_svg(text)`, `history`, `tip`.
@@ -48,8 +53,9 @@ Commands:
   `device_disconnect`, `device_import(birthday?)`, `verify_address(ua)`,
   `propose_send(to, amount, memo?)` (amount in ZEC; builds the compact
   signer view), `propose_shield` (all transparent funds into the
-  shielded pool) and `sign_and_send(proposalId)`, which signs either and
-  returns the txid. One proposal is pending at a time: a new one
+  shielded pool) and `sign_and_send(proposalId, confirmMainnet?)`, which
+  signs either and returns the txid (on mainnet only with
+  `confirmMainnet: true`). One proposal is pending at a time: a new one
   replaces the last. Device flows report each step on `device://status`.
 
 ## Hardware accounts
@@ -131,9 +137,27 @@ format as `zecz --data-dir`):
 - macOS: `~/Library/Application Support/com.leekwallet.zcash/wallets/test`
 - Windows: `%APPDATA%\com.leekwallet.zcash\wallets\test`
 
-Testnet by default. `LEEKZ_NETWORK=main` selects mainnet and
-`LEEKZ_SERVER=https://host:port` another lightwalletd; there is no switch
-in the UI yet.
+Testnet by default. "Network and server" (top of the window) switches
+between Testnet and Mainnet; mainnet takes a confirmation. The choice
+and each network's server are saved in `<app data dir>/settings.json`
+(`{"version": 1, "network": "test"|"main", "servers": {"main": "…"}}`;
+a network without an entry uses its default, `https://testnet.zec.rocks:443`
+or `https://zec.rocks:443`). Switching closes the device session, drops a
+pending send and opens the other network's wallet directory and address
+book; neither network's files are touched by the other. zecz-core
+refuses a server whose chain (GetLightdInfo `chain_name`) is not the
+wallet's, before it stores anything.
+
+On mainnet the window carries a red "MAINNET — real funds" bar, and a
+send or shielding needs one more step after the review: a tick box
+("This sends real ZEC on mainnet…"), without which Sign stays disabled
+and `sign_and_send` refuses (`confirmMainnet`). The device is asked with
+the wallet's network ("main") in every call; a session paired for one
+network is refused for the other.
+
+`LEEKZ_NETWORK=main|test` and `LEEKZ_SERVER=https://host:port` still
+override the saved choice for one run, without saving it. The first
+mainnet test with the board is `docs/zcash/MAINNET.md`.
 
 ## Requirements
 

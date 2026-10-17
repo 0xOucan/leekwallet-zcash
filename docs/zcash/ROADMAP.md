@@ -422,7 +422,17 @@ Not the thin forwarder planned before: its own software wallets, the board over 
   - Done when: a testnet `zecz shield` signed on the board confirms, and the
     Android app applies a version 2 `.zsig`.
 - **10.2 Measured timings on the board (S).** Roadmap 4.5: check and sign times per backend (C on the device; Rust only as a reference build).
-- **10.3 Mainnet (S).** A small mainnet send over each link before any release.
+- **10.3 Mainnet (S). Done on PC (2026-10-17); the board send is next.** A small mainnet send over each link before any release.
+  - Done on PC: mainnet PCZT vectors (a send and a shield, compact views,
+    four cross-network refusals) through both signers, the sim, the soft
+    signer and zdev; zShowAddress and the review pages on mainnet; zecz
+    and zecz-core refuse a lightwalletd of the other chain; a watch-only
+    mainnet sync of the public test account; the desktop app's network
+    switch (saved, its own wallet per network, a red mainnet bar and an
+    extra confirmation before signing).
+  - Left: the first real mainnet receive, address check, send and shield
+    on the board, with zecz and the desktop app, following
+    `docs/zcash/MAINNET.md`.
 - **10.4 Several accounts (S).** Account selection carried by every companion, not only account 0.
 - **10.5 Bluetooth bonding (M).** Today every connection pairs with the six digits; optionally remember a host.
 - **10.6 Security review (M).**
