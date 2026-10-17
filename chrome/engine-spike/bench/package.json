@@ -1,0 +1,13 @@
+{
+  "name": "engine-spike-bench",
+  "private": true,
+  "type": "module",
+  "description": "Runs the engine spike in Node and in a Chrome MV3 extension (Playwright's Chromium)",
+  "scripts": {
+    "node": "node node.mjs",
+    "chromium": "node chromium.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Engine spike",
+  "version": "0.1.0",
+  "description": "Phase 9.1: the Zcash engine in an MV3 extension page and offscreen document",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["offscreen", "storage"],
+  "host_permissions": ["https://zcash-testnet.chainsafe.dev/*", "https://testnet.zec.rocks/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "cross_origin_embedder_policy": { "value": "require-corp" },
+  "cross_origin_opener_policy": { "value": "same-origin" }
+}
