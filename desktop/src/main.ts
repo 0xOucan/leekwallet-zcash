@@ -103,6 +103,22 @@ interface Addresses {
   orchardOnly: string;
 }
 
+interface Tx {
+  txid: string;
+  minedHeight: number | null;
+  /** Unix seconds. */
+  blockTime: number | null;
+  expiryHeight: number | null;
+  expired: boolean;
+  kind: "received" | "sent" | "shielded" | "internal";
+  amountZat: number;
+  deltaZat: number;
+  /** Only when this wallet paid it. */
+  feeZat: number | null;
+  memos: string[];
+  recipients: { address: string; valueZat: number }[];
+}
+
 interface NewAddress {
   unified: string;
   /** Decimal string: it can exceed 2^53. */
@@ -205,6 +221,7 @@ async function refresh(): Promise<void> {
   $("balance-panel").hidden = !s.hasAccount;
   $("receive-panel").hidden = !s.hasAccount;
   $("send-panel").hidden = !(s.hasAccount && s.hardware);
+  $("history-panel").hidden = !s.hasAccount;
   $("verify-btn").hidden = !s.hardware;
   renderDevice();
   if (!s.hasAccount) {
@@ -218,7 +235,7 @@ async function refresh(): Promise<void> {
     $("sync-status").textContent = `Not synced yet. Scanning starts at the birthday, block ${s.birthday ?? "?"}.`;
   }
   setConn("connected", s.hardware ? `LeekWallet account · ZFP ${s.zfp ?? "?"}` : "Watch-only account");
-  await Promise.all([renderAddresses(), renderBalances()]);
+  await Promise.all([renderAddresses(), renderBalances(), renderHistory()]);
 }
 
 /** The device panel: the link chooser, or the connected device. */
@@ -388,7 +405,7 @@ $("sync-btn").addEventListener("click", async () => {
     const done = await invoke<SyncDone>("sync");
     bar.value = done.progress;
     $("sync-status").textContent = `Up to date at block ${done.chainTip}.`;
-    await renderBalances();
+    await Promise.all([renderBalances(), renderHistory()]);
     setConn("connected", "Synced");
   } catch (e) {
     err.textContent = errText(e);
@@ -776,7 +793,7 @@ $("sign-btn").addEventListener("click", async () => {
 
 /** A transaction was stored and broadcast: what it changed. */
 async function afterTransaction(): Promise<void> {
-  await renderBalances();
+  await Promise.all([renderBalances(), renderHistory()]);
 }
 
 // ------------------------------------------------------------------- shield
@@ -874,6 +891,76 @@ $("copy-txid").addEventListener("click", async () => {
     /* the txid is on screen to select by hand */
   }
 });
+
+// ------------------------------------------------------------------ history
+
+const KIND_LABEL: Record<Tx["kind"], string> = {
+  received: "Received",
+  sent: "Sent",
+  shielded: "Shielded",
+  internal: "Moved between pools",
+};
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function txWhen(t: Tx): string {
+  if (t.minedHeight === null) {
+    if (t.expired) return "Not mined, expired: it will not be";
+    return t.expiryHeight !== null ? `Waiting to be mined (expires at block ${t.expiryHeight})` : "Waiting to be mined";
+  }
+  const at = `block ${t.minedHeight.toLocaleString("en-US")}`;
+  if (t.blockTime === null) return at;
+  const d = new Date(t.blockTime * 1000);
+  return `${d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · ${at}`;
+}
+
+async function renderHistory(): Promise<void> {
+  const list = $("history");
+  const err = $("history-err");
+  let txs: Tx[];
+  try {
+    txs = await invoke<Tx[]>("history");
+    err.textContent = "";
+  } catch (e) {
+    err.textContent = errText(e);
+    return;
+  }
+  $("history-empty").hidden = txs.length > 0;
+  list.replaceChildren(
+    ...txs.map((t) => {
+      const li = document.createElement("li");
+      const head = el("div", "tx__head");
+      head.append(el("span", "tx__kind", KIND_LABEL[t.kind]), el("span", "tx__when", txWhen(t)));
+      const incoming = t.kind === "received";
+      const amount = el("span", "tx__amount", `${incoming ? "+" : t.kind === "sent" ? "−" : ""}${formatZec(t.amountZat, ticker)}`);
+      amount.dataset["sign"] = incoming ? "in" : "out";
+      head.append(amount);
+      li.append(head);
+      if (t.feeZat !== null && !incoming) li.append(el("div", "tx__fee", `Fee ${formatZec(t.feeZat, ticker)}`));
+      for (const r of t.recipients) {
+        li.append(el("div", "tx__to", `To ${chunk(r.address)}`));
+      }
+      for (const m of t.memos) li.append(el("p", "tx__memo", m));
+      const id = el("div", "tx__id");
+      const code = el("code", "", t.txid);
+      code.dataset["raw"] = t.txid;
+      const copy = el("button", "", "Copy");
+      copy.type = "button";
+      copy.title = "Copy the transaction id";
+      copy.addEventListener("click", () => void copyFrom(copy, code));
+      id.append(code, copy);
+      li.append(id);
+      return li;
+    }),
+  );
+}
+
+$("history-refresh").addEventListener("click", () => void renderHistory());
 
 // -------------------------------------------------------------------- theme
 

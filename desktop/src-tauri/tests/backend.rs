@@ -1,7 +1,8 @@
 //! The desktop backend end to end, without a window: profile status,
 //! a watch-only import of the public test account (abandon x23 art,
-//! vectors/keys.json), a sync with progress events, receive addresses
-//! with their QR code, and the refusals of a shielding.
+//! vectors/keys.json), a sync with progress events, and the wallet
+//! screens: history (a real transaction stored in an offline wallet),
+//! receive addresses and their QR code, shield refusals.
 //!
 //! The testnet test is #[ignore]d; run it with
 //! `cargo test --test backend -- --ignored`.
@@ -75,6 +76,59 @@ fn offline_wallet(profile: &Profile, spec: &AccountSpec) {
     use zcash_protocol::consensus::BlockHeight;
     let birthday = AccountBirthday::from_parts(ChainState::empty(BlockHeight::from_u32(1_842_419), BlockHash([0; 32])), None);
     Wallet::init_with_birthday(profile.clone(), spec, &birthday).unwrap();
+}
+
+/// Vector `iw_send_shielded` (abandon-art pays 0.004 TAZ with a memo to
+/// zoo-vote), soft-signed, proven and extracted: a real transaction to
+/// put in an offline wallet.
+fn iw_send_shielded_tx() -> Vec<u8> {
+    use pczt::Pczt;
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
+    let unsigned =
+        std::fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vectors/pczt/iw_send_shielded.pczt")).unwrap();
+    let acct = zecz::keys::DevAccount::from_mnemonic(&TEST, ABANDON_ART, "", 0).unwrap();
+    let zsig = zecz::soft_signer::sign(&unsigned, &acct, 1).unwrap();
+    let signed = zecz::authorize::apply_zsig(Pczt::parse(&unsigned).unwrap(), &zsig).unwrap();
+    let proven = zecz::authorize::prove(signed).unwrap();
+    let finalized = pczt::roles::spend_finalizer::SpendFinalizer::new(proven).finalize_spends().unwrap();
+    let tx = pczt::roles::tx_extractor::TransactionExtractor::new(finalized).extract(UnwrapErr(SysRng)).unwrap();
+    let mut raw = Vec::new();
+    tx.write(&mut raw).unwrap();
+    raw
+}
+
+#[test]
+fn history_of_an_offline_wallet() {
+    let d = TempDir::new("history");
+    let profile = Profile::new(TEST, d.0.join("w"), None);
+    // No wallet yet: an empty history, not an error.
+    assert!(backend::history(&profile).unwrap().is_empty());
+
+    let zoo = key_vector("test/zoo-vote/pp0/acct0");
+    offline_wallet(&profile, &AccountSpec::view_only(zoo["ufvk"].as_str().unwrap().into(), "zoo"));
+    assert!(backend::history(&profile).unwrap().is_empty());
+
+    let mut w = Wallet::open(profile.clone()).unwrap();
+    let txid = w.store_transaction(&iw_send_shielded_tx(), Some(4_200_000)).unwrap();
+    drop(w);
+    let h = backend::history(&profile).unwrap();
+    assert_eq!(h.len(), 1);
+    let t = &h[0];
+    assert_eq!(t.txid, txid);
+    assert_eq!((t.kind, t.amount_zat, t.delta_zat), ("received", 400_000, 400_000));
+    assert_eq!(t.mined_height, Some(4_200_000));
+    assert_eq!(t.memos, vec!["LeekWallet Zcash test".to_string()]);
+    // The payer's fee is not this wallet's to show.
+    assert_eq!(t.fee_zat, None);
+    assert!(!t.expired);
+
+    // The JSON the frontend reads.
+    let v = serde_json::to_value(t).unwrap();
+    assert_eq!(v["kind"], "received");
+    assert_eq!(v["amountZat"], 400_000);
+    assert_eq!(v["memos"][0], "LeekWallet Zcash test");
+    assert!(v["blockTime"].is_null() && v["feeZat"].is_null());
+    assert_eq!(v["txid"].as_str().unwrap().len(), 64);
 }
 
 #[test]
@@ -174,4 +228,13 @@ fn watch_only_import_and_sync_on_testnet() {
 
     let s = backend::profile_status(&profile).unwrap();
     assert_eq!(s.chain_tip, Some(done.chain_tip));
+
+    // The history of what the sync found, newest first.
+    let h = backend::history(&profile).unwrap();
+    for t in &h {
+        assert!(t.mined_height.map_or(true, |m| m >= birthday), "{t:?}");
+        println!("{} {} {} zat at {:?} memos {:?}", t.txid, t.kind, t.amount_zat, t.mined_height, t.memos);
+    }
+    let heights: Vec<u32> = h.iter().filter_map(|t| t.mined_height).collect();
+    assert!(heights.windows(2).all(|w| w[0] >= w[1]), "not newest first: {heights:?}");
 }

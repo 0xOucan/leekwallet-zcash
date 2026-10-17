@@ -142,6 +142,13 @@ async fn addresses(state: State<'_, AppState>) -> Result<backend::AddressesDto, 
     off_thread(move || backend::addresses(&p)).await
 }
 
+/// The account's transactions, newest first.
+#[tauri::command]
+async fn history(state: State<'_, AppState>) -> Result<Vec<backend::TxDto>, String> {
+    let p = state.profile.clone();
+    off_thread(move || backend::history(&p)).await
+}
+
 /// Rotates the receive address to a fresh diversified one.
 #[tauri::command]
 async fn next_address(state: State<'_, AppState>) -> Result<backend::NewAddressDto, String> {
@@ -393,6 +400,7 @@ pub fn run() {
             sync,
             balances,
             addresses,
+            history,
             next_address,
             qr_svg,
             tip,

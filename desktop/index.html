@@ -221,6 +221,18 @@
             </div>
           </div>
         </section>
+
+        <section class="panel" id="history-panel" hidden aria-labelledby="history-h">
+          <div class="row panel-head">
+            <h2 id="history-h">History</h2>
+            <span class="statusbar__spacer"></span>
+            <button id="history-refresh" type="button" title="Read the history again from the wallet (Sync fetches new transactions)">Refresh</button>
+          </div>
+          <p class="muted" id="history-empty">No transactions yet. Sync to find them.</p>
+          <ol class="txlist" id="history"></ol>
+          <p class="formerr" id="history-err" role="alert"></p>
+        </section>
+
       </main>
     </div>
     <script type="module" src="/src/main.ts"></script>
