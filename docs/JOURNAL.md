@@ -869,3 +869,16 @@ checked on Xtensa).
 - Next: receive a small amount, send some back and shield, all signed on
   the board (docs/zcash/MAINNET.md). Real mainnet addresses and txids are
   kept out of the repository on purpose.
+
+### 10.3 Mainnet: first send and shield signed on the board (2026-10-17)
+- The user funded the board's mainnet account (shielded and transparent).
+- `zecz --network main` sent a small amount to the account's own
+  address with a memo (compact PCZT, 1,452 B), signed on the board over
+  USB, proved and broadcast: accepted on mainnet.
+- Then a shield of the transparent coin into Ironwood (compact PCZT,
+  1,426 B): the board showed "From 1 of 1", the t1 address and its path,
+  and "Shield ... into this wallet"; signed, proved, accepted.
+- The board's review named Mainnet and ZEC throughout. Both txids are
+  known to the user and deliberately not recorded here.
+- Fixed: `zecz balance` still said the device could not sign transparent
+  inputs.

@@ -12,9 +12,9 @@ for Zcash's shielded pools: **Ironwood** (NU6.3), **Orchard**, and transparent
 outputs.
 
 > **Status: experimental.** It has signed real testnet transactions over USB,
-> Bluetooth, QR and SD card. It is not audited. Flash encryption and secure boot
+> Bluetooth, QR and SD card, and its first mainnet send and shield. It is not audited. Flash encryption and secure boot
 > are deliberately not enabled (no eFuses burned), so anyone holding the board
-> can read its flash. Do not put real funds on it.
+> can read its flash. Use only small amounts on mainnet.
 
 ## How it works
 
@@ -47,7 +47,7 @@ outputs.
 | **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
 | **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
 | **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, import, sync, balances, address. Board link and software wallets next ([chrome/README.md](chrome/README.md)) |
-| **Mainnet** | Ready: mainnet vectors and tests, servers of the wrong chain refused, one birthday per network on the board, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation; the board has paired and imported on mainnet. Testnet stays the default. First funded send: [MAINNET.md](docs/zcash/MAINNET.md) |
+| **Mainnet** | Ready: mainnet vectors and tests, servers of the wrong chain refused, one birthday per network on the board, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation; the board has signed a send and a shield accepted on mainnet. Testnet stays the default. Checklist: [MAINNET.md](docs/zcash/MAINNET.md) |
 | **NEAR Intents** | Planned, after the first mainnet send |
 
 ## What works
@@ -165,7 +165,7 @@ The full plan, with a "done when" check for each step, is in
 - [x] Chrome: a full Zcash engine runs in the browser (9.1)
 - [x] Chrome extension engine, stored on OPFS, with a popup (9.2)
 - [x] Mainnet ready on the PC, testnet kept as the default option (10.3)
-- [ ] First mainnet send signed on the board
+- [x] First mainnet send and shield signed on the board (10.3)
 - [ ] Chrome extension: the board over Web Serial / Web Bluetooth (9.3), software wallets (9.4)
 - [ ] Firmware: several accounts, Bluetooth bonding, security review (Phase 10)
 - [ ] NEAR Intents swaps signed on the board, on Android, desktop and Chrome
