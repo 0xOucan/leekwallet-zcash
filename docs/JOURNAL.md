@@ -634,3 +634,16 @@ checked on Xtensa).
 - Also funded the board's t-address (tx
   `dbfce8b9edd0bf33faa1287e2de417c8359eda0cb0bb45bc198d5e4dccfb9232`)
   for the shield test of 10.1.
+
+### 10.1 Transparent inputs: first shield signed on the board (2026-10-16)
+- The board's t-address held three coins (0.0102 TAZ). `zecz shield
+  --compact` built a 1,739-byte compact PCZT moving them into Ironwood
+  (0.00995 TAZ, fee 0.00025). The board showed one "From k of n" page
+  per input with the t-address and path, and "Shield ... into this
+  wallet"; it signed the three transparent inputs, and the transaction
+  proved and was accepted: tx
+  `d18f66149acf36b9d932b062ae8e8383bbb1cf2d28fab648bfb27054f1366191`.
+- Found on the way: with only 0.0002 TAZ on the t-address, shield built
+  a transaction whose whole balance went to the fee (ZIP 317 fee plus
+  dust change absorbed into it). `propose_shield` now refuses that.
+- zecz printed transparent signatures as "action"; they are inputs.
