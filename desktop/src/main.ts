@@ -79,6 +79,8 @@ interface DeviceImported {
 
 interface Proposal {
   id: string;
+  /** "shield": no payments; the change is what gets shielded. */
+  kind: "send" | "shield";
   targetHeight: number;
   payments: { recipient: string; amountZat: number; pool: string; hasMemo: boolean }[];
   change: { valueZat: number; pool: string }[];
@@ -321,6 +323,11 @@ async function renderBalances(): Promise<void> {
     const pending = b.orchard.pending + b.ironwood.pending + b.transparent.pending;
     note.textContent = pending > 0 ? `${formatZec(pending, ticker)} waiting for confirmations.` : "";
   }
+  // Shielding is signed on the device: a LeekWallet account only. The
+  // backend decides whether there is enough to shield, and says why not.
+  const canShield = b !== null && b.transparent.total > 0 && profile?.hardware === true;
+  $("shield-row").hidden = !canShield || !$("shield-review").hidden || !$("shielded").hidden;
+  if (!canShield) $("shield-err").textContent = "";
 }
 
 // ------------------------------------------------------------------ actions
@@ -681,6 +688,12 @@ $<HTMLFormElement>("send-form").addEventListener("submit", async (ev) => {
   btn.disabled = true;
   try {
     proposal = await invoke<Proposal>("propose_send", { to, amount, memo: memo.trim() === "" ? null : memo });
+    // A shielding under review shares the one pending slot; this replaced it.
+    if (shieldProposal) {
+      shieldProposal = null;
+      showShieldStage("idle");
+      void renderBalances();
+    }
     renderReview(proposal);
     $("sign-status").textContent = "";
     $("sign-err").textContent = "";
@@ -698,40 +711,156 @@ $("cancel-btn").addEventListener("click", () => {
   showSendStage("form");
 });
 
-$("sign-btn").addEventListener("click", async () => {
-  if (!proposal) return;
-  $("sign-err").textContent = "";
+/** The elements of one review: the send's or the shielding's. */
+interface SignUi {
+  sign: string;
+  cancel: string;
+  bar: string;
+  status: string;
+  err: string;
+}
+
+/**
+ * Signs a reviewed proposal on the device, then proves and broadcasts it
+ * (the backend does both in `sign_and_send`). Returns null on failure,
+ * with the reason shown.
+ */
+async function signOnDevice(p: Proposal, ui: SignUi): Promise<Sent | null> {
+  $(ui.err).textContent = "";
   if (!paired) {
-    $("sign-err").textContent = "Connect the LeekWallet first (above).";
-    return;
+    $(ui.err).textContent = "Connect the LeekWallet first (above).";
+    return null;
   }
-  const bar = $<HTMLProgressElement>("sign-bar");
+  const bar = $<HTMLProgressElement>(ui.bar);
   bar.value = 0;
   uploadBar = bar;
-  $<HTMLButtonElement>("cancel-btn").disabled = true;
+  $<HTMLButtonElement>(ui.cancel).disabled = true;
   setConn("connecting", "Signing on LeekWallet…");
   try {
-    const sent = await deviceFlow("sign-status", $<HTMLButtonElement>("sign-btn"), () =>
-      invoke<Sent>("sign_and_send", { proposalId: proposal?.id }),
+    const sent = await deviceFlow(ui.status, $<HTMLButtonElement>(ui.sign), () =>
+      invoke<Sent>("sign_and_send", { proposalId: p.id }),
     );
-    proposal = null;
-    const txid = $("txid");
-    txid.textContent = sent.txid;
-    txid.dataset["raw"] = sent.txid;
-    $<HTMLFormElement>("send-form").reset();
-    showSendStage("sent");
-    setConn("connected", "Sent");
-    await renderBalances();
+    setConn("connected", p.kind === "shield" ? "Shielded" : "Sent");
+    return sent;
   } catch (e) {
-    $("sign-status").textContent = "";
-    $("sign-err").textContent = errText(e);
-    setConn("error", "Not sent");
+    $(ui.status).textContent = "";
+    $(ui.err).textContent = errText(e);
+    setConn("error", p.kind === "shield" ? "Not shielded" : "Not sent");
     await afterDeviceError();
+    return null;
   } finally {
     uploadBar = null;
     bar.hidden = true;
-    $<HTMLButtonElement>("cancel-btn").disabled = false;
+    $<HTMLButtonElement>(ui.cancel).disabled = false;
   }
+}
+
+$("sign-btn").addEventListener("click", async () => {
+  if (!proposal) return;
+  const sent = await signOnDevice(proposal, {
+    sign: "sign-btn",
+    cancel: "cancel-btn",
+    bar: "sign-bar",
+    status: "sign-status",
+    err: "sign-err",
+  });
+  if (!sent) return;
+  proposal = null;
+  const txid = $("txid");
+  txid.textContent = sent.txid;
+  txid.dataset["raw"] = sent.txid;
+  $<HTMLFormElement>("send-form").reset();
+  showSendStage("sent");
+  await afterTransaction();
+});
+
+/** A transaction was stored and broadcast: what it changed. */
+async function afterTransaction(): Promise<void> {
+  await renderBalances();
+}
+
+// ------------------------------------------------------------------- shield
+
+let shieldProposal: Proposal | null = null;
+
+function showShieldStage(stage: "idle" | "review" | "done"): void {
+  $("shield-review").hidden = stage !== "review";
+  $("shielded").hidden = stage !== "done";
+  $("shield-row").hidden = stage !== "idle";
+}
+
+$("shield-btn").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("shield-btn");
+  const err = $("shield-err");
+  err.textContent = "";
+  btn.disabled = true;
+  try {
+    const p = await invoke<Proposal>("propose_shield");
+    shieldProposal = p;
+    // A send under review shares the one pending slot; this replaced it.
+    if (proposal) {
+      proposal = null;
+      showSendStage("form");
+    }
+    const kv = $("shield-kv");
+    kv.replaceChildren();
+    const row = (k: string, v: string) => {
+      const dt = document.createElement("dt");
+      dt.textContent = k;
+      const dd = document.createElement("dd");
+      dd.textContent = v;
+      kv.append(dt, dd);
+    };
+    const shielded = p.change.reduce((s, c) => s + c.valueZat, 0);
+    const pools = [...new Set(p.change.map((c) => c.pool))].join(", ");
+    row("From", "Your transparent funds");
+    row("Shield", formatZec(shielded, ticker));
+    row("Into", `${pools} (this wallet)`);
+    row("Fee", formatZec(p.feeZat, ticker));
+    row("Total", formatZec(shielded + p.feeZat, ticker));
+    $("shield-note").textContent =
+      `Nothing leaves the wallet but the fee. The device shows each transparent coin it signs, then "Shield … into this wallet". ` +
+      `It receives a compact PCZT of ${p.signerViewBytes.toLocaleString("en-US")} bytes. Sign soon: the transaction expires about 40 blocks after ${p.targetHeight}.`;
+    $("shield-status").textContent = "";
+    $("shield-sign-err").textContent = "";
+    showShieldStage("review");
+  } catch (e) {
+    // E.g. the fee would take the whole transparent balance.
+    err.textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("shield-cancel-btn").addEventListener("click", () => {
+  shieldProposal = null;
+  showShieldStage("idle");
+  void renderBalances();
+});
+
+$("shield-sign-btn").addEventListener("click", async () => {
+  if (!shieldProposal) return;
+  const sent = await signOnDevice(shieldProposal, {
+    sign: "shield-sign-btn",
+    cancel: "shield-cancel-btn",
+    bar: "shield-bar",
+    status: "shield-status",
+    err: "shield-sign-err",
+  });
+  if (!sent) return;
+  shieldProposal = null;
+  const txid = $("shield-txid");
+  txid.textContent = sent.txid;
+  txid.dataset["raw"] = sent.txid;
+  showShieldStage("done");
+  await afterTransaction();
+});
+
+$("copy-shield-txid").addEventListener("click", () => void copyFrom($("copy-shield-txid"), $("shield-txid")));
+
+$("shield-done-btn").addEventListener("click", () => {
+  showShieldStage("idle");
+  void renderBalances();
 });
 
 $("new-send-btn").addEventListener("click", () => showSendStage("form"));

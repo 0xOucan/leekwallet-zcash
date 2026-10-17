@@ -1,7 +1,7 @@
 //! The desktop backend end to end, without a window: profile status,
 //! a watch-only import of the public test account (abandon x23 art,
-//! vectors/keys.json), a sync with progress events, and receive
-//! addresses with their QR code.
+//! vectors/keys.json), a sync with progress events, receive addresses
+//! with their QR code, and the refusals of a shielding.
 //!
 //! The testnet test is #[ignore]d; run it with
 //! `cargo test --test backend -- --ignored`.
@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use leekwallet_zcash_lib::backend::{self, SyncProgress};
+use leekwallet_zcash_lib::hardware;
 use serde_json::Value;
 use zecz::wallet::{AccountBirthday, AccountSpec};
 use zecz::{Network, Profile, Wallet};
@@ -63,6 +64,9 @@ fn empty_profile_and_bad_input() {
 }
 
 const TEST: Network = Network::TestNetwork;
+const ABANDON_ART: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+                           abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+                           abandon art";
 
 /// A wallet of `spec` born at NU5 with empty trees: no lightwalletd.
 fn offline_wallet(profile: &Profile, spec: &AccountSpec) {
@@ -91,6 +95,28 @@ fn receive_addresses_and_qr() {
     let svg = backend::qr_svg(&a.unified).unwrap();
     assert!(svg.contains("<svg") && svg.contains("#000000") && svg.contains("#ffffff"), "{svg:.200}");
     assert!(backend::qr_svg(&"x".repeat(5000)).is_err());
+}
+
+#[test]
+fn shield_refusals() {
+    let d = TempDir::new("shield");
+    let kv = key_vector("test/abandon-art/pp0/acct0");
+
+    // Watch-only: nothing could sign it.
+    let watch = Profile::new(TEST, d.0.join("watch"), None);
+    offline_wallet(&watch, &AccountSpec::view_only(kv["ufvk"].as_str().unwrap().into(), "watch"));
+    let e = format!("{:#}", hardware::propose_shield(&watch).unwrap_err());
+    assert!(e.contains("watch-only"), "{e}");
+
+    // A device account never synced: no height to build for. (The fee
+    // swallowing the whole balance is refused in zecz: host/zecz-core
+    // tests/shield.rs.)
+    let dev = Profile::new(TEST, d.0.join("dev"), None);
+    let acct = zecz::keys::DevAccount::from_mnemonic(&TEST, ABANDON_ART, "", 0).unwrap();
+    offline_wallet(&dev, &AccountSpec::from_dev_account(TEST, &acct, "leekwallet").unwrap());
+    let e = format!("{:#}", hardware::propose_shield(&dev).unwrap_err());
+    assert!(e.contains("not synced"), "{e}");
+    assert!(!dev.pending_dir().exists());
 }
 
 #[test]

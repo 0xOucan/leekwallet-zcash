@@ -115,6 +115,34 @@
             <dt>Spendable</dt><dd id="bal-spendable">—</dd>
           </dl>
           <p class="muted" id="balance-note"></p>
+          <div class="row" id="shield-row" hidden>
+            <button class="primary" id="shield-btn" type="button"
+                    title="Move every transparent coin into this wallet's shielded pool, signed on the LeekWallet">Shield transparent funds</button>
+          </div>
+          <p class="formerr" id="shield-err" role="alert"></p>
+
+          <div id="shield-review" hidden>
+            <h3>Review the shielding</h3>
+            <dl class="kv" id="shield-kv"></dl>
+            <p class="muted" id="shield-note"></p>
+            <div class="row">
+              <button class="primary" id="shield-sign-btn" type="button">Sign on LeekWallet</button>
+              <button id="shield-cancel-btn" type="button">Cancel</button>
+            </div>
+            <progress id="shield-bar" max="1" value="0" hidden></progress>
+            <p id="shield-status" class="muted" role="status"></p>
+            <p class="formerr" id="shield-sign-err" role="alert"></p>
+          </div>
+
+          <div id="shielded" hidden>
+            <h3>Shielded</h3>
+            <p>Transaction id</p>
+            <div class="addr" id="shield-txid"></div>
+            <div class="row">
+              <button id="copy-shield-txid" type="button">Copy</button>
+              <button id="shield-done-btn" type="button">Done</button>
+            </div>
+          </div>
         </section>
 
         <section class="panel" id="receive-panel" hidden aria-labelledby="receive-h">

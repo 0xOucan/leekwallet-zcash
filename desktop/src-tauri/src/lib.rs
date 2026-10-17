@@ -329,6 +329,22 @@ async fn propose_send(
     .await
 }
 
+/// Builds a shielding of all transparent funds (compact signer view) and
+/// returns its summary for review; signed by `sign_and_send` like a send.
+/// It replaces any send waiting for review.
+#[tauri::command]
+async fn propose_shield(state: State<'_, AppState>) -> Result<hardware::ProposalDto, String> {
+    let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
+    let (profile, slot) = (state.profile.clone(), state.proposal.clone());
+    off_thread(move || {
+        let _guard = guard;
+        let (dto, view) = hardware::propose_shield(&profile)?;
+        *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some((dto.id.clone(), view));
+        Ok(dto)
+    })
+    .await
+}
+
 /// Signs the reviewed proposal on the device, then proves, stores and
 /// broadcasts it; progress on `device://status`. Returns the txid.
 #[tauri::command]
@@ -388,6 +404,7 @@ pub fn run() {
             device_import,
             verify_address,
             propose_send,
+            propose_shield,
             sign_and_send
         ])
         .run(tauri::generate_context!())
