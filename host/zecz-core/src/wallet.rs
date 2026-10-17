@@ -697,6 +697,18 @@ impl Wallet {
             None,
         )
         .map_err(|e| anyhow!("nothing to shield: {e}"))?;
+        // A transparent balance near the fee shields nothing: the change
+        // would be dust, which the fee absorbs, so every zatoshi would go to
+        // miners. Refuse rather than build that.
+        let step = proposal.steps().first();
+        let shielded: u64 = step.balance().proposed_change().iter().map(|c| u64::from(c.value())).sum();
+        if shielded == 0 {
+            let fee = u64::from(step.balance().fee_required());
+            bail!(
+                "shielding would move nothing: the fee ({}) takes the whole transparent balance. Receive more on the t-address first",
+                format_zec(fee)
+            );
+        }
         self.build_proposed(account_id, &proposal, target_h, compact)
     }
 
