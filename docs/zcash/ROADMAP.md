@@ -361,18 +361,21 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 - **Device and long-running work in an offscreen document,** LeekWallet's proven pattern: a service worker has no `navigator.serial` and is evicted.
 - **Device protocol:** the TypeScript `session.ts` and `framing.ts` from LeekWallet's `app/packages/core`, checked against the firmware's conformance vectors. Or `leek-device` compiled to WASM, decided in 9.1.
 - **Transports:** Web Serial for USB, Web Bluetooth for BLE (from an extension page; it needs a user gesture), and a popup QR page.
-- **Wallet engine:** the hard part. Sync and proving in WASM.
+- **Wallet engine:** our librustzcash rev in WASM, with threads, in a dedicated worker started by the offscreen document (9.1).
 
-**9.1 Engine spike (M, the largest risk).**
-- Evaluate ChainSafe's WebZjs, a Zcash wallet in WASM used by the Zcash MetaMask Snap:
-  - Ironwood support;
-  - gRPC-web access to lightwalletd (which needs a proxy);
-  - Orchard proving time in the browser, single- and multi-threaded;
-  - storage size.
-- Alternatives: `zecz` compiled to WASM, or a local helper over native messaging (the old thin design) as a fallback.
-- Done when: a decision with measured numbers.
+**9.1 Engine spike (M, the largest risk). Done (2026-10-16): see [CHROME-ENGINE.md](CHROME-ENGINE.md).**
+- WebZjs is out: it is pinned to ChainSafe's NU6.1 librustzcash fork, with no Ironwood.
+- Our own librustzcash rev, compiled to WASM (`chrome/engine-spike`), ran the whole flow in an extension worker: sync, propose, PCZT, sign, prove, extract. Broadcast is not tested yet.
+  - It needs threads (single-threaded sync never finishes), so the engine runs in a dedicated worker with COOP/COEP.
+  - It needs `zcash_client_sqlite` through a `libsqlite3-sys` stand-in over `sqlite-wasm-rs`.
+  - It needs a gRPC-web endpoint: zec.rocks speaks only plain gRPC, ChainSafe hosts proxies.
+- Numbers, 8 threads, laptop: prove 2 actions 9-10 s (single-threaded about 57 s, native 2.2 s), proving key 9-13 s, sync about 355 blocks/s, 145 MB memory, 4.3 MB gzip.
+- Native messaging to `zecz` stays a fallback.
 
-**9.2 Software wallets (M).** Create or restore with a passphrase, encrypted with WebCrypto (Argon2id in WASM), auto-lock, several accounts.
+**9.2 Engine package and software wallets (L).**
+- First, turn the spike into `chrome/engine`: the worker, a message API, sqlite on OPFS that persists, and a broadcast through the proxy.
+- Then create or restore with a passphrase, encrypted with WebCrypto (Argon2id in WASM), auto-lock, several accounts.
+- Done when: a testnet send from a software wallet, broadcast from the extension.
 
 **9.3 The board (M).**
 - Pair and sign over Web Serial and Web Bluetooth, and QR through the webcam.

@@ -532,3 +532,45 @@ checked on Xtensa).
   the transparent key at that index) and only then shows it. Foreign,
   mixed, Sapling-bearing and malformed addresses are refused before the
   screen. Vectors from librustzcash at indices 1, 7, 2^31+5 and 88 bits.
+
+### 9.1 Browser engine spike (2026-10-16)
+- Decision: the extension's engine is our own librustzcash rev
+  (`16f0723c`) compiled to WASM, not WebZjs. WebZjs is pinned to
+  ChainSafe's `librustzcash-nu61` fork (NU6.1, head 2026-02-02), with no
+  NU6.3 and no Ironwood. Findings, numbers and the revised plan are in
+  `docs/zcash/CHROME-ENGINE.md`.
+- `chrome/engine-spike` builds the zecz-core crates for
+  wasm32-unknown-unknown, `zcash_client_sqlite` included. rusqlite 0.37
+  cannot build bundled SQLite there, so a `[patch.crates-io]`
+  `libsqlite3-sys` stand-in re-exports `sqlite-wasm-rs`. The threads
+  build also needs `-matomics -mbulk-memory` for that C code. Other
+  fixes: tonic `=0.14.2` for gRPC-web trailers, the wasm-bindgen-rayon
+  worker spawned from the packaged file instead of a blob: URL (MV3
+  CSP), uuid `js`, and a `Date.now()` clock.
+- Single-threaded, `sync::run` spins forever at the first block with
+  shielded outputs: trial decryption goes to `rayon::spawn_fifo`, and
+  the caller blocks on its result. With threads the caller blocks in
+  `Atomics.wait`, which only a worker may do. So the engine runs in a
+  dedicated worker started by the offscreen document.
+- Measured in Playwright's Chromium 153, with the spike as an MV3
+  extension, `crossOriginIsolated`, on an i7-1355U laptop. Worker, 8
+  threads, abandon-art account, through ChainSafe's testnet gRPC-web
+  proxy:
+  - sync of 8,501 blocks in 22 s, which found the 10,000-zat Ironwood
+    note;
+  - propose plus PCZT of a 0-zat send to self in 0.3 s (4,946 B);
+  - proving key 9-13 s, and a 2-action proof in 9-10 s;
+  - sign, prove and extract gave a 9,166 B v6 transaction, not
+    broadcast;
+  - a 50,001-block sync took 141 s (about 355 blocks/s), and the
+    database grew to 4.6 MB (1.8 MB after 8,500 blocks);
+  - 145 MB of WASM memory; 13.0 MB WASM, 4.3 MB gzip.
+- Proving a 2-action bundle: single-threaded in a tab or offscreen
+  document took 56-60 s (key 44 s), 4 threads in a worker 16-20 s.
+  Natively, 4.8 s single and 2.2 s multi-threaded.
+- gRPC: zec.rocks speaks only plain gRPC. ChainSafe's testnet and
+  mainnet proxies speak gRPC-web. A `fetch` from an extension page to
+  zec.rocks does read the gRPC messages, but not the trailer status, so
+  an error looks like an empty 200.
+- Not done: broadcast, OPFS persistence, wasm-opt, and sync from an old
+  birthday.
