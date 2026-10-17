@@ -243,3 +243,110 @@ pub fn tip(server: &str) -> Result<TipDto> {
     let t = block_on(wallet::tip(server))??;
     Ok(TipDto { server: t.server, chain_name: t.chain_name, height: t.height, vendor: t.vendor, version: t.version })
 }
+
+// ----------------------------------------------------------------- history
+
+/// How many transactions the history shows.
+pub const HISTORY_LIMIT: u32 = 200;
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipientDto {
+    pub address: String,
+    pub value_zat: u64,
+}
+
+/// One row of the history.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxDto {
+    pub txid: String,
+    /// None while unmined.
+    pub mined_height: Option<u32>,
+    /// Unix seconds of its block, when the wallet has it.
+    pub block_time: Option<i64>,
+    pub expiry_height: Option<u32>,
+    pub expired: bool,
+    /// "received", "sent", "shielded" or "internal".
+    pub kind: &'static str,
+    pub amount_zat: u64,
+    /// Change of the balance, negative when value left.
+    pub delta_zat: i64,
+    /// Only when this wallet paid it.
+    pub fee_zat: Option<u64>,
+    pub memos: Vec<String>,
+    pub recipients: Vec<RecipientDto>,
+}
+
+/// The account's transactions, newest first (unmined on top). Empty for
+/// an empty profile.
+pub fn history(profile: &Profile) -> Result<Vec<TxDto>> {
+    if !profile.exists() {
+        return Ok(Vec::new());
+    }
+    let w = Wallet::open(profile.clone())?;
+    if !w.has_account()? {
+        return Ok(Vec::new());
+    }
+    Ok(w.history(HISTORY_LIMIT)?.into_iter().map(tx_dto).collect())
+}
+
+fn tx_dto(t: wallet::TxRecord) -> TxDto {
+    use wallet::TxKind;
+    let kind = match t.kind {
+        TxKind::Received => "received",
+        TxKind::Sent => "sent",
+        TxKind::Shielded => "shielded",
+        TxKind::Internal => "internal",
+    };
+    TxDto {
+        txid: t.txid,
+        mined_height: t.mined_height,
+        block_time: t.block_time,
+        expiry_height: t.expiry_height,
+        expired: t.expired_unmined,
+        kind,
+        amount_zat: t.amount_zat,
+        delta_zat: t.delta_zat,
+        // A received transaction's fee was the payer's to pay.
+        fee_zat: if t.kind == TxKind::Received { None } else { t.fee_zat },
+        memos: t.memos,
+        recipients: t.recipients.into_iter().map(|r| RecipientDto { address: r.address, value_zat: r.value_zat }).collect(),
+    }
+}
+
+// ----------------------------------------------------------------- receive
+
+/// A fresh diversified address from [`next_address`].
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewAddressDto {
+    pub unified: String,
+    /// Decimal: a diversifier index can exceed what a JSON number holds.
+    pub diversifier_index: String,
+    /// Its transparent receiver; None for an Orchard-only address.
+    pub transparent: Option<String>,
+}
+
+/// Rotates to a new diversified address of the account. The wallet
+/// records it, so what is paid to it is found when syncing.
+pub fn next_address(profile: &Profile) -> Result<NewAddressDto> {
+    let a = Wallet::open(profile.clone())?.next_address()?;
+    Ok(NewAddressDto { unified: a.unified, diversifier_index: a.diversifier_index.to_string(), transparent: a.transparent })
+}
+
+/// `text` as a QR code in SVG, black on white with its quiet zone in any
+/// theme (scanners expect dark on light). Error correction M: an address
+/// is long, and a screen is clean.
+pub fn qr_svg(text: &str) -> Result<String> {
+    use qrcode::render::svg;
+    use qrcode::{EcLevel, QrCode};
+    let code = QrCode::with_error_correction_level(text.as_bytes(), EcLevel::M).context("too long for a QR code")?;
+    Ok(code
+        .render::<svg::Color>()
+        .min_dimensions(256, 256)
+        .dark_color(svg::Color("#000000"))
+        .light_color(svg::Color("#ffffff"))
+        .quiet_zone(true)
+        .build())
+}

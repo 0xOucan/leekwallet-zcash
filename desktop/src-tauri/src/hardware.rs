@@ -137,6 +137,8 @@ pub struct ChangeDto {
 pub struct ProposalDto {
     /// SHA-256 of the signer view, hex: what `sign_and_send` takes.
     pub id: String,
+    /// "send", or "shield": no payments, the change is what is shielded.
+    pub kind: &'static str,
     pub target_height: u32,
     pub payments: Vec<PaymentDto>,
     pub change: Vec<ChangeDto>,
@@ -378,6 +380,23 @@ pub fn propose_send(profile: &Profile, to: &str, amount_zec: &str, memo: Option<
         bail!("This is a watch-only account; nothing could sign the send. Import the account from a LeekWallet to spend.");
     }
     let p = w.propose_send(&SendRequest { to: to.to_string(), amount_zat, memo, compact: true })?;
+    Ok(proposal_dto(p, "send"))
+}
+
+/// Proposes shielding every transparent coin of the account into its
+/// shielded pool (Ironwood from NU6.3), with the compact signer view for
+/// the device, which signs each coin with the key it re-derives (roadmap
+/// 10.1). Refused when the fee would take the whole transparent balance.
+pub fn propose_shield(profile: &Profile) -> Result<(ProposalDto, Vec<u8>)> {
+    let mut w = Wallet::open(profile.clone())?;
+    if w.key_origin()?.is_none() {
+        bail!("This is a watch-only account; nothing could sign the shielding. Import the account from a LeekWallet to spend.");
+    }
+    let p = w.propose_shield(true)?;
+    Ok(proposal_dto(p, "shield"))
+}
+
+fn proposal_dto(p: wallet::SendProposal, kind: &'static str) -> (ProposalDto, Vec<u8>) {
     let payments: Vec<PaymentDto> = p
         .payments
         .iter()
@@ -386,6 +405,7 @@ pub fn propose_send(profile: &Profile, to: &str, amount_zec: &str, memo: Option<
     let total_zat = payments.iter().map(|x| x.amount_zat).sum::<u64>() + p.fee_zat;
     let dto = ProposalDto {
         id: proposal_id(&p.signer_view),
+        kind,
         target_height: p.target_height,
         payments,
         change: p.change.iter().map(|c| ChangeDto { value_zat: c.value_zat, pool: c.pool.clone() }).collect(),
@@ -394,7 +414,7 @@ pub fn propose_send(profile: &Profile, to: &str, amount_zec: &str, memo: Option<
         signer_view_bytes: p.signer_view.len(),
         compact: p.compact,
     };
-    Ok((dto, p.signer_view))
+    (dto, p.signer_view)
 }
 
 /// The id a proposal goes by: the hex SHA-256 of its signer view, the

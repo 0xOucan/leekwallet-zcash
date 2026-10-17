@@ -2754,6 +2754,7 @@ dependencies = [
  "leek-transport-ble",
  "leek-transport-serial",
  "pczt",
+ "qrcode",
  "rand 0.10.3",
  "serde",
  "serde_json",
@@ -3930,6 +3931,12 @@ checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-xml"

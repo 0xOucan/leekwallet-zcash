@@ -7,10 +7,12 @@ plain TypeScript frontend with LeekWallet's look.
 It imports an account from a LeekWallet over USB or Bluetooth (8.3), or a
 unified full viewing key as a watch-only account (8.1). It syncs from
 lightwalletd with a progress bar, shows the balance per pool (Orchard,
-Ironwood, transparent) and the unified address, verifies that address on
-the device, and sends: the app builds the transaction, the LeekWallet
-reviews and signs it, the app proves and broadcasts it. Software wallets
-(8.2) come later.
+Ironwood, transparent) and the unified address with its QR code, rotates
+to fresh addresses, verifies an address on the device, and sends: the
+app builds the transaction, the LeekWallet reviews and signs it, the app
+proves and broadcasts it. It shields transparent funds the same way,
+lists the account's history, and keeps an address book (8.4). Software
+wallets (8.2) come later.
 
 ## Layout
 
@@ -22,6 +24,7 @@ desktop/
     src/backend.rs        blocking calls over zecz::wallet, serializable results
     src/hardware.rs       the device flows: pair, import, verify, sign, finish
     src/link.rs           USB serial and Bluetooth LE links to the device
+    src/contacts.rs       the address book (JSON in the app data dir)
     src/lib.rs            the Tauri commands; work runs on worker threads
     tests/backend.rs      backend tests (one #[ignore]d, on testnet)
     tests/device_zdev.rs  the device flows against zdev (one #[ignore]d)
@@ -35,14 +38,19 @@ library build from. It depends on `host/zecz-core` by path.
 Commands:
 
 - Wallet: `profile_status`, `init_watch_only(ufvk, birthday)`, `sync`
-  (emits `sync://progress`), `balances`, `addresses`, `tip`.
+  (emits `sync://progress`), `balances`, `addresses`, `next_address`,
+  `qr_svg(text)`, `history`, `tip`.
+- Contacts: `contacts_list`, `contact_save(name, address, replacing?)`,
+  `contact_remove(name)`; each returns the book.
 - Device: `list_ports` (USB serial ports, the board's Espressif VID 303a
   first), `ble_scan`, `device_pair(transport, port?, account?)` (emits the
   six digits on `device://passkey`), `device_session`,
   `device_disconnect`, `device_import(birthday?)`, `verify_address(ua)`,
   `propose_send(to, amount, memo?)` (amount in ZEC; builds the compact
-  signer view) and `sign_and_send(proposalId)`, which returns the txid.
-  Device flows report each step on `device://status`.
+  signer view), `propose_shield` (all transparent funds into the
+  shielded pool) and `sign_and_send(proposalId)`, which signs either and
+  returns the txid. One proposal is pending at a time: a new one
+  replaces the last. Device flows report each step on `device://status`.
 
 ## Hardware accounts
 
@@ -73,6 +81,14 @@ and `finish`:
    the app applies the signatures (each checked against its rk), proves,
    stores and broadcasts, and shows the txid.
 
+5. **Shield.** When the transparent balance is above zero, the balance
+   card offers "Shield transparent funds": the review shows the amount,
+   the fee and the pool it goes into (Ironwood from NU6.3); the device
+   shows each transparent coin and "Shield … into this wallet", and signs
+   each coin with the key it re-derives (roadmap 10.1). When the balance
+   does not cover the fee, or the fee would take all of it, the app shows
+   zecz's refusal instead of a review.
+
 Before verifying or signing, the app checks that the connected device
 holds the wallet's seed (the ZIP 32 seed fingerprint), so a second board
 is refused with both fingerprints rather than failing on the device.
@@ -80,6 +96,31 @@ is refused with both fingerprints rather than failing on the device.
 One device call runs at a time. Errors from the device read as sentences
 (rejected, timed out, locked, session ended, refused to sign with its
 reason code), with the device's own message after them.
+
+## Wallet screens
+
+- **Receive.** The unified address (Orchard and P2PKH receivers) in
+  groups of four and as a QR code (SVG drawn by the backend with the
+  `qrcode` crate; black on white in either theme). "New address" rotates
+  to a fresh diversified address, recorded in the wallet so what is paid
+  to it is found: Orchard and P2PKH while the transparent gap limit (10
+  unused addresses) allows, then Orchard only. Earlier addresses keep
+  working; the app shows the default one again after a restart. "Verify
+  on device" accepts any of them. The transparent address is shown
+  apart, under a PUBLIC warning.
+- **History.** The account's transactions from the wallet database
+  (zcash_client_sqlite's `v_transactions` and `v_tx_outputs`), newest
+  first with unmined ones on top: date and height, received, sent,
+  shielded or moved between pools, amount, the fee when this wallet paid
+  it, recipients (by contact name when known), readable memos, and the
+  txid with Copy. Read again after a sync, a send and a shielding.
+- **Contacts.** Name and address, kept on this computer only in
+  `<app data dir>/contacts-<test|main>.json` (`{"version": 1,
+  "contacts": [{"name", "address"}]}`), written to a temporary file and
+  renamed. Names are unique ignoring case; an address must be payable on
+  the wallet's network. The send form has a contact picker, and "Pay" on
+  a contact fills it in.
+- **Account.** The app uses account 0 of the device, as before.
 
 ## Where the wallet lives
 
@@ -156,11 +197,20 @@ syncs, and sends to itself if the account holds enough (without
 broadcasting unless `LEEKZ_TEST_BROADCAST=1`). Bluetooth needs a radio and
 a board; it is only compiled here.
 
+`tests/backend.rs` also checks the wallet screens offline: the history
+of an offline wallet holding a real transaction (vector
+`iw_send_shielded`, soft-signed, proven and stored with
+`Wallet::store_transaction`) and its JSON, rotating addresses and the QR
+code, the shield refusals (watch-only, not synced), and the contacts
+file (sorting, unique names, foreign-network addresses, rename, remove,
+no temporary file left, an unreadable file). The refusals of a shield
+the fee would swallow are tested in `host/zecz-core/tests/shield.rs`.
+
 The testnet test imports the public test account (the 24-word
 "abandon ... art" mnemonic, UFVK from `vectors/keys.json`) as watch-only
 about 2,500 blocks below the tip, syncs it through
-`https://testnet.zec.rocks:443`, and checks the progress events, balances
-and addresses.
+`https://testnet.zec.rocks:443`, and checks the progress events,
+balances, addresses and the order of the history.
 
 CI (`.github/workflows/desktop.yml`) builds the app on Ubuntu, Windows and
 macOS and runs the offline tests and `host/` tests on Ubuntu.

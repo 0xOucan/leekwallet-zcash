@@ -79,6 +79,8 @@ interface DeviceImported {
 
 interface Proposal {
   id: string;
+  /** "shield": no payments; the change is what gets shielded. */
+  kind: "send" | "shield";
   targetHeight: number;
   payments: { recipient: string; amountZat: number; pool: string; hasMemo: boolean }[];
   change: { valueZat: number; pool: string }[];
@@ -99,6 +101,34 @@ interface Addresses {
   unified: string;
   transparent: string | null;
   orchardOnly: string;
+}
+
+interface Tx {
+  txid: string;
+  minedHeight: number | null;
+  /** Unix seconds. */
+  blockTime: number | null;
+  expiryHeight: number | null;
+  expired: boolean;
+  kind: "received" | "sent" | "shielded" | "internal";
+  amountZat: number;
+  deltaZat: number;
+  /** Only when this wallet paid it. */
+  feeZat: number | null;
+  memos: string[];
+  recipients: { address: string; valueZat: number }[];
+}
+
+interface Contact {
+  name: string;
+  address: string;
+}
+
+interface NewAddress {
+  unified: string;
+  /** Decimal string: it can exceed 2^53. */
+  diversifierIndex: string;
+  transparent: string | null;
 }
 
 interface Imported {
@@ -196,6 +226,8 @@ async function refresh(): Promise<void> {
   $("balance-panel").hidden = !s.hasAccount;
   $("receive-panel").hidden = !s.hasAccount;
   $("send-panel").hidden = !(s.hasAccount && s.hardware);
+  $("history-panel").hidden = !s.hasAccount;
+  $("contacts-panel").hidden = !s.hasAccount;
   $("verify-btn").hidden = !s.hardware;
   renderDevice();
   if (!s.hasAccount) {
@@ -209,7 +241,7 @@ async function refresh(): Promise<void> {
     $("sync-status").textContent = `Not synced yet. Scanning starts at the birthday, block ${s.birthday ?? "?"}.`;
   }
   setConn("connected", s.hardware ? `LeekWallet account · ZFP ${s.zfp ?? "?"}` : "Watch-only account");
-  await Promise.all([renderAddresses(), renderBalances()]);
+  await Promise.all([renderAddresses(), renderBalances(), loadContacts(), renderHistory()]);
 }
 
 /** The device panel: the link chooser, or the connected device. */
@@ -253,11 +285,48 @@ function showScanned(scanned: number, tip: number, birthday: number): void {
     scanned >= tip ? `Up to date at block ${tip}.` : `Scanned to block ${scanned} of ${tip}.`;
 }
 
+/**
+ * The address the receive card shows: the default one at start, or the one
+ * "New address" rotated to, for the rest of the session.
+ */
+let rotated: NewAddress | null = null;
+
 async function renderAddresses(): Promise<void> {
   const a = await invoke<Addresses>("addresses");
+  showUa(rotated ? rotated.unified : a.unified, rotated);
+  $("taddr-box").hidden = a.transparent === null;
+  if (a.transparent !== null) {
+    $("taddr").textContent = chunk(a.transparent);
+    $("taddr").dataset["raw"] = a.transparent;
+  }
+}
+
+function showUa(unified: string, fresh: NewAddress | null): void {
   const ua = $("ua");
-  ua.textContent = chunk(a.unified);
-  ua.dataset["raw"] = a.unified;
+  ua.textContent = chunk(unified);
+  ua.dataset["raw"] = unified;
+  $("ua-label").textContent =
+    fresh === null
+      ? "Unified address (Orchard and transparent receivers)."
+      : fresh.transparent === null
+        ? "A new unified address (Orchard only: the transparent receivers in reserve are all handed out until one is paid)."
+        : "A new unified address (Orchard and transparent receivers). Earlier addresses keep working.";
+  $("verify-status").textContent = "";
+  $("verify-err").textContent = "";
+  void drawQr(unified);
+}
+
+async function drawQr(text: string): Promise<void> {
+  const img = $<HTMLImageElement>("ua-qr");
+  try {
+    const svg = await invoke<string>("qr_svg", { text });
+    // The address on screen may have changed while the QR was drawn.
+    if (($("ua").dataset["raw"] ?? "") !== text) return;
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    img.hidden = false;
+  } catch {
+    img.hidden = true;
+  }
 }
 
 async function renderBalances(): Promise<void> {
@@ -277,6 +346,11 @@ async function renderBalances(): Promise<void> {
     const pending = b.orchard.pending + b.ironwood.pending + b.transparent.pending;
     note.textContent = pending > 0 ? `${formatZec(pending, ticker)} waiting for confirmations.` : "";
   }
+  // Shielding is signed on the device: a LeekWallet account only. The
+  // backend decides whether there is enough to shield, and says why not.
+  const canShield = b !== null && b.transparent.total > 0 && profile?.hardware === true;
+  $("shield-row").hidden = !canShield || !$("shield-review").hidden || !$("shielded").hidden;
+  if (!canShield) $("shield-err").textContent = "";
 }
 
 // ------------------------------------------------------------------ actions
@@ -337,7 +411,7 @@ $("sync-btn").addEventListener("click", async () => {
     const done = await invoke<SyncDone>("sync");
     bar.value = done.progress;
     $("sync-status").textContent = `Up to date at block ${done.chainTip}.`;
-    await renderBalances();
+    await Promise.all([renderBalances(), renderHistory()]);
     setConn("connected", "Synced");
   } catch (e) {
     err.textContent = errText(e);
@@ -356,18 +430,36 @@ void tauri?.event?.listen?.<SyncProgress>("sync://progress", ({ payload: p }) =>
   }
 });
 
-$("copy-ua").addEventListener("click", async () => {
-  const raw = $("ua").dataset["raw"] ?? "";
+/** Copies the raw text of `source` (its data-raw) and says so on `btn`. */
+async function copyFrom(btn: HTMLElement, source: HTMLElement): Promise<void> {
+  const raw = source.dataset["raw"] ?? source.textContent ?? "";
   try {
     await navigator.clipboard.writeText(raw);
-    $("copy-ua").textContent = "Copied";
-    setTimeout(() => ($("copy-ua").textContent = "Copy"), 1500);
+    btn.textContent = "Copied";
+    setTimeout(() => (btn.textContent = "Copy"), 1500);
   } catch {
     // Clipboard denied: select the text so it can be copied by hand.
     const r = document.createRange();
-    r.selectNodeContents($("ua"));
+    r.selectNodeContents(source);
     getSelection()?.removeAllRanges();
     getSelection()?.addRange(r);
+  }
+}
+
+$("copy-ua").addEventListener("click", () => void copyFrom($("copy-ua"), $("ua")));
+$("copy-taddr").addEventListener("click", () => void copyFrom($("copy-taddr"), $("taddr")));
+
+$("new-addr-btn").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("new-addr-btn");
+  btn.disabled = true;
+  $("verify-err").textContent = "";
+  try {
+    rotated = await invoke<NewAddress>("next_address");
+    showUa(rotated.unified, rotated);
+  } catch (e) {
+    $("verify-err").textContent = errText(e);
+  } finally {
+    btn.disabled = false;
   }
 });
 
@@ -619,6 +711,12 @@ $<HTMLFormElement>("send-form").addEventListener("submit", async (ev) => {
   btn.disabled = true;
   try {
     proposal = await invoke<Proposal>("propose_send", { to, amount, memo: memo.trim() === "" ? null : memo });
+    // A shielding under review shares the one pending slot; this replaced it.
+    if (shieldProposal) {
+      shieldProposal = null;
+      showShieldStage("idle");
+      void renderBalances();
+    }
     renderReview(proposal);
     $("sign-status").textContent = "";
     $("sign-err").textContent = "";
@@ -636,40 +734,157 @@ $("cancel-btn").addEventListener("click", () => {
   showSendStage("form");
 });
 
-$("sign-btn").addEventListener("click", async () => {
-  if (!proposal) return;
-  $("sign-err").textContent = "";
+/** The elements of one review: the send's or the shielding's. */
+interface SignUi {
+  sign: string;
+  cancel: string;
+  bar: string;
+  status: string;
+  err: string;
+}
+
+/**
+ * Signs a reviewed proposal on the device, then proves and broadcasts it
+ * (the backend does both in `sign_and_send`). Returns null on failure,
+ * with the reason shown.
+ */
+async function signOnDevice(p: Proposal, ui: SignUi): Promise<Sent | null> {
+  $(ui.err).textContent = "";
   if (!paired) {
-    $("sign-err").textContent = "Connect the LeekWallet first (above).";
-    return;
+    $(ui.err).textContent = "Connect the LeekWallet first (above).";
+    return null;
   }
-  const bar = $<HTMLProgressElement>("sign-bar");
+  const bar = $<HTMLProgressElement>(ui.bar);
   bar.value = 0;
   uploadBar = bar;
-  $<HTMLButtonElement>("cancel-btn").disabled = true;
+  $<HTMLButtonElement>(ui.cancel).disabled = true;
   setConn("connecting", "Signing on LeekWallet…");
   try {
-    const sent = await deviceFlow("sign-status", $<HTMLButtonElement>("sign-btn"), () =>
-      invoke<Sent>("sign_and_send", { proposalId: proposal?.id }),
+    const sent = await deviceFlow(ui.status, $<HTMLButtonElement>(ui.sign), () =>
+      invoke<Sent>("sign_and_send", { proposalId: p.id }),
     );
-    proposal = null;
-    const txid = $("txid");
-    txid.textContent = sent.txid;
-    txid.dataset["raw"] = sent.txid;
-    $<HTMLFormElement>("send-form").reset();
-    showSendStage("sent");
-    setConn("connected", "Sent");
-    await renderBalances();
+    setConn("connected", p.kind === "shield" ? "Shielded" : "Sent");
+    return sent;
   } catch (e) {
-    $("sign-status").textContent = "";
-    $("sign-err").textContent = errText(e);
-    setConn("error", "Not sent");
+    $(ui.status).textContent = "";
+    $(ui.err).textContent = errText(e);
+    setConn("error", p.kind === "shield" ? "Not shielded" : "Not sent");
     await afterDeviceError();
+    return null;
   } finally {
     uploadBar = null;
     bar.hidden = true;
-    $<HTMLButtonElement>("cancel-btn").disabled = false;
+    $<HTMLButtonElement>(ui.cancel).disabled = false;
   }
+}
+
+$("sign-btn").addEventListener("click", async () => {
+  if (!proposal) return;
+  const sent = await signOnDevice(proposal, {
+    sign: "sign-btn",
+    cancel: "cancel-btn",
+    bar: "sign-bar",
+    status: "sign-status",
+    err: "sign-err",
+  });
+  if (!sent) return;
+  proposal = null;
+  const txid = $("txid");
+  txid.textContent = sent.txid;
+  txid.dataset["raw"] = sent.txid;
+  $<HTMLFormElement>("send-form").reset();
+  showRecipientName();
+  showSendStage("sent");
+  await afterTransaction();
+});
+
+/** A transaction was stored and broadcast: what it changed. */
+async function afterTransaction(): Promise<void> {
+  await Promise.all([renderBalances(), renderHistory()]);
+}
+
+// ------------------------------------------------------------------- shield
+
+let shieldProposal: Proposal | null = null;
+
+function showShieldStage(stage: "idle" | "review" | "done"): void {
+  $("shield-review").hidden = stage !== "review";
+  $("shielded").hidden = stage !== "done";
+  $("shield-row").hidden = stage !== "idle";
+}
+
+$("shield-btn").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("shield-btn");
+  const err = $("shield-err");
+  err.textContent = "";
+  btn.disabled = true;
+  try {
+    const p = await invoke<Proposal>("propose_shield");
+    shieldProposal = p;
+    // A send under review shares the one pending slot; this replaced it.
+    if (proposal) {
+      proposal = null;
+      showSendStage("form");
+    }
+    const kv = $("shield-kv");
+    kv.replaceChildren();
+    const row = (k: string, v: string) => {
+      const dt = document.createElement("dt");
+      dt.textContent = k;
+      const dd = document.createElement("dd");
+      dd.textContent = v;
+      kv.append(dt, dd);
+    };
+    const shielded = p.change.reduce((s, c) => s + c.valueZat, 0);
+    const pools = [...new Set(p.change.map((c) => c.pool))].join(", ");
+    row("From", "Your transparent funds");
+    row("Shield", formatZec(shielded, ticker));
+    row("Into", `${pools} (this wallet)`);
+    row("Fee", formatZec(p.feeZat, ticker));
+    row("Total", formatZec(shielded + p.feeZat, ticker));
+    $("shield-note").textContent =
+      `Nothing leaves the wallet but the fee. The device shows each transparent coin it signs, then "Shield … into this wallet". ` +
+      `It receives a compact PCZT of ${p.signerViewBytes.toLocaleString("en-US")} bytes. Sign soon: the transaction expires about 40 blocks after ${p.targetHeight}.`;
+    $("shield-status").textContent = "";
+    $("shield-sign-err").textContent = "";
+    showShieldStage("review");
+  } catch (e) {
+    // E.g. the fee would take the whole transparent balance.
+    err.textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("shield-cancel-btn").addEventListener("click", () => {
+  shieldProposal = null;
+  showShieldStage("idle");
+  void renderBalances();
+});
+
+$("shield-sign-btn").addEventListener("click", async () => {
+  if (!shieldProposal) return;
+  const sent = await signOnDevice(shieldProposal, {
+    sign: "shield-sign-btn",
+    cancel: "shield-cancel-btn",
+    bar: "shield-bar",
+    status: "shield-status",
+    err: "shield-sign-err",
+  });
+  if (!sent) return;
+  shieldProposal = null;
+  const txid = $("shield-txid");
+  txid.textContent = sent.txid;
+  txid.dataset["raw"] = sent.txid;
+  showShieldStage("done");
+  await afterTransaction();
+});
+
+$("copy-shield-txid").addEventListener("click", () => void copyFrom($("copy-shield-txid"), $("shield-txid")));
+
+$("shield-done-btn").addEventListener("click", () => {
+  showShieldStage("idle");
+  void renderBalances();
 });
 
 $("new-send-btn").addEventListener("click", () => showSendStage("form"));
@@ -683,6 +898,224 @@ $("copy-txid").addEventListener("click", async () => {
     /* the txid is on screen to select by hand */
   }
 });
+
+// ------------------------------------------------------------------ history
+
+const KIND_LABEL: Record<Tx["kind"], string> = {
+  received: "Received",
+  sent: "Sent",
+  shielded: "Shielded",
+  internal: "Moved between pools",
+};
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function txWhen(t: Tx): string {
+  if (t.minedHeight === null) {
+    if (t.expired) return "Not mined, expired: it will not be";
+    return t.expiryHeight !== null ? `Waiting to be mined (expires at block ${t.expiryHeight})` : "Waiting to be mined";
+  }
+  const at = `block ${t.minedHeight.toLocaleString("en-US")}`;
+  if (t.blockTime === null) return at;
+  const d = new Date(t.blockTime * 1000);
+  return `${d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · ${at}`;
+}
+
+async function renderHistory(): Promise<void> {
+  const list = $("history");
+  const err = $("history-err");
+  let txs: Tx[];
+  try {
+    txs = await invoke<Tx[]>("history");
+    err.textContent = "";
+  } catch (e) {
+    err.textContent = errText(e);
+    return;
+  }
+  $("history-empty").hidden = txs.length > 0;
+  const names = new Map(contactList.map((c) => [c.address, c.name]));
+  list.replaceChildren(
+    ...txs.map((t) => {
+      const li = document.createElement("li");
+      const head = el("div", "tx__head");
+      head.append(el("span", "tx__kind", KIND_LABEL[t.kind]), el("span", "tx__when", txWhen(t)));
+      const incoming = t.kind === "received";
+      const amount = el("span", "tx__amount", `${incoming ? "+" : t.kind === "sent" ? "−" : ""}${formatZec(t.amountZat, ticker)}`);
+      amount.dataset["sign"] = incoming ? "in" : "out";
+      head.append(amount);
+      li.append(head);
+      if (t.feeZat !== null && !incoming) li.append(el("div", "tx__fee", `Fee ${formatZec(t.feeZat, ticker)}`));
+      for (const r of t.recipients) {
+        const who = names.get(r.address);
+        li.append(el("div", "tx__to", `To ${who ? `${who} · ` : ""}${chunk(r.address)}`));
+      }
+      for (const m of t.memos) li.append(el("p", "tx__memo", m));
+      const id = el("div", "tx__id");
+      const code = el("code", "", t.txid);
+      code.dataset["raw"] = t.txid;
+      const copy = el("button", "", "Copy");
+      copy.type = "button";
+      copy.title = "Copy the transaction id";
+      copy.addEventListener("click", () => void copyFrom(copy, code));
+      id.append(code, copy);
+      li.append(id);
+      return li;
+    }),
+  );
+}
+
+$("history-refresh").addEventListener("click", () => void renderHistory());
+
+// ----------------------------------------------------------------- contacts
+
+let contactList: Contact[] = [];
+/** The contact being edited, by its name; null when adding. */
+let editing: string | null = null;
+
+async function loadContacts(): Promise<void> {
+  try {
+    contactList = await invoke<Contact[]>("contacts_list");
+    $("contact-err").textContent = "";
+  } catch (e) {
+    contactList = [];
+    $("contact-err").textContent = errText(e);
+  }
+  renderContacts();
+}
+
+function renderContacts(): void {
+  const list = $("contacts");
+  list.replaceChildren(
+    ...contactList.map((c) => {
+      const li = document.createElement("li");
+      const pay = el("button", "", "Pay");
+      pay.type = "button";
+      pay.hidden = $("send-panel").hidden;
+      pay.addEventListener("click", () => pickContact(c));
+      const edit = el("button", "", "Edit");
+      edit.type = "button";
+      edit.addEventListener("click", () => startEdit(c));
+      // Two presses, so a slip does not lose a contact: the webview has no
+      // confirm dialog on every platform.
+      const del = el("button", "", "Delete");
+      del.type = "button";
+      let armed = 0;
+      del.addEventListener("click", () => {
+        if (armed) {
+          clearTimeout(armed);
+          void removeContact(c);
+          return;
+        }
+        del.textContent = "Really delete?";
+        armed = window.setTimeout(() => {
+          armed = 0;
+          del.textContent = "Delete";
+        }, 3000);
+      });
+      li.append(el("span", "contact__name", c.name), el("span", "statusbar__spacer"), pay, edit, del, el("span", "contact__addr", chunk(c.address)));
+      return li;
+    }),
+  );
+  // The send form's picker.
+  const sel = $<HTMLSelectElement>("send-contact");
+  const keep = sel.value;
+  sel.replaceChildren(sel.options[0] ?? new Option("Type an address below, or pick a contact", ""));
+  for (const c of contactList) sel.append(new Option(c.name, c.address));
+  sel.value = contactList.some((c) => c.address === keep) ? keep : "";
+  $("send-contact-field").hidden = contactList.length === 0;
+  showRecipientName();
+}
+
+/** Fills the send form with a contact's address. */
+function pickContact(c: Contact): void {
+  showSendStage("form");
+  $<HTMLTextAreaElement>("send-to").value = c.address;
+  $<HTMLSelectElement>("send-contact").value = c.address;
+  showRecipientName();
+  $("send-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  $<HTMLInputElement>("send-amount").focus();
+}
+
+/** Names the recipient when the address typed is a contact's. */
+function showRecipientName(): void {
+  const to = $<HTMLTextAreaElement>("send-to").value.trim();
+  const c = contactList.find((x) => x.address === to);
+  $("send-to-name").textContent = c ? `Contact: ${c.name}` : "";
+  $<HTMLSelectElement>("send-contact").value = c ? c.address : "";
+}
+
+$("send-contact").addEventListener("change", () => {
+  const addr = $<HTMLSelectElement>("send-contact").value;
+  if (addr !== "") $<HTMLTextAreaElement>("send-to").value = addr;
+  showRecipientName();
+});
+$("send-to").addEventListener("input", showRecipientName);
+
+function startEdit(c: Contact): void {
+  editing = c.name;
+  $<HTMLInputElement>("contact-name").value = c.name;
+  $<HTMLTextAreaElement>("contact-address").value = c.address;
+  $("contact-save").textContent = "Save contact";
+  $("contact-cancel").hidden = false;
+  $("contact-err").textContent = "";
+  $<HTMLInputElement>("contact-name").focus();
+}
+
+function stopEdit(): void {
+  editing = null;
+  $<HTMLFormElement>("contact-form").reset();
+  $("contact-save").textContent = "Add contact";
+  $("contact-cancel").hidden = true;
+  $("contact-name").setAttribute("aria-invalid", "false");
+  $("contact-address").setAttribute("aria-invalid", "false");
+}
+
+$("contact-cancel").addEventListener("click", () => {
+  stopEdit();
+  $("contact-err").textContent = "";
+});
+
+$<HTMLFormElement>("contact-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const name = $<HTMLInputElement>("contact-name").value.trim();
+  const address = $<HTMLTextAreaElement>("contact-address").value.trim();
+  const err = $("contact-err");
+  $("contact-name").setAttribute("aria-invalid", String(name === ""));
+  $("contact-address").setAttribute("aria-invalid", String(address === ""));
+  if (name === "" || address === "") {
+    err.textContent = "Enter a name and an address.";
+    return;
+  }
+  const btn = $<HTMLButtonElement>("contact-save");
+  btn.disabled = true;
+  try {
+    contactList = await invoke<Contact[]>("contact_save", { name, address, replacing: editing });
+    err.textContent = "";
+    stopEdit();
+    renderContacts();
+    void renderHistory();
+  } catch (e) {
+    err.textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function removeContact(c: Contact): Promise<void> {
+  try {
+    contactList = await invoke<Contact[]>("contact_remove", { name: c.name });
+    if (editing === c.name) stopEdit();
+    renderContacts();
+    void renderHistory();
+  } catch (e) {
+    $("contact-err").textContent = errText(e);
+  }
+}
 
 // -------------------------------------------------------------------- theme
 

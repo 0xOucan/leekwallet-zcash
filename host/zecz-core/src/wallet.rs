@@ -170,6 +170,62 @@ pub struct Addresses {
     pub orchard_only: String,
 }
 
+/// A diversified address from [`Wallet::next_address`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiversifiedAddress {
+    pub unified: String,
+    pub diversifier_index: u128,
+    /// Its P2PKH receiver, encoded on its own; None for an Orchard-only one.
+    pub transparent: Option<String>,
+}
+
+/// What a transaction did to the account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxKind {
+    /// Value came in from elsewhere.
+    Received,
+    /// Value left the account (to others, or to itself for a fee).
+    Sent,
+    /// The account's transparent coins moved into its shielded pool.
+    Shielded,
+    /// The account's shielded funds moved between its own pools.
+    Internal,
+}
+
+/// A value the account paid to an address that is not its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recipient {
+    pub address: String,
+    pub value_zat: u64,
+}
+
+/// One transaction in [`Wallet::history`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxRecord {
+    /// Hex, in the byte order block explorers show.
+    pub txid: String,
+    /// None while unmined.
+    pub mined_height: Option<u32>,
+    /// Unix seconds of its block, when the wallet stored the block.
+    pub block_time: Option<i64>,
+    pub expiry_height: Option<u32>,
+    /// Never mined and past its expiry height: it never will be.
+    pub expired_unmined: bool,
+    pub kind: TxKind,
+    /// The change in the account's balance; negative when value left.
+    pub delta_zat: i64,
+    /// What moved: received, paid to others, shielded, or crossed pools.
+    pub amount_zat: u64,
+    /// Known when the wallet knows every input's value (always for a fully
+    /// shielded transaction). Paid by the sender, which for a received
+    /// transaction is someone else.
+    pub fee_zat: Option<u64>,
+    /// The text memos the wallet could read, change excluded.
+    pub memos: Vec<String>,
+    /// Who the account paid, for a send.
+    pub recipients: Vec<Recipient>,
+}
+
 /// What [`Wallet::init`] did.
 #[derive(Clone, Debug)]
 pub enum InitOutcome {
@@ -340,6 +396,27 @@ pub fn parse_zec(s: &str) -> Result<u64> {
     let int: u64 = if int.is_empty() { 0 } else { int.parse().context("bad ZEC amount")? };
     let frac: u64 = if frac.is_empty() { 0 } else { format!("{frac:0<8}").parse().context("bad ZEC amount")? };
     int.checked_mul(100_000_000).and_then(|v| v.checked_add(frac)).ok_or_else(|| anyhow!("amount overflows"))
+}
+
+/// Checks that `addr` is an address this wallet can pay on `network`
+/// (unified, Orchard-only unified or transparent; not Sapling), and names
+/// its kind: "unified" or "transparent".
+pub fn check_address(network: Network, addr: &str) -> Result<&'static str> {
+    match Address::decode(&network, addr.trim()) {
+        Some(Address::Unified(_)) => Ok("unified"),
+        Some(Address::Transparent(_)) => Ok("transparent"),
+        Some(Address::Sapling(_)) => bail!("Sapling addresses are not supported"),
+        Some(_) => bail!("this kind of address is not supported"),
+        None => bail!("{} is not a valid {} address", addr.trim(), network_name(network)),
+    }
+}
+
+/// A memo's text, if it is a non-empty text memo.
+fn memo_text(bytes: &[u8]) -> Option<String> {
+    match Memo::from_bytes(bytes).ok()? {
+        Memo::Text(t) if !t.trim().is_empty() => Some(t.to_string()),
+        _ => None,
+    }
 }
 
 fn ua_request() -> UnifiedAddressRequest {
@@ -548,6 +625,158 @@ impl Wallet {
     pub fn addresses(&self) -> Result<Addresses> {
         let (_, ufvk) = self.the_account()?;
         addresses_of(self.profile.network, &ufvk)
+    }
+
+    /// Generates and records a fresh diversified address, so a payer sees
+    /// a different address from the last one. Orchard and P2PKH, as the
+    /// default address, while the transparent gap limit allows (the wallet
+    /// watches the gap addresses' coins as it syncs); then Orchard only
+    /// rather than an address whose transparent coins it could miss. The
+    /// device verifies either shape (zShowAddress accepts any index).
+    pub fn next_address(&mut self) -> Result<DiversifiedAddress> {
+        use zcash_client_sqlite::error::SqliteClientError;
+        let (id, _) = self.the_account()?;
+        let net = self.profile.network;
+        // The first un-exposed index in the gap may be the default one,
+        // which the user has already seen: take the next.
+        for _ in 0..2 {
+            let (ua, j) = match self.db.get_next_available_address(id, ua_request()) {
+                Ok(Some(a)) => a,
+                Ok(None) => bail!("account vanished"),
+                Err(SqliteClientError::ReachedGapLimit(..)) => self
+                    .db
+                    .get_next_available_address(id, UnifiedAddressRequest::ORCHARD)
+                    .map_err(|e| anyhow!("address generation: {e}"))?
+                    .ok_or_else(|| anyhow!("account vanished"))?,
+                Err(e) => bail!("address generation: {e}"),
+            };
+            if u128::from(j) == 0 {
+                continue;
+            }
+            return Ok(DiversifiedAddress {
+                unified: ua.encode(&net),
+                diversifier_index: u128::from(j),
+                transparent: ua.transparent().map(|t| Address::Transparent(*t).encode(&net)),
+            });
+        }
+        bail!("the wallet keeps handing out its default address")
+    }
+
+    /// The account's transactions, newest first (unmined ones on top), at
+    /// most `limit`: from zcash_client_sqlite's `v_transactions` and
+    /// `v_tx_outputs` views.
+    pub fn history(&self, limit: u32) -> Result<Vec<TxRecord>> {
+        use rusqlite::{named_params, Connection, OpenFlags};
+        let (id, _) = self.the_account()?;
+        let conn = Connection::open_with_flags(self.profile.db_path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .context("opening the wallet database")?;
+        let mut txs = conn.prepare(
+            "SELECT t.txid, t.mined_height, t.block_time, t.expiry_height, t.expired_unmined,
+                    t.account_balance_delta, t.fee_paid, t.is_shielding, t.total_received,
+                    t.pool_crossing_value
+             FROM v_transactions t
+             WHERE t.account_uuid = :uuid
+             ORDER BY t.mined_height IS NOT NULL, t.mined_height DESC, t.tx_index DESC
+             LIMIT :limit",
+        )?;
+        let mut outs = conn.prepare(
+            "SELECT o.value, o.is_change, o.memo, o.to_address, o.to_account_uuid IS NULL
+             FROM v_tx_outputs o
+             WHERE o.txid = :txid
+             ORDER BY o.output_pool, o.output_index",
+        )?;
+        let rows = txs.query_map(named_params![":uuid": id.expose_uuid().as_bytes(), ":limit": limit], |r| {
+            Ok((
+                r.get::<_, Vec<u8>>(0)?,
+                r.get::<_, Option<u32>>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, Option<u32>>(3)?,
+                r.get::<_, Option<bool>>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, Option<i64>>(6)?,
+                r.get::<_, bool>(7)?,
+                r.get::<_, i64>(8)?,
+                r.get::<_, Option<i64>>(9)?,
+            ))
+        })?;
+        let mut history = Vec::new();
+        for row in rows {
+            let (txid, mined, time, expiry, expired, delta, fee, shielding, received, crossing) = row?;
+            let mut memos: Vec<String> = Vec::new();
+            let mut recipients = Vec::new();
+            let mut paid_out = 0u64;
+            let out_rows = outs.query_map(named_params![":txid": txid], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, bool>(1)?,
+                    r.get::<_, Option<Vec<u8>>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, bool>(4)?,
+                ))
+            })?;
+            for o in out_rows {
+                let (value, is_change, memo, to, external) = o?;
+                if external {
+                    paid_out += value.max(0) as u64;
+                    if let Some(to) = to {
+                        recipients.push(Recipient { address: to, value_zat: value.max(0) as u64 });
+                    }
+                }
+                // Change carries no memo worth showing; a payment's memo is
+                // shown once even when both of its rows are the wallet's.
+                if let Some(text) = memo.as_deref().filter(|_| !is_change).and_then(memo_text) {
+                    if !memos.contains(&text) {
+                        memos.push(text);
+                    }
+                }
+            }
+            let fee_zat = fee.map(|f| f.max(0) as u64);
+            let (kind, amount_zat) = if shielding {
+                (TxKind::Shielded, received.max(0) as u64)
+            } else if let Some(c) = crossing {
+                (TxKind::Internal, c.max(0) as u64)
+            } else if delta < 0 {
+                let amount = if paid_out > 0 { paid_out } else { (delta.unsigned_abs()).saturating_sub(fee_zat.unwrap_or(0)) };
+                (TxKind::Sent, amount)
+            } else {
+                (TxKind::Received, delta as u64)
+            };
+            let mut txid = txid;
+            txid.reverse();
+            history.push(TxRecord {
+                txid: hex::encode(txid),
+                mined_height: mined,
+                block_time: time,
+                expiry_height: expiry.filter(|&e| e != 0),
+                expired_unmined: expired.unwrap_or(false),
+                kind,
+                delta_zat: delta,
+                amount_zat,
+                fee_zat,
+                memos,
+                recipients,
+            });
+        }
+        Ok(history)
+    }
+
+    /// Decrypts a raw transaction with the account's keys and records what
+    /// it finds, as if scanned: e.g. one finished on another machine, or a
+    /// known transaction in a test. `mined_height` is None for a
+    /// transaction not yet in a block.
+    pub fn store_transaction(&mut self, raw: &[u8], mined_height: Option<u32>) -> Result<String> {
+        use zcash_client_backend::data_api::wallet::decrypt_and_store_transaction;
+        use zcash_primitives::transaction::Transaction;
+        use zcash_protocol::consensus::BranchId;
+        let params = self.profile.network;
+        let height = match mined_height {
+            Some(h) => BlockHeight::from(h),
+            None => self.db.chain_height()?.map(|h| h + 1).ok_or_else(|| anyhow!("wallet is not synced; run `zecz sync`"))?,
+        };
+        let tx = Transaction::read(raw, BranchId::for_height(&params, height)).context("not a transaction")?;
+        decrypt_and_store_transaction(&params, &mut self.db, &tx, mined_height.map(BlockHeight::from))
+            .map_err(|e| anyhow!("storing the transaction: {e}"))?;
+        Ok(tx.txid().to_string())
     }
 
     /// Scans the chain through lightwalletd until the wallet is up to date,

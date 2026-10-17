@@ -344,6 +344,19 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
   the app, and `.zkv` card creation (moved to 8.4).
 
 **8.4 Wallet screens (M).** Balance (Orchard, Ironwood, transparent), receive (UA, QR, "verify on device"), send with memo, history, contacts.
+- Done on PC (2026-10-16), the board next: receive with a QR code,
+  "New address" (fresh diversified addresses, Orchard + P2PKH within the
+  transparent gap limit, then Orchard only) and the transparent address
+  under a PUBLIC warning; "Shield transparent funds" (review, signed on
+  the device like a send, zecz's refusal shown when the fee would take
+  the balance); history from `v_transactions` / `v_tx_outputs` (date,
+  kind, amount, fee, memo, txid with copy), refreshed after sync, send
+  and shield; contacts as JSON in the app data dir, with a picker in the
+  send form. zecz-core gained `next_address`, `check_address`,
+  `history` and `store_transaction`. Tested offline (zecz-core and
+  backend tests) and the history on testnet.
+- Left: the board (a shielding signed on the device, a payment to a
+  rotated address found by sync), and `.zkv` card creation (from 8.3).
 
 **8.5 Air gap (M).**
 - QR both ways with the webcam: the large-QR rules from Android, plus LeekWallet's manual exposure.

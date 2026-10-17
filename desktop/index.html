@@ -115,28 +115,82 @@
             <dt>Spendable</dt><dd id="bal-spendable">—</dd>
           </dl>
           <p class="muted" id="balance-note"></p>
+          <div class="row" id="shield-row" hidden>
+            <button class="primary" id="shield-btn" type="button"
+                    title="Move every transparent coin into this wallet's shielded pool, signed on the LeekWallet">Shield transparent funds</button>
+          </div>
+          <p class="formerr" id="shield-err" role="alert"></p>
+
+          <div id="shield-review" hidden>
+            <h3>Review the shielding</h3>
+            <dl class="kv" id="shield-kv"></dl>
+            <p class="muted" id="shield-note"></p>
+            <div class="row">
+              <button class="primary" id="shield-sign-btn" type="button">Sign on LeekWallet</button>
+              <button id="shield-cancel-btn" type="button">Cancel</button>
+            </div>
+            <progress id="shield-bar" max="1" value="0" hidden></progress>
+            <p id="shield-status" class="muted" role="status"></p>
+            <p class="formerr" id="shield-sign-err" role="alert"></p>
+          </div>
+
+          <div id="shielded" hidden>
+            <h3>Shielded</h3>
+            <p>Transaction id</p>
+            <div class="addr" id="shield-txid"></div>
+            <div class="row">
+              <button id="copy-shield-txid" type="button">Copy</button>
+              <button id="shield-done-btn" type="button">Done</button>
+            </div>
+          </div>
         </section>
 
         <section class="panel" id="receive-panel" hidden aria-labelledby="receive-h">
           <h2 id="receive-h">Receive</h2>
-          <p>Unified address (Orchard and transparent receivers).</p>
-          <div class="addr" id="ua"></div>
+          <p id="ua-label">Unified address (Orchard and transparent receivers).</p>
+          <div class="receive">
+            <img id="ua-qr" class="qr" alt="QR code of the unified address" width="192" height="192" hidden />
+            <div class="addr" id="ua"></div>
+          </div>
           <div class="row receive-actions">
             <button id="copy-ua" type="button">Copy</button>
+            <button id="new-addr-btn" type="button"
+                    title="Show another address of this wallet, so payers cannot link their payments">New address</button>
             <button id="verify-btn" type="button" hidden
                     title="The device checks that this address is its own and shows it for you to compare">Verify on device</button>
           </div>
           <p id="verify-status" class="muted" role="status"></p>
           <p class="formerr" id="verify-err" role="alert"></p>
+
+          <div id="taddr-box" hidden>
+            <h3>Transparent address</h3>
+            <div class="notice notice--danger" role="note">
+              <strong>PUBLIC.</strong> Everything sent to this address, its
+              amount and this address itself are visible to anyone on the
+              blockchain, forever. Use it only for a payer that cannot pay a
+              unified address (some exchanges), then shield the funds.
+            </div>
+            <div class="addr" id="taddr"></div>
+            <div class="row">
+              <button id="copy-taddr" type="button">Copy</button>
+            </div>
+          </div>
         </section>
 
         <section class="panel" id="send-panel" hidden aria-labelledby="send-h">
           <h2 id="send-h">Send</h2>
           <form id="send-form" novalidate>
+            <label class="field" id="send-contact-field" hidden>
+              <span>Contact</span>
+              <select id="send-contact">
+                <option value="">Type an address below, or pick a contact</option>
+              </select>
+            </label>
             <label class="field">
               <span>To (unified, Orchard or transparent address)</span>
               <textarea id="send-to" rows="2" spellcheck="false" autocomplete="off"></textarea>
             </label>
+            <p class="muted" id="send-to-name"></p>
             <label class="field">
               <span id="send-amount-label">Amount (ZEC)</span>
               <input id="send-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.001" />
@@ -173,6 +227,38 @@
               <button id="new-send-btn" type="button">New send</button>
             </div>
           </div>
+        </section>
+
+        <section class="panel" id="history-panel" hidden aria-labelledby="history-h">
+          <div class="row panel-head">
+            <h2 id="history-h">History</h2>
+            <span class="statusbar__spacer"></span>
+            <button id="history-refresh" type="button" title="Read the history again from the wallet (Sync fetches new transactions)">Refresh</button>
+          </div>
+          <p class="muted" id="history-empty">No transactions yet. Sync to find them.</p>
+          <ol class="txlist" id="history"></ol>
+          <p class="formerr" id="history-err" role="alert"></p>
+        </section>
+
+        <section class="panel" id="contacts-panel" hidden aria-labelledby="contacts-h">
+          <h2 id="contacts-h">Contacts</h2>
+          <p>Names for addresses you pay, kept on this computer only.</p>
+          <ul class="contacts" id="contacts"></ul>
+          <form id="contact-form" novalidate>
+            <label class="field">
+              <span>Name</span>
+              <input id="contact-name" type="text" maxlength="64" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Address (unified, Orchard or transparent)</span>
+              <textarea id="contact-address" rows="2" spellcheck="false" autocomplete="off"></textarea>
+            </label>
+            <div class="row">
+              <button class="primary" id="contact-save" type="submit">Add contact</button>
+              <button id="contact-cancel" type="button" hidden>Cancel</button>
+            </div>
+            <p class="formerr" id="contact-err" role="alert"></p>
+          </form>
         </section>
       </main>
     </div>

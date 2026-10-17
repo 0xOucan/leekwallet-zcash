@@ -647,3 +647,59 @@ checked on Xtensa).
   a transaction whose whole balance went to the fee (ZIP 317 fee plus
   dust change absorbed into it). `propose_shield` now refuses that.
 - zecz printed transparent signatures as "action"; they are inputs.
+
+### 8.4 Desktop wallet screens (2026-10-16): done on PC, board next
+- Receive: the address as a QR code (SVG from the `qrcode` crate,
+  pinned at 0.14.1 without its image feature, drawn by the backend; black
+  on white in both themes, CSP unchanged: a `data:` image). "New
+  address" calls zecz-core's new `Wallet::next_address`
+  (`get_next_available_address`): Orchard + P2PKH while the transparent
+  gap limit allows (10 unused external addresses; sync watches the gap
+  addresses' coins), then Orchard only rather than a transparent
+  receiver the wallet would not watch. The first un-exposed gap index can
+  be 0, the default address, so it is skipped. The rotated address is
+  kept for the session; "Verify on device" takes it as is. The
+  transparent address sits apart under a PUBLIC warning.
+- Shield: `propose_shield` in the desktop backend over zecz-core's
+  (compact signer view); the balance card shows "Shield transparent
+  funds" when the transparent balance is above zero; the review shows
+  the amount, fee, pool and total; signing is the send's
+  `sign_and_send` (the two flows share one function in main.ts now).
+  Refusals are shown as zecz words them. Found while testing: with one
+  coin the ZIP 317 fee is 15,000 zat (1 transparent input, padded
+  shielded output); below it zecz says "Insufficient funds"; at exactly
+  the fee the "shielding would move nothing" refusal fires; a coin of
+  17,000 is refused as short of a 20,000 fee (zcash_client_backend's
+  dust handling).
+- History: zecz-core `Wallet::history(limit)` reads `v_transactions`
+  (kind from `is_shielding`, `pool_crossing_value` and the balance
+  delta) and `v_tx_outputs` (recipients outside the wallet, text memos
+  without change). A fully shielded transaction states its fee, so even
+  a received one has it; the app shows a fee only for what this wallet
+  paid. `Wallet::store_transaction` (decrypt_and_store_transaction)
+  stores a raw transaction, used by the tests.
+- Contacts: `src-tauri/src/contacts.rs`, `<app data
+  dir>/contacts-<test|main>.json`, versioned, written atomically; names
+  unique ignoring case; addresses checked with zecz-core's new
+  `check_address`. A picker in the send form, "Pay" on each contact,
+  contact names in the history. Delete takes two presses (no
+  `window.confirm` in every webview).
+- Account index: still 0 in the UI; nothing new depends on it.
+- Tests, all passing: zecz-core `tests/receive.rs` (rotation through
+  the gap limit to Orchard only, each address re-derived from the UFVK;
+  address check), `tests/history.rs` (the `iw_send_shielded` vector
+  soft-signed, proven, extracted and stored in the payee's and the
+  payer's offline wallets: received 400,000 zat with its memo; the
+  payer's recipient and memo via its OVK), `tests/shield.rs` (a chain
+  tip, one scanned empty block and one coin put into an offline wallet:
+  refusals at 5,000, 12,000 and 15,000 zat, a 1,000,000-zat shield
+  built into Ironwood). Desktop `tests/backend.rs`: history and its
+  JSON, rotation and QR, shield refusals, contacts. The ignored testnet
+  test also lists the history: two transactions found near the tip.
+  `cargo test` in host/zecz-core and desktop/src-tauri pass (zdev tests
+  included); `pnpm typecheck` and `pnpm build` pass.
+- Left: on the board, a shielding signed on the device (the board's
+  t-address holds 20,000 zat, which zecz found the fee would take whole
+  (45518f9), though one 20,000-zat coin builds offline here: send it
+  about 0.001 TAZ more for a shield that surely moves value), a payment
+  to a rotated address found by sync; `.zkv` cards.
