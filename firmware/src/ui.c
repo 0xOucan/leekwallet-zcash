@@ -3386,7 +3386,7 @@ static void sd_load(void)
     zm.birthday = meta.birthday;
     zm.flags = meta.flags & ZMETA_FLAG_USE_QSK;
     snprintf(zm.label, sizeof zm.label, "%s", meta.label);
-    zmeta_set(meta.account, &zm);
+    zmeta_set(meta.account, zcash_network, &zm);
     /* Wider than a row; sd_result() cuts each line to the panel. */
     char l1[40], l2[40], l3[40];
     snprintf(l1, sizeof l1, "Loaded %s", name);
@@ -3412,7 +3412,7 @@ static void sd_save(void)
     char name[SDCARD_NAME_MAX + 1];
     /* What the device knows about the account goes on the card with it. */
     ZcashMeta zm;
-    zmeta_get(hd_account, &zm);
+    zmeta_get(hd_account, zcash_network, &zm);
     SdSeedResult r = sdseed_save(sd_entry.text, (size_t)sd_entry.length, zm.label, zm.birthday,
                                  hd_account, 0, name);
     sd_forget();

@@ -13,7 +13,9 @@
 
 #define NVS_NS "zc_meta"
 #define BLOB_VERSION 1
-/* NVS keys are at most 15 characters: "1A2B3C4D.99999". */
+/* NVS keys are at most 15 characters: "1A2B3C4D.99999" on testnet,
+ * "1A2B3C4D:99999" on mainnet. Testnet keeps the original separator, so the
+ * records written before networks were told apart (all testnet) still read. */
 #define STORED_ACCOUNT_MAX 99999u
 #define SESSION_SLOTS 8
 
@@ -21,6 +23,7 @@ typedef struct {
     bool      used;
     char      fp[ZCASH_FP_CHARS + 1];
     uint32_t  account;
+    uint8_t   network;
     ZcashMeta meta;
 } SessionRecord;
 
@@ -47,29 +50,37 @@ static bool open_seed(char fp[ZCASH_FP_CHARS + 1], bool *persist)
     return true;
 }
 
-static SessionRecord *find_session(const char *fp, uint32_t account)
+static SessionRecord *find_session(const char *fp, uint32_t account, uint8_t network)
 {
     for (int i = 0; i < SESSION_SLOTS; i++) {
-        if (session[i].used && session[i].account == account && strcmp(session[i].fp, fp) == 0) {
+        if (session[i].used && session[i].account == account && session[i].network == network &&
+            strcmp(session[i].fp, fp) == 0) {
             return &session[i];
         }
     }
     return NULL;
 }
 
-static void key_for(const char *fp, uint32_t account, char key[16])
+static void key_for(const char *fp, uint32_t account, uint8_t network, char key[16])
 {
-    snprintf(key, 16, "%.8s.%u", fp, (unsigned)(account % (STORED_ACCOUNT_MAX + 1)));
+    snprintf(key, 16, "%.8s%c%u", fp, network == ZMETA_NET_MAIN ? ':' : '.',
+             (unsigned)(account % (STORED_ACCOUNT_MAX + 1)));
 }
 
-bool zmeta_get(uint32_t account, ZcashMeta *out)
+static bool network_ok(uint8_t network)
+{
+    return network == ZMETA_NET_MAIN || network == ZMETA_NET_TEST;
+}
+
+bool zmeta_get(uint32_t account, uint8_t network, ZcashMeta *out)
 {
     memset(out, 0, sizeof *out);
+    if (!network_ok(network)) return false;
     char fp[ZCASH_FP_CHARS + 1];
     bool persist;
     if (!open_seed(fp, &persist)) return false;
 
-    SessionRecord *r = find_session(fp, account);
+    SessionRecord *r = find_session(fp, account, network);
     if (r) {
         *out = r->meta;
         return true;
@@ -79,7 +90,7 @@ bool zmeta_get(uint32_t account, ZcashMeta *out)
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
     char key[16];
-    key_for(fp, account, key);
+    key_for(fp, account, network, key);
     uint8_t blob[7 + ZMETA_LABEL_MAX];
     size_t len = sizeof blob;
     esp_err_t err = nvs_get_blob(h, key, blob, &len);
@@ -102,9 +113,9 @@ bool zmeta_get(uint32_t account, ZcashMeta *out)
     return true;
 }
 
-ZcashMetaResult zmeta_set(uint32_t account, const ZcashMeta *m)
+ZcashMetaResult zmeta_set(uint32_t account, uint8_t network, const ZcashMeta *m)
 {
-    if (!m || account >= 0x80000000u || !label_ok(m->label) || (m->flags & ~ZMETA_FLAG_USE_QSK)) {
+    if (!m || account >= 0x80000000u || !network_ok(network) || !label_ok(m->label) || (m->flags & ~ZMETA_FLAG_USE_QSK)) {
         return ZMETA_E_ARG;
     }
     char fp[ZCASH_FP_CHARS + 1];
@@ -112,7 +123,7 @@ ZcashMetaResult zmeta_set(uint32_t account, const ZcashMeta *m)
     if (!open_seed(fp, &persist)) return ZMETA_E_NO_SEED;
 
     if (!persist || account > STORED_ACCOUNT_MAX) {
-        SessionRecord *r = find_session(fp, account);
+        SessionRecord *r = find_session(fp, account, network);
         for (int i = 0; !r && i < SESSION_SLOTS; i++) {
             if (!session[i].used) r = &session[i];
         }
@@ -120,6 +131,7 @@ ZcashMetaResult zmeta_set(uint32_t account, const ZcashMeta *m)
         r->used = true;
         memcpy(r->fp, fp, sizeof r->fp);
         r->account = account;
+        r->network = network;
         r->meta = *m;
         return ZMETA_OK_SESSION;
     }
@@ -138,7 +150,7 @@ ZcashMetaResult zmeta_set(uint32_t account, const ZcashMeta *m)
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return ZMETA_E_NVS;
     char key[16];
-    key_for(fp, account, key);
+    key_for(fp, account, network, key);
     esp_err_t err = nvs_set_blob(h, key, blob, 7 + ll);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);

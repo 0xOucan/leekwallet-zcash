@@ -342,12 +342,14 @@ response says whether it worked. The PIN never crosses the wire in any form.
 ```
 zGetAccount     { account?: uint, network: "main"|"test" }
              -> { account, network, seedFingerprint: h'32', ufvk, ua, tAddress, birthday? }
-zSetAccountMeta { account?: uint, birthday?: uint, label?: text }
+zSetAccountMeta { account?: uint, network?: "main"|"test", birthday?: uint, label?: text }
              -> { stored: 0|1 }
 ```
 
 `birthday` is present in `zGetAccount` only when the device has one for that
-account of the open seed: a companion set it with `zSetAccountMeta`, or the
+account and network of the open seed (records are per network: the same
+account is born at a far lower height on mainnet; `network` defaults to
+`"test"` in `zSetAccountMeta` for companions that predate it): a companion set it with `zSetAccountMeta`, or the
 seed came from an SD `.zkv` file that carried it. A companion should use it
 instead of asking the user, and set it after an import when it was absent.
 Fields left out of `zSetAccountMeta` keep their values. `label` is at most 32
