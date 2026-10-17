@@ -170,6 +170,15 @@ pub struct Addresses {
     pub orchard_only: String,
 }
 
+/// A diversified address from [`Wallet::next_address`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiversifiedAddress {
+    pub unified: String,
+    pub diversifier_index: u128,
+    /// Its P2PKH receiver, encoded on its own; None for an Orchard-only one.
+    pub transparent: Option<String>,
+}
+
 /// What [`Wallet::init`] did.
 #[derive(Clone, Debug)]
 pub enum InitOutcome {
@@ -340,6 +349,19 @@ pub fn parse_zec(s: &str) -> Result<u64> {
     let int: u64 = if int.is_empty() { 0 } else { int.parse().context("bad ZEC amount")? };
     let frac: u64 = if frac.is_empty() { 0 } else { format!("{frac:0<8}").parse().context("bad ZEC amount")? };
     int.checked_mul(100_000_000).and_then(|v| v.checked_add(frac)).ok_or_else(|| anyhow!("amount overflows"))
+}
+
+/// Checks that `addr` is an address this wallet can pay on `network`
+/// (unified, Orchard-only unified or transparent; not Sapling), and names
+/// its kind: "unified" or "transparent".
+pub fn check_address(network: Network, addr: &str) -> Result<&'static str> {
+    match Address::decode(&network, addr.trim()) {
+        Some(Address::Unified(_)) => Ok("unified"),
+        Some(Address::Transparent(_)) => Ok("transparent"),
+        Some(Address::Sapling(_)) => bail!("Sapling addresses are not supported"),
+        Some(_) => bail!("this kind of address is not supported"),
+        None => bail!("{} is not a valid {} address", addr.trim(), network_name(network)),
+    }
 }
 
 fn ua_request() -> UnifiedAddressRequest {
@@ -548,6 +570,41 @@ impl Wallet {
     pub fn addresses(&self) -> Result<Addresses> {
         let (_, ufvk) = self.the_account()?;
         addresses_of(self.profile.network, &ufvk)
+    }
+
+    /// Generates and records a fresh diversified address, so a payer sees
+    /// a different address from the last one. Orchard and P2PKH, as the
+    /// default address, while the transparent gap limit allows (the wallet
+    /// watches the gap addresses' coins as it syncs); then Orchard only
+    /// rather than an address whose transparent coins it could miss. The
+    /// device verifies either shape (zShowAddress accepts any index).
+    pub fn next_address(&mut self) -> Result<DiversifiedAddress> {
+        use zcash_client_sqlite::error::SqliteClientError;
+        let (id, _) = self.the_account()?;
+        let net = self.profile.network;
+        // The first un-exposed index in the gap may be the default one,
+        // which the user has already seen: take the next.
+        for _ in 0..2 {
+            let (ua, j) = match self.db.get_next_available_address(id, ua_request()) {
+                Ok(Some(a)) => a,
+                Ok(None) => bail!("account vanished"),
+                Err(SqliteClientError::ReachedGapLimit(..)) => self
+                    .db
+                    .get_next_available_address(id, UnifiedAddressRequest::ORCHARD)
+                    .map_err(|e| anyhow!("address generation: {e}"))?
+                    .ok_or_else(|| anyhow!("account vanished"))?,
+                Err(e) => bail!("address generation: {e}"),
+            };
+            if u128::from(j) == 0 {
+                continue;
+            }
+            return Ok(DiversifiedAddress {
+                unified: ua.encode(&net),
+                diversifier_index: u128::from(j),
+                transparent: ua.transparent().map(|t| Address::Transparent(*t).encode(&net)),
+            });
+        }
+        bail!("the wallet keeps handing out its default address")
     }
 
     /// Scans the chain through lightwalletd until the wallet is up to date,
