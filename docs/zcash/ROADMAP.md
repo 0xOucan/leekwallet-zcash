@@ -362,8 +362,17 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 - QR both ways with the webcam: the large-QR rules from Android, plus LeekWallet's manual exposure.
 - SD card: write `LEEKZ/unsigned.pczt`, read `LEEKZ/signed.zsig`.
 
-**8.6 NEAR Intents (M).**
+**8.6 NEAR Intents (M). Done on PC (2026-10-17); the mainnet swap with the board is next.**
 - The 1Click API: tokens, quote (with `confidentiality`), the deposit send signed by software or the board, status polling, refunds.
+- Done on PC (`desktop/src-tauri/src/near.rs`, the Swap screen): ZEC to
+  any 1Click asset (the deposit built as a send and signed on the board)
+  and any asset to ZEC (the deposit address shown to pay from elsewhere),
+  refunds and payouts to a fresh Orchard-only address, quotes checked
+  against the request, swaps kept in `swaps-main.json` and polled to
+  SUCCESS / REFUNDED / FAILED. Testnet previews a price only. Confidential
+  quotes need a 1Click API key (401 without). Tested offline against
+  recorded answers and with a live dry quote.
+- Left: the ZEC deposit address type (seen on the first real quote).
 - Done when: a small mainnet swap completes from desktop.
 
 **8.7 Packaging (M).**

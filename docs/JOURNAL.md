@@ -882,3 +882,45 @@ checked on Xtensa).
   known to the user and deliberately not recorded here.
 - Fixed: `zecz balance` still said the device could not sign transparent
   inputs.
+
+### 8.6 Desktop NEAR Intents (2026-10-17): done on PC, the mainnet swap pending
+- What 1Click is, from its OpenAPI (`1click.chaindefuser.com/docs/v0/openapi.yaml`,
+  v0.1.10), its docs (docs.near-intents.org: Making a Request, API Keys,
+  Confidential Swaps) and Zodl's `NearApiProvider.kt` / `NearSwapDataSource.kt`:
+  - `GET /v0/tokens`, `POST /v0/quote`, `POST /v0/deposit/submit`
+    (optional, speeds things up), `GET /v0/status?depositAddress=`. ZEC
+    is `nep141:zec.omft.near`, 8 decimals.
+  - Amounts are base-unit strings; slippage in basis points; deadline in
+    RFC 3339. `dry: true` prices without a deposit address.
+  - From ZEC Zodl asks EXACT_INPUT, into ZEC FLEX_INPUT, both
+    `ORIGIN_CHAIN` / `DESTINATION_CHAIN`, refunds to a fresh shielded
+    address of the wallet; the deposit is a plain send with an empty memo.
+  - The key is optional: without one 1Click adds a 0.25% fee (and the
+    answer carried a 20 bp `appFees` entry it added itself). Zodl ships
+    its partner JWT in the APK; we do not copy it. The app reads
+    `LEEKZ_1CLICK_API_KEY` or `oneClickApiKey` in settings.json.
+  - `confidentiality: "basic"|"advanced"` is a plain field of an
+    ORIGIN_CHAIN quote, but 1Click answers 401 "User authentication is
+    required for confidential intent quotes" without a key. The option
+    is in the app, off and greyed without a key.
+- Checked live with dry quotes only (nothing created, nothing paid):
+  0.01 ZEC to USDC on Solana (EXACT_INPUT) and 10 USDC to ZEC
+  (FLEX_INPUT); a unified Orchard-only address is accepted as `refundTo`
+  and as `recipient`. 0.001 ZEC gives a 500; 0.00132 ZEC is the minimum
+  1Click names for that route. A refund costs about 0.00032 ZEC.
+- Not known yet: the kind of ZEC deposit address (a dry quote has none;
+  we did not ask for a real one). The app pays a unified or transparent
+  one and refuses a TEX one (two-step send). The first mainnet swap will
+  tell.
+- Built: `src-tauri/src/near.rs` (client over ureq/rustls-ring, quote
+  checks, state machine, `swaps-main.json`), commands `swap_info`,
+  `swap_tokens`, `swap_quote`, `swap_execute`, `swap_status`, `swap_list`,
+  `swap_forget`; `sign_and_send` records the deposit txid with its swap.
+  zecz-core gained `next_shielded_address` (fresh Orchard-only, no gap
+  limit). The Swap screen: preview, quote, review, sign on LeekWallet,
+  a timeline polled every 20 s. A quote 1Click echoes for another swap
+  (assets, amount, recipient, refund) is not used.
+- Tests: `tests/near.rs` (13 offline against recorded answers, one
+  ignored live dry quote, which passed), zecz-core `receive.rs`.
+- Next: a tiny mainnet swap from the app with the board
+  (docs/zcash/MAINNET.md, "A tiny NEAR Intents swap").
