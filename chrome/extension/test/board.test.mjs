@@ -18,7 +18,8 @@ await vendor();
 
 const { decodeCbor, encodeCbor } = await import('../src/board/cbor.js');
 const { BleReassembler, FRAME, UsbFrameDecoder, chunkForBle, encodeFrame, encodeUsbFrame } = await import('../src/board/framing.js');
-const { Device, DeviceError, ERR, toHex } = await import('../src/board/device.js');
+const { Device, DeviceError, ERR, toHex, fromHex: fromHexT } = await import('../src/board/device.js');
+const { BoardHost, BoardNeeds } = await import('../src/board/host.js');
 const { BleLink } = await import('../src/board/ble-link.js');
 const { encodeZsig, parseZsig, POOL } = await import('../src/board/zsig.js');
 const { Session, deriveKeys, generateKeyPair, sharedSecret } = await import('../src/board/session.js');
@@ -252,6 +253,80 @@ describe('against zdev, answering on the "device"', { skip: !zdevOk && 'zdev cou
       assert.equal(dev.paired, false);
     } finally {
       await dev.link.close();
+      z.stop();
+    }
+  });
+});
+
+describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { skip: !zdevOk && 'zdev could not be built' }, () => {
+  /** Records the engine calls the host makes and answers them as the engine would. */
+  function fakeEngine(network) {
+    const calls = [];
+    const engine = async (method, params) => {
+      calls.push({ method, params });
+      if (method === 'status') return { open: true, network };
+      if (method === 'tip') return { height: 4_600_000 };
+      if (method === 'importAccount') return { imported: true, account: { uuid: 'u1', kind: 'device', origin: params.origin }, addresses: { unified: 'x' } };
+      if (method === 'finish') return { txid: 'ab'.repeat(32), broadcast: params.broadcast, size: 9000, proveMs: 1 };
+      throw new Error(`unexpected engine call ${method}`);
+    };
+    return { engine, calls };
+  }
+
+  test('connect, import (asking for the birthday, then recording it), verify, sign and finish', async () => {
+    const z = await startZdev({ yes: true });
+    const { engine, calls } = fakeEngine('test');
+    const states = [];
+    const host = new BoardHost({ engine, openLink: async () => new PtyLink(z.link), onState: (s) => states.push(s) });
+    try {
+      await host.run('connect', { kind: 'usb' });
+      assert.equal(host.state.phase, 'ready');
+      assert.ok(states.some((s) => s.phase === 'pairing' && /^\d{6}$/.test(s.passkey) && s.passkey === z.passkeys.at(-1)));
+
+      await assert.rejects(host.run('importAccount', { network: 'test' }), (e) => e instanceof BoardNeeds && e.need === 'birthday' && e.tip === 4_600_000);
+      const k = key('test/abandon-art/pp0/acct0');
+      const imp = await host.run('importAccount', { network: 'test', birthday: 4_501_000 });
+      const ic = calls.find((c) => c.method === 'importAccount').params;
+      assert.equal(ic.ufvk, k.ufvk);
+      assert.deepEqual(ic.origin, { seedFingerprint: k.seed_fingerprint, accountIndex: 0 });
+      assert.equal(ic.birthday, 4_501_000);
+      assert.equal(imp.storedOnBoard, true);
+      // The next import takes the birthday from the board.
+      const again = await host.run('importAccount', { network: 'test' });
+      assert.equal(again.birthdayFromBoard, true);
+      assert.equal(again.birthday, 4_501_000);
+
+      assert.equal((await host.run('showAddress', { network: 'test', ua: k.ua })).ua, k.ua);
+
+      const { bytes } = vector('t_shield_compact');
+      const r = await host.run('signAndFinish', { network: 'test', signerView: toHex(bytes), broadcast: true });
+      const fin = calls.find((c) => c.method === 'finish').params;
+      assert.equal(fin.signerView, toHex(bytes));
+      const z2 = parseZsig(fromHexT(fin.zsig));
+      assert.equal(z2.version, 2);
+      assert.equal(toHex(z2.pcztSha256), sha256hex(bytes));
+      assert.equal(r.txid, 'ab'.repeat(32));
+      assert.equal(host.state.lastResult.txid, r.txid);
+      assert.ok(states.some((s) => s.task?.phase === 'review'));
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('mainnet needs the real-funds confirmation; the engine must be on the same network', async () => {
+    const z = await startZdev({ yes: true });
+    const { engine, calls } = fakeEngine('test');
+    const host = new BoardHost({ engine, openLink: async () => new PtyLink(z.link) });
+    try {
+      await host.run('connect', { kind: 'usb' });
+      const view = toHex(vector('main_iw_send_shielded_compact').bytes);
+      await assert.rejects(host.run('signAndFinish', { network: 'main', signerView: view }), /real ZEC/);
+      await assert.rejects(host.run('signAndFinish', { network: 'main', signerView: view, confirmMainnet: true }), /engine is test, not main/);
+      assert.equal(calls.filter((c) => c.method === 'finish').length, 0);
+      assert.equal(host.state.phase, 'ready');
+    } finally {
+      await host.run('disconnect');
       z.stop();
     }
   });
