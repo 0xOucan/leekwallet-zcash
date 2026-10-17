@@ -39,6 +39,12 @@ leek-transport-ble = { path = "../../firmware/app/transport-ble" }
 # The receive QR code, drawn as SVG here so the webview ships no QR code
 # of its own; no image feature (no raster images, no image crate).
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
+# NEAR Intents' 1Click API (src/near.rs): blocking HTTPS on the worker
+# threads, over rustls with ring and the webpki roots, the TLS stack the
+# lightwalletd client already links. No gzip, no cookies.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+# RFC 3339 deadlines of 1Click quotes.
+time = { version = "0.3", features = ["formatting", "parsing"] }
 
 [dev-dependencies]
 serde_json = "1"
