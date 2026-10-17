@@ -349,7 +349,7 @@ pub fn device_import_with(
     // Recorded on the device for the next companion, as zecz does.
     let birthday_stored = if a.birthday != Some(wallet_birthday) {
         on_status(DeviceStatus::new("birthday", format!("Recording birthday {wallet_birthday} on the device…")));
-        let r = s.dev.z_set_birthday(a.index, wallet_birthday);
+        let r = s.dev.z_set_birthday(a.index, profile.net_name(), wallet_birthday);
         let stored = track(s, r)?;
         s.account.birthday = Some(wallet_birthday);
         Some(stored)

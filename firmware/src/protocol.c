@@ -1109,7 +1109,7 @@ static void dispatch(const uint8_t *payload, size_t len)
          * companion set it, or the SD file carried it). Absent rather than
          * zero: zero would read as "scan from genesis". */
         ZcashMeta meta;
-        const bool have_birthday = zmeta_get(account, &meta) && meta.birthday != 0;
+        const bool have_birthday = zmeta_get(account, network, &meta) && meta.birthday != 0;
 
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
@@ -1284,8 +1284,20 @@ static void dispatch(const uint8_t *payload, size_t len)
             send_wallet_error(werr);
             return;
         }
+        /* The network the birthday belongs to. Optional for the companions
+         * that predate it, all of which were testnet-only. */
+        uint8_t network = ZCASH_NET_TEST;
+        if (cbor_map_find(payload, len, "network", &item)) {
+            char net_name[8];
+            if (!cbor_text_copy(&item, net_name, sizeof net_name) ||
+                (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+                send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+                return;
+            }
+            network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+        }
         ZcashMeta meta;
-        zmeta_get(account, &meta);   /* fields not sent are kept */
+        zmeta_get(account, network, &meta);   /* fields not sent are kept */
         if (cbor_map_find(payload, len, "birthday", &item)) {
             if (item.type != CBOR_UINT || item.value == 0) {
                 send_error(ERR_MALFORMED, "birthday must be a block height");
@@ -1298,7 +1310,7 @@ static void dispatch(const uint8_t *payload, size_t len)
             send_error(ERR_MALFORMED, "label: at most 32 characters");
             return;
         }
-        ZcashMetaResult r = zmeta_set(account, &meta);
+        ZcashMetaResult r = zmeta_set(account, network, &meta);
         if (r == ZMETA_E_ARG) {
             send_error(ERR_MALFORMED, "label must be printable ASCII");
             return;

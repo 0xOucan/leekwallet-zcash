@@ -4,8 +4,9 @@
  * None of it is secret, and none of it is needed to sign; it saves a
  * companion asking the user for the birthday again, and a rescan from the
  * wrong height. Records are keyed by the open seed's short ZIP 32
- * fingerprint and the ZIP 32 account, so they follow the seed, not a vault
- * slot number.
+ * fingerprint, the ZIP 32 account and the network, so they follow the seed,
+ * not a vault slot number, and a mainnet birthday never replaces a testnet
+ * one (the same account has a far lower height on mainnet).
  *
  * Where a record lives depends on the seed, on purpose:
  *   - a stored wallet with no BIP39 passphrase: NVS, so it survives reboots;
@@ -24,6 +25,9 @@
 
 #define ZMETA_LABEL_MAX 32
 #define ZMETA_FLAG_USE_QSK 0x01
+/* Networks, as ZCASH_NET_* / ZS_NET_*. */
+#define ZMETA_NET_MAIN 0
+#define ZMETA_NET_TEST 1
 
 typedef struct {
     uint32_t birthday;              /* 0: unknown */
@@ -39,11 +43,11 @@ typedef enum {
     ZMETA_E_NVS,
 } ZcashMetaResult;
 
-/** The record for `account` of the open seed. False if there is none. */
-bool zmeta_get(uint32_t account, ZcashMeta *out);
+/** The record for `account` on `network` of the open seed. False if there is none. */
+bool zmeta_get(uint32_t account, uint8_t network, ZcashMeta *out);
 
-/** Store or replace the record for `account` of the open seed. */
-ZcashMetaResult zmeta_set(uint32_t account, const ZcashMeta *m);
+/** Store or replace the record for `account` on `network` of the open seed. */
+ZcashMetaResult zmeta_set(uint32_t account, uint8_t network, const ZcashMeta *m);
 
 /** Drop every session record. Called on lock. */
 void zmeta_forget_session(void);

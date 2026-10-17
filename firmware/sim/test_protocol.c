@@ -1589,7 +1589,7 @@ static void test_zset_account_meta(void)
     send_encrypted(payload, zset_meta_request(payload, sizeof payload, 0, 0, "Renamed"));
     next_reply();
     ZcashMeta m;
-    CHECK(zmeta_get(0, &m) && m.birthday == 3000000 && strcmp(m.label, "Renamed") == 0,
+    CHECK(zmeta_get(0, ZMETA_NET_TEST, &m) && m.birthday == 3000000 && strcmp(m.label, "Renamed") == 0,
           "a partial update lost a field");
 
     send_encrypted(payload, zset_meta_request(payload, sizeof payload, 0x80000000u, 1, NULL));

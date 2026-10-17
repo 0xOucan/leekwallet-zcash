@@ -414,10 +414,11 @@ impl Device {
     /// `zSetAccountMeta`: record the account's birthday on the device, so
     /// the next companion can import without asking. True if the device
     /// stored it in flash (a stored wallet with no passphrase), false if it
-    /// holds it until lock.
-    pub fn z_set_birthday(&mut self, account: u32, birthday: u32) -> Result<bool> {
+    /// holds it until lock. The device keeps one birthday per network.
+    pub fn z_set_birthday(&mut self, account: u32, network: &str, birthday: u32) -> Result<bool> {
         let r = self.call("zSetAccountMeta", vec![
             ("account", Value::Integer(account.into())),
+            ("network", Value::Text(network.into())),
             ("birthday", Value::Integer(birthday.into())),
         ], DERIVE)?;
         Ok(get_uint(&r, "stored")? == 1)

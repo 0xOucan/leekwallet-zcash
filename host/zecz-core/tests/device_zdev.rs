@@ -193,11 +193,21 @@ fn the_device_remembers_the_birthday_a_companion_gives_it() {
     let a = dev.z_get_account(0, "test").expect("account");
     assert!(device::get_uint(&a, "birthday").is_err(), "a birthday before any was set");
     // zdev's seed is a stored wallet with no passphrase: kept in flash.
-    assert!(dev.z_set_birthday(0, 3_000_123).expect("set"), "not stored");
+    assert!(dev.z_set_birthday(0, "test", 3_000_123).expect("set"), "not stored");
     let a = dev.z_get_account(0, "test").expect("account");
     assert_eq!(device::get_uint(&a, "birthday").unwrap(), 3_000_123);
     let a1 = dev.z_get_account(1, "test").expect("account 1");
     assert!(device::get_uint(&a1, "birthday").is_err(), "account 1 got account 0's birthday");
+
+    // One birthday per network: a mainnet import must not replace the
+    // testnet one (it once did, on the board).
+    let m = dev.z_get_account(0, "main").expect("mainnet account");
+    assert!(device::get_uint(&m, "birthday").is_err(), "mainnet read the testnet birthday");
+    assert!(dev.z_set_birthday(0, "main", 3_520_600).expect("set main"));
+    let m = dev.z_get_account(0, "main").expect("mainnet account");
+    assert_eq!(device::get_uint(&m, "birthday").unwrap(), 3_520_600);
+    let a = dev.z_get_account(0, "test").expect("account");
+    assert_eq!(device::get_uint(&a, "birthday").unwrap(), 3_000_123, "the testnet birthday was replaced");
 }
 
 #[test]

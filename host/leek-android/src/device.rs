@@ -219,9 +219,10 @@ pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_getAccount<'
 /// True if the device stored it in flash, false if only until it locks.
 #[no_mangle]
 pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_setBirthday(
-    mut env: JNIEnv, _c: JClass, handle: jlong, account: jint, birthday: jlong,
+    mut env: JNIEnv, _c: JClass, handle: jlong, account: jint, network: JString, birthday: jlong,
 ) -> jboolean {
-    match device(handle).z_set_birthday(account as u32, birthday as u32) {
+    let r = string(&mut env, &network).and_then(|net| device(handle).z_set_birthday(account as u32, &net, birthday as u32));
+    match r {
         Ok(stored) => stored as jboolean,
         Err(e) => { throw(&mut env, &e); 0 }
     }

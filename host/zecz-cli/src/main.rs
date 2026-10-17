@@ -432,9 +432,10 @@ async fn cmd_device_init(profile: Profile, port: &str, account: u32, birthday: O
         bail!("the device's address does not match its own viewing key; refusing to import");
     }
     let spec = AccountSpec::device(ufvk, fp, account, name);
+    let net = profile.net_name();
     cmd_init(profile, &spec, birthday).await?;
     if device_birthday != Some(birthday) {
-        let stored = dev.z_set_birthday(account, birthday)?;
+        let stored = dev.z_set_birthday(account, net, birthday)?;
         println!("Recorded birthday {birthday} on the device{}",
                  if stored { "" } else { " until it locks (passphrase or session seed)" });
     }

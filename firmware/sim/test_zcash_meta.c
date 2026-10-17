@@ -55,26 +55,61 @@ static void test_stored_wallet_persists(void)
     CHECK(wallet_select_wallet(slot) == WALLET_OK, "select");
 
     ZcashMeta m = meta(2900000, "Main"), got;
-    CHECK(!zmeta_get(0, &got), "a record before any was set");
-    CHECK(zmeta_set(0, &m) == ZMETA_OK_STORED, "set acct 0");
+    CHECK(!zmeta_get(0, ZMETA_NET_TEST, &got), "a record before any was set");
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &m) == ZMETA_OK_STORED, "set acct 0");
     ZcashMeta m1 = meta(3100000, "Other");
     m1.flags = ZMETA_FLAG_USE_QSK;
-    CHECK(zmeta_set(1, &m1) == ZMETA_OK_STORED, "set acct 1");
+    CHECK(zmeta_set(1, ZMETA_NET_TEST, &m1) == ZMETA_OK_STORED, "set acct 1");
 
     boot(false);
     wallet_select_wallet(slot);
-    CHECK(zmeta_get(0, &got) && memcmp(&got, &m, sizeof m) == 0, "acct 0 after reboot");
-    CHECK(zmeta_get(1, &got) && memcmp(&got, &m1, sizeof m1) == 0, "acct 1 after reboot");
-    CHECK(!zmeta_get(2, &got), "acct 2 invented");
+    CHECK(zmeta_get(0, ZMETA_NET_TEST, &got) && memcmp(&got, &m, sizeof m) == 0, "acct 0 after reboot");
+    CHECK(zmeta_get(1, ZMETA_NET_TEST, &got) && memcmp(&got, &m1, sizeof m1) == 0, "acct 1 after reboot");
+    CHECK(!zmeta_get(2, ZMETA_NET_TEST, &got), "acct 2 invented");
 
     ZcashMeta m2 = meta(3200000, "");
-    CHECK(zmeta_set(0, &m2) == ZMETA_OK_STORED && zmeta_get(0, &got) && got.birthday == 3200000 &&
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &m2) == ZMETA_OK_STORED && zmeta_get(0, ZMETA_NET_TEST, &got) && got.birthday == 3200000 &&
           got.label[0] == '\0', "replace");
 
     /* Another seed sees none of it. */
     uint8_t other = wallet_add_mnemonic(ZV_KEYS[12].mnemonic);   /* zoo ... vote */
     CHECK(wallet_select_wallet(other) == WALLET_OK, "select other");
-    CHECK(!zmeta_get(0, &got), "another seed read the first seed's record");
+    CHECK(!zmeta_get(0, ZMETA_NET_TEST, &got), "another seed read the first seed's record");
+}
+
+/* Seen on the board: one birthday per account whatever the network, so a
+ * mainnet import overwrote the testnet birthday (and a testnet one, far
+ * above mainnet's tip, would hide every mainnet note). */
+static void test_networks_are_kept_apart(void)
+{
+    printf("== mainnet and testnet records are separate; testnet keeps its old key\n");
+    ctx = "networks";
+    boot(true);
+    uint8_t slot = wallet_add_mnemonic(ZV_KEYS[0].mnemonic);
+    CHECK(wallet_select_wallet(slot) == WALLET_OK, "select");
+
+    ZcashMeta t = meta(4506700, "Test"), m = meta(3520600, "Main"), got;
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &t) == ZMETA_OK_STORED, "set test");
+    CHECK(!zmeta_get(0, ZMETA_NET_MAIN, &got), "mainnet read the testnet record");
+    CHECK(zmeta_set(0, ZMETA_NET_MAIN, &m) == ZMETA_OK_STORED, "set main");
+
+    boot(false);
+    wallet_select_wallet(slot);
+    CHECK(zmeta_get(0, ZMETA_NET_TEST, &got) && got.birthday == 4506700, "testnet birthday replaced");
+    CHECK(zmeta_get(0, ZMETA_NET_MAIN, &got) && got.birthday == 3520600, "mainnet birthday lost");
+
+    /* The testnet key is the one written before networks were told apart,
+     * so a board's existing record still reads after the update. */
+    uint8_t full[32];
+    char fp[ZCASH_FP_CHARS + 1], key[16];
+    CHECK(zcash_seed_fingerprint(full) == WALLET_OK, "fingerprint");
+    zcash_short_fp(full, fp);
+    snprintf(key, sizeof key, "%.8s.0", fp);
+    CHECK(fake_nvs_has("zc_meta", key), "testnet key changed: old records would be lost");
+    snprintf(key, sizeof key, "%.8s:0", fp);
+    CHECK(fake_nvs_has("zc_meta", key), "mainnet key");
+
+    CHECK(zmeta_set(0, 7, &m) == ZMETA_E_ARG && !zmeta_get(0, 7, &got), "unknown network");
 }
 
 static void test_hidden_and_session_seeds_stay_in_ram(void)
@@ -92,33 +127,33 @@ static void test_hidden_and_session_seeds_stay_in_ram(void)
 
     int writes = fake_nvs_write_count();
     ZcashMeta m = meta(0x0BADF00D, "Hidden"), got;
-    CHECK(zmeta_set(0, &m) == ZMETA_OK_SESSION, "a hidden wallet's record went to flash");
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &m) == ZMETA_OK_SESSION, "a hidden wallet's record went to flash");
     CHECK(fake_nvs_write_count() == writes, "a flash write happened");
     CHECK(!fake_nvs_contains_bytes(short_fp, 8), "the hidden wallet's fingerprint is in flash");
     CHECK(!fake_nvs_contains_bytes(fp, 4), "its raw fingerprint is in flash");
-    CHECK(zmeta_get(0, &got) && got.birthday == 0x0BADF00D, "readable this session");
+    CHECK(zmeta_get(0, ZMETA_NET_TEST, &got) && got.birthday == 0x0BADF00D, "readable this session");
 
     /* The base wallet does not see the hidden one's record. */
     wallet_clear_passphrase();
-    CHECK(!zmeta_get(0, &got), "the base wallet read the hidden record");
+    CHECK(!zmeta_get(0, ZMETA_NET_TEST, &got), "the base wallet read the hidden record");
     wallet_set_passphrase("TREZOR", 6);
     zmeta_forget_session();   /* what lock_device() calls */
-    CHECK(!zmeta_get(0, &got), "a lock did not forget it");
+    CHECK(!zmeta_get(0, ZMETA_NET_TEST, &got), "a lock did not forget it");
 
     ctx = "temporary";
     boot(true);
     CHECK(wallet_use_temporary_mnemonic(ZV_KEYS[24].mnemonic) == WALLET_OK, "temp");  /* legal winner */
     writes = fake_nvs_write_count();
-    CHECK(zmeta_set(0, &m) == ZMETA_OK_SESSION, "a session seed's record went to flash");
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &m) == ZMETA_OK_SESSION, "a session seed's record went to flash");
     CHECK(fake_nvs_write_count() == writes, "a flash write happened");
-    CHECK(zmeta_get(0, &got) && strcmp(got.label, "Hidden") == 0, "readable this session");
+    CHECK(zmeta_get(0, ZMETA_NET_TEST, &got) && strcmp(got.label, "Hidden") == 0, "readable this session");
     uint8_t needle[4] = { 0x0D, 0xF0, 0xAD, 0x0B };
     CHECK(!fake_nvs_contains_bytes(needle, 4), "the birthday is in flash");
 
     ctx = "no seed";
     boot(true);
-    CHECK(zmeta_set(0, &m) == ZMETA_E_NO_SEED, "set with no seed");
-    CHECK(!zmeta_get(0, &got), "get with no seed");
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &m) == ZMETA_E_NO_SEED, "set with no seed");
+    CHECK(!zmeta_get(0, ZMETA_NET_TEST, &got), "get with no seed");
 }
 
 static void test_power_cut_and_damage(void)
@@ -129,14 +164,14 @@ static void test_power_cut_and_damage(void)
     uint8_t slot = wallet_add_mnemonic(ZV_KEYS[0].mnemonic);
     wallet_select_wallet(slot);
     ZcashMeta old = meta(1000, "old"), neu = meta(2000, "new"), got;
-    CHECK(zmeta_set(0, &old) == ZMETA_OK_STORED, "setup");
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &old) == ZMETA_OK_STORED, "setup");
     for (int cut = 0; cut <= 2; cut++) {
-        CHECK(zmeta_set(0, &old) == ZMETA_OK_STORED, "reset");
+        CHECK(zmeta_set(0, ZMETA_NET_TEST, &old) == ZMETA_OK_STORED, "reset");
         fake_nvs_crash_after(cut);
-        zmeta_set(0, &neu);
+        zmeta_set(0, ZMETA_NET_TEST, &neu);
         boot(false);
         wallet_select_wallet(slot);
-        CHECK(zmeta_get(0, &got) &&
+        CHECK(zmeta_get(0, ZMETA_NET_TEST, &got) &&
               (memcmp(&got, &old, sizeof got) == 0 || memcmp(&got, &neu, sizeof got) == 0),
               "cut after %d writes: neither old nor new", cut);
     }
@@ -159,7 +194,7 @@ static void test_power_cut_and_damage(void)
     for (size_t i = 0; i < 4; i++) {
         nvs_set_blob(h, key, bad[i], lens[i]);
         nvs_commit(h);
-        CHECK(!zmeta_get(0, &got), "damaged record %zu accepted", i);
+        CHECK(!zmeta_get(0, ZMETA_NET_TEST, &got), "damaged record %zu accepted", i);
         static const ZcashMeta zero;
         CHECK(memcmp(&got, &zero, sizeof got) == 0, "damaged record %zu left output", i);
     }
@@ -167,18 +202,19 @@ static void test_power_cut_and_damage(void)
 
     ctx = "args";
     ZcashMeta m = meta(1, "tab\there");
-    CHECK(zmeta_set(0, &m) == ZMETA_E_ARG, "control character in label");
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &m) == ZMETA_E_ARG, "control character in label");
     m = meta(1, "");
     m.flags = 0x80;
-    CHECK(zmeta_set(0, &m) == ZMETA_E_ARG, "unknown flag");
-    CHECK(zmeta_set(0x80000000u, &old) == ZMETA_E_ARG, "hardened account");
-    CHECK(zmeta_set(100000, &old) == ZMETA_OK_SESSION, "an account too large for a key is RAM only");
+    CHECK(zmeta_set(0, ZMETA_NET_TEST, &m) == ZMETA_E_ARG, "unknown flag");
+    CHECK(zmeta_set(0x80000000u, ZMETA_NET_TEST, &old) == ZMETA_E_ARG, "hardened account");
+    CHECK(zmeta_set(100000, ZMETA_NET_TEST, &old) == ZMETA_OK_SESSION, "an account too large for a key is RAM only");
 }
 
 int main(void)
 {
     printf("== test_zcash_meta\n");
     test_stored_wallet_persists();
+    test_networks_are_kept_apart();
     test_hidden_and_session_seeds_stay_in_ram();
     test_power_cut_and_damage();
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
