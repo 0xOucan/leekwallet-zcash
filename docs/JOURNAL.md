@@ -793,3 +793,61 @@ checked on Xtensa).
   `cargo test` pass.
 - Checklist for the board: `docs/zcash/MAINNET.md`. Left: the first real
   mainnet receive, address check, send and shield on the board.
+
+### 9.2 Chrome extension engine (2026-10-17)
+- `chrome/engine`: the spike turned into the extension's engine. Our
+  librustzcash rev (`16f0723c`) for wasm32 with threads, in a dedicated
+  worker, driven by JSON messages (`chrome/README.md` lists them):
+  open a wallet per network, import a UFVK (view-only, or a device
+  account with its ZIP 32 origin, as zecz's `AccountSpec::device`),
+  sync with progress and cancel, balances per pool, addresses with
+  rotation, history, propose a send or a shield (compact signer view
+  out, full PCZT kept), apply a `.zsig`, prove with progress, extract,
+  broadcast over gRPC-web.
+- Shared code: `host/leek-device/src/zsig.rs` (`.zsig` v1/v2) and
+  `host/zecz-core/src/{authorize,keys,soft_signer}.rs` compile for wasm32
+  unchanged, included with `#[path]`. zecz-core's `wallet.rs` needs
+  `std::fs`, tonic's transport and tokio, so its operations are restated
+  in `chrome/engine/src/wallet.rs`, each naming the zecz function it
+  follows.
+- Storage: `zcash_client_sqlite` on OPFS through `sqlite-wasm-vfs` 0.3
+  (the sync access handle pool) under the `libsqlite3-sys` stand-in,
+  which moved to `chrome/engine/patches`. Pending and sent PCZTs go in
+  a second database beside the wallet (zecz keeps them as files).
+- Found: `sync::run` awaits the block cache's `delete`s only when the
+  whole run ends. Progress reported from `delete` came all at once at
+  the end, and every downloaded block stayed in memory. The cache now
+  reports, and drops, the previous batch when the next one arrives.
+- `chrome/extension`: MV3 skeleton. The service worker only creates the
+  offscreen document; that document starts the engine worker and serves
+  it to pages over a runtime port, and restarts it if the WASM traps.
+  COOP/COEP in the manifest. Popup after LeekWallet's EVM extension:
+  network switch, import a viewing key, sync progress, balances per
+  pool, receive address with rotation, recent history, endpoint setting.
+  Plain ES modules, no bundler.
+- `test/e2e.mjs`, headless Chromium (Playwright's, Chromium 153), i7-1355U,
+  8 threads, ChainSafe's testnet proxy, abandon-art testnet account 0
+  imported as a device account with birthday 4,501,000: 26/26 checks.
+  - Engine start (WASM, 8-thread pool, OPFS) 0.3-0.9 s; import 0.4-0.8 s.
+  - `cancelSync` stopped a sync after its first 1,000-block batch; the
+    next sync went on from there.
+  - Reloading the extension in the middle of a sync lost nothing: same
+    account, and the sync finished afterwards (about 7,700 blocks in
+    35-54 s, 144-201 blocks/s, to tip 4,510,727).
+  - Balances: 10,000 zat, all Ironwood, spendable (the note 9.1 found).
+    History: 2 transactions. Rotation gave index 1, then 2 after a reload.
+  - After an extension reload and after a browser restart: same
+    account, same scan height, same balances, and the next sync scanned
+    0-2 new blocks in 1-4 s.
+  - Wallet database 1.92 MB, extension database 41 kB, 33 MB of WASM
+    memory (no proving key built). Engine 13.9 MB of WASM, no wasm-opt.
+  - A send to self cannot be proposed: 10,000 zat does not cover 1,000
+    plus the 10,000 fee. The engine says so cleanly.
+- Reloading an unpacked extension in Playwright's Chromium needs
+  developer mode on (`chrome.developerPrivate`); otherwise Chromium
+  disables it on reload ("unsupportedDeveloperExtension").
+- Not done: broadcast through the proxy (opt-in `BROADCAST=1` with the
+  dev soft signer, needs a funded test account), the proving key in the
+  extension (`warmProver`, `prove` are in the API, not exercised here),
+  wasm-opt, a sync from an old birthday, the board (9.3), software
+  wallets (9.4).

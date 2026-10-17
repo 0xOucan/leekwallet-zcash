@@ -86,7 +86,7 @@ tonic-web-wasm-client = { version = "0.8", optional = true }
 uuid = { version = "1", optional = true, features = ["js"] }
 
 [patch.crates-io]
-libsqlite3-sys = { path = "patches/libsqlite3-sys" }
+libsqlite3-sys = { path = "../engine/patches/libsqlite3-sys" }
 
 [profile.release]
 opt-level = 3

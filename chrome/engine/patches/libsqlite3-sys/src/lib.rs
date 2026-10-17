@@ -4,4 +4,4 @@
 pub use sqlite_wasm_rs::*;
 
 #[cfg(not(target_arch = "wasm32"))]
-compile_error!("engine-spike's libsqlite3-sys stand-in is for wasm32 only");
+compile_error!("the libsqlite3-sys stand-in (chrome/engine/patches) is for wasm32 only");

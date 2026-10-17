@@ -17,7 +17,7 @@ README covers how to rebuild and rerun them.
 | `src/engine.rs` (feature `engine`) | Two pieces. First, sign / prove / extract of the repo's real vector `vectors/pczt/iw_send_shielded.pczt`. It uses the dev soft signer for the board's part, then `pczt` Prover and TransactionExtractor. Second, `scan_block` trial decryption of compact blocks for a UFVK. |
 | `src/wallet.rs` (feature `sqlite`) | zecz-core's wallet flow: `zcash_client_sqlite` (in memory), `sync::run` over gRPC-web, then `propose_transfer` and `create_pczt_from_proposal` of a send to self. Nothing is broadcast. |
 | `src/web.rs` | The wasm-bindgen surface. It covers `Prover`, `Verifier`, `sign_prove_extract`, `lwd_info`, `fetch_and_scan` and `wallet_run`, plus `initThreadPool` in the `threads` builds. The gRPC calls go through `tonic-web-wasm-client`, which is gRPC-web over `fetch`. |
-| `patches/libsqlite3-sys` | A stand-in for libsqlite3-sys 0.35 that re-exports `sqlite-wasm-rs`, so rusqlite 0.37 builds for wasm32 (see below). |
+| `../engine/patches/libsqlite3-sys` | (moved to `chrome/engine` in 9.2) A stand-in for libsqlite3-sys 0.35 that re-exports `sqlite-wasm-rs`, so rusqlite 0.37 builds for wasm32 (see below). |
 | `examples/native_*.rs` | The same work natively, for comparison. |
 | `build.sh` | Wraps the wasm32 builds and wasm-bindgen. |
 | `bench/node.mjs` | Runs the WASM in Node. Node is a single-threaded proxy, not the browser. |
@@ -85,7 +85,7 @@ itself (default 1,000 zat).
 | `getrandom` 0.4 on wasm32 | Fixed with feature `wasm_js`. No `--cfg` is needed in 0.4. |
 | `secp256k1-sys` needs a C compiler for wasm32 (`failed to find tool "clang"`) | Fixed with the NDK clang (`build.sh`). |
 | `halo2_proofs`: "The multicore feature flag is not supported on wasm32 architectures without atomics" | Caused by `zcash_client_sqlite`'s default `multicore` feature. Fixed with `default-features = false`. Threads come from the `threads` build. |
-| `zcash_client_sqlite`: `libsqlite3-sys 0.35` compiles bundled SQLite against libc, giving `sqlite3/sqlite3.c: fatal error: 'stdio.h' file not found` | Fixed. rusqlite 0.37 (pinned by librustzcash and `schemerz-rusqlite`) has no wasm32 support, but rusqlite 0.40 gets it from `sqlite-wasm-rs`, which exposes the same C API. `patches/libsqlite3-sys` re-exports it under the old name through `[patch.crates-io]`. |
+| `zcash_client_sqlite`: `libsqlite3-sys 0.35` compiles bundled SQLite against libc, giving `sqlite3/sqlite3.c: fatal error: 'stdio.h' file not found` | Fixed. rusqlite 0.37 (pinned by librustzcash and `schemerz-rusqlite`) has no wasm32 support, but rusqlite 0.40 gets it from `sqlite-wasm-rs`, which exposes the same C API. `chrome/engine/patches/libsqlite3-sys` re-exports it under the old name through `[patch.crates-io]`. |
 | `uuid` needs a randomness source on wasm32 | Fixed with feature `js`. |
 | `SystemTime::now()` panics on wasm32 | `wallet.rs` gives `WalletDb` a `Clock` over `Date.now()`. |
 | Threads build: `--shared-memory is disallowed by sqlite3.o because it was not compiled with 'atomics' or 'bulk-memory'` | Fixed. `build.sh` passes `-matomics -mbulk-memory` to the C compiler. |

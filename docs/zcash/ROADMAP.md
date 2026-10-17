@@ -396,6 +396,8 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 
 **9.2 Engine package and software wallets (L).**
 - First, turn the spike into `chrome/engine`: the worker, a message API, sqlite on OPFS that persists, and a broadcast through the proxy.
+  - **Engine and extension skeleton: done (2026-10-17).** `chrome/engine` (the message API in `chrome/README.md`), `chrome/extension` (offscreen document, engine worker, popup: network, import a viewing key, sync, balances, receive). Headless Chromium test: import, sync, stop and resume, and the wallet persisted on OPFS across an extension reload (mid-sync too) and a browser restart.
+  - Pending: a broadcast through the proxy. The send path is in the API (propose, `.zsig`, prove, extract, broadcast) with an opt-in test that needs a funded testnet account.
 - Then create or restore with a passphrase, encrypted with WebCrypto (Argon2id in WASM), auto-lock, several accounts.
 - Done when: a testnet send from a software wallet, broadcast from the extension.
 
