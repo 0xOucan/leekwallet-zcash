@@ -47,7 +47,11 @@ zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723
 pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true, features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
 zip32 = { version = "0.3", optional = true }
 bip39 = { version = "2", optional = true, default-features = false, features = ["std"] }
-tonic = { version = "0.14", optional = true, default-features = false, features = ["codegen"] }
+# =0.14.2: tonic 0.14.6 rejects a stream that ends without a grpc-status
+# trailer frame, and tonic-web-wasm-client 0.8 never emits one (it parses
+# the gRPC-web trailer but does not hand it to tonic): every call fails with
+# "missing grpc-status trailer". 0.14.2 is also what host/ uses.
+tonic = { version = "=0.14.2", optional = true, default-features = false, features = ["codegen"] }
 prost = { version = "0.14", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
