@@ -39,6 +39,7 @@ try {
     pczt,
     lwd: q.get('lwd'),
     scanCount: Number(q.get('scan') ?? 1000),
+    onlyLwd: q.has('only_lwd'),
     log,
   });
   report({ ...env, ...out });

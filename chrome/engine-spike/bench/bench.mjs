@@ -6,7 +6,7 @@ export const MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon ' +
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art';
 
-export async function runBench(mod, { pczt, lwd, scanStart, scanCount, log }) {
+export async function runBench(mod, { pczt, lwd, scanStart, scanCount, onlyLwd, log }) {
   const out = {};
   const time = async (name, f) => {
     const t = performance.now();
@@ -15,11 +15,13 @@ export async function runBench(mod, { pczt, lwd, scanStart, scanCount, log }) {
     log(`${name}: ${out[name]} ms${r !== undefined ? ` (${typeof r === 'string' ? r : JSON.stringify(r)})` : ''}`);
     return r;
   };
-  const prover = await time('proving_key_ms', () => new mod.Prover());
-  await time('prove_2_actions_ms', () => prover.prove(1));
-  await time('prove_2_actions_again_ms', () => prover.prove(1));
-  await time('prove_4_actions_ms', () => prover.prove(3));
-  if (mod.Verifier && pczt) {
+  const prover = onlyLwd ? null : await time('proving_key_ms', () => new mod.Prover());
+  if (prover) {
+    await time('prove_2_actions_ms', () => prover.prove(1));
+    await time('prove_2_actions_again_ms', () => prover.prove(1));
+    await time('prove_3_actions_ms', () => prover.prove(3));
+  }
+  if (prover && mod.Verifier && pczt) {
     const verifier = await time('verifying_key_ms', () => new mod.Verifier());
     out.flow = JSON.parse(mod.sign_prove_extract(prover, verifier, pczt, MNEMONIC));
     log(`sign/prove/extract iw_send_shielded.pczt: ${JSON.stringify(out.flow)}`);

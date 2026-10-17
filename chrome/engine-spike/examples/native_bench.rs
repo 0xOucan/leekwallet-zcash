@@ -6,7 +6,7 @@ fn main() {
     let t = Instant::now();
     let pk = engine_spike::prove::build_pk();
     println!("proving key build: {:.2} s", t.elapsed().as_secs_f64());
-    for outputs in [1usize, 2, 4] {
+    for outputs in [1usize, 1, 3] {
         let t = Instant::now();
         let (actions, proof) = engine_spike::prove::prove(&pk, outputs);
         println!(
