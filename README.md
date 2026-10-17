@@ -42,11 +42,11 @@ outputs.
 
 | Component | State |
 |---|---|
-| **Board + firmware** | Done and tested on real hardware: signs over USB, Bluetooth, QR and SD; compact PCZT; verifies any of its addresses |
+| **Board + firmware** | Done and tested on real hardware: signs shielded and transparent spends (shielding) over USB, Bluetooth, QR and SD; compact PCZT; verifies any of its addresses |
 | **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; testnet sends signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen |
 | **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
-| **Desktop app** (`desktop/`) | Skeleton: import a viewing key, sync with progress, balances, address. Builds on Linux, Windows and macOS in CI. Board pairing and signing in progress |
-| **Chrome extension** | Planned: a test of a Zcash engine in the browser comes first |
+| **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
+| **Chrome extension** | Engine proven: our librustzcash compiled to WebAssembly syncs, builds, proves and extracts a transaction inside an extension worker ([CHROME-ENGINE.md](docs/zcash/CHROME-ENGINE.md)). The extension itself is next |
 | **Mainnet, NEAR Intents** | Planned (firmware Phase 10, then swaps on every companion) |
 
 ## What works
@@ -55,7 +55,7 @@ outputs.
 |---|---|
 | Keys | BIP39 seed + optional passphrase entered on the device, ZIP 32 accounts, unified addresses, seed fingerprint (ZFP) |
 | Storage | PIN vault in flash, stateless (seed typed each boot), or an encrypted `.zkv` file on the microSD card |
-| Signing | Ironwood and Orchard spends, to shielded or transparent outputs, with memos. Two independent signers: C (on the device) and Rust (host and QEMU), cross-checked against each other |
+| Signing | Ironwood and Orchard spends, and transparent P2PKH inputs (shielding), to shielded or transparent outputs, with memos. Two independent signers: C (on the device) and Rust (host and QEMU), cross-checked against each other |
 | Links | USB serial and Bluetooth LE for everyday signing; animated QR (UR fountain codes, the board's camera) and the SD card when the board must stay off every link |
 | Screen | 128×128 SH1107 OLED, EC11 rotary encoder + buttons; receive address as text and QR |
 | Address check | The app sends the address it displays, even a rotated diversified one; the board proves it is its own (Orchard `pk_d = [ivk]·g_d`, index recovered by FF1 decryption, transparent receiver checked at that index) and only then shows it to confirm. Foreign or mixed addresses are refused |
@@ -99,6 +99,7 @@ Everything runs at 3.3 V.
 | `host/leek-device` | Device client shared by `zecz` and Android: pairing, session, calls, `.zsig` |
 | `host/leek-android` | Native library for the Android app (JNI): device client, compact view, applying signatures |
 | `desktop/` | LeekWallet Zcash desktop app (Tauri 2) on `zecz-core`, for Linux, Windows and macOS |
+| `chrome/engine-spike/` | The browser engine test: librustzcash in WebAssembly, run in an MV3 extension worker |
 | `.github/workflows/` | CI: host tests, and desktop builds on the three systems |
 | `vectors/` | Key, PCZT (valid, compact and refused) and `.zsig` test vectors, and their generator |
 | `docs/zcash/` | [ANALYSIS](docs/zcash/ANALYSIS.md), [PLAN](docs/zcash/PLAN.md), [ROADMAP](docs/zcash/ROADMAP.md), [FORMATS](docs/zcash/FORMATS.md) |
@@ -161,9 +162,11 @@ The full plan, with a "done when" check for each step, is in
 - [x] Android: import, USB / Bluetooth / QR signing, verify address on device
 - [x] Compact PCZT on every link (Phase 7)
 - [x] Desktop skeleton and CI on three systems (8.1)
-- [ ] Desktop: pair with the board, sign, verify address (8.3), wallet screens (8.4)
-- [ ] Chrome extension: engine test (9.1), then a full wallet with the board over Web Serial / Web Bluetooth
-- [ ] Firmware: transparent inputs, mainnet, several accounts, Bluetooth bonding, security review (Phase 10)
+- [x] Desktop: pair with the board, sign, verify address (8.3), wallet screens (8.4)
+- [x] Firmware: transparent inputs, first shield signed on the board (10.1)
+- [x] Chrome: a full Zcash engine runs in the browser (9.1)
+- [ ] Chrome extension: the engine, software wallets, the board over Web Serial / Web Bluetooth (9.2+)
+- [ ] Firmware: mainnet, several accounts, Bluetooth bonding, security review (Phase 10)
 - [ ] NEAR Intents swaps signed on the board, on Android, desktop and Chrome
 - [ ] A proper account type in the Android app and an offer to Zodl upstream
 - [ ] Releases and the hackathon submission
