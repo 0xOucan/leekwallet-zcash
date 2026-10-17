@@ -160,3 +160,6 @@ details[open] > summary { margin-bottom: var(--space-2); }
   color: var(--muted);
 }
 .notice.bad { border-left-color: var(--danger); color: var(--danger); }
+
+/* The pairing digits, compared by eye with the board's screen. */
+#passkey { font-size: 2rem; letter-spacing: 0.2em; text-align: center; color: var(--text); }
