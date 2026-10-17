@@ -1,0 +1,41 @@
+# A stand-in for libsqlite3-sys 0.35 on wasm32-unknown-unknown, used through
+# [patch.crates-io] by the `sqlite` build only.
+#
+# rusqlite 0.37 (pinned by librustzcash and schemerz-rusqlite 0.371) builds
+# bundled SQLite with libc headers, which wasm32-unknown-unknown lacks.
+# sqlite-wasm-rs compiles SQLite with its own libc shims and exposes the
+# same bindings (it is what rusqlite 0.40 uses), so this crate re-exports
+# them under the name and version rusqlite 0.37 expects.
+[package]
+name = "libsqlite3-sys"
+version = "0.35.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "libsqlite3_sys"
+path = "src/lib.rs"
+
+# rusqlite 0.37 turns these on; they mean nothing here.
+[features]
+default = ["min_sqlite_version_3_14_0"]
+bundled = ["bundled_bindings"]
+bundled-windows = ["bundled_bindings"]
+bundled_bindings = []
+buildtime_bindgen = []
+bundled-sqlcipher = ["bundled"]
+bundled-sqlcipher-vendored-openssl = ["bundled-sqlcipher"]
+column_metadata = []
+in_gecko = []
+loadable_extension = []
+min_sqlite_version_3_14_0 = []
+preupdate_hook = []
+session = []
+sqlcipher = []
+unlock_notify = []
+wasm32-wasi-vfs = []
+with-asan = []
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# wasm-bindgen: supplies the host hooks (time, entropy, sleep) through JS.
+sqlite-wasm-rs = { version = "0.6", features = ["wasm-bindgen"] }

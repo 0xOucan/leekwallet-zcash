@@ -127,3 +127,21 @@ mod engine_web {
         ))
     }
 }
+
+#[cfg(feature = "sqlite")]
+mod wallet_web {
+    use super::*;
+
+    /// zecz-core's flow: init + sync::run over gRPC-web into zcash_client_sqlite,
+    /// then propose and build the PCZT of a send to self (not broadcast).
+    #[wasm_bindgen]
+    pub async fn wallet_run(url: String, mnemonic: String, blocks_back: u32, send_zat: u64) -> Result<String, JsError> {
+        let r = crate::wallet::run(&url, &mnemonic, blocks_back, send_zat).await.map_err(|e| JsError::new(&e))?;
+        let hex: String = r.pczt.iter().map(|b| format!("{b:02x}")).collect();
+        Ok(format!(
+            r#"{{"birthday":{},"tip":{},"init_ms":{},"sync_ms":{},"scanned_blocks":{},"spendable_zat":{},"total_zat":{},"propose_ms":{},"fee_zat":{},"propose_error":{:?},"pczt_len":{},"pczt_hex":"{}"}}"#,
+            r.birthday, r.tip, r.init_ms, r.sync_ms, r.scanned_blocks, r.spendable_zat, r.total_zat, r.propose_ms, r.fee_zat,
+            r.propose_error.as_deref().unwrap_or(""), r.pczt.len(), hex
+        ))
+    }
+}

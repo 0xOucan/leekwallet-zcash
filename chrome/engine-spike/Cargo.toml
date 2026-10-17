@@ -31,9 +31,20 @@ engine = [
     "dep:tonic-web-wasm-client",
     "dep:wasm-bindgen-futures",
 ]
-# zecz-core's storage. Does NOT build for wasm32-unknown-unknown at this rev:
-# rusqlite 0.37 compiles bundled SQLite against libc headers (see README).
-sqlite = ["engine", "dep:zcash_client_sqlite"]
+# zecz-core's storage and wallet flow (sync::run, propose, create PCZT).
+# rusqlite 0.37 alone does not build for wasm32-unknown-unknown (bundled
+# SQLite needs libc headers); [patch.crates-io] below swaps libsqlite3-sys
+# for a stand-in backed by sqlite-wasm-rs.
+sqlite = [
+    "engine",
+    "dep:zcash_client_sqlite",
+    "dep:zcash_primitives",
+    "dep:zip321",
+    "dep:rusqlite",
+    "dep:async-trait",
+    "dep:uuid",
+    "dep:tracing",
+]
 
 [dependencies]
 orchard = { version = "0.16", default-features = false, features = ["std", "circuit"] }
@@ -41,10 +52,17 @@ rand = { version = "0.10", default-features = false, features = ["sys_rng"] }
 
 # Same rev as host/zecz-core.
 zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true, default-features = false, features = ["orchard", "transparent-inputs", "pczt", "sync"] }
-zcash_client_sqlite = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true, default-features = false, features = ["orchard", "transparent-inputs"] }
+zcash_client_sqlite = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true, default-features = false, features = ["orchard", "transparent-inputs", "serde"] }
 zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true, features = ["orchard", "transparent-inputs"] }
 zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true }
 pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true, features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
+# Not its default `multicore`: that needs the threads build on wasm32.
+zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true, default-features = false, features = ["std", "circuits"] }
+zip321 = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", optional = true }
+rusqlite = { version = "0.37", optional = true }
+async-trait = { version = "0.1", optional = true }
+# librustzcash logs through tracing; wallet.rs forwards it to console.log.
+tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
 zip32 = { version = "0.3", optional = true }
 bip39 = { version = "2", optional = true, default-features = false, features = ["std"] }
 # =0.14.2: tonic 0.14.6 rejects a stream that ends without a grpc-status
@@ -64,6 +82,11 @@ js-sys = "0.3"
 # gRPC-web over fetch(): needs a gRPC-web endpoint (a proxy in front of
 # lightwalletd; testnet.zec.rocks speaks plain gRPC only).
 tonic-web-wasm-client = { version = "0.8", optional = true }
+# zcash_client_sqlite makes account UUIDs; uuid needs a randomness source on wasm32.
+uuid = { version = "1", optional = true, features = ["js"] }
+
+[patch.crates-io]
+libsqlite3-sys = { path = "patches/libsqlite3-sys" }
 
 [profile.release]
 opt-level = 3

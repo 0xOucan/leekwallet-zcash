@@ -573,6 +573,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 name = "engine-spike"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bip39",
  "getrandom 0.4.3",
  "js-sys",
@@ -580,16 +581,21 @@ dependencies = [
  "pczt",
  "prost",
  "rand 0.10.3",
+ "rusqlite",
  "tonic",
  "tonic-web-wasm-client",
+ "tracing",
+ "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-rayon",
  "zcash_client_backend",
  "zcash_client_sqlite",
  "zcash_keys",
+ "zcash_primitives",
  "zcash_protocol",
  "zip32",
+ "zip321",
 ]
 
 [[package]]
@@ -1191,12 +1197,8 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "libsqlite3-sys"
 version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
 dependencies = [
- "cc",
- "pkg-config",
- "vcpkg",
+ "sqlite-wasm-rs",
 ]
 
 [[package]]
@@ -1480,12 +1482,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "pkg-config"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "poly1305"
@@ -1791,6 +1787,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsqlite-vfs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "353b74f9810d5b085b6c42c9d86a5f0fdb795553235cdd48753b32e3809d18a7"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2071,6 +2076,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 dependencies = [
  "lock_api",
+]
+
+[[package]]
+name = "sqlite-wasm-rs"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "717e14271e332de37b8f7793913d53e2f952b3d21f96efd5880aea42a3c32d18"
+dependencies = [
+ "cc",
+ "js-sys",
+ "rsqlite-vfs",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2413,14 +2430,9 @@ checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"
@@ -2691,6 +2703,7 @@ dependencies = [
  "schemerz-rusqlite",
  "secp256k1",
  "secrecy",
+ "serde",
  "shardtree",
  "static_assertions",
  "subtle",

@@ -5,7 +5,8 @@
 #   ./build.sh threads         rayon prover (atomics)         -> pkg-threads/
 #   ./build.sh engine          prover + wallet engine crates  -> pkg-engine/
 #   ./build.sh threads-engine  both, with rayon               -> pkg-threads-engine/
-#   ./build.sh sqlite          engine + zcash_client_sqlite (fails: see README)
+#   ./build.sh sqlite          engine + zcash_client_sqlite   -> pkg-sqlite/
+#   ./build.sh threads-sqlite  sqlite, with rayon              -> pkg-threads-sqlite/
 #
 # C code (secp256k1-sys, and sqlite for the engine) needs a clang that targets
 # wasm32. Any LLVM clang works; the Android NDK's does, so it is the default.
@@ -22,26 +23,30 @@ case "$what" in
   prover)  features="";        extra=();;
   engine)  features="engine";  extra=();;
   sqlite)  features="sqlite";  extra=();;
-  threads|threads-engine)
+  threads|threads-engine|threads-sqlite)
     features="threads"
     [ "$what" = threads-engine ] && features="threads,engine"
+    [ "$what" = threads-sqlite ] && features="threads,sqlite"
     # Shared memory needs std rebuilt with atomics. Stable rustc accepts
     # -Z build-std under RUSTC_BOOTSTRAP=1 (needs `rustup component add rust-src`).
     export RUSTC_BOOTSTRAP=1
     export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--max-memory=4294967296 -C link-arg=--import-memory -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base"
+    # C code linked into shared memory must be built for it too (sqlite3.o:
+    # "--shared-memory is disallowed ... not compiled with 'atomics'").
+    export CFLAGS_wasm32_unknown_unknown="${CFLAGS_wasm32_unknown_unknown:-} -matomics -mbulk-memory"
     extra=(-Z build-std=panic_abort,std --target-dir target-threads)
-    [ "$what" = threads-engine ] && extra=(-Z build-std=panic_abort,std --target-dir target-threads-engine)
+    [ "$what" != threads ] && extra=(-Z build-std=panic_abort,std --target-dir "target-$what")
     ;;
-  *) echo "usage: $0 prover|engine|threads|threads-engine|sqlite" >&2; exit 2;;
+  *) echo "usage: $0 prover|engine|sqlite|threads|threads-engine|threads-sqlite" >&2; exit 2;;
 esac
 
 cargo build -j"$JOBS" --release --target wasm32-unknown-unknown ${features:+--features "$features"} "${extra[@]}"
 
 dir=target
-case "$what" in threads) dir=target-threads;; threads-engine) dir=target-threads-engine;; esac
+case "$what" in threads*) dir="target-$what";; esac
 wasm-bindgen --target web --out-dir "pkg-$what" "$dir/wasm32-unknown-unknown/release/engine_spike.wasm"
 
-if [ "$what" = threads ] || [ "$what" = threads-engine ]; then
+if [[ "$what" == threads* ]]; then
   # wasm-bindgen-rayon spawns each worker from a blob: URL. An MV3 extension
   # page's CSP (script-src 'self' 'wasm-unsafe-eval'; blob: is not allowed)
   # refuses that, and initThreadPool then waits forever (WebZjs issue #141).
