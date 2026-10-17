@@ -46,9 +46,9 @@ outputs.
 | **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; sends and shielding signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen; a mainnet app and a testnet app side by side |
 | **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
 | **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
-| **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, import, sync, balances, address. Board link and software wallets next ([chrome/README.md](chrome/README.md)) |
+| **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, sync, balances, receive. Pairs with the board over Web Serial and Web Bluetooth, imports its account, verifies addresses on it, sends and shields signed on it (tested against the simulated board; the real board is next). Software wallets next ([chrome/README.md](chrome/README.md)) |
 | **Mainnet** | Ready: mainnet vectors and tests, servers of the wrong chain refused, one birthday per network on the board, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation; the board has signed a send and a shield accepted on mainnet. Testnet stays the default. Checklist: [MAINNET.md](docs/zcash/MAINNET.md) |
-| **NEAR Intents** | Planned, after the first mainnet send |
+| **NEAR Intents** | In the desktop app: swaps from and into ZEC through 1Click, with the ZEC deposit signed on the board, status tracking and fresh shielded refund addresses (mainnet only). Tested against recorded answers and dry quotes; the first real swap is next |
 
 ## What works
 
@@ -166,9 +166,11 @@ The full plan, with a "done when" check for each step, is in
 - [x] Chrome extension engine, stored on OPFS, with a popup (9.2)
 - [x] Mainnet ready on the PC, testnet kept as the default option (10.3)
 - [x] First mainnet send and shield signed on the board (10.3)
-- [ ] Chrome extension: the board over Web Serial / Web Bluetooth (9.3), software wallets (9.4)
+- [x] Chrome extension with the board over Web Serial / Web Bluetooth (9.3), tested against the simulated board
+- [ ] Chrome extension: on the real board, then software wallets (9.4)
 - [ ] Firmware: several accounts, Bluetooth bonding, security review (Phase 10)
-- [ ] NEAR Intents swaps signed on the board, on Android, desktop and Chrome
+- [x] NEAR Intents swaps in the desktop app (8.6)
+- [ ] A first real swap; NEAR Intents on Android and Chrome
 - [ ] A proper account type in the Android app and an offer to Zodl upstream
 - [ ] Releases and the hackathon submission
 
