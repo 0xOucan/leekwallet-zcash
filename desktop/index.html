@@ -272,6 +272,101 @@
           </div>
         </section>
 
+        <!-- Cross-chain swaps through NEAR Intents' 1Click API. The quote
+             comes from 1Click; from ZEC, the deposit is an ordinary send
+             signed on the LeekWallet. Mainnet only. -->
+        <section class="panel" id="swap-panel" hidden aria-labelledby="swap-h">
+          <h2 id="swap-h">Swap</h2>
+          <div class="notice notice--danger" role="note" id="swap-testnote" hidden>
+            <strong>Mainnet only.</strong> NEAR Intents has no testnet: on
+            testnet this screen can only preview a price (a dry-run quote,
+            no deposit address). Switch to Mainnet to swap.
+          </div>
+          <p>
+            Cross-chain swaps through NEAR Intents (1Click). The rate, the
+            fees and the deposit address come from 1Click; the LeekWallet
+            cannot check them. It shows the amount and the address it pays.
+          </p>
+          <form id="swap-form" novalidate>
+            <fieldset class="netpick">
+              <legend class="visually-hidden">Direction</legend>
+              <label><input type="radio" name="swapdir" value="fromZec" id="swap-from" checked /> ZEC → another asset</label>
+              <label><input type="radio" name="swapdir" value="toZec" id="swap-to" /> Another asset → ZEC</label>
+            </fieldset>
+            <label class="field">
+              <span id="swap-asset-label">Receive</span>
+              <select id="swap-asset"><option value="">Loading the assets…</option></select>
+            </label>
+            <label class="field">
+              <span id="swap-amount-label">Amount (ZEC)</span>
+              <input id="swap-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.01" />
+            </label>
+            <label class="field">
+              <span id="swap-addr-label">Recipient address</span>
+              <textarea id="swap-addr" rows="2" spellcheck="false" autocomplete="off"></textarea>
+            </label>
+            <label class="field">
+              <span>Slippage tolerance (%)</span>
+              <input id="swap-slippage" type="text" inputmode="decimal" autocomplete="off" value="1" />
+            </label>
+            <label class="field-check">
+              <input type="checkbox" id="swap-confidential" />
+              <span id="swap-confidential-label">Confidential (NEAR Confidential Intents; needs a 1Click API key)</span>
+            </label>
+            <p class="muted" id="swap-privacy"></p>
+            <div class="row">
+              <button class="primary" id="swap-quote-btn" type="submit">Get quote</button>
+              <button id="swap-preview-btn" type="button" title="A dry-run quote: the price only, no deposit address">Preview price</button>
+            </div>
+            <p class="formerr" id="swap-err" role="alert"></p>
+          </form>
+
+          <div id="swap-quote" hidden>
+            <h3 id="swap-quote-h">Quote</h3>
+            <dl class="kv" id="swap-quote-kv"></dl>
+            <div id="swap-deposit-box" hidden>
+              <p id="swap-deposit-label"></p>
+              <div class="receive">
+                <img id="swap-deposit-qr" class="qr" alt="QR code of the deposit address" width="192" height="192" hidden />
+                <div class="addr" id="swap-deposit"></div>
+              </div>
+              <div class="row"><button id="copy-swap-deposit" type="button">Copy</button></div>
+            </div>
+            <p class="muted" id="swap-quote-note"></p>
+            <div class="row">
+              <button class="primary" id="swap-review-btn" type="button">Review the deposit</button>
+              <button id="swap-back-btn" type="button">Back</button>
+            </div>
+            <p class="formerr" id="swap-quote-err" role="alert"></p>
+          </div>
+
+          <div id="swap-review" hidden>
+            <h3>Review the deposit</h3>
+            <dl class="kv" id="swap-review-kv"></dl>
+            <p class="muted" id="swap-review-note"></p>
+            <label class="confirm-main" hidden>
+              <input type="checkbox" id="swap-main-confirm" />
+              <span>This sends <strong>real ZEC on mainnet</strong> to a NEAR Intents deposit address. I checked the quote here and will check the address and amount on the device.</span>
+            </label>
+            <div class="row">
+              <button class="primary" id="swap-sign-btn" type="button">Sign on LeekWallet</button>
+              <button id="swap-cancel-btn" type="button">Cancel</button>
+            </div>
+            <progress id="swap-bar" max="1" value="0" hidden></progress>
+            <p id="swap-sign-status" class="muted" role="status"></p>
+            <p class="formerr" id="swap-sign-err" role="alert"></p>
+          </div>
+
+          <div class="row panel-head swaps-head">
+            <h3>Swaps</h3>
+            <span class="statusbar__spacer"></span>
+            <button id="swap-refresh" type="button" title="Ask 1Click where each swap stands">Check now</button>
+          </div>
+          <p class="muted" id="swap-empty">No swaps on this network yet.</p>
+          <ol class="txlist" id="swap-list"></ol>
+          <p class="formerr" id="swap-list-err" role="alert"></p>
+        </section>
+
         <section class="panel" id="history-panel" hidden aria-labelledby="history-h">
           <div class="row panel-head">
             <h2 id="history-h">History</h2>
