@@ -1,0 +1,22 @@
+<!doctype html>
+<!--
+  The popup. It is rebuilt on every open and closes whenever it loses
+  focus, so it holds nothing: the engine (offscreen document + worker) has
+  the wallet and keeps syncing while the popup is shut. Rendered by
+  src/popup.js.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeekWallet Zcash</title>
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main id="root" aria-live="polite">
+      <p class="muted">Starting the wallet engine…</p>
+    </main>
+    <script type="module" src="./src/popup.js"></script>
+  </body>
+</html>

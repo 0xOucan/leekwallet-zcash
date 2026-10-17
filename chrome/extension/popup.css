@@ -1,0 +1,162 @@
+/* The popup's layout, after LeekWallet's EVM extension
+ * (firmware/app/extension/src/popup.css): every colour, space and size comes
+ * from the app's tokens (tokens.css, copied from firmware/app/src at build),
+ * so the light/dark pair stays in contrast without a second palette.
+ * One column, roughly 360px, the wallet's state at the top. */
+
+body {
+  margin: 0;
+  width: 380px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* Opened as a tab (tests, or a user who wants room): a readable column. */
+body.tab {
+  width: auto;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+main {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+h1 {
+  font-size: var(--text-base);
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+h2 {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 var(--space-2);
+  font-weight: 600;
+}
+
+p { margin: 0 0 var(--space-2); }
+p:last-child { margin-bottom: 0; }
+
+.muted { color: var(--muted); }
+.danger { color: var(--danger); }
+.warn { color: var(--warn); }
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+
+/* Controls carry --control-border, not --border (3:1, see tokens.css). */
+button, select, input, textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
+}
+
+button { cursor: pointer; padding: var(--space-2) var(--space-3); }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+textarea, input[type="text"], input[type="number"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+textarea { font-family: var(--font-mono); font-size: var(--text-xs); resize: vertical; }
+
+label { display: block; margin-bottom: var(--space-2); }
+label > span { display: block; color: var(--muted); font-size: var(--text-xs); }
+
+label.check { display: flex; gap: var(--space-2); align-items: center; }
+
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.grow { flex: 1 1 auto; }
+
+/* A shape and a word, never a colour alone. */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+.dot.on { background: var(--ok); }
+.dot.off { background: var(--danger); }
+.dot.busy { background: var(--warn); }
+
+/* Addresses and hashes wrap in full: a wrong character costs money. */
+code, .mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
+.big {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+td, th { padding: 2px 0; text-align: left; }
+td.num, th.num { text-align: right; font-family: var(--font-mono); }
+th { color: var(--muted); font-weight: 600; }
+
+ul.history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+ul.history li { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-xs); }
+
+details > summary { cursor: pointer; color: var(--muted); }
+details[open] > summary { margin-bottom: var(--space-2); }
+
+.notice {
+  border-left: 2px solid var(--warn);
+  padding-left: var(--space-3);
+  color: var(--muted);
+}
+.notice.bad { border-left-color: var(--danger); color: var(--danger); }

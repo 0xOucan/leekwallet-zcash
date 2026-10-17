@@ -1,0 +1,16 @@
+<!doctype html>
+<!--
+  The hidden document that hosts the wallet engine. Nobody sees it. It is a
+  document only because a service worker cannot start a dedicated worker
+  that outlives it, and (from 9.3) because Web Serial and Web Bluetooth are
+  exposed to documents. See src/offscreen.js.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>LeekWallet Zcash engine</title>
+  </head>
+  <body>
+    <script type="module" src="./src/offscreen.js"></script>
+  </body>
+</html>
