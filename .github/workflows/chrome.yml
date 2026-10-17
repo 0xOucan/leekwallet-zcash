@@ -1,0 +1,87 @@
+# Builds the Chrome extension: the WASM engine (chrome/engine, threads) and
+# the unpacked extension (chrome/extension/dist), uploaded as an artifact.
+# The end-to-end test needs a live testnet gRPC-web endpoint, so it runs
+# only on demand (workflow_dispatch with e2e = true).
+name: chrome
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "chrome/engine/**"
+      - "chrome/extension/**"
+      - "host/zecz-core/src/authorize.rs"
+      - "host/zecz-core/src/keys.rs"
+      - "host/zecz-core/src/soft_signer.rs"
+      - "host/leek-device/src/zsig.rs"
+      - "firmware/app/src/tokens.css"
+      - ".github/workflows/chrome.yml"
+  pull_request:
+    paths:
+      - "chrome/engine/**"
+      - "chrome/extension/**"
+      - "host/zecz-core/src/authorize.rs"
+      - "host/zecz-core/src/keys.rs"
+      - "host/zecz-core/src/soft_signer.rs"
+      - "host/leek-device/src/zsig.rs"
+      - "firmware/app/src/tokens.css"
+      - ".github/workflows/chrome.yml"
+  workflow_dispatch:
+    inputs:
+      e2e:
+        description: "Run the headless-Chromium end-to-end test (live testnet)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: chrome-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: engine + extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      # clang targets wasm32 out of the box; it builds secp256k1 and SQLite.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chrome/engine
+      - name: wasm-bindgen-cli (matches Cargo.lock)
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Build the engine
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+          JOBS: "4"
+        run: chrome/engine/build.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the extension
+        working-directory: chrome/extension
+        run: |
+          npm ci
+          node build.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leekwallet-zcash-extension
+          path: chrome/extension/dist
+      - name: End-to-end test (live testnet)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.e2e }}
+        working-directory: chrome/extension
+        run: |
+          npx playwright-core install chromium
+          node test/e2e.mjs
