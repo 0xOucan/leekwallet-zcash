@@ -144,5 +144,39 @@ static const zv_pczt_vector ZV_PCZT[] = {
   { "r_t_sighash_none", "../../vectors/pczt/r_t_sighash_none.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -16,
     0, 0x00000000, 0, 0, { },
     0, { } },
+  { "main_iw_send_shielded", "../../vectors/pczt/main_iw_send_shielded.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "7b1644b2641b8cc3364413f5556fb14dff28c1eaa5b389e31db795c65f97955f", 0x37a5165b, 10000, 2, {
+      { 2, 0, 100000, "u1yr0x0lh5svjdqqq20rfgwzkyzy3wv94740zjgr07yjkngmpquc4gjzlsp32kscwtw6z43rtx9xzvf96l597m7ctv3v93m87tkqwzs2m9", "LeekWallet Zcash mainnet" },
+      { 2, 1, 890000, "", "" }, },
+    0, { } },
+  { "main_iw_send_shielded_compact", "../../vectors/pczt/main_iw_send_shielded_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "7b1644b2641b8cc3364413f5556fb14dff28c1eaa5b389e31db795c65f97955f", 0x37a5165b, 10000, 2, {
+      { 2, 0, 100000, "u1yr0x0lh5svjdqqq20rfgwzkyzy3wv94740zjgr07yjkngmpquc4gjzlsp32kscwtw6z43rtx9xzvf96l597m7ctv3v93m87tkqwzs2m9", "LeekWallet Zcash mainnet" },
+      { 2, 1, 890000, "", "" }, },
+    0, { } },
+  { "main_t_shield", "../../vectors/pczt/main_t_shield.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "25026aaa3f1c321609935645065be2cc0c10ffa02635f53d60d12183ed6226fd", 0x37a5165b, 20000, 1, {
+      { 2, 1, 480000, "", "" }, },
+    2, {
+      { 300000, 0, 0, "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F", "75324940c2ef0e88077846eedada83aedb17fe22ba9b9acaa1ad797bb7a93284" },
+      { 200000, 1, 1, "t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v", "ac6bb191d6b1d97874d41ecdd67d7cd6f9b54e469afeeb108a80ef44d5721135" }, } },
+  { "main_t_shield_compact", "../../vectors/pczt/main_t_shield_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "25026aaa3f1c321609935645065be2cc0c10ffa02635f53d60d12183ed6226fd", 0x37a5165b, 20000, 1, {
+      { 2, 1, 480000, "", "" }, },
+    2, {
+      { 300000, 0, 0, "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F", "75324940c2ef0e88077846eedada83aedb17fe22ba9b9acaa1ad797bb7a93284" },
+      { 200000, 1, 1, "t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v", "ac6bb191d6b1d97874d41ecdd67d7cd6f9b54e469afeeb108a80ef44d5721135" }, } },
+  { "r_main_on_test", "../../vectors/pczt/r_main_on_test.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -17,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_main_shield_on_test", "../../vectors/pczt/r_main_shield_on_test.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -17,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_test_on_main", "../../vectors/pczt/r_test_on_main.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, -17,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_test_shield_on_main", "../../vectors/pczt/r_test_shield_on_main.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, -17,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
 };
 #define ZV_PCZT_COUNT (sizeof ZV_PCZT / sizeof ZV_PCZT[0])

@@ -27,7 +27,7 @@ use shardtree::{store::memory::MemoryShardStore, ShardTree};
 use zcash_note_encryption::try_note_decryption;
 use zcash_primitives::transaction::builder::{BuildConfig, Builder, BundlePadding, PcztResult};
 use zcash_primitives::transaction::fees::zip317;
-use zcash_protocol::consensus::{BlockHeight, NetworkConstants, Parameters, TestNetwork};
+use zcash_protocol::consensus::{BlockHeight, Network, NetworkConstants, NetworkType, Parameters};
 use zcash_protocol::memo::{Memo, MemoBytes};
 use zcash_protocol::value::Zatoshis;
 use zcash_transparent::address::TransparentAddress;
@@ -37,6 +37,11 @@ use zip32::{fingerprint::SeedFingerprint, AccountId};
 const H_NU6_2: u32 = 4_100_000;
 const H_NU6_3: u32 = 4_200_000;
 const H_NU7: u32 = 4_500_000;
+/// Mainnet: NU6.3 activates at 3,428,143; NU7 has no height yet.
+const H_MAIN_NU6_3: u32 = 3_520_000;
+
+const TEST: Network = Network::TestNetwork;
+const MAIN: Network = Network::MainNetwork;
 
 const SENDER: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 const RECIPIENT: &str = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote";
@@ -81,14 +86,31 @@ struct PcztVector {
 }
 
 struct Account {
+    net: Network,
     seed: [u8; 64],
     fvk: FullViewingKey,
 }
 
-fn account(mnemonic: &str) -> Account {
+fn account(mnemonic: &str, net: Network) -> Account {
     let seed = bip39::Mnemonic::parse_normalized(mnemonic).unwrap().to_seed_normalized("");
-    let sk = SpendingKey::from_zip32_seed(&seed, TestNetwork.coin_type(), AccountId::ZERO).unwrap();
-    Account { seed, fvk: FullViewingKey::from(&sk) }
+    let sk = SpendingKey::from_zip32_seed(&seed, net.coin_type(), AccountId::ZERO).unwrap();
+    Account { net, seed, fvk: FullViewingKey::from(&sk) }
+}
+
+fn net_name(net: Network) -> &'static str {
+    match net.network_type() {
+        NetworkType::Main => "main",
+        _ => "test",
+    }
+}
+
+/// m/32'/coin'/0': the ZIP 32 path of the sender's account 0.
+fn zip32_path(net: Network) -> Vec<u32> {
+    vec![
+        zip32::ChildIndex::hardened(32).index(),
+        zip32::ChildIndex::hardened(net.network_type().coin_type()).index(),
+        zip32::ChildIndex::hardened(0).index(),
+    ]
 }
 
 /// A received Ironwood note plus a one-leaf tree to spend it from.
@@ -145,7 +167,7 @@ fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, a
     let change_addr = sender.fvk.address_at(0u32, Scope::Internal);
 
     let mut builder = Builder::new(
-        TestNetwork,
+        sender.net,
         BlockHeight::from_u32(height),
         BuildConfig::Standard {
             sapling_anchor: None,
@@ -196,11 +218,7 @@ fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, a
 
     // Updater: what a wallet adds for an external signer.
     let fp = SeedFingerprint::from_seed(&sender.seed).unwrap().to_bytes();
-    let path = vec![
-        zip32::ChildIndex::hardened(32).index(),
-        zip32::ChildIndex::hardened(TestNetwork.network_type().coin_type()).index(),
-        zip32::ChildIndex::hardened(0).index(),
-    ];
+    let path = zip32_path(sender.net);
     let pczt = Updater::new(pczt)
         .update_ironwood_with(|mut u| {
             let n = u.bundle().actions().len();
@@ -312,7 +330,7 @@ fn build_orchard_send(
     let change_addr = sender.fvk.address_at(0u32, Scope::Internal);
 
     let mut builder = Builder::new(
-        TestNetwork,
+        sender.net,
         BlockHeight::from_u32(height),
         BuildConfig::Standard {
             sapling_anchor: None,
@@ -346,11 +364,7 @@ fn build_orchard_send(
     let pczt = IoFinalizer::new(pczt).finalize_io(rng(tag + 200)).unwrap();
 
     let fp = SeedFingerprint::from_seed(&sender.seed).unwrap().to_bytes();
-    let zpath = vec![
-        zip32::ChildIndex::hardened(32).index(),
-        zip32::ChildIndex::hardened(TestNetwork.network_type().coin_type()).index(),
-        zip32::ChildIndex::hardened(0).index(),
-    ];
+    let zpath = zip32_path(sender.net);
     let external_ua = Some((recipient, ua.to_string()));
     let pczt = Updater::new(pczt)
         .update_orchard_with(|u| annotate(u, fp, &zpath, &external_ua))
@@ -402,7 +416,7 @@ struct TCoin {
 }
 
 fn t_account_key(a: &Account) -> zcash_transparent::keys::AccountPrivKey {
-    zcash_transparent::keys::AccountPrivKey::from_seed(&TestNetwork, &a.seed, AccountId::ZERO).unwrap()
+    zcash_transparent::keys::AccountPrivKey::from_seed(&a.net, &a.seed, AccountId::ZERO).unwrap()
 }
 
 fn t_secret(a: &Account, scope: u32, index: u32) -> secp256k1::SecretKey {
@@ -412,12 +426,12 @@ fn t_secret(a: &Account, scope: u32, index: u32) -> secp256k1::SecretKey {
         .unwrap()
 }
 
-fn t_addr_string(pk: &secp256k1::PublicKey) -> String {
-    zcash_keys::address::Address::Transparent(TransparentAddress::from_pubkey(pk)).encode(&TestNetwork)
+fn t_addr_string(net: Network, pk: &secp256k1::PublicKey) -> String {
+    zcash_keys::address::Address::Transparent(TransparentAddress::from_pubkey(pk)).encode(&net)
 }
 
-fn bip44_path(account: u32, scope: u32, index: u32) -> Vec<u32> {
-    vec![44 | 0x8000_0000, TestNetwork.network_type().coin_type() | 0x8000_0000, account | 0x8000_0000, scope, index]
+fn bip44_path(net: Network, account: u32, scope: u32, index: u32) -> Vec<u32> {
+    vec![44 | 0x8000_0000, net.network_type().coin_type() | 0x8000_0000, account | 0x8000_0000, scope, index]
 }
 
 /// How the Updater describes each transparent input (the refusal vectors
@@ -444,6 +458,7 @@ enum TDeriv {
 #[allow(clippy::too_many_arguments)]
 fn build_t_send(
     tag: u64,
+    height: u32,
     sender: &Account,
     coins: &[TCoin],
     note: Option<u64>,
@@ -457,8 +472,8 @@ fn build_t_send(
     let spent = note.map(|v| ironwood_note(fvk, v, tag));
     let anchor = spent.as_ref().map_or(orchard::Anchor::empty_tree(), |s| s.1);
     let mut builder = Builder::new(
-        TestNetwork,
-        BlockHeight::from_u32(H_NU6_3),
+        sender.net,
+        BlockHeight::from_u32(height),
         BuildConfig::Standard {
             sapling_anchor: None,
             orchard_anchor: None,
@@ -485,7 +500,7 @@ fn build_t_send(
             )
             .unwrap();
         total += c.value;
-        t_inputs.push(TInputSummary { address: t_addr_string(&pk), value: c.value, scope: c.scope, index: c.index, sighash: String::new() });
+        t_inputs.push(TInputSummary { address: t_addr_string(sender.net, &pk), value: c.value, scope: c.scope, index: c.index, sighash: String::new() });
     }
     if let Some((n, _, path)) = spent {
         builder.add_ironwood_spend::<zip317::FeeRule>(fvk.clone(), n, path).unwrap();
@@ -518,11 +533,7 @@ fn build_t_send(
     let pczt = IoFinalizer::new(pczt).finalize_io(rng(tag + 200)).unwrap();
 
     let fp = SeedFingerprint::from_seed(&sender.seed).unwrap().to_bytes();
-    let zpath = vec![
-        zip32::ChildIndex::hardened(32).index(),
-        zip32::ChildIndex::hardened(TestNetwork.network_type().coin_type()).index(),
-        zip32::ChildIndex::hardened(0).index(),
-    ];
+    let zpath = zip32_path(sender.net);
     let pczt = Updater::new(pczt)
         .update_ironwood_with(|u| annotate(u, fp, &zpath, &external_ua))
         .unwrap()
@@ -530,9 +541,9 @@ fn build_t_send(
             for (i, c) in coins.iter().enumerate() {
                 let pk = t_secret(sender, c.scope, c.index).public_key();
                 let path = match deriv {
-                    TDeriv::Ours | TDeriv::Missing => bip44_path(0, c.scope, c.index),
-                    TDeriv::WrongIndex => bip44_path(0, c.scope, c.index + 1),
-                    TDeriv::WrongAccount => bip44_path(1, c.scope, c.index),
+                    TDeriv::Ours | TDeriv::Missing => bip44_path(sender.net, 0, c.scope, c.index),
+                    TDeriv::WrongIndex => bip44_path(sender.net, 0, c.scope, c.index + 1),
+                    TDeriv::WrongAccount => bip44_path(sender.net, 1, c.scope, c.index),
                 };
                 if deriv == TDeriv::Missing {
                     continue;
@@ -623,28 +634,30 @@ fn varint(mut v: u64) -> Vec<u8> {
     }
 }
 
+/// A recipient's Orchard-only UA, as a wallet would display it.
+fn orchard_ua(net: Network, addr: &orchard::Address) -> String {
+    use zcash_address::unified::{self, Encoding};
+    unified::Address::try_from_items(
+        unified::Revision::R0,
+        vec![unified::Uitem::Data(unified::Receiver::Orchard(addr.to_raw_address_bytes()))],
+    )
+    .unwrap()
+    .encode(&net.network_type())
+}
+
 fn main() {
     let dir = std::env::args().nth(1).unwrap_or_else(|| "..".into());
     fs::create_dir_all(format!("{dir}/pczt")).unwrap();
 
-    let sender = account(SENDER);
-    let rcpt = account(RECIPIENT);
+    let sender = account(SENDER, TEST);
+    let rcpt = account(RECIPIENT, TEST);
     let rcpt_addr = rcpt.fvk.address_at(0u32, Scope::External);
-    // The recipient's Orchard-only UA, as a wallet would display it.
-    let rcpt_ua = {
-        use zcash_address::unified::{self, Encoding};
-        unified::Address::try_from_items(
-            unified::Revision::R0,
-            vec![unified::Uitem::Data(unified::Receiver::Orchard(rcpt_addr.to_raw_address_bytes()))],
-        )
-        .unwrap()
-        .encode(&zcash_protocol::consensus::NetworkType::Test)
-    };
+    let rcpt_ua = orchard_ua(TEST, &rcpt_addr);
     let rcpt_taddr = TransparentAddress::PublicKeyHash([0x42; 20]);
-    let rcpt_taddr_s = zcash_keys::address::Address::Transparent(rcpt_taddr).encode(&TestNetwork);
+    let rcpt_taddr_s = zcash_keys::address::Address::Transparent(rcpt_taddr).encode(&TEST);
 
     let mut vs = Vec::new();
-    let push_ok = |name: &str, desc: &str, b: &Built, vs: &mut Vec<PcztVector>| {
+    let push_ok_on = |net: Network, name: &str, desc: &str, b: &Built, vs: &mut Vec<PcztVector>| {
         let bytes = b.pczt.clone().serialize().unwrap();
         let signer = Signer::new(b.pczt.clone()).unwrap();
         let mut t_inputs = b.t_inputs.clone();
@@ -658,7 +671,7 @@ fn main() {
             signer_mnemonic: SENDER.into(),
             signer_passphrase: String::new(),
             account: 0,
-            network: "test",
+            network: net_name(net),
             expect: "ok".into(),
             sighash: Some(hex::encode(signer.shielded_sighash())),
             consensus_branch_id: Some(format!("{:08x}", u32::from(*b.pczt.global().consensus_branch_id()))),
@@ -668,14 +681,15 @@ fn main() {
         });
         bytes
     };
-    let refuse = |name: &str, desc: &str, bytes: &[u8], mnemonic: &str, code: &str| PcztVector {
+    let push_ok = |name: &str, desc: &str, b: &Built, vs: &mut Vec<PcztVector>| push_ok_on(TEST, name, desc, b, vs);
+    let refuse_on = |net: Network, name: &str, desc: &str, bytes: &[u8], mnemonic: &str, code: &str| PcztVector {
         name: name.into(),
         description: desc.into(),
         file: write(&dir, name, bytes),
         signer_mnemonic: mnemonic.into(),
         signer_passphrase: String::new(),
         account: 0,
-        network: "test",
+        network: net_name(net),
         expect: code.into(),
         sighash: None,
         consensus_branch_id: None,
@@ -683,6 +697,7 @@ fn main() {
         outputs: vec![],
         t_inputs: vec![],
     };
+    let refuse = |name: &str, desc: &str, bytes: &[u8], mnemonic: &str, code: &str| refuse_on(TEST, name, desc, bytes, mnemonic, code);
 
     // 1. Ironwood -> external Ironwood address with memo, plus change.
     let a = build_send(1, H_NU6_3, &sender, 1_000_000, Dest::Shielded(rcpt_ua.clone(), rcpt_addr), 400_000, "LeekWallet Zcash test", 10_000);
@@ -818,13 +833,13 @@ fn main() {
 
     // 1. Shield: two coins (an external and a change address) to Ironwood.
     let shield_coins = [TCoin { scope: 0, index: 0, value: 600_000 }, TCoin { scope: 1, index: 3, value: 400_000 }];
-    let ts = build_t_send(20, &sender, &shield_coins, None, None, None, 20_000, TDeriv::Ours, None);
+    let ts = build_t_send(20, H_NU6_3, &sender, &shield_coins, None, None, None, 20_000, TDeriv::Ours, None);
     let ts_bytes = push_ok("t_shield", "Two transparent coins of this account shielded to its Ironwood change address (v6, NU6.3)", &ts, &mut vs);
 
     // 2. Mixed: an Ironwood note and a transparent coin to an external UA.
     let mixed_coins = [TCoin { scope: 0, index: 2, value: 500_000 }];
     let tm = build_t_send(
-        21, &sender, &mixed_coins, Some(1_000_000),
+        21, H_NU6_3, &sender, &mixed_coins, Some(1_000_000),
         Some((&rcpt_ua, rcpt_addr, 1_200_000, "from t and Ironwood")),
         Some(sender.fvk.to_ovk(Scope::External)), 15_000, TDeriv::Ours, None,
     );
@@ -834,7 +849,7 @@ fn main() {
     // transparent external OVK (ZIP 316), as a wallet encrypts it.
     let tovk_coins = [TCoin { scope: 2, index: 1, value: 800_000 }];
     let tv = build_t_send(
-        22, &sender, &tovk_coins, None,
+        22, H_NU6_3, &sender, &tovk_coins, None,
         Some((&rcpt_ua, rcpt_addr, 300_000, "refund via ephemeral")),
         Some(t_ovk_ext), 15_000, TDeriv::Ours, None,
     );
@@ -845,13 +860,13 @@ fn main() {
     push_ok("t_mixed_compact", "Vector t_mixed in the compact signer view (v2)", &compact_view(&tm), &mut vs);
 
     // Refusals of transparent inputs.
-    let foreign = build_t_send(23, &sender, &[TCoin { scope: 0, index: 0, value: 600_000 }], None, None, None, 15_000, TDeriv::Ours, Some(&rcpt));
+    let foreign = build_t_send(23, H_NU6_3, &sender, &[TCoin { scope: 0, index: 0, value: 600_000 }], None, None, None, 15_000, TDeriv::Ours, Some(&rcpt));
     vs.push(refuse("r_t_input_not_ours", "Transparent input pays another seed's key; its derivation names ours", &foreign.pczt.serialize().unwrap(), SENDER, "spend_not_ours"));
-    let wrong = build_t_send(24, &sender, &shield_coins, None, None, None, 20_000, TDeriv::WrongIndex, None);
+    let wrong = build_t_send(24, H_NU6_3, &sender, &shield_coins, None, None, None, 20_000, TDeriv::WrongIndex, None);
     vs.push(refuse("r_t_wrong_path", "Transparent input derivation path one address index off its key", &wrong.pczt.serialize().unwrap(), SENDER, "spend_not_ours"));
-    let wrong = build_t_send(25, &sender, &shield_coins, None, None, None, 20_000, TDeriv::WrongAccount, None);
+    let wrong = build_t_send(25, H_NU6_3, &sender, &shield_coins, None, None, None, 20_000, TDeriv::WrongAccount, None);
     vs.push(refuse("r_t_wrong_account", "Transparent input derivation path names account 1", &wrong.pczt.serialize().unwrap(), SENDER, "spend_not_ours"));
-    let missing = build_t_send(26, &sender, &shield_coins, None, None, None, 20_000, TDeriv::Missing, None);
+    let missing = build_t_send(26, H_NU6_3, &sender, &shield_coins, None, None, None, 20_000, TDeriv::Missing, None);
     vs.push(refuse("r_t_missing_derivation", "Transparent input without a BIP 32 derivation", &missing.pczt.serialize().unwrap(), SENDER, "missing_data"));
     vs.push(refuse("r_t_foreign_seed", "Valid shield PCZT, but the transparent coins belong to another seed", &ts_bytes, RECIPIENT, "spend_not_ours"));
 
@@ -879,6 +894,28 @@ fn main() {
     let mut with = vec![0x00, 0x00, 0x02, 0x01];
     with.extend(pk);
     vs.push(refuse("r_t_sighash_none", "Transparent input asks for SIGHASH_NONE", &patch_unique(&tm_bytes, &needle, &with), SENDER, "unsupported_bundle"));
+
+    // Mainnet (roadmap 10.3): the same shapes under coin type 133, u1 / t1
+    // addresses and the NU6.3 branch at a mainnet height. Appended after the
+    // testnet vectors, with their own RNG tags, so those stay byte-identical.
+    let m_sender = account(SENDER, MAIN);
+    let m_rcpt = account(RECIPIENT, MAIN);
+    let m_rcpt_addr = m_rcpt.fvk.address_at(0u32, Scope::External);
+    let m_rcpt_ua = orchard_ua(MAIN, &m_rcpt_addr);
+    let ma = build_send(40, H_MAIN_NU6_3, &m_sender, 1_000_000, Dest::Shielded(m_rcpt_ua.clone(), m_rcpt_addr), 100_000, "LeekWallet Zcash mainnet", 10_000);
+    let ma_bytes = push_ok_on(MAIN, "main_iw_send_shielded", "Mainnet: Ironwood note to an external u1 address with memo, change back to self (v6, NU6.3, coin type 133)", &ma, &mut vs);
+    push_ok_on(MAIN, "main_iw_send_shielded_compact", "Vector main_iw_send_shielded in the compact signer view (v2)", &compact_view(&ma), &mut vs);
+    let m_coins = [TCoin { scope: 0, index: 0, value: 300_000 }, TCoin { scope: 1, index: 1, value: 200_000 }];
+    let mts = build_t_send(41, H_MAIN_NU6_3, &m_sender, &m_coins, None, None, None, 20_000, TDeriv::Ours, None);
+    let mts_bytes = push_ok_on(MAIN, "main_t_shield", "Mainnet: two transparent t1 coins of this account shielded to its Ironwood change address (v6, NU6.3, m/44'/133')", &mts, &mut vs);
+    push_ok_on(MAIN, "main_t_shield_compact", "Vector main_t_shield in the compact signer view (v2)", &compact_view(&mts), &mut vs);
+
+    // A PCZT names its network only through its coin type (the branch ids
+    // are shared): a request for the other network must be refused.
+    vs.push(refuse_on(TEST, "r_main_on_test", "Mainnet PCZT (main_iw_send_shielded) in a testnet request", &ma_bytes, SENDER, "network_mismatch"));
+    vs.push(refuse_on(TEST, "r_main_shield_on_test", "Mainnet shield PCZT (main_t_shield) in a testnet request", &mts_bytes, SENDER, "network_mismatch"));
+    vs.push(refuse_on(MAIN, "r_test_on_main", "Testnet PCZT (iw_send_shielded) in a mainnet request", &a_bytes, SENDER, "network_mismatch"));
+    vs.push(refuse_on(MAIN, "r_test_shield_on_main", "Testnet shield PCZT (t_shield) in a mainnet request", &ts_bytes, SENDER, "network_mismatch"));
 
     fs::write(format!("{dir}/pczt.json"), serde_json::to_string_pretty(&vs).unwrap() + "\n").unwrap();
     fs::write(format!("{dir}/pczt_vectors.h"), c_header(&vs)).unwrap();
