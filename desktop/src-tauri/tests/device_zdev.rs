@@ -333,6 +333,63 @@ fn another_seed_is_refused_before_anything_is_sent() {
     assert!(format!("{e:#}").contains("already tracks a different account"), "{e:#}");
 }
 
+/// Roadmap 10.3: the same flows on mainnet. The device is asked for "main"
+/// and exports the coin type 133 account; it verifies the u1 address and
+/// signs a mainnet PCZT, and refuses a testnet one (-17). A session paired
+/// for mainnet is refused for a testnet wallet before anything reaches the
+/// device (what a network switch must never allow), and a mainnet
+/// sign_and_send needs the user's extra confirmation.
+#[test]
+fn mainnet_flows_and_a_session_bound_to_its_network() {
+    let z = zdev_or_skip!("main", true);
+    let d = TempDir::new("main");
+    let main = Profile::new(Network::MainNetwork, d.0.join("wallets/main"), None);
+    let test = Profile::new(TEST, d.0.join("wallets/test"), None);
+    let kv = key_vector("main/abandon-art/pp0/acct0");
+    let seen = Seen::default();
+
+    let mut s = connect(&z, &main, &seen);
+    assert_eq!(s.network, "main");
+    assert_eq!(s.account.ua, kv["ua"].as_str().unwrap());
+    assert_eq!(s.account.t_address, kv["transparent_address"].as_str().unwrap());
+    assert!(s.account.ua.starts_with("u1") && s.account.t_address.starts_with("t1"));
+    let imported = import_offline(&main, &mut s, Some(3_500_000), &seen).expect("import");
+    assert_eq!(imported.addresses.unified, kv["ua"].as_str().unwrap());
+    assert_eq!(backend::profile_status(&main).unwrap().network, "main");
+
+    seen.clear();
+    hardware::verify_address(&main, &mut s, kv["ua"].as_str().unwrap(), &seen.status()).expect("confirmed");
+    let t_ua = key_vector("test/abandon-art/pp0/acct0")["ua"].as_str().unwrap().to_string();
+    assert!(hardware::verify_address(&main, &mut s, &t_ua, &seen.status()).is_err(), "a testnet address on mainnet");
+
+    let (_, view) = pczt_vector("main_iw_send_shielded_compact");
+    let zsig = hardware::device_sign(&main, &mut s, &view, &seen.status()).expect("device signs mainnet");
+    assert_eq!(Zsig::parse_for(&zsig, &view).unwrap().entries.len(), 1);
+    let (_, tview) = pczt_vector("iw_send_shielded_compact");
+    let e = err_text(hardware::device_sign(&main, &mut s, &tview, &seen.status()));
+    assert!(hardware::explain(&e).contains("reason 0x11"), "{}", hardware::explain(&e));
+    assert!(!s.lost);
+
+    // The session was paired for mainnet: a testnet wallet cannot use it.
+    seen.clear();
+    for e in [
+        err_text(hardware::verify_address(&test, &mut s, &t_ua, &seen.status())),
+        err_text(hardware::device_sign(&test, &mut s, &tview, &seen.status()).map(|_| ())),
+        err_text(import_offline(&test, &mut s, Some(3_000_000), &seen).map(|_| ())),
+    ] {
+        assert!(e.to_string().contains("connected for mainnet, but the wallet is now on testnet"), "{e:#}");
+    }
+    assert!(seen.steps().is_empty(), "something reached the device: {:?}", seen.steps());
+    assert!(!test.exists(), "a testnet wallet was created from a mainnet session");
+
+    // The extra step: a mainnet send is refused unconfirmed, before the device.
+    assert!(hardware::check_mainnet_confirmed(&main, true).is_ok());
+    assert!(hardware::check_mainnet_confirmed(&test, false).is_ok(), "testnet needs no confirmation");
+    let e = err_text(hardware::sign_and_send(&main, &mut s, &view, false, &seen.status()));
+    assert!(e.to_string().contains("mainnet transaction of real ZEC"), "{e:#}");
+    assert!(seen.steps().is_empty(), "the device was asked: {:?}", seen.steps());
+}
+
 #[test]
 fn device_errors_read_as_sentences() {
     let err = |code| anyhow::Error::from(DeviceError { code, message: "dev text".into() });

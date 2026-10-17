@@ -63,6 +63,9 @@ pub struct DeviceSession {
     /// The serial port or the Bluetooth id.
     pub port: String,
     pub account: DeviceAccount,
+    /// The network the account was read for ("test" or "main"). Every
+    /// later call must be for the same one.
+    pub network: &'static str,
     /// The link failed or the device dropped the session: connect again.
     pub lost: bool,
 }
@@ -254,7 +257,39 @@ pub fn connect(
     on_status(DeviceStatus::new("account", "Reading the account from the device…"));
     let net = profile.net_name();
     let account = account_of(&dev.z_get_account(account, net)?, account, net)?;
-    Ok(DeviceSession { dev, transport: transport.to_string(), port: port.to_string(), account, lost: false })
+    Ok(DeviceSession { dev, transport: transport.to_string(), port: port.to_string(), account, network: net, lost: false })
+}
+
+/// Refuses a session paired for another network than `profile`'s: its
+/// account and seed check are that network's. The app closes the session
+/// when the network is switched; this is the backstop.
+fn same_network(profile: &Profile, s: &DeviceSession) -> Result<()> {
+    if s.network != profile.net_name() {
+        bail!(
+            "The LeekWallet was connected for {}, but the wallet is now on {}. Disconnect and connect it again.",
+            network_label(s.network),
+            network_label(profile.net_name())
+        );
+    }
+    Ok(())
+}
+
+fn network_label(net: &str) -> &'static str {
+    if net == "main" {
+        "mainnet"
+    } else {
+        "testnet"
+    }
+}
+
+/// A mainnet send or shielding moves real funds: the app asks the user to
+/// confirm it once more, after the review and before the device. Testnet
+/// needs no confirmation.
+pub fn check_mainnet_confirmed(profile: &Profile, confirmed: bool) -> Result<()> {
+    if profile.net_name() == "main" && !confirmed {
+        bail!("This is a mainnet transaction of real ZEC. Tick the confirmation under the review, then sign.");
+    }
+    Ok(())
 }
 
 /// Imports the device's account as the wallet's, fetching the tree state
@@ -277,6 +312,7 @@ pub fn device_import_with(
     on_status: &dyn Fn(DeviceStatus),
     init: impl FnOnce(&Profile, &AccountSpec, u32) -> Result<(Wallet, InitOutcome)>,
 ) -> Result<DeviceImported> {
+    same_network(profile, s)?;
     let a = s.account.clone();
     // The user's birthday wins (they may know better, e.g. an older seed);
     // otherwise the device's, as `zecz device-init` does.
@@ -334,6 +370,7 @@ pub fn device_import_with(
 /// holds its seed: signing or verifying with another seed would at best
 /// fail on the device.
 fn same_seed(profile: &Profile, s: &mut DeviceSession) -> Result<KeyOrigin> {
+    same_network(profile, s)?;
     let origin = wallet_origin(profile)?.ok_or_else(|| {
         anyhow!("This wallet has no LeekWallet account (it is empty or watch-only). Import the account from the device first.")
     })?;
@@ -463,9 +500,16 @@ pub fn finish(profile: &Profile, view: &[u8], zsig: &[u8], broadcast: bool, on_s
     Ok(SentDto { txid: f.txid, signatures: f.signatures, size: f.raw.len(), broadcast: f.broadcast })
 }
 
-/// The send after the user reviewed it here: sign on the device, then
-/// [`finish`] and broadcast.
-pub fn sign_and_send(profile: &Profile, s: &mut DeviceSession, view: &[u8], on_status: &dyn Fn(DeviceStatus)) -> Result<SentDto> {
+/// The send after the user reviewed it here (and, on mainnet, confirmed
+/// it once more): sign on the device, then [`finish`] and broadcast.
+pub fn sign_and_send(
+    profile: &Profile,
+    s: &mut DeviceSession,
+    view: &[u8],
+    mainnet_confirmed: bool,
+    on_status: &dyn Fn(DeviceStatus),
+) -> Result<SentDto> {
+    check_mainnet_confirmed(profile, mainnet_confirmed)?;
     let zsig = device_sign(profile, s, view, on_status)?;
     finish(profile, view, &zsig, true, on_status)
 }

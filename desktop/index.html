@@ -19,9 +19,44 @@
 
       <main id="main">
         <h1 class="visually-hidden">LeekWallet Zcash</h1>
+        <div class="mainnet-banner" role="alert" id="mainnote" hidden>
+          MAINNET — real funds
+        </div>
         <div class="notice notice--danger" role="note" id="netnote">
           Testnet: coins here have no value.
         </div>
+
+        <!-- The network: each has its own wallet and address book in the app
+             data folder; the switch is saved and applies at once. -->
+        <details class="panel" id="network-panel">
+          <summary id="network-summary">Network and server</summary>
+          <fieldset class="netpick">
+            <legend class="visually-hidden">Network</legend>
+            <label><input type="radio" name="net" value="test" id="net-test" /> Testnet <span class="muted">(coins without value)</span></label>
+            <label><input type="radio" name="net" value="main" id="net-main" /> Mainnet <span class="muted">(real ZEC)</span></label>
+          </fieldset>
+          <div id="net-confirm" hidden>
+            <p>
+              Switch to <strong>mainnet</strong>? The app opens the mainnet
+              wallet (its own folder) and disconnects the LeekWallet. Sends
+              there move real ZEC.
+            </p>
+            <div class="row">
+              <button class="danger" id="net-confirm-btn" type="button">Switch to mainnet</button>
+              <button id="net-cancel-btn" type="button">Stay on testnet</button>
+            </div>
+          </div>
+          <label class="field">
+            <span id="server-label">lightwalletd server</span>
+            <input id="server-input" type="text" spellcheck="false" autocomplete="off" />
+          </label>
+          <div class="row">
+            <button id="server-save" type="button">Save server</button>
+            <button id="server-default" type="button">Use the default</button>
+          </div>
+          <p class="muted" id="net-note"></p>
+          <p class="formerr" id="net-err" role="alert"></p>
+        </details>
 
         <!-- The LeekWallet: connect, pair, import its account. The device
              holds the keys; this app keeps a watch-only copy of the account
@@ -75,7 +110,7 @@
         <section class="panel" id="import-panel" hidden aria-labelledby="import-h">
           <h2 id="import-h">Or import a viewing key</h2>
           <p>
-            A unified full viewing key (<span class="mono">uviewtest1…</span>) lets
+            A unified full viewing key (<span class="mono" id="ufvk-hrp">uviewtest1…</span>) lets
             this app see the account's funds without being able to spend them.
           </p>
           <form id="import-form" novalidate>
@@ -125,6 +160,10 @@
             <h3>Review the shielding</h3>
             <dl class="kv" id="shield-kv"></dl>
             <p class="muted" id="shield-note"></p>
+            <label class="confirm-main" hidden>
+              <input type="checkbox" id="shield-main-confirm" />
+              <span>This is <strong>mainnet</strong>: I checked the amounts here and will check them on the device.</span>
+            </label>
             <div class="row">
               <button class="primary" id="shield-sign-btn" type="button">Sign on LeekWallet</button>
               <button id="shield-cancel-btn" type="button">Cancel</button>
@@ -209,6 +248,10 @@
             <h3>Review</h3>
             <dl class="kv" id="review-kv"></dl>
             <p class="muted" id="review-note"></p>
+            <label class="confirm-main" hidden>
+              <input type="checkbox" id="send-main-confirm" />
+              <span>This sends <strong>real ZEC on mainnet</strong>. I checked the address and amount here and will check them on the device.</span>
+            </label>
             <div class="row">
               <button class="primary" id="sign-btn" type="button">Sign on LeekWallet</button>
               <button id="cancel-btn" type="button">Cancel</button>
