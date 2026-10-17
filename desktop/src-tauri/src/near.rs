@@ -342,12 +342,13 @@ impl<T: Transport> OneClick<T> {
     /// (as Zodl lists them), sorted by symbol then chain.
     pub fn tokens(&self) -> Result<Vec<Token>> {
         let body = self.get("/v0/tokens", &[])?;
-        let mut all: Vec<Token> = serde_json::from_str(&body).context("1Click sent a token list this app cannot read")?;
-        all.sort_by(|a, b| {
-            (a.symbol.to_lowercase(), &a.blockchain, a.asset_id.as_str()).cmp(&(b.symbol.to_lowercase(), &b.blockchain, b.asset_id.as_str()))
-        });
-        all.dedup_by(|a, b| a.symbol == b.symbol && a.blockchain == b.blockchain && a.decimals == b.decimals);
-        Ok(all)
+        let all: Vec<Token> = serde_json::from_str(&body).context("1Click sent a token list this app cannot read")?;
+        // The first of each in 1Click's order, as Zodl's distinctBy keeps it.
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<Token> =
+            all.into_iter().filter(|t| seen.insert((t.symbol.clone(), t.blockchain.clone(), t.decimals))).collect();
+        out.sort_by(|a, b| (a.symbol.to_lowercase(), &a.blockchain).cmp(&(b.symbol.to_lowercase(), &b.blockchain)));
+        Ok(out)
     }
 
     /// A quote, and the response as sent (kept whole with the swap).

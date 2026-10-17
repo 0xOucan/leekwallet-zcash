@@ -1,0 +1,6 @@
+{
+  "too_low": {"status": 400, "body": {"message":"Amount is too low for bridge, try at least 132000","correlationId":"d2a20270-f932-41f9-a7db-764555dc9902","timestamp":"2026-10-17T20:13:23.030Z","path":"/v0/quote"}},
+  "confidential_unauthenticated": {"status": 401, "body": {"message":"User authentication is required for confidential intent quotes","error":"Unauthorized","statusCode":401,"timestamp":"2026-10-17T20:13:12.638Z","path":"/v0/quote"}},
+  "internal": {"status": 500, "body": {"message":"Internal server error","correlationId":"2c25b830-98cb-46a0-be7e-ea11213d84a1","timestamp":"2026-10-17T20:12:57.248Z","path":"/v0/quote"}},
+  "status_not_found": {"status": 404, "body": {"message":"Deposit address t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v not found","error":"Not Found","statusCode":404,"timestamp":"2026-10-17T20:13:23.271Z","path":"/v0/status?depositAddress=t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v"}}
+}
