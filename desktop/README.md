@@ -11,8 +11,9 @@ Ironwood, transparent) and the unified address with its QR code, rotates
 to fresh addresses, verifies an address on the device, and sends: the
 app builds the transaction, the LeekWallet reviews and signs it, the app
 proves and broadcasts it. It shields transparent funds the same way,
-lists the account's history, and keeps an address book (8.4). Software
-wallets (8.2) come later.
+lists the account's history, and keeps an address book (8.4). It swaps
+ZEC to and from other chains through NEAR Intents (8.6, mainnet only).
+Software wallets (8.2) come later.
 
 ## Layout
 
@@ -25,11 +26,13 @@ desktop/
     src/hardware.rs       the device flows: pair, import, verify, sign, finish
     src/link.rs           USB serial and Bluetooth LE links to the device
     src/contacts.rs       the address book (JSON in the app data dir)
+    src/near.rs           NEAR Intents swaps: 1Click client, swap records
     src/settings.rs       the network switch and servers (settings.json)
     src/lib.rs            the Tauri commands; work runs on worker threads
     tests/backend.rs      backend tests (one #[ignore]d, on testnet)
     tests/device_zdev.rs  the device flows against zdev (one #[ignore]d)
     tests/settings.rs     the network switch: what is saved, which wallet opens
+    tests/near.rs         swaps against recorded 1Click answers (one #[ignore]d, live dry quote)
     tauri.conf.json, capabilities/, icons/
 ```
 
@@ -57,6 +60,11 @@ Commands:
   signs either and returns the txid (on mainnet only with
   `confirmMainnet: true`). One proposal is pending at a time: a new one
   replaces the last. Device flows report each step on `device://status`.
+- Swaps (NEAR Intents): `swap_info`, `swap_tokens`, `swap_quote(params)`
+  (`{direction: "fromZec"|"toZec", asset, amount, recipient?, refundTo?,
+  slippageBps?, dry, confidential}`), `swap_execute(id)` (the deposit of
+  a swap from ZEC as a proposal for `sign_and_send`), `swap_status(id)`,
+  `swap_list`, `swap_forget(id)`. A swap's id is its deposit address.
 
 ## Hardware accounts
 
@@ -127,6 +135,70 @@ reason code), with the device's own message after them.
   the wallet's network. The send form has a contact picker, and "Pay" on
   a contact fills it in.
 - **Account.** The app uses account 0 of the device, as before.
+
+## Swaps (NEAR Intents)
+
+The Swap card trades ZEC for any asset NEAR Intents' 1Click service
+lists, both ways, on **mainnet only** (1Click has no testnet; on testnet
+the card says so and offers only "Preview price", a dry-run quote
+against a placeholder address). The flow is Zodl's and the 1Click
+docs' ([Making a Request](https://docs.near-intents.org/integration/distribution-channels/1click-api/quickstart/making-a-request),
+[OpenAPI](https://1click.chaindefuser.com/docs/v0/openapi.yaml)):
+
+1. `GET /v0/tokens` fills the asset picker.
+2. The user picks a direction, an asset, an amount, the address on the
+   other chain and the slippage (1% by default, at most 10%). "Preview
+   price" asks a `dry` quote; "Get quote" a real one, which comes with a
+   deposit address and a two-hour deadline and is stored.
+3. **ZEC → asset** (EXACT_INPUT): the quote shows what is paid, received
+   (about, and at least after slippage), the rate, fees, the refund fee
+   and the deadline. "Review the deposit" builds a send of exactly the
+   quoted amount to the deposit address (`propose_send`, compact PCZT);
+   the review, the mainnet tick box and "Sign on LeekWallet" are the
+   send's. The device shows the deposit address and amount; a `t1…`
+   deposit address gets its transparent warning there.
+   **Asset → ZEC** (FLEX_INPUT): the card shows the deposit address on
+   the other chain, with a QR code, for the user to pay from their
+   wallet there before the deadline.
+4. After the broadcast, `sign_and_send` records the txid with the swap;
+   polling sends it to `/v0/deposit/submit` once, then reads
+   `/v0/status` every 20 s until SUCCESS, REFUNDED or FAILED. The list
+   shows each swap as a timeline (quoted, deposit sent, deposit seen,
+   swapping, done / refunded / failed), the deposit address, the txids
+   and the payout's explorer link, with Copy.
+
+Checks the backend makes: mainnet for anything but a preview; a hardware
+account to swap from ZEC; spendable ZEC for the deposit plus a fee,
+before asking 1Click; 1Click's echo of the request (assets, amount,
+recipient, refund address, swap type) must match what was asked, and
+the deposit amount must be exactly the amount asked; the deposit address
+must be a mainnet address the wallet can pay (unified or transparent; a
+TEX address is refused); no deposit memo; at least 15 minutes left
+before the deadline when the deposit is built; the proposal must pay
+exactly that amount to that address. A status never moves a swap
+backwards, and SUCCESS, REFUNDED and FAILED are final.
+
+**Privacy.** The wallet's side of each swap (the refund address from
+ZEC, the payout address into ZEC) is a fresh Orchard-only unified
+address (`Wallet::next_shielded_address`), so refunds and payouts stay
+shielded and swaps cannot be linked to each other or to the receive
+address. The deposit itself is a payment to 1Click's address: if it is
+transparent, the deposit and its amount are public on the chain (the
+rest of the wallet is not), which the card says.
+
+**API key.** Optional. Without one 1Click adds a 0.25% platform fee and
+refuses confidential quotes (401). A partner key (a JWT from
+partners.near-intents.org) goes in `LEEKZ_1CLICK_API_KEY` or as
+`"oneClickApiKey"` in `<app data dir>/settings.json`; it is sent as a
+bearer token and never shown. None is in the repository. With a key,
+"Confidential" asks `confidentiality: "basic"` (Confidential Intents).
+
+**Records.** `<app data dir>/swaps-main.json` (`{"version": 1, "swaps":
+[…]}`), one per swap with a deposit address: the whole quote response
+with 1Click's signature (kept for disputes), the deposit txid, the last
+status and its details. A restart picks the open ones up again. "Remove"
+forgets a swap once it is final or expired, or a quote from ZEC that was
+never paid.
 
 ## Where the wallet lives
 
@@ -205,7 +277,16 @@ cd src-tauri
 cargo test                                   # offline, includes zdev
 cargo test --test backend -- --ignored       # import + sync on testnet
 cargo test --test device_zdev -- --ignored   # a device send on testnet
+cargo test --test near -- --ignored          # 1Click token list and a dry quote (no funds)
 ```
+
+`tests/near.rs` runs the swap code against 1Click answers recorded on
+2026-10-17 (tests/fixtures/near): token list, quotes both ways, the
+refusals before 1Click is asked (testnet, balance, not synced,
+confidential without a key), 1Click's errors in words (minimum amount),
+a quote for another swap than the one asked, the deposit checks
+(expiry, already paid), the status state machine, polling with the txid
+submit and the swaps file.
 
 `tests/device_zdev.rs` drives the device flows against `zdev`
 (`firmware/sim`, built with `make -C firmware/sim build/zdev` on first
