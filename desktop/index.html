@@ -20,12 +20,60 @@
       <main id="main">
         <h1 class="visually-hidden">LeekWallet Zcash</h1>
         <div class="notice notice--danger" role="note" id="netnote">
-          Testnet, watch-only. This build imports a viewing key and shows
-          balances; it cannot spend.
+          Testnet: coins here have no value.
         </div>
 
+        <!-- The LeekWallet: connect, pair, import its account. The device
+             holds the keys; this app keeps a watch-only copy of the account
+             and asks the device to sign. -->
+        <section class="panel" id="device-panel" hidden aria-labelledby="device-h">
+          <h2 id="device-h">LeekWallet</h2>
+          <p id="device-hint">
+            Connect the board over USB or Bluetooth. It uses one link at a
+            time: choose the same one in its Settings.
+          </p>
+          <div class="row" id="device-pick">
+            <label class="muted" for="link">Link</label>
+            <select id="link"></select>
+            <button id="link-refresh" type="button" title="List the serial ports again">Refresh</button>
+            <button id="ble-scan" type="button" title="Look for LeekWallets advertising over Bluetooth">Scan Bluetooth</button>
+            <button class="primary" id="pair-btn" type="button">Connect</button>
+          </div>
+          <div class="row" id="device-connected" hidden>
+            <span id="device-line" class="mono"></span>
+            <span class="statusbar__spacer"></span>
+            <button id="unpair-btn" type="button">Disconnect</button>
+          </div>
+          <div id="pairing" hidden role="group" aria-label="Passkey to compare with the device">
+            <dl class="kv kv--single">
+              <dt>Passkey</dt>
+              <dd id="passkey" class="passkey"></dd>
+            </dl>
+            <p>Check that the device shows the same six digits, then press <strong>ALLOW</strong> on it.</p>
+          </div>
+          <p id="device-status" class="muted" role="status"></p>
+          <p class="formerr" id="device-err" role="alert"></p>
+
+          <form id="device-import-form" novalidate hidden>
+            <dl class="kv kv--plain">
+              <dt>Seed fingerprint</dt><dd id="dev-zfp">—</dd>
+              <dt>Address</dt><dd id="dev-ua">—</dd>
+            </dl>
+            <p>Compare the seed fingerprint (ZFP) with the one on the device's home screen.</p>
+            <label class="field">
+              <span id="dev-bday-label">Birthday height (the first block that can hold its funds)</span>
+              <input id="dev-birthday" type="number" inputmode="numeric" min="1" step="1" />
+            </label>
+            <div class="row">
+              <button class="primary" id="dev-import-btn" type="submit">Import account</button>
+              <button id="dev-tip-btn" type="button" title="A new wallet: start at the current chain tip">Use chain tip</button>
+            </div>
+            <p class="formerr" id="dev-import-err" role="alert"></p>
+          </form>
+        </section>
+
         <section class="panel" id="import-panel" hidden aria-labelledby="import-h">
-          <h2 id="import-h">Import a viewing key</h2>
+          <h2 id="import-h">Or import a viewing key</h2>
           <p>
             A unified full viewing key (<span class="mono">uviewtest1…</span>) lets
             this app see the account's funds without being able to spend them.
@@ -75,6 +123,55 @@
           <div class="addr" id="ua"></div>
           <div class="row receive-actions">
             <button id="copy-ua" type="button">Copy</button>
+            <button id="verify-btn" type="button" hidden
+                    title="The device checks that this address is its own and shows it for you to compare">Verify on device</button>
+          </div>
+          <p id="verify-status" class="muted" role="status"></p>
+          <p class="formerr" id="verify-err" role="alert"></p>
+        </section>
+
+        <section class="panel" id="send-panel" hidden aria-labelledby="send-h">
+          <h2 id="send-h">Send</h2>
+          <form id="send-form" novalidate>
+            <label class="field">
+              <span>To (unified, Orchard or transparent address)</span>
+              <textarea id="send-to" rows="2" spellcheck="false" autocomplete="off"></textarea>
+            </label>
+            <label class="field">
+              <span id="send-amount-label">Amount (ZEC)</span>
+              <input id="send-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.001" />
+            </label>
+            <label class="field">
+              <span>Memo (optional, shielded recipients only)</span>
+              <textarea id="send-memo" rows="2" maxlength="512"></textarea>
+            </label>
+            <div class="row">
+              <button class="primary" id="review-btn" type="submit">Review</button>
+            </div>
+            <p class="formerr" id="send-err" role="alert"></p>
+          </form>
+
+          <div id="review" hidden>
+            <h3>Review</h3>
+            <dl class="kv" id="review-kv"></dl>
+            <p class="muted" id="review-note"></p>
+            <div class="row">
+              <button class="primary" id="sign-btn" type="button">Sign on LeekWallet</button>
+              <button id="cancel-btn" type="button">Cancel</button>
+            </div>
+            <progress id="sign-bar" max="1" value="0" hidden></progress>
+            <p id="sign-status" class="muted" role="status"></p>
+            <p class="formerr" id="sign-err" role="alert"></p>
+          </div>
+
+          <div id="sent" hidden>
+            <h3>Sent</h3>
+            <p>Transaction id</p>
+            <div class="addr" id="txid"></div>
+            <div class="row">
+              <button id="copy-txid" type="button">Copy</button>
+              <button id="new-send-btn" type="button">New send</button>
+            </div>
           </div>
         </section>
       </main>
