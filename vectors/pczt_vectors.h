@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 typedef struct { uint8_t pool, kind; uint64_t value; const char *address, *memo; } zv_pczt_output;
+typedef struct { uint64_t value; uint32_t scope, index; const char *address, *sighash; } zv_pczt_tinput;
 typedef struct {
     const char *name, *file, *mnemonic, *passphrase;
     uint32_t account; uint8_t network;
@@ -10,66 +11,138 @@ typedef struct {
     const char *sighash; /* hex, NULL for refusals */
     uint32_t branch_id; uint64_t fee;
     uint8_t n_outputs; zv_pczt_output outputs[4];
+    uint8_t n_tinputs; zv_pczt_tinput tinputs[4];
 } zv_pczt_vector;
 
 static const zv_pczt_vector ZV_PCZT[] = {
   { "iw_send_shielded", "../../vectors/pczt/iw_send_shielded.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "466827d957076588ab8cb898b89d44abf32a0c140fb811370dbc37b4022dcc7e", 0x37a5165b, 10000, 2, {
       { 2, 0, 400000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "LeekWallet Zcash test" },
-      { 2, 1, 590000, "", "" }, } },
+      { 2, 1, 590000, "", "" }, },
+    0, { } },
   { "iw_send_transparent", "../../vectors/pczt/iw_send_transparent.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "1ec3b8ffd0598c2f4a33d6b217a4fbaa96da0c6719acd3c58121675a6d48dde6", 0x37a5165b, 15000, 2, {
       { 0, 0, 300000, "tmFkhJaNXuoMeKKBHp8EE9oiFW4uXKAPWnH", "" },
-      { 2, 1, 685000, "", "" }, } },
+      { 2, 1, 685000, "", "" }, },
+    0, { } },
   { "iw_send_nu7", "../../vectors/pczt/iw_send_nu7.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "325396ca15726bd524b1b729e08133393e2fa4620c1eae3d4ea372767c78199d", 0x77190ad9, 10000, 2, {
       { 2, 0, 250000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "NU7 branch" },
-      { 2, 1, 740000, "", "" }, } },
+      { 2, 1, 740000, "", "" }, },
+    0, { } },
   { "orchard_to_ironwood", "../../vectors/pczt/orchard_to_ironwood.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "21585fb04d46428ff34297a9580e3b7cc78299837909ed7f20810df5199636de", 0x37a5165b, 20000, 2, {
       { 2, 0, 500000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "out of Orchard" },
-      { 2, 1, 1480000, "", "" }, } },
+      { 2, 1, 1480000, "", "" }, },
+    0, { } },
   { "iw_send_shielded_compact", "../../vectors/pczt/iw_send_shielded_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "466827d957076588ab8cb898b89d44abf32a0c140fb811370dbc37b4022dcc7e", 0x37a5165b, 10000, 2, {
       { 2, 0, 400000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "LeekWallet Zcash test" },
-      { 2, 1, 590000, "", "" }, } },
+      { 2, 1, 590000, "", "" }, },
+    0, { } },
   { "iw_send_transparent_compact", "../../vectors/pczt/iw_send_transparent_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "1ec3b8ffd0598c2f4a33d6b217a4fbaa96da0c6719acd3c58121675a6d48dde6", 0x37a5165b, 15000, 2, {
       { 0, 0, 300000, "tmFkhJaNXuoMeKKBHp8EE9oiFW4uXKAPWnH", "" },
-      { 2, 1, 685000, "", "" }, } },
+      { 2, 1, 685000, "", "" }, },
+    0, { } },
   { "iw_send_nu7_compact", "../../vectors/pczt/iw_send_nu7_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "325396ca15726bd524b1b729e08133393e2fa4620c1eae3d4ea372767c78199d", 0x77190ad9, 10000, 2, {
       { 2, 0, 250000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "NU7 branch" },
-      { 2, 1, 740000, "", "" }, } },
+      { 2, 1, 740000, "", "" }, },
+    0, { } },
   { "orchard_to_ironwood_compact", "../../vectors/pczt/orchard_to_ironwood_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "21585fb04d46428ff34297a9580e3b7cc78299837909ed7f20810df5199636de", 0x37a5165b, 20000, 2, {
       { 2, 0, 500000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "out of Orchard" },
-      { 2, 1, 1480000, "", "" }, } },
+      { 2, 1, 1480000, "", "" }, },
+    0, { } },
   { "iw_send_shielded_compact_memo_changed", "../../vectors/pczt/iw_send_shielded_compact_memo_changed.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
     "9e47d3ccf6ab711673263d7b475487721e83cdc55737fb7734c70e94c50f4e12", 0x37a5165b, 10000, 2, {
       { 2, 0, 400000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "LeekWallet Zcash TEST" },
-      { 2, 1, 590000, "", "" }, } },
+      { 2, 1, 590000, "", "" }, },
+    0, { } },
   { "r_foreign_spend", "../../vectors/pczt/r_foreign_spend.pczt", "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote", "", 0, 1, -12,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_output_value_tampered", "../../vectors/pczt/r_output_value_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -13,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_output_recipient_tampered", "../../vectors/pczt/r_output_recipient_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -13,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_user_address_tampered", "../../vectors/pczt/r_user_address_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -14,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_truncated", "../../vectors/pczt/r_truncated.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -10,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_bad_magic", "../../vectors/pczt/r_bad_magic.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -10,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_old_branch", "../../vectors/pczt/r_old_branch.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -11,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_compact_value_tampered", "../../vectors/pczt/r_compact_value_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -15,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_v1_nu6_2", "../../vectors/pczt/r_v1_nu6_2.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -11,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_compact_recipient_tampered", "../../vectors/pczt/r_compact_recipient_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -14,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
   { "r_compact_diversifier_tampered", "../../vectors/pczt/r_compact_diversifier_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -10,
-    0, 0x00000000, 0, 0, { } },
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "t_shield", "../../vectors/pczt/t_shield.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "642232b2233e9febe631bc5fda44e4546f15ce2a5b94591a65b690f2042a9ea4", 0x37a5165b, 20000, 1, {
+      { 2, 1, 980000, "", "" }, },
+    2, {
+      { 600000, 0, 0, "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd", "231f599fe3b8008a4bb5bd28d8b25669a0eb8e16fa04decc944f6ac7335ca472" },
+      { 400000, 1, 3, "tmBQuXbCk8Etq6tftGe2QrYzmMn2NmJhuLz", "0b6110d69fff337b2c1b08994f167c83deb7b7fcc40eeaa576afdf33f5f2caeb" }, } },
+  { "t_mixed", "../../vectors/pczt/t_mixed.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "cdc290524f99489018f5296ea11b04daf9494a5338697a957ca65c1d949c35f8", 0x37a5165b, 15000, 2, {
+      { 2, 0, 1200000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "from t and Ironwood" },
+      { 2, 1, 285000, "", "" }, },
+    1, {
+      { 500000, 0, 2, "tmRSjpqFr1j7P3WBXWFgsRuhQbHaiJBXXRW", "a43c366ed47e0100eecd439611475854a2a45439704ca9f27252745b93706b5f" }, } },
+  { "t_send_tovk", "../../vectors/pczt/t_send_tovk.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "b6c903eb8e8536e60e8eb4be5cd10dd98bce6078029197bc1441f39c62aa0484", 0x37a5165b, 15000, 2, {
+      { 2, 0, 300000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "refund via ephemeral" },
+      { 2, 1, 485000, "", "" }, },
+    1, {
+      { 800000, 2, 1, "tmL2coPoReYiwv2iYPgXUuqukKL7uYMeKd1", "c486ce8db203c0105777e614fe763f2259018a4a3b1e5e2f89e2a86b2ce0984d" }, } },
+  { "t_shield_compact", "../../vectors/pczt/t_shield_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "642232b2233e9febe631bc5fda44e4546f15ce2a5b94591a65b690f2042a9ea4", 0x37a5165b, 20000, 1, {
+      { 2, 1, 980000, "", "" }, },
+    2, {
+      { 600000, 0, 0, "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd", "231f599fe3b8008a4bb5bd28d8b25669a0eb8e16fa04decc944f6ac7335ca472" },
+      { 400000, 1, 3, "tmBQuXbCk8Etq6tftGe2QrYzmMn2NmJhuLz", "0b6110d69fff337b2c1b08994f167c83deb7b7fcc40eeaa576afdf33f5f2caeb" }, } },
+  { "t_mixed_compact", "../../vectors/pczt/t_mixed_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "cdc290524f99489018f5296ea11b04daf9494a5338697a957ca65c1d949c35f8", 0x37a5165b, 15000, 2, {
+      { 2, 0, 1200000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "from t and Ironwood" },
+      { 2, 1, 285000, "", "" }, },
+    1, {
+      { 500000, 0, 2, "tmRSjpqFr1j7P3WBXWFgsRuhQbHaiJBXXRW", "a43c366ed47e0100eecd439611475854a2a45439704ca9f27252745b93706b5f" }, } },
+  { "r_t_input_not_ours", "../../vectors/pczt/r_t_input_not_ours.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -12,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_t_wrong_path", "../../vectors/pczt/r_t_wrong_path.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -12,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_t_wrong_account", "../../vectors/pczt/r_t_wrong_account.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -12,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_t_missing_derivation", "../../vectors/pczt/r_t_missing_derivation.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -19,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_t_foreign_seed", "../../vectors/pczt/r_t_foreign_seed.pczt", "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote", "", 0, 1, -12,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_t_value_tampered", "../../vectors/pczt/r_t_value_tampered.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -15,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_t_sighash_none", "../../vectors/pczt/r_t_sighash_none.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -16,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
 };
 #define ZV_PCZT_COUNT (sizeof ZV_PCZT / sizeof ZV_PCZT[0])

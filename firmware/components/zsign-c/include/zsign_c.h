@@ -2,12 +2,13 @@
  *
  * A second, independent implementation of zsign_rust.h's signer: the PCZT is
  * read by our own postcard reader (pczt_reader.c), and every check is redone
- * with libzcash-ironwood-c (vendored, MIT) plus this component's own code. No
+ * with libzcash-ironwood-c (vendored, MIT) plus this component's own code, and
+ * transparent inputs' secp256k1 with trezor-crypto (zc_secp.c only). No
  * Rust code is called or linked. Both backends fill the same zs_* structs and
  * return the same ZS_* codes (zsign-common/include/zsign_types.h), so the
  * firmware can require them to agree before it signs.
  *
- * Memory: no heap. zc_pczt_new uses one static context (about 14 KB on the
+ * Memory: no heap. zc_pczt_new uses one static context (about 16 KB on the
  * ESP32-S3); a second zc_pczt_new before zc_pczt_free fails with
  * ZS_E_INTERNAL. zc_pczt_new_in places the context in caller memory instead.
  * The context points into `bytes`, which must stay valid until

@@ -6941,6 +6941,7 @@ dependencies = [
  "pczt",
  "rand 0.10.3",
  "rusqlite",
+ "secp256k1",
  "secrecy",
  "sha2 0.10.9",
  "tokio",

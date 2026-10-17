@@ -205,7 +205,8 @@ FORCE:
 # Zcash C signer (zsign-c, Phase 4). Built as one archive with its own flags:
 # no trezor-crypto include path, and every vendored libzcash-ironwood-c symbol
 # renamed zcv_* (vendor/zc_vendor_prefix.h), so it links next to trezor-crypto
-# and zsign-rust without sharing a line of code with either.
+# and zsign-rust without sharing a line of code with either. The one
+# exception, zc_secp.c (transparent inputs), is built further down.
 ZSIGNC := ../components/zsign-c
 ZCV    := $(ZSIGNC)/vendor/libzcash-ironwood-c
 ZC_CFLAGS := -O2 -g -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Wno-unused-parameter \
@@ -216,10 +217,28 @@ ZC_SRC := $(ZSIGNC)/pczt_reader.c $(ZSIGNC)/zsign_c.c $(ZSIGNC)/zc_crypto.c $(ZS
           $(ZSIGNC)/zc_xcheck.c \
           $(addprefix $(ZCV)/src/,orchard.c pallas.c redpallas.c zip244.c bignum.c blake2b.c \
             memzero.c segwit_addr.c chacha20poly1305.c sha2.c aes/aes_ct.c)
-$(BUILD)/libzsign_c.a: $(ZC_SRC) $(wildcard $(ZSIGNC)/*.h $(ZSIGNC)/include/*.h) | $(BUILD)
-	rm -rf $(BUILD)/zsign-c && mkdir -p $(BUILD)/zsign-c
+# Transparent inputs (roadmap 10.1): zc_secp.c is the one unit that calls
+# trezor-crypto (BIP 32, ECDSA), so it is built WITHOUT the prefix header and
+# with the firmware's flags. The trezor-crypto objects it needs go into the
+# archive too, so every binary that links the C signer links as before; a
+# binary that also compiles some of those sources defines the same symbols
+# first, and the archive's copies are then never pulled.
+TZ_SECP_SRC := $(addprefix $(CRYPTO)/,bip32.c ecdsa.c bignum.c secp256k1.c nist256p1.c curves.c \
+                 ripemd160.c base58.c blake256.c blake2b.c hasher.c address.c segwit_addr.c \
+                 base32.c groestl.c sha2.c sha3.c hmac.c pbkdf2.c rfc6979.c hmac_drbg.c \
+                 memzero.c rand.c bip39.c bip39_english.c \
+                 ed25519-donna/ed25519.c ed25519-donna/curve25519-donna-32bit.c \
+                 ed25519-donna/curve25519-donna-helpers.c \
+                 ed25519-donna/curve25519-donna-scalarmult-base.c \
+                 ed25519-donna/ed25519-donna-32bit-tables.c \
+                 ed25519-donna/ed25519-donna-impl-base.c ed25519-donna/modm-donna-32bit.c \
+                 ed25519-donna/ed25519-sha3.c ed25519-donna/ed25519-keccak.c)
+$(BUILD)/libzsign_c.a: $(ZC_SRC) $(ZSIGNC)/zc_secp.c $(wildcard $(ZSIGNC)/*.h $(ZSIGNC)/include/*.h) | $(BUILD)
+	rm -rf $(BUILD)/zsign-c && mkdir -p $(BUILD)/zsign-c/tz
 	for f in $(ZC_SRC); do $(CC) $(ZC_CFLAGS) -c $$f -o $(BUILD)/zsign-c/$$(basename $$f).o || exit 1; done
-	ar rcs $@ $(BUILD)/zsign-c/*.o
+	$(CC) $(CFLAGS) -c $(ZSIGNC)/zc_secp.c -o $(BUILD)/zsign-c/zc_secp.c.o
+	for f in $(TZ_SECP_SRC); do $(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -c $$f -o $(BUILD)/zsign-c/tz/tz_$$(basename $$f).o || exit 1; done
+	ar rcs $@ $(BUILD)/zsign-c/*.o $(BUILD)/zsign-c/tz/*.o
 
 ZC_TEST_DEPS := host_stubs.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c $(CRYPTO)/sha2.c \
                 $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c

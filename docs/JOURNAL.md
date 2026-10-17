@@ -571,3 +571,52 @@ checked on Xtensa).
   is untested here (no radio, no board).
 - Left: the board over USB and Bluetooth, a broadcast send from the app,
   and `.zkv` card creation (with 8.4).
+
+### 10.1 Transparent inputs (2026-10-16): done on PC, board pending
+- Design in FORMATS.md ("Transparent inputs") and PROTOCOL.md. Each
+  input must be plain P2PKH, SIGHASH_ALL, with one BIP 44 derivation
+  naming this seed (ZIP 32 fingerprint), coin type and account, scope
+  0/1/2; the device re-derives the key at that path and checks HASH160
+  against the script. Refusals: not ours -12, no derivation -19, other
+  shapes (P2SH, SIGHASH_NONE, script_sig, lock times) -16, pczt parse
+  rules -10. The fee counts the inputs; their amounts and scripts are
+  committed by every ZIP 244 sighash, so a lying host gets signatures
+  the network rejects. The shielded sighash switches to the S.2
+  SIGHASH_ALL form when there are inputs.
+- Rust backend: zcash_transparent keys, libsecp256k1. C backend (the one
+  on the chip): own transparent digests, trezor-crypto BIP 32 / ECDSA in
+  `zc_secp.c`, the only zsign-c unit without the zcv_ prefix;
+  `check-zsign-c-symbols.sh` allows trezor references from it alone
+  (esp32s3cam: 156 zcv_* symbols, none shared). Both use RFC 6979, so
+  their transparent signatures are byte-identical.
+- Memos of outputs paid from transparent inputs are recovered with the
+  account's transparent OVKs (ZIP 316), as wallets encrypt them.
+- `.zsig` version 2 only when a transparent entry exists (DER ‖ 0x01,
+  pubkey); a shielded-only file is byte-identical to version 1, so
+  `vectors/zsig/iw_send_shielded.zsig` still applies. zSignFinish carries
+  the same fields; zGetFeatures lists transparent. QR return message cap
+  raised to 1024 B (a shield of 2 inputs is 263 B).
+- Review: a "From k of n / Your t-address / Path .../s/i" page per input
+  before the recipients, "From t-addr: n" on the fee page, "Shield X into
+  this wallet" when nothing leaves.
+- Host: leek-device parses v2 and the protocol fields; zecz-core and
+  leek-android add the pubkey as hash160 preimage and use
+  `Signer::append_transparent_signature`; `propose_send` accepts
+  transparent inputs; `zecz shield` / `propose_shield`.
+- Vectors (12 new, 32 in all, existing files unchanged): t_shield,
+  t_mixed, t_send_tovk, two compact views; refusals r_t_input_not_ours,
+  r_t_wrong_path, r_t_wrong_account, r_t_missing_derivation,
+  r_t_foreign_seed, r_t_value_tampered (-15), r_t_sighash_none.
+- Found by test_zsign_diff's new transparent pass: zcash_script refuses
+  disabled opcodes even in a spent coin's (FromChain) script; the C
+  parser accepted them (-16 instead of -10). Fixed; the pass is the
+  regression test.
+- Numbers: test_zsign_diff 9,750 random mutations (5,333 accepted, 0
+  mismatches) + 3,363 on every transparent input byte (722 accepted, 0
+  mismatches); it now takes ~17 min. `make test` passes; `cargo test` in
+  host/ passes (57, 2 ignored), including zdev signing t_shield and
+  t_mixed_compact end to end: applied, proven, extracted, verified.
+  esp32s3cam builds (flash 80.6%).
+- Open: the board (shield review pages on the panel, timing of five
+  secp256k1 derivations per input), a testnet `zecz shield`, the Android
+  app UI for shielding, and the Chrome/desktop companions.

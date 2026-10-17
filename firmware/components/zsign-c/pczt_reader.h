@@ -23,12 +23,13 @@
 extern "C" {
 #endif
 
-/* Caps on what the reader stores. Everything it only skips (inputs, Sapling,
+/* Caps on what the reader stores. Everything it only skips (Sapling,
  * maps, derivation paths) is bounded by the input length alone. A PCZT over
  * a cap is refused with ZS_E_TOO_MANY; the Rust side has no cap, so this is
  * a known difference, in the refusing direction only. */
 #define ZC_MAX_ACTIONS     64   /* Orchard + Ironwood together */
 #define ZC_MAX_T_OUTPUTS   32
+#define ZC_MAX_T_INPUTS    16   /* = ZS_MAX_T_INPUTS, what the summary holds */
 
 /* Reader result codes. */
 #define ZC_R_OK        0
@@ -53,6 +54,30 @@ typedef struct {
     zc_bytes redeem_script;     /* optional */
     zc_bytes user_address;      /* optional, valid UTF-8 */
 } zc_tout;
+
+/* A transparent input. Maps are kept as their entry count; of
+ * bip32_derivation the first entry is kept too (the signer accepts exactly
+ * one), with up to five path indices. */
+typedef struct {
+    const uint8_t *prevout_txid;    /* 32 */
+    uint32_t prevout_index;
+    uint32_t sequence;              /* 0xFFFFFFFF when absent */
+    uint8_t  has_time_lock, has_height_lock;
+    uint8_t  sighash_type;
+    uint8_t  _pad;
+    uint32_t time_lock, height_lock;
+    zc_bytes script_sig;            /* optional */
+    uint64_t value;
+    zc_bytes script_pubkey;
+    zc_bytes redeem_script;         /* optional */
+    uint32_t n_partial_sigs;
+    uint32_t max_partial_sig_len;   /* longest partial signature value */
+    uint32_t n_bip32;
+    const uint8_t *bip32_key;       /* 33, first entry */
+    const uint8_t *bip32_fp;        /* 32, first entry */
+    uint32_t bip32_path_len;
+    uint32_t bip32_path[5];
+} zc_tin;
 
 /* EncCiphertext (v2): either the 580-byte ciphertext or the memo plaintext
  * with trailing zeros stripped (<= 512 bytes, last byte non-zero). v1 always
@@ -119,6 +144,7 @@ typedef struct {
     zc_global  g;
     uint16_t   n_tin, n_tout;
     uint8_t    tin_lock_time_set;   /* any input carries a required lock time */
+    zc_tin     tin[ZC_MAX_T_INPUTS];  /* the first n_tin (n_tin <= cap on success) */
     zc_tout    tout[ZC_MAX_T_OUTPUTS];
     zc_sapling sapling;
     zc_obundle orchard, ironwood;

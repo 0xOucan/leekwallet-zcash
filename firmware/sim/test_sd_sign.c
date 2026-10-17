@@ -195,11 +195,55 @@ static void test_refusals(void)
     CHECK(sdsign_load(0, ZS_NET_TEST, &s) == SDSIGN_E_NOCARD, "no card");
 }
 
+/* Roadmap 10.1: a shield signs two transparent inputs, and signed.zsig is
+ * version 2 with a DER || SIGHASH_ALL and a pubkey per input. */
+static void test_shield_from_card(void)
+{
+    printf("== a shield on the card: transparent signatures, .zsig version 2\n");
+    const zv_pczt_vector *v = vec("t_shield");
+    ctx = v ? v->name : "t_shield";
+    CHECK(v, "vector");
+    if (!v) return;
+    size_t len;
+    uint8_t *pczt = load(v->file, &len);
+    device_with(v->mnemonic);
+    card_rm(SDSIGN_OUT);
+    card_file(SDSIGN_IN, pczt, len);
+    const zs_summary *s = NULL;
+    int rc = sdsign_load(v->account, v->network, &s);
+    CHECK(rc == 0 && s && s->n_tinputs == 2, "load: %s", sdsign_strerror(rc));
+    uint32_t n = 0;
+    rc = sdsign_finish(&n);
+    CHECK(rc == 0 && n == 2, "finish: %s, %u sigs", sdsign_strerror(rc), n);
+
+    char p[256];
+    snprintf(p, sizeof p, "%s/%s", card, SDSIGN_OUT);
+    size_t zl;
+    uint8_t *z = load(p, &zl);
+    CHECK(z && zl > 39 && z[4] == 2, "version 2");
+    size_t at = 39;
+    for (uint32_t i = 0; z && i < n; i++) {
+        CHECK(at + 6 <= zl && z[at] == ZS_POOL_TRANSPARENT && z[at + 1] == i, "entry %u header", i);
+        size_t l = z[at + 5];
+        const uint8_t *d = z + at + 6;
+        CHECK(l >= 9 && l <= 73 && at + 6 + l + 33 <= zl, "entry %u length %zu", i, l);
+        CHECK(d[0] == 0x30 && d[1] == l - 3 && d[2] == 0x02, "entry %u is not DER", i);
+        CHECK(d[l - 1] == 0x01, "entry %u is not SIGHASH_ALL", i);
+        uint8_t pk0 = z[at + 6 + l];
+        CHECK(pk0 == 0x02 || pk0 == 0x03, "entry %u pubkey prefix %02x", i, pk0);
+        at += 6 + l + 33;
+    }
+    CHECK(at == zl, "trailing bytes: %zu of %zu", at, zl);
+    free(z);
+    free(pczt);
+}
+
 int main(void)
 {
     printf("== test_sd_sign\n");
     if (!mkdtemp(card)) return 1;
     test_sign_from_card();
+    test_shield_from_card();
     test_changed_file_is_not_signed();
     test_refusals();
     char cmd[128];

@@ -1,7 +1,8 @@
 //! The one step the Zodl Android SDK cannot do for a LeekWallet device.
 //!
 //! The device returns spend-authorization signatures only (a `.zsig`,
-//! docs/zcash/FORMATS.md). The SDK combines a *signed PCZT* with the proven
+//! docs/zcash/FORMATS.md), and, for transparent inputs (version 2), the
+//! ECDSA signature and pubkey of each. The SDK combines a *signed PCZT* with the proven
 //! one (`createTransactionFromPczt`), as Keystone and Ledger hand it one, but
 //! has no call to insert raw signatures. This does it, with the `pczt`
 //! crate's Signer role - which checks each signature against the action's
@@ -13,13 +14,13 @@
 
 pub mod device;
 
+use leek_device::zsig::{Pool, Zsig};
 use pczt::roles::signer::Signer;
 use pczt::Pczt;
 use sha2::{Digest, Sha256};
 
 const MAGIC: &[u8; 4] = b"ZSIG";
 const HEADER: usize = 4 + 1 + 32 + 2;
-const ENTRY: usize = 1 + 4 + 64;
 
 /// The proprietary fields `zcash_client_backend` adds for itself; no signer
 /// needs them (the same names its `redact_pczt_for_signer` removes).
@@ -92,40 +93,72 @@ pub fn apply_signatures_to(pczt: &[u8], sent: &[u8], zsig: &[u8]) -> Result<Vec<
     if zsig.len() < HEADER || &zsig[..4] != MAGIC {
         return Err("not a .zsig".into());
     }
-    if zsig[4] != 1 {
-        return Err(format!(".zsig version {} is not supported", zsig[4]));
-    }
     let hash: [u8; 32] = Sha256::digest(sent).into();
-    if zsig[5..37] != hash {
+    if zsig.len() >= HEADER && zsig[5..37] != hash {
         return Err("the .zsig was made for a different PCZT".into());
     }
-    let n = u16::from_le_bytes([zsig[37], zsig[38]]) as usize;
-    if zsig.len() != HEADER + n * ENTRY {
-        return Err(".zsig length does not match its count".into());
-    }
+    // Versions 1 and 2 (transparent entries), docs/zcash/FORMATS.md.
+    let zsig = Zsig::parse(zsig).map_err(|e| e.to_string())?;
 
-    let parsed = Pczt::parse(pczt).map_err(|e| format!("PCZT: {e:?}"))?;
+    let mut parsed = Pczt::parse(pczt).map_err(|e| format!("PCZT: {e:?}"))?;
+    // The pczt Signer finds a P2PKH input's key through hash160_preimages,
+    // which wallets leave empty: add each transparent entry's key (a key
+    // that is not the script's is then just not found, and refused).
+    let ts: Vec<(usize, [u8; 33])> =
+        zsig.entries.iter().filter_map(|e| e.transparent.as_ref().map(|t| (e.index as usize, t.pubkey))).collect();
+    if !ts.is_empty() {
+        let n = parsed.transparent().inputs().len();
+        if let Some((i, _)) = ts.iter().find(|(i, _)| *i >= n) {
+            return Err(format!("transparent signature for input {i}, but the PCZT has {n} inputs"));
+        }
+        parsed = pczt::roles::updater::Updater::new(parsed)
+            .update_transparent_with(|mut u| {
+                for (i, pk) in &ts {
+                    u.update_input_with(*i, |mut iu| {
+                        iu.set_hash160_preimage(pk.to_vec());
+                        Ok(())
+                    })?;
+                }
+                Ok(())
+            })
+            .map_err(|e| format!("PCZT transparent update: {e:?}"))?
+            .finish();
+    }
     let mut signer = Signer::new(parsed).map_err(|e| format!("Signer: {e:?}"))?;
     if sent != pczt {
-        // Parsing resolves the compacted fields, so this is the full sighash.
+        // Parsing resolves the compacted fields, so this is the full sighash
+        // (with transparent inputs it commits to their amounts and scripts).
         let view = Pczt::parse(sent).map_err(|e| format!("sent PCZT: {e:?}"))?;
         let view_sighash = Signer::new(view).map_err(|e| format!("Signer: {e:?}"))?.shielded_sighash();
         if view_sighash != signer.shielded_sighash() {
             return Err("the PCZT sent to the device is a different transaction".into());
         }
     }
-    for i in 0..n {
-        let e = &zsig[HEADER + i * ENTRY..HEADER + (i + 1) * ENTRY];
-        let index = u32::from_le_bytes([e[1], e[2], e[3], e[4]]) as usize;
-        let mut sig = [0u8; 64];
-        sig.copy_from_slice(&e[5..69]);
-        let sig = orchard::primitives::redpallas::Signature::<orchard::primitives::redpallas::SpendAuth>::from(sig);
-        match e[0] {
-            1 => signer.apply_orchard_signature(index, sig),
-            2 => signer.apply_ironwood_signature(index, sig),
-            p => return Err(format!("pool {p} is not supported")),
+    for e in &zsig.entries {
+        let index = e.index as usize;
+        match (e.pool, &e.transparent) {
+            (Pool::Transparent, Some(t)) => {
+                if t.sighash_type() != 0x01 {
+                    return Err(format!("transparent signature for input {index} is not SIGHASH_ALL"));
+                }
+                let sig = secp256k1::ecdsa::Signature::from_der(t.der())
+                    .map_err(|err| format!("transparent signature for input {index}: {err}"))?;
+                signer
+                    .append_transparent_signature(index, sig)
+                    .map_err(|err| format!("signature for transparent input {index} rejected: {err:?}"))?;
+            }
+            (Pool::Orchard | Pool::Ironwood, None) => {
+                let sig =
+                    orchard::primitives::redpallas::Signature::<orchard::primitives::redpallas::SpendAuth>::from(e.sig);
+                if e.pool == Pool::Orchard {
+                    signer.apply_orchard_signature(index, sig)
+                } else {
+                    signer.apply_ironwood_signature(index, sig)
+                }
+                .map_err(|err| format!("signature for action {index} rejected: {err:?}"))?;
+            }
+            (p, _) => return Err(format!("malformed entry for pool {p:?}")),
         }
-        .map_err(|err| format!("signature for action {index} rejected: {err:?}"))?;
     }
     signer.finish().serialize().map_err(|e| format!("PCZT encoding: {e:?}"))
 }

@@ -50,6 +50,17 @@ struct OutputSummary {
     memo: String,
 }
 
+/// A transparent input as the device must show it ("from your t-address").
+#[derive(Serialize, Clone)]
+struct TInputSummary {
+    address: String,
+    value: u64,
+    scope: u32,
+    index: u32,
+    /// ZIP 244 transparent sighash of this input (SIGHASH_ALL).
+    sighash: String,
+}
+
 #[derive(Serialize)]
 struct PcztVector {
     name: String,
@@ -64,6 +75,9 @@ struct PcztVector {
     consensus_branch_id: Option<String>,
     fee: Option<u64>,
     outputs: Vec<OutputSummary>,
+    /// Left out when empty, so the shielded-only entries are unchanged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    t_inputs: Vec<TInputSummary>,
 }
 
 struct Account {
@@ -122,6 +136,7 @@ struct Built {
     pczt: Pczt,
     outputs: Vec<OutputSummary>,
     fee: u64,
+    t_inputs: Vec<TInputSummary>,
 }
 
 fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, amount: u64, memo: &str, fee: u64) -> Built {
@@ -210,7 +225,7 @@ fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, a
         .unwrap()
         .finish();
 
-    Built { pczt, outputs, fee }
+    Built { pczt, outputs, fee, t_inputs: vec![] }
 }
 
 /// An Orchard-pool note (note plaintext version 2) and a one-leaf tree, as
@@ -344,7 +359,7 @@ fn build_orchard_send(
         .unwrap()
         .finish();
 
-    Built { pczt, outputs, fee }
+    Built { pczt, outputs, fee, t_inputs: vec![] }
 }
 
 /// The v2 compact signer view, as `zcash_client_backend`'s
@@ -376,7 +391,164 @@ fn compact_view(b: &Built) -> Built {
         .redact_orchard_with(bundle)
         .redact_ironwood_with(bundle)
         .finish();
-    Built { pczt, outputs: b.outputs.clone(), fee: b.fee }
+    Built { pczt, outputs: b.outputs.clone(), fee: b.fee, t_inputs: b.t_inputs.clone() }
+}
+
+/// A P2PKH coin of the sender at m/44'/1'/0'/scope/index.
+struct TCoin {
+    scope: u32,
+    index: u32,
+    value: u64,
+}
+
+fn t_account_key(a: &Account) -> zcash_transparent::keys::AccountPrivKey {
+    zcash_transparent::keys::AccountPrivKey::from_seed(&TestNetwork, &a.seed, AccountId::ZERO).unwrap()
+}
+
+fn t_secret(a: &Account, scope: u32, index: u32) -> secp256k1::SecretKey {
+    use zcash_transparent::keys::{NonHardenedChildIndex, TransparentKeyScope};
+    t_account_key(a)
+        .derive_secret_key(TransparentKeyScope::custom(scope).unwrap(), NonHardenedChildIndex::from_index(index).unwrap())
+        .unwrap()
+}
+
+fn t_addr_string(pk: &secp256k1::PublicKey) -> String {
+    zcash_keys::address::Address::Transparent(TransparentAddress::from_pubkey(pk)).encode(&TestNetwork)
+}
+
+fn bip44_path(account: u32, scope: u32, index: u32) -> Vec<u32> {
+    vec![44 | 0x8000_0000, TestNetwork.network_type().coin_type() | 0x8000_0000, account | 0x8000_0000, scope, index]
+}
+
+/// How the Updater describes each transparent input (the refusal vectors
+/// change it).
+#[derive(Clone, Copy, PartialEq)]
+enum TDeriv {
+    /// The input's own key and path, as zcash_client_backend adds them.
+    Ours,
+    /// No bip32_derivation at all.
+    Missing,
+    /// The right key, but a path one address index off.
+    WrongIndex,
+    /// The right key, but account 1 in the path.
+    WrongAccount,
+}
+
+/// Spend transparent coins of `sender` (and optionally one Ironwood note) to
+/// an external UA with a memo, or, with `dest` None, shield everything to the
+/// sender's own internal Ironwood address. The Updater pass is what
+/// `zcash_client_backend` adds: a BIP 44 derivation per transparent input.
+/// `ext_ovk` encrypts the external output's out_ciphertext. With `foreign`,
+/// the first coin pays to the recipient's key while the derivation still
+/// names ours.
+#[allow(clippy::too_many_arguments)]
+fn build_t_send(
+    tag: u64,
+    sender: &Account,
+    coins: &[TCoin],
+    note: Option<u64>,
+    dest: Option<(&str, orchard::Address, u64, &str)>,
+    ext_ovk: Option<orchard::keys::OutgoingViewingKey>,
+    fee: u64,
+    deriv: TDeriv,
+    foreign: Option<&Account>,
+) -> Built {
+    let fvk = &sender.fvk;
+    let spent = note.map(|v| ironwood_note(fvk, v, tag));
+    let anchor = spent.as_ref().map_or(orchard::Anchor::empty_tree(), |s| s.1);
+    let mut builder = Builder::new(
+        TestNetwork,
+        BlockHeight::from_u32(H_NU6_3),
+        BuildConfig::Standard {
+            sapling_anchor: None,
+            orchard_anchor: None,
+            ironwood_anchor: Some(anchor),
+            orchard_padding: BundlePadding::DEFAULT,
+            ironwood_padding: BundlePadding::DEFAULT,
+        },
+    );
+    let mut t_inputs = Vec::new();
+    let mut total = 0u64;
+    for (i, c) in coins.iter().enumerate() {
+        let owner = if i == 0 { foreign.unwrap_or(sender) } else { sender };
+        let pk = t_secret(owner, c.scope, c.index).public_key();
+        let script = TransparentAddress::from_pubkey(&pk).script();
+        let mut txid = [0u8; 32];
+        txid[0] = tag as u8;
+        txid[1] = i as u8;
+        txid[31] = 0x7a;
+        builder
+            .add_transparent_p2pkh_input(
+                pk,
+                zcash_transparent::bundle::OutPoint::new(txid, i as u32),
+                zcash_transparent::bundle::TxOut::new(Zatoshis::const_from_u64(c.value), (&script).into()),
+            )
+            .unwrap();
+        total += c.value;
+        t_inputs.push(TInputSummary { address: t_addr_string(&pk), value: c.value, scope: c.scope, index: c.index, sighash: String::new() });
+    }
+    if let Some((n, _, path)) = spent {
+        builder.add_ironwood_spend::<zip317::FeeRule>(fvk.clone(), n, path).unwrap();
+        total += note.unwrap();
+    }
+
+    let mut outputs = Vec::new();
+    let mut external_ua: Option<(orchard::Address, String)> = None;
+    let mut change = total - fee;
+    if let Some((ua, recipient, amount, memo)) = dest {
+        let memo_bytes = MemoBytes::from(Memo::from_bytes(memo.as_bytes()).unwrap());
+        builder
+            .add_ironwood_output::<zip317::FeeRule>(ext_ovk, recipient, Zatoshis::const_from_u64(amount), memo_bytes)
+            .unwrap();
+        external_ua = Some((recipient, ua.to_string()));
+        outputs.push(OutputSummary { pool: "ironwood", kind: "external", address: ua.into(), value: amount, memo: memo.into() });
+        change -= amount;
+    }
+    // Change (or the shielded funds) to the internal address. A wallet's
+    // Sender OVK policy leaves change without an OVK.
+    builder
+        .add_ironwood_output::<zip317::FeeRule>(None, fvk.address_at(0u32, Scope::Internal), Zatoshis::const_from_u64(change), MemoBytes::empty())
+        .unwrap();
+    outputs.push(OutputSummary { pool: "ironwood", kind: "change", address: String::new(), value: change, memo: String::new() });
+
+    let PcztResult { pczt_parts, .. } = builder
+        .build_for_pczt(rng(tag + 100), &zip317::FeeRule::standard())
+        .unwrap();
+    let pczt = Creator::build_from_parts(pczt_parts).unwrap();
+    let pczt = IoFinalizer::new(pczt).finalize_io(rng(tag + 200)).unwrap();
+
+    let fp = SeedFingerprint::from_seed(&sender.seed).unwrap().to_bytes();
+    let zpath = vec![
+        zip32::ChildIndex::hardened(32).index(),
+        zip32::ChildIndex::hardened(TestNetwork.network_type().coin_type()).index(),
+        zip32::ChildIndex::hardened(0).index(),
+    ];
+    let pczt = Updater::new(pczt)
+        .update_ironwood_with(|u| annotate(u, fp, &zpath, &external_ua))
+        .unwrap()
+        .update_transparent_with(|mut u| {
+            for (i, c) in coins.iter().enumerate() {
+                let pk = t_secret(sender, c.scope, c.index).public_key();
+                let path = match deriv {
+                    TDeriv::Ours | TDeriv::Missing => bip44_path(0, c.scope, c.index),
+                    TDeriv::WrongIndex => bip44_path(0, c.scope, c.index + 1),
+                    TDeriv::WrongAccount => bip44_path(1, c.scope, c.index),
+                };
+                if deriv == TDeriv::Missing {
+                    continue;
+                }
+                u.update_input_with(i, |mut iu| {
+                    iu.set_bip32_derivation(pk.serialize(), zcash_transparent::pczt::Bip32Derivation::parse(fp, path).unwrap());
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })
+        .unwrap()
+        .finish();
+    // Witnesses kept, as in the shielded vectors, so a host test can prove
+    // the signed result.
+    Built { pczt, outputs, fee, t_inputs }
 }
 
 fn write(dir: &str, name: &str, bytes: &[u8]) -> String {
@@ -406,6 +578,7 @@ fn code(expect: &str) -> i32 {
         "value_balance" => -15,
         "unsupported_bundle" => -16,
         "network_mismatch" => -17,
+        "missing_data" => -19,
         other => panic!("unknown expectation {other}"),
     }
 }
@@ -416,7 +589,8 @@ fn c_header(vs: &[PcztVector]) -> String {
     let kind = |k: &str| match k { "external" => 0, "change" => 1, _ => 2 };
     let mut h = String::from("/* Generated by vectors/gen (pczt-vectors). Do not edit. */\n#pragma once\n#include <stdint.h>\n\n");
     h.push_str("typedef struct { uint8_t pool, kind; uint64_t value; const char *address, *memo; } zv_pczt_output;\n");
-    h.push_str("typedef struct {\n    const char *name, *file, *mnemonic, *passphrase;\n    uint32_t account; uint8_t network;\n    int32_t expect;\n    const char *sighash; /* hex, NULL for refusals */\n    uint32_t branch_id; uint64_t fee;\n    uint8_t n_outputs; zv_pczt_output outputs[4];\n} zv_pczt_vector;\n\n");
+    h.push_str("typedef struct { uint64_t value; uint32_t scope, index; const char *address, *sighash; } zv_pczt_tinput;\n");
+    h.push_str("typedef struct {\n    const char *name, *file, *mnemonic, *passphrase;\n    uint32_t account; uint8_t network;\n    int32_t expect;\n    const char *sighash; /* hex, NULL for refusals */\n    uint32_t branch_id; uint64_t fee;\n    uint8_t n_outputs; zv_pczt_output outputs[4];\n    uint8_t n_tinputs; zv_pczt_tinput tinputs[4];\n} zv_pczt_vector;\n\n");
     h.push_str("static const zv_pczt_vector ZV_PCZT[] = {\n");
     for v in vs {
         write!(h, "  {{ {:?}, {:?}, {:?}, {:?}, {}, {}, {},\n    ", v.name, format!("../../vectors/{}", v.file), v.signer_mnemonic, v.signer_passphrase, v.account, u8::from(v.network == "test"), code(&v.expect)).unwrap();
@@ -425,6 +599,10 @@ fn c_header(vs: &[PcztVector]) -> String {
         write!(h, "0x{bid:08x}, {}, {}, {{", v.fee.unwrap_or(0), v.outputs.len()).unwrap();
         for o in &v.outputs {
             write!(h, "\n      {{ {}, {}, {}, {:?}, {:?} }},", pool(o.pool), kind(o.kind), o.value, o.address, o.memo).unwrap();
+        }
+        write!(h, " }},\n    {}, {{", v.t_inputs.len()).unwrap();
+        for t in &v.t_inputs {
+            write!(h, "\n      {{ {}, {}, {}, {:?}, {:?} }},", t.value, t.scope, t.index, t.address, t.sighash).unwrap();
         }
         h.push_str(" } },\n");
     }
@@ -469,6 +647,10 @@ fn main() {
     let push_ok = |name: &str, desc: &str, b: &Built, vs: &mut Vec<PcztVector>| {
         let bytes = b.pczt.clone().serialize().unwrap();
         let signer = Signer::new(b.pczt.clone()).unwrap();
+        let mut t_inputs = b.t_inputs.clone();
+        for (i, t) in t_inputs.iter_mut().enumerate() {
+            t.sighash = hex::encode(signer.transparent_sighash(i).unwrap());
+        }
         vs.push(PcztVector {
             name: name.into(),
             description: desc.into(),
@@ -482,6 +664,7 @@ fn main() {
             consensus_branch_id: Some(format!("{:08x}", u32::from(*b.pczt.global().consensus_branch_id()))),
             fee: Some(b.fee),
             outputs: b.outputs.clone(),
+            t_inputs,
         });
         bytes
     };
@@ -498,6 +681,7 @@ fn main() {
         consensus_branch_id: None,
         fee: None,
         outputs: vec![],
+        t_inputs: vec![],
     };
 
     // 1. Ironwood -> external Ironwood address with memo, plus change.
@@ -525,7 +709,7 @@ fn main() {
             r.clear_anchor();
         })
         .finish();
-    let e = Built { pczt: compact, outputs: a.outputs.clone(), fee: a.fee };
+    let e = Built { pczt: compact, outputs: a.outputs.clone(), fee: a.fee, t_inputs: vec![] };
     let e_bytes = push_ok("iw_send_shielded_compact", "Vector iw_send_shielded with cv_net, cmx and memo ciphertext compacted (v2)", &e, &mut vs);
 
     // 6-8. The other valid vectors as a companion sends them: the compact
@@ -543,7 +727,7 @@ fn main() {
     let g_bytes = patch_unique(&e_bytes, memo_b, memo_t);
     let mut g_outputs = a.outputs.clone();
     g_outputs[0].memo = String::from_utf8(memo_t.to_vec()).unwrap();
-    let g = Built { pczt: Pczt::parse(&g_bytes).unwrap(), outputs: g_outputs, fee: a.fee };
+    let g = Built { pczt: Pczt::parse(&g_bytes).unwrap(), outputs: g_outputs, fee: a.fee, t_inputs: vec![] };
     let g_round = push_ok("iw_send_shielded_compact_memo_changed", "Vector iw_send_shielded_compact with the memo plaintext changed: a different transaction, shown and signed as such", &g, &mut vs);
     assert_eq!(g_round, g_bytes, "the patched compact PCZT reserializes unchanged");
     assert_ne!(vs.last().unwrap().sighash, vs.iter().find(|v| v.name == "iw_send_shielded_compact").unwrap().sighash);
@@ -624,6 +808,77 @@ fn main() {
     let mut with = rb3.to_vec();
     with.push(0x01);
     vs.push(refuse("r_compact_diversifier_tampered", "Compact PCZT: external output diversifier changed; memo re-encryption gives a different epk", &patch_unique(&e_bytes, &needle, &with), SENDER, "parse_error"));
+
+    // Transparent inputs (roadmap 10.1). Every one is a P2PKH coin of the
+    // sender's account, with the BIP 44 derivation a wallet adds.
+    let t_ovk_ext = {
+        let ovks = t_account_key(&sender).to_account_pubkey().ovks_for_shielding();
+        orchard::keys::OutgoingViewingKey::from(ovks.external().as_bytes())
+    };
+
+    // 1. Shield: two coins (an external and a change address) to Ironwood.
+    let shield_coins = [TCoin { scope: 0, index: 0, value: 600_000 }, TCoin { scope: 1, index: 3, value: 400_000 }];
+    let ts = build_t_send(20, &sender, &shield_coins, None, None, None, 20_000, TDeriv::Ours, None);
+    let ts_bytes = push_ok("t_shield", "Two transparent coins of this account shielded to its Ironwood change address (v6, NU6.3)", &ts, &mut vs);
+
+    // 2. Mixed: an Ironwood note and a transparent coin to an external UA.
+    let mixed_coins = [TCoin { scope: 0, index: 2, value: 500_000 }];
+    let tm = build_t_send(
+        21, &sender, &mixed_coins, Some(1_000_000),
+        Some((&rcpt_ua, rcpt_addr, 1_200_000, "from t and Ironwood")),
+        Some(sender.fvk.to_ovk(Scope::External)), 15_000, TDeriv::Ours, None,
+    );
+    let tm_bytes = push_ok("t_mixed", "Ironwood note plus a transparent coin to an external UA with memo, Ironwood change (v6, NU6.3)", &tm, &mut vs);
+
+    // 3. Transparent only, to an external UA: the memo is under the account's
+    // transparent external OVK (ZIP 316), as a wallet encrypts it.
+    let tovk_coins = [TCoin { scope: 2, index: 1, value: 800_000 }];
+    let tv = build_t_send(
+        22, &sender, &tovk_coins, None,
+        Some((&rcpt_ua, rcpt_addr, 300_000, "refund via ephemeral")),
+        Some(t_ovk_ext), 15_000, TDeriv::Ours, None,
+    );
+    push_ok("t_send_tovk", "Transparent (ephemeral-scope) coin to an external UA, memo under the transparent OVK (v6, NU6.3)", &tv, &mut vs);
+
+    // 4-5. The compact signer view of 1 and 2.
+    push_ok("t_shield_compact", "Vector t_shield in the compact signer view (v2)", &compact_view(&ts), &mut vs);
+    push_ok("t_mixed_compact", "Vector t_mixed in the compact signer view (v2)", &compact_view(&tm), &mut vs);
+
+    // Refusals of transparent inputs.
+    let foreign = build_t_send(23, &sender, &[TCoin { scope: 0, index: 0, value: 600_000 }], None, None, None, 15_000, TDeriv::Ours, Some(&rcpt));
+    vs.push(refuse("r_t_input_not_ours", "Transparent input pays another seed's key; its derivation names ours", &foreign.pczt.serialize().unwrap(), SENDER, "spend_not_ours"));
+    let wrong = build_t_send(24, &sender, &shield_coins, None, None, None, 20_000, TDeriv::WrongIndex, None);
+    vs.push(refuse("r_t_wrong_path", "Transparent input derivation path one address index off its key", &wrong.pczt.serialize().unwrap(), SENDER, "spend_not_ours"));
+    let wrong = build_t_send(25, &sender, &shield_coins, None, None, None, 20_000, TDeriv::WrongAccount, None);
+    vs.push(refuse("r_t_wrong_account", "Transparent input derivation path names account 1", &wrong.pczt.serialize().unwrap(), SENDER, "spend_not_ours"));
+    let missing = build_t_send(26, &sender, &shield_coins, None, None, None, 20_000, TDeriv::Missing, None);
+    vs.push(refuse("r_t_missing_derivation", "Transparent input without a BIP 32 derivation", &missing.pczt.serialize().unwrap(), SENDER, "missing_data"));
+    vs.push(refuse("r_t_foreign_seed", "Valid shield PCZT, but the transparent coins belong to another seed", &ts_bytes, RECIPIENT, "spend_not_ours"));
+
+    // The coin's value is committed by every sighash, so a lowered value is a
+    // different transaction; once outputs exceed inputs it cannot balance.
+    let TransparentAddress::PublicKeyHash(h) = TransparentAddress::from_pubkey(&t_secret(&sender, 0, 2).public_key()) else { unreachable!() };
+    let script = [&[0x76, 0xa9, 0x14][..], &h, &[0x88, 0xac]].concat();
+    let mut needle = varint(500_000);
+    needle.push(script.len() as u8);
+    needle.extend(&script);
+    // A varint of the same length, so the patch keeps every other byte.
+    let with = {
+        let mut w = varint(400_000);
+        assert_eq!(w.len(), varint(500_000).len());
+        w.push(script.len() as u8);
+        w.extend(&script);
+        w
+    };
+    vs.push(refuse("r_t_value_tampered", "Transparent input value lowered by 0.001: outputs exceed inputs", &patch_unique(&tm_bytes, &needle, &with), SENDER, "value_balance"));
+
+    // SIGHASH_NONE would let anyone redirect the outputs: refused.
+    let pk = t_secret(&sender, 0, 2).public_key().serialize();
+    let mut needle = vec![0x00, 0x00, 0x01, 0x01];
+    needle.extend(pk);
+    let mut with = vec![0x00, 0x00, 0x02, 0x01];
+    with.extend(pk);
+    vs.push(refuse("r_t_sighash_none", "Transparent input asks for SIGHASH_NONE", &patch_unique(&tm_bytes, &needle, &with), SENDER, "unsupported_bundle"));
 
     fs::write(format!("{dir}/pczt.json"), serde_json::to_string_pretty(&vs).unwrap() + "\n").unwrap();
     fs::write(format!("{dir}/pczt_vectors.h"), c_header(&vs)).unwrap();

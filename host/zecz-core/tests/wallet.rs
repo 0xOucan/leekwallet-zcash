@@ -204,6 +204,8 @@ fn send_refusals() {
     assert!(err_text(w.propose_send(&req(&to, 0))).contains("amount must be positive"));
     // Never scanned: no target height to build for.
     assert!(err_text(w.propose_send(&req(&to, 1000))).contains("wallet is not synced"));
+    // Shielding needs a synced wallet too (roadmap 10.1).
+    assert!(err_text(w.propose_shield(true)).contains("wallet is not synced"));
     assert!(!w.profile().pending_dir().exists());
 }
 

@@ -13,6 +13,9 @@ pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cec
 zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
 orchard = { version = "0.16", default-features = false, features = ["std"] }
 sha2 = "0.10"
+# DER signatures of transparent inputs (roadmap 10.1); already in the tree
+# through the pczt transparent signer.
+secp256k1 = "0.33"
 jni = { version = "0.21", default-features = false }
 leek-device = { path = "../leek-device", default-features = false }
 leek-transport-serial = { path = "../../firmware/app/transport-serial", default-features = false }

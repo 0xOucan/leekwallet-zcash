@@ -168,7 +168,7 @@ int airgap_sign(uint8_t *out, size_t cap, size_t *len)
     int rc = zcash_sign_sign(sigs, ZS_MAX_SIGS, &n);
     if (rc != 0) return rc;
     /* CBOR byte string around the .zsig, so ur:leek-zsig decodes like any UR. */
-    static uint8_t zsig[4 + 1 + 32 + 2 + ZS_MAX_SIGS * 69];
+    static uint8_t zsig[SDSIGN_ZSIG_MAX];
     size_t zl = sdsign_zsig_encode(loaded_sha, sigs, n, zsig, sizeof zsig);
     memzero(sigs, sizeof sigs);
     if (zl == 0 || zl + 3 > cap) return ZSIGN_E_TOO_LARGE;

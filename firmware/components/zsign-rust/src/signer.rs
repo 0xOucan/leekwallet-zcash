@@ -15,16 +15,25 @@ use alloc::vec::Vec;
 use orchard::keys::{FullViewingKey, OutgoingViewingKey, Scope, SpendAuthorizingKey};
 use orchard::ValuePool;
 use pczt::roles::signer::{extract_orchard_spend_auth_signatures, Signer};
-use pczt::roles::verifier::{OrchardError, Verifier};
+use pczt::roles::verifier::{OrchardError, TransparentError, Verifier};
 use pczt::Pczt;
 use zcash_address::unified::{self, Container, Encoding};
-use zcash_protocol::consensus::NetworkType;
+use zcash_protocol::consensus::{MainNetwork, NetworkType, TestNetwork};
+use zcash_transparent::address::TransparentAddress;
+use zcash_transparent::keys::{AccountPrivKey, NonHardenedChildIndex, TransparentKeyScope};
+use zip32::fingerprint::SeedFingerprint;
+use zip32::AccountId;
 
 use crate::account::{coin_type, network, orchard_sk, ZS_UA_MAX};
 use crate::platform::PlatformRng;
 
 pub const ZS_MAX_OUTPUTS: usize = 16;
 pub const ZS_MAX_SIGS: usize = 32;
+pub const ZS_MAX_T_INPUTS: usize = 16;
+pub const ZS_TADDR_MAX: usize = 48;
+
+/// The only sighash type the device signs a transparent input with.
+const SIGHASH_ALL: u8 = 0x01;
 
 /// Refusal codes. Each one names exactly why the device will not sign.
 pub const ZS_E_PARSE: i32 = -10;
@@ -94,6 +103,19 @@ pub struct ZsSummary {
     pub fee: u64,
     pub sighash: [u8; 32],
     pub outputs: [ZsOutput; ZS_MAX_OUTPUTS],
+    pub n_tinputs: u8,
+    pub _pad3: [u8; 7],
+    pub t_in: u64,
+    pub tinputs: [ZsTInput; ZS_MAX_T_INPUTS],
+}
+
+#[repr(C)]
+pub struct ZsTInput {
+    pub value: u64,
+    pub scope: u32,
+    pub index: u32,
+    pub sighash: [u8; 32],
+    pub address: [u8; ZS_TADDR_MAX],
 }
 
 #[repr(C)]
@@ -102,6 +124,8 @@ pub struct ZsSig {
     pub _pad: [u8; 3],
     pub index: u32,
     pub sig: [u8; 64],
+    pub pubkey: [u8; 33],
+    pub _pad2: [u8; 3],
 }
 
 pub struct ZsCtx {
@@ -109,8 +133,19 @@ pub struct ZsCtx {
     checked: Option<FullViewingKey>,
 }
 
+/// A transparent input that passed every check: ours, at this path.
+struct TIn {
+    value: u64,
+    scope: u32,
+    index: u32,
+    address: String,
+}
+
 struct Acc<'a> {
     fvk: &'a FullViewingKey,
+    /// The account's transparent OVKs (external, internal), tried after the
+    /// Orchard ones when the PCZT spends transparent inputs.
+    t_ovks: Option<[OutgoingViewingKey; 2]>,
     net: NetworkType,
     outputs: Vec<(u8, u8, u64, String, u8, Vec<u8>)>,
     n_spends: u8,
@@ -164,8 +199,11 @@ fn check_bundle(
 ) -> Result<(), i32> {
     let version = *bundle.bundle_version();
     bundle.verify_cross_address_restriction().map_err(|_| ZS_E_OUTPUT_COMMITMENT)?;
-    let ovks: [OutgoingViewingKey; 2] =
-        [acc.fvk.to_ovk(Scope::External), acc.fvk.to_ovk(Scope::Internal)];
+    let mut ovks: Vec<OutgoingViewingKey> =
+        alloc::vec![acc.fvk.to_ovk(Scope::External), acc.fvk.to_ovk(Scope::Internal)];
+    if let Some(t) = &acc.t_ovks {
+        ovks.extend(t.iter().cloned());
+    }
 
     let mut sum: i128 = 0;
     for action in bundle.actions() {
@@ -252,6 +290,117 @@ fn t_address(script: &[u8], net: NetworkType) -> Option<String> {
     }
 }
 
+/// m/44'/coin'/account' of this seed: the transparent half of the account.
+fn t_account_key(seed: &[u8; 64], net: NetworkType, account: u32) -> Option<AccountPrivKey> {
+    let acct = AccountId::try_from(account).ok()?;
+    match net {
+        NetworkType::Main => AccountPrivKey::from_seed(&MainNetwork, seed, acct).ok(),
+        _ => AccountPrivKey::from_seed(&TestNetwork, seed, acct).ok(),
+    }
+}
+
+/// The key at .../scope/index, for the scopes a wallet uses (external,
+/// internal, ephemeral).
+fn t_secret(key: &AccountPrivKey, scope: u32, index: u32) -> Option<secp256k1::SecretKey> {
+    if scope > 2 {
+        return None;
+    }
+    let scope = TransparentKeyScope::custom(scope)?;
+    key.derive_secret_key(scope, NonHardenedChildIndex::from_index(index)?).ok()
+}
+
+/// The 20-byte hash a P2PKH script pays to, if `script` is exactly P2PKH.
+fn p2pkh_hash(script: &[u8]) -> Option<&[u8]> {
+    match script {
+        [0x76, 0xa9, 0x14, h @ .., 0x88, 0xac] if h.len() == 20 => Some(h),
+        _ => None,
+    }
+}
+
+fn hash160(pubkey: &[u8; 33]) -> Option<[u8; 20]> {
+    let pk = secp256k1::PublicKey::from_slice(pubkey).ok()?;
+    match TransparentAddress::from_pubkey(&pk) {
+        TransparentAddress::PublicKeyHash(h) => Some(h),
+        _ => None,
+    }
+}
+
+/// Every check a transparent input must pass before it may be signed
+/// (docs/zcash/FORMATS.md, "Transparent inputs"), in that order. Returns the
+/// inputs as the review shows them.
+fn check_transparent(
+    pczt: &Pczt,
+    seed: &[u8; 64],
+    account: u32,
+    net: NetworkType,
+    key: &AccountPrivKey,
+) -> Result<Vec<TIn>, i32> {
+    let raw = pczt.transparent().inputs();
+    let fp = SeedFingerprint::from_seed(seed).ok_or(ZS_E_INTERNAL)?.to_bytes();
+    let coin = coin_type(net);
+    let mut err = 0;
+    let mut tins = Vec::new();
+    let r = Verifier::new(pczt.clone()).with_transparent::<(), _>(|b| {
+        let mut f = || -> Result<(), i32> {
+            for (inp, rin) in b.inputs().iter().zip(raw.iter()) {
+                if inp.sighash_type().encode() != SIGHASH_ALL {
+                    return Err(ZS_E_UNSUPPORTED_BUNDLE);
+                }
+                let hash = p2pkh_hash(rin.script_pubkey()).ok_or(ZS_E_UNSUPPORTED_BUNDLE)?;
+                if inp.redeem_script().is_some()
+                    || inp.script_sig().is_some()
+                    || !inp.partial_signatures().is_empty()
+                    || inp.required_time_lock_time().is_some()
+                    || inp.required_height_lock_time().is_some()
+                {
+                    return Err(ZS_E_UNSUPPORTED_BUNDLE);
+                }
+                let derivs = inp.bip32_derivation();
+                if derivs.is_empty() {
+                    return Err(ZS_E_MISSING_DATA);
+                }
+                if derivs.len() > 1 {
+                    return Err(ZS_E_UNSUPPORTED_BUNDLE);
+                }
+                let (pubkey, d) = derivs.iter().next().ok_or(ZS_E_INTERNAL)?;
+                if d.seed_fingerprint() != &fp {
+                    return Err(ZS_E_SPEND_NOT_OURS);
+                }
+                let (scope, index) = match d.derivation_path().iter().map(|c| c.0).collect::<Vec<u32>>()[..] {
+                    [p, c, a, s, i]
+                        if p == (44 | 0x8000_0000)
+                            && c == (coin | 0x8000_0000)
+                            && a == (account | 0x8000_0000)
+                            && s <= 2
+                            && i < 0x8000_0000 =>
+                    {
+                        (s, i)
+                    }
+                    _ => return Err(ZS_E_SPEND_NOT_OURS),
+                };
+                let sk = t_secret(key, scope, index).ok_or(ZS_E_SPEND_NOT_OURS)?;
+                if &sk.public_key().serialize() != pubkey {
+                    return Err(ZS_E_SPEND_NOT_OURS);
+                }
+                if hash160(pubkey).ok_or(ZS_E_SPEND_NOT_OURS)?[..] != *hash {
+                    return Err(ZS_E_SPEND_NOT_OURS);
+                }
+                let address = t_address(rin.script_pubkey(), net).ok_or(ZS_E_INTERNAL)?;
+                tins.push(TIn { value: *rin.value(), scope, index, address });
+            }
+            Ok(())
+        };
+        f().map_err(|e| {
+            err = e;
+            TransparentError::Custom(())
+        })
+    });
+    match r {
+        Ok(_) => Ok(tins),
+        Err(_) => Err(if err != 0 { err } else { ZS_E_PARSE }),
+    }
+}
+
 fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut ZsSummary)
     -> Result<FullViewingKey, i32>
 {
@@ -267,16 +416,13 @@ fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut
     let sk = orchard_sk(seed, net, account).ok_or(ZS_E_INTERNAL)?;
     let fvk = FullViewingKey::from(&sk);
 
-    // Not yet supported on the device: refuse rather than sign blind.
-    if !pczt.transparent().inputs().is_empty() {
-        return Err(ZS_E_UNSUPPORTED_BUNDLE);
-    }
+    // Not supported on the device: refuse rather than sign blind.
     if !pczt.sapling().spends().is_empty() || !pczt.sapling().outputs().is_empty() {
         return Err(ZS_E_UNSUPPORTED_BUNDLE);
     }
 
     let mut acc = Acc {
-        fvk: &fvk, net, outputs: Vec::new(),
+        fvk: &fvk, t_ovks: None, net, outputs: Vec::new(),
         n_spends: 0, n_dummies: 0, total_in: 0, warnings: 0,
     };
 
@@ -287,6 +433,22 @@ fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut
         t_out = t_out.checked_add(v).ok_or(ZS_E_VALUE_BALANCE)?;
         acc.warnings |= ZS_WARN_TRANSPARENT_OUT;
         acc.outputs.push((ZS_POOL_TRANSPARENT, ZS_KIND_EXTERNAL, v, addr, ZS_MEMO_NONE, Vec::new()));
+    }
+
+    // Transparent inputs: each must be a P2PKH coin of this account.
+    let mut tins = Vec::new();
+    let mut t_in: u64 = 0;
+    if !pczt.transparent().inputs().is_empty() {
+        let key = t_account_key(seed, net, account).ok_or(ZS_E_INTERNAL)?;
+        tins = check_transparent(pczt, seed, account, net, &key)?;
+        for t in &tins {
+            t_in = t_in.checked_add(t.value).ok_or(ZS_E_VALUE_BALANCE)?;
+        }
+        let ovks = key.to_account_pubkey().ovks_for_shielding();
+        acc.t_ovks = Some([
+            OutgoingViewingKey::from(ovks.external().as_bytes()),
+            OutgoingViewingKey::from(ovks.internal().as_bytes()),
+        ]);
     }
 
     let mut err: i32 = 0;
@@ -309,17 +471,27 @@ fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut
     let shielded_in = acc.total_in;
     let shielded_out: u64 = acc.outputs.iter().filter(|o| o.0 != ZS_POOL_TRANSPARENT).map(|o| o.2).sum();
     let fee = shielded_in
-        .checked_sub(shielded_out)
+        .checked_add(t_in)
+        .and_then(|x| x.checked_sub(shielded_out))
         .and_then(|x| x.checked_sub(t_out))
         .ok_or(ZS_E_VALUE_BALANCE)?;
 
-    if acc.outputs.len() > ZS_MAX_OUTPUTS {
+    if acc.outputs.len() > ZS_MAX_OUTPUTS || tins.len() > ZS_MAX_T_INPUTS {
         return Err(ZS_E_TOO_MANY);
     }
     let signer = Signer::new(pczt.clone()).map_err(|_| ZS_E_PARSE)?;
     if *g.tx_version() != V6_TX_VERSION {
         return Err(ZS_E_PARSE);
     }
+    for (slot, (i, t)) in out.tinputs.iter_mut().zip(tins.iter().enumerate()) {
+        slot.value = t.value;
+        slot.scope = t.scope;
+        slot.index = t.index;
+        slot.sighash = signer.transparent_sighash(i).map_err(|_| ZS_E_PARSE)?;
+        put_str(&mut slot.address, &t.address);
+    }
+    out.n_tinputs = tins.len() as u8;
+    out.t_in = t_in;
 
     out.branch_id = branch;
     out.tx_version = *g.tx_version();
@@ -473,7 +645,24 @@ pub unsafe extern "C" fn zs_pczt_sign(
         let b = match s.value_pool() { ValuePool::Orchard => ctx.pczt.orchard(), _ => ctx.pczt.ironwood() };
         b.actions()[s.action_index()].spend().spend_auth_sig().is_none()
     }).collect();
-    if ours.len() > max as usize {
+
+    // Transparent inputs, after the shielded spends: every one passed
+    // check_transparent, so each is ours at the path it names.
+    let mut t_sigs: Vec<(u32, [u8; 64], [u8; 33])> = Vec::new();
+    if !ctx.pczt.transparent().inputs().is_empty() {
+        let seed = &*(seed as *const [u8; 64]);
+        let Some(key) = t_account_key(seed, net, account) else { return ZS_E_INTERNAL };
+        let Ok(paths) = t_paths(&ctx.pczt) else { return ZS_E_SIGN };
+        let Ok(tsigner) = Signer::new(ctx.pczt.clone()) else { return ZS_E_PARSE };
+        for (i, (scope, index)) in paths.into_iter().enumerate() {
+            let Some(sk) = t_secret(&key, scope, index) else { return ZS_E_SIGN };
+            let Ok(sighash) = tsigner.transparent_sighash(i) else { return ZS_E_SIGN };
+            let sig = secp256k1::ecdsa::sign(secp256k1::Message::from_digest(sighash), &sk);
+            t_sigs.push((i as u32, sig.serialize_compact(), sk.public_key().serialize()));
+        }
+    }
+
+    if ours.len() + t_sigs.len() > max as usize {
         return ZS_E_TOO_MANY;
     }
     let out = core::slice::from_raw_parts_mut(sigs, max as usize);
@@ -482,9 +671,59 @@ pub unsafe extern "C" fn zs_pczt_sign(
         slot._pad = [0; 3];
         slot.index = s.action_index() as u32;
         slot.sig = *s.signature();
+        slot.pubkey = [0; 33];
+        slot._pad2 = [0; 3];
     }
-    *n_out = ours.len() as u32;
+    for (slot, (index, sig, pubkey)) in out[ours.len()..].iter_mut().zip(t_sigs.iter()) {
+        slot.pool = ZS_POOL_TRANSPARENT;
+        slot._pad = [0; 3];
+        slot.index = *index;
+        slot.sig = *sig;
+        slot.pubkey = *pubkey;
+        slot._pad2 = [0; 3];
+    }
+    *n_out = (ours.len() + t_sigs.len()) as u32;
     0
+}
+
+/// The (scope, index) every transparent input's derivation names, in input
+/// order. Only called after check_transparent accepted them all.
+fn t_paths(pczt: &Pczt) -> Result<Vec<(u32, u32)>, ()> {
+    let mut paths = Vec::new();
+    Verifier::new(pczt.clone())
+        .with_transparent::<(), _>(|b| {
+            for inp in b.inputs() {
+                let (_, d) = inp.bip32_derivation().iter().next().ok_or(TransparentError::Custom(()))?;
+                match d.derivation_path()[..] {
+                    [_, _, _, s, i] => paths.push((s.0, i.0)),
+                    _ => return Err(TransparentError::Custom(())),
+                }
+            }
+            Ok(())
+        })
+        .map_err(|_| ())?;
+    Ok(paths)
+}
+
+/// A transparent signature as a host applies it: the pubkey is the one the
+/// input's script pays to and its derivation names, the signature is low S
+/// and verifies over the input's ZIP 244 sighash.
+fn verify_transparent(pczt: &Pczt, signer: &Signer, sig: &ZsSig) -> bool {
+    let i = sig.index as usize;
+    let Some(rin) = pczt.transparent().inputs().get(i) else { return false };
+    let Some(hash) = p2pkh_hash(rin.script_pubkey()) else { return false };
+    if hash160(&sig.pubkey).map_or(true, |h| h[..] != *hash) {
+        return false;
+    }
+    let Ok(pk) = secp256k1::PublicKey::from_slice(&sig.pubkey) else { return false };
+    let Ok(s) = secp256k1::ecdsa::Signature::from_compact(&sig.sig) else { return false };
+    let mut low = s;
+    low.normalize_s();
+    if low != s {
+        return false;
+    }
+    let Ok(sighash) = signer.transparent_sighash(i) else { return false };
+    secp256k1::ecdsa::verify(&s, secp256k1::Message::from_digest(sighash), &pk).is_ok()
 }
 
 /// Check one signature the way a companion applies it: against the action's
@@ -499,6 +738,9 @@ pub unsafe extern "C" fn zs_pczt_verify_sig(ctx: *const ZsCtx, sig: *const ZsSig
     }
     let (ctx, sig) = (&*ctx, &*sig);
     let Ok(mut signer) = Signer::new(ctx.pczt.clone()) else { return ZS_E_PARSE };
+    if sig.pool == ZS_POOL_TRANSPARENT {
+        return if verify_transparent(&ctx.pczt, &signer, sig) { 0 } else { ZS_E_SIGN };
+    }
     let s: orchard::primitives::redpallas::Signature<orchard::primitives::redpallas::SpendAuth> =
         sig.sig.into();
     let r = match sig.pool {

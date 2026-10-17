@@ -305,6 +305,35 @@ int zcash_sign_sign(zs_sig *sigs, uint32_t max, uint32_t *n_out)
     return ZS_OK;
 }
 
+/* --------------------------------------------------------- encodings */
+
+/* One DER INTEGER from a 32-byte big-endian unsigned value: leading zeros
+ * dropped, a 0x00 added when the top bit is set. */
+static size_t der_int(const uint8_t v[32], uint8_t *out)
+{
+    int i = 0;
+    while (i < 31 && v[i] == 0) i++;
+    size_t n = (size_t)(32 - i), pad = (v[i] & 0x80) ? 1 : 0;
+    out[0] = 0x02;
+    out[1] = (uint8_t)(n + pad);
+    out[2] = 0x00;
+    memcpy(out + 2 + pad, v + i, n);
+    return 2 + pad + n;
+}
+
+size_t zcash_tsig_encode(const zs_sig *s, uint8_t out[ZCASH_TSIG_MAX])
+{
+    if (!s || s->pool != ZS_POOL_TRANSPARENT) return 0;
+    uint8_t body[70];
+    size_t n = der_int(s->sig, body);
+    n += der_int(s->sig + 32, body + n);
+    out[0] = 0x30;
+    out[1] = (uint8_t)n;
+    memcpy(out + 2, body, n);
+    out[2 + n] = 0x01;                  /* SIGHASH_ALL */
+    return n + 3;
+}
+
 /* ------------------------------------------------------------ strings */
 
 const char *zcash_sign_strerror(int code)
@@ -314,11 +343,11 @@ const char *zcash_sign_strerror(int code)
         case ZS_ERR_ARG:              return "bad argument";
         case ZS_E_PARSE:              return "not a PCZT this device can read";
         case ZS_E_UNSUPPORTED_BRANCH: return "unsupported network upgrade";
-        case ZS_E_SPEND_NOT_OURS:     return "spends a note this wallet does not own";
+        case ZS_E_SPEND_NOT_OURS:     return "spends funds this wallet does not own";
         case ZS_E_OUTPUT_COMMITMENT:  return "an output does not match its commitment";
         case ZS_E_USER_ADDRESS:       return "a shown address does not match its output";
         case ZS_E_VALUE_BALANCE:      return "values do not balance";
-        case ZS_E_UNSUPPORTED_BUNDLE: return "transparent or Sapling inputs are not supported";
+        case ZS_E_UNSUPPORTED_BUNDLE: return "Sapling, P2SH or a sighash type the device does not sign";
         case ZS_E_NETWORK:            return "wrong network";
         case ZS_E_TOO_MANY:           return "too many actions";
         case ZS_E_MISSING_DATA:       return "PCZT is missing data the device must check";

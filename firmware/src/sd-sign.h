@@ -51,7 +51,12 @@ void sdsign_cancel(void);
 /** Short reason for any code above, a ZSIGN_E_* or a ZS_E_*. */
 const char *sdsign_strerror(int code);
 
-/** Serialize a .zsig (FORMATS.md). Returns the length, 0 if `cap` is short. */
+/* The largest .zsig: every entry a transparent one (DER of 73 bytes with the
+ * sighash type, and the 33-byte pubkey). */
+#define SDSIGN_ZSIG_MAX (4 + 1 + 32 + 2 + ZS_MAX_SIGS * (1 + 4 + 1 + 73 + 33))
+
+/** Serialize a .zsig (FORMATS.md): version 1 if every signature is shielded,
+ * version 2 otherwise. Returns the length, 0 if `cap` is short. */
 size_t sdsign_zsig_encode(const uint8_t sha256[32], const zs_sig *sigs, uint32_t n,
                           uint8_t *out, size_t cap);
 

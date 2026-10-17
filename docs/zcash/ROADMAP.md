@@ -400,9 +400,11 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 
 ## Phase 10: Firmware follow-ups
 
-- **10.1 Transparent inputs (L):**
+- **10.1 Transparent inputs (L):** done on PC (zdev end to end); the board and a testnet shield remain.
   - Sign P2PKH spends (ZIP 244 transparent digests; secp256k1 ECDSA) in both backends, with review pages.
   - Needed to shield funds received on a t-address, and for some swap refunds.
+  - Done when: a testnet `zecz shield` signed on the board confirms, and the
+    Android app applies a version 2 `.zsig`.
 - **10.2 Measured timings on the board (S).** Roadmap 4.5: check and sign times per backend (C on the device; Rust only as a reference build).
 - **10.3 Mainnet (S).** A small mainnet send over each link before any release.
 - **10.4 Several accounts (S).** Account selection carried by every companion, not only account 0.

@@ -413,5 +413,293 @@
     "consensus_branch_id": null,
     "fee": null,
     "outputs": []
+  },
+  {
+    "name": "t_shield",
+    "description": "Two transparent coins of this account shielded to its Ironwood change address (v6, NU6.3)",
+    "file": "pczt/t_shield.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "642232b2233e9febe631bc5fda44e4546f15ce2a5b94591a65b690f2042a9ea4",
+    "consensus_branch_id": "37a5165b",
+    "fee": 20000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 980000,
+        "memo": ""
+      }
+    ],
+    "t_inputs": [
+      {
+        "address": "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd",
+        "value": 600000,
+        "scope": 0,
+        "index": 0,
+        "sighash": "231f599fe3b8008a4bb5bd28d8b25669a0eb8e16fa04decc944f6ac7335ca472"
+      },
+      {
+        "address": "tmBQuXbCk8Etq6tftGe2QrYzmMn2NmJhuLz",
+        "value": 400000,
+        "scope": 1,
+        "index": 3,
+        "sighash": "0b6110d69fff337b2c1b08994f167c83deb7b7fcc40eeaa576afdf33f5f2caeb"
+      }
+    ]
+  },
+  {
+    "name": "t_mixed",
+    "description": "Ironwood note plus a transparent coin to an external UA with memo, Ironwood change (v6, NU6.3)",
+    "file": "pczt/t_mixed.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "cdc290524f99489018f5296ea11b04daf9494a5338697a957ca65c1d949c35f8",
+    "consensus_branch_id": "37a5165b",
+    "fee": 15000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "external",
+        "address": "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3",
+        "value": 1200000,
+        "memo": "from t and Ironwood"
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 285000,
+        "memo": ""
+      }
+    ],
+    "t_inputs": [
+      {
+        "address": "tmRSjpqFr1j7P3WBXWFgsRuhQbHaiJBXXRW",
+        "value": 500000,
+        "scope": 0,
+        "index": 2,
+        "sighash": "a43c366ed47e0100eecd439611475854a2a45439704ca9f27252745b93706b5f"
+      }
+    ]
+  },
+  {
+    "name": "t_send_tovk",
+    "description": "Transparent (ephemeral-scope) coin to an external UA, memo under the transparent OVK (v6, NU6.3)",
+    "file": "pczt/t_send_tovk.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "b6c903eb8e8536e60e8eb4be5cd10dd98bce6078029197bc1441f39c62aa0484",
+    "consensus_branch_id": "37a5165b",
+    "fee": 15000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "external",
+        "address": "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3",
+        "value": 300000,
+        "memo": "refund via ephemeral"
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 485000,
+        "memo": ""
+      }
+    ],
+    "t_inputs": [
+      {
+        "address": "tmL2coPoReYiwv2iYPgXUuqukKL7uYMeKd1",
+        "value": 800000,
+        "scope": 2,
+        "index": 1,
+        "sighash": "c486ce8db203c0105777e614fe763f2259018a4a3b1e5e2f89e2a86b2ce0984d"
+      }
+    ]
+  },
+  {
+    "name": "t_shield_compact",
+    "description": "Vector t_shield in the compact signer view (v2)",
+    "file": "pczt/t_shield_compact.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "642232b2233e9febe631bc5fda44e4546f15ce2a5b94591a65b690f2042a9ea4",
+    "consensus_branch_id": "37a5165b",
+    "fee": 20000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 980000,
+        "memo": ""
+      }
+    ],
+    "t_inputs": [
+      {
+        "address": "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd",
+        "value": 600000,
+        "scope": 0,
+        "index": 0,
+        "sighash": "231f599fe3b8008a4bb5bd28d8b25669a0eb8e16fa04decc944f6ac7335ca472"
+      },
+      {
+        "address": "tmBQuXbCk8Etq6tftGe2QrYzmMn2NmJhuLz",
+        "value": 400000,
+        "scope": 1,
+        "index": 3,
+        "sighash": "0b6110d69fff337b2c1b08994f167c83deb7b7fcc40eeaa576afdf33f5f2caeb"
+      }
+    ]
+  },
+  {
+    "name": "t_mixed_compact",
+    "description": "Vector t_mixed in the compact signer view (v2)",
+    "file": "pczt/t_mixed_compact.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "cdc290524f99489018f5296ea11b04daf9494a5338697a957ca65c1d949c35f8",
+    "consensus_branch_id": "37a5165b",
+    "fee": 15000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "external",
+        "address": "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3",
+        "value": 1200000,
+        "memo": "from t and Ironwood"
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 285000,
+        "memo": ""
+      }
+    ],
+    "t_inputs": [
+      {
+        "address": "tmRSjpqFr1j7P3WBXWFgsRuhQbHaiJBXXRW",
+        "value": 500000,
+        "scope": 0,
+        "index": 2,
+        "sighash": "a43c366ed47e0100eecd439611475854a2a45439704ca9f27252745b93706b5f"
+      }
+    ]
+  },
+  {
+    "name": "r_t_input_not_ours",
+    "description": "Transparent input pays another seed's key; its derivation names ours",
+    "file": "pczt/r_t_input_not_ours.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "spend_not_ours",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_t_wrong_path",
+    "description": "Transparent input derivation path one address index off its key",
+    "file": "pczt/r_t_wrong_path.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "spend_not_ours",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_t_wrong_account",
+    "description": "Transparent input derivation path names account 1",
+    "file": "pczt/r_t_wrong_account.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "spend_not_ours",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_t_missing_derivation",
+    "description": "Transparent input without a BIP 32 derivation",
+    "file": "pczt/r_t_missing_derivation.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "missing_data",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_t_foreign_seed",
+    "description": "Valid shield PCZT, but the transparent coins belong to another seed",
+    "file": "pczt/r_t_foreign_seed.pczt",
+    "signer_mnemonic": "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "spend_not_ours",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_t_value_tampered",
+    "description": "Transparent input value lowered by 0.001: outputs exceed inputs",
+    "file": "pczt/r_t_value_tampered.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "value_balance",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_t_sighash_none",
+    "description": "Transparent input asks for SIGHASH_NONE",
+    "file": "pczt/r_t_sighash_none.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "unsupported_bundle",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
   }
 ]

@@ -29,16 +29,16 @@ fn vector(name: &str) -> (Value, Vec<u8>) {
     (e, bytes)
 }
 
+/// Builds zdev from the current firmware sources, once per test binary.
+/// Always through make (incremental): reusing an existing binary only when
+/// it is missing once ran these tests against a stale device.
 fn zdev_binary() -> Option<PathBuf> {
+    static BUILT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let sim = repo().join("firmware/sim");
-    let bin = sim.join("build/zdev");
-    if !bin.exists() {
-        let ok = Command::new("make").arg("-C").arg(&sim).arg("build/zdev").status().is_ok_and(|s| s.success());
-        if !ok {
-            return None;
-        }
-    }
-    Some(bin)
+    let ok = *BUILT.get_or_init(|| {
+        Command::new("make").arg("-C").arg(&sim).arg("build/zdev").status().is_ok_and(|s| s.success())
+    });
+    ok.then(|| sim.join("build/zdev"))
 }
 
 /// A running zdev, killed on drop.
@@ -112,6 +112,56 @@ fn device_signs_and_the_transaction_verifies() {
     pczt::roles::tx_extractor::TransactionExtractor::new(finalized)
         .extract(UnwrapErr(SysRng))
         .expect("extraction verifies proofs and the device's signatures");
+}
+
+/// Roadmap 10.1: the device signs transparent inputs (a shield, and a send
+/// that also spends an Ironwood note); the pczt Signer accepts each
+/// transparent signature against its input's sighash, and the transaction
+/// proves and extracts.
+#[test]
+fn device_signs_transparent_inputs_and_the_transaction_verifies() {
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
+    use zecz::zsig::Pool;
+
+    let z = zdev_or_skip!("transparent", true);
+    let mut dev = connect(&z);
+    for name in ["t_shield", "t_mixed_compact"] {
+        let (v, sent) = vector(name);
+        let (sighash, entries) = dev.z_sign(&sent, 0, "test", |_, _| {}).expect("device signs");
+        assert_eq!(hex::encode(sighash), v["sighash"].as_str().unwrap(), "{name}: device sighash");
+        let n_t = v["t_inputs"].as_array().unwrap().len();
+        assert_eq!(entries.iter().filter(|e| e.pool == Pool::Transparent).count(), n_t, "{name}");
+
+        // The full PCZT the compact view was made from takes the signatures.
+        let full_name = name.trim_end_matches("_compact");
+        let (_, full) = vector(full_name);
+        let zsig = Zsig::new(&sent, entries);
+        let bytes = zsig.to_bytes().unwrap();
+        assert_eq!(bytes[4], 2, "version 2 .zsig");
+        let signed = leek_android_like_apply(&full, &Zsig::parse_for(&bytes, &sent).unwrap());
+        let proven = prove(signed).unwrap();
+        let finalized = pczt::roles::spend_finalizer::SpendFinalizer::new(proven).finalize_spends().unwrap();
+        let tx = pczt::roles::tx_extractor::TransactionExtractor::new(finalized)
+            .extract(UnwrapErr(SysRng))
+            .expect("extraction verifies proofs and the device's transparent signatures");
+        assert_eq!(tx.transparent_bundle().unwrap().vin.len(), n_t, "{name}");
+    }
+}
+
+/// `zecz finish` applies to the full PCZT; the device saw `sent`, which is
+/// the same transaction (checked by the shielded sighash above).
+fn leek_android_like_apply(full: &[u8], zsig: &Zsig) -> Pczt {
+    apply_zsig(Pczt::parse(full).unwrap(), zsig).expect("the device's signatures verify")
+}
+
+#[test]
+fn device_refuses_a_foreign_transparent_input() {
+    let z = zdev_or_skip!("t-foreign", true);
+    let (_, bytes) = vector("r_t_input_not_ours");
+    let mut dev = connect(&z);
+    let err = dev.z_sign(&bytes, 0, "test", |_, _| {}).expect_err("must refuse");
+    // ZS_E_SPEND_NOT_OURS = -12.
+    assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 12), "{err}");
 }
 
 #[test]

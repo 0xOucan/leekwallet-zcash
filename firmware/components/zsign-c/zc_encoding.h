@@ -38,6 +38,12 @@ size_t zc_t_address(char *out, size_t cap, uint8_t net, const uint8_t *script, s
 /* 1 if the script's pushes all fit (zcash_script's parse). */
 int zc_script_parses(const uint8_t *s, size_t n);
 
+/* The same for the three script kinds a PCZT carries: PubKey (any valid
+ * opcode; outputs), FromChain (any byte as an opcode; a spent coin's script),
+ * Sig (pushes only; a script_sig). */
+enum { ZC_SCRIPT_PUBKEY = 0, ZC_SCRIPT_FROM_CHAIN = 1, ZC_SCRIPT_SIG = 2 };
+int zc_script_parses_as(const uint8_t *s, size_t n, int kind);
+
 #ifdef __cplusplus
 }
 #endif

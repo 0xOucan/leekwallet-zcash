@@ -270,20 +270,56 @@ static void global(rd *r, zc_global *g)
     proprietary(r);
 }
 
-static void t_input(rd *r, zc_pczt *z)
+/* BTreeMap<[u8; 33], Vec<u8>> partial_signatures: count and longest value. */
+static void partial_sigs(rd *r, zc_tin *t)
 {
-    arr(r, 32);                          /* prevout_txid */
-    vu32(r);                             /* prevout_index */
-    if (opt(r)) vu32(r);                 /* sequence */
-    if (opt(r)) { vu32(r); z->tin_lock_time_set = 1; } /* required_time_lock_time */
-    if (opt(r)) { vu32(r); z->tin_lock_time_set = 1; } /* required_height_lock_time */
-    opt_vec(r);                          /* script_sig */
-    vu64(r);                             /* value */
-    vec_u8(r);                           /* script_pubkey */
-    opt_vec(r);                          /* redeem_script */
-    fixed_key_map(r, 33, 0);             /* partial_signatures */
-    u8(r);                               /* sighash_type */
-    fixed_key_map(r, 33, 1);             /* bip32_derivation */
+    uint32_t n = count(r);
+    t->n_partial_sigs = n;
+    for (uint32_t i = 0; i < n && OK(r); i++) {
+        arr(r, 33);
+        zc_bytes v = vec_u8(r);
+        if (v.len > t->max_partial_sig_len) t->max_partial_sig_len = v.len;
+    }
+}
+
+/* BTreeMap<[u8; 33], Zip32Derivation> bip32_derivation: the first entry. */
+static void bip32_map(rd *r, zc_tin *t)
+{
+    uint32_t n = count(r);
+    t->n_bip32 = n;
+    for (uint32_t i = 0; i < n && OK(r); i++) {
+        const uint8_t *key = arr(r, 33);
+        const uint8_t *fp = arr(r, 32);
+        uint32_t len = count(r);
+        if (i == 0) {
+            t->bip32_key = key;
+            t->bip32_fp = fp;
+            t->bip32_path_len = len;
+        }
+        for (uint32_t j = 0; j < len && OK(r); j++) {
+            uint32_t idx = vu32(r);
+            if (i == 0 && j < 5) t->bip32_path[j] = idx;
+        }
+    }
+}
+
+static void t_input(rd *r, zc_pczt *z, zc_tin *t)
+{
+    memset(t, 0, sizeof *t);
+    t->prevout_txid = arr(r, 32);
+    t->prevout_index = vu32(r);
+    t->sequence = opt(r) ? vu32(r) : 0xFFFFFFFFu;
+    t->has_time_lock = (uint8_t)opt(r);
+    if (t->has_time_lock) { t->time_lock = vu32(r); z->tin_lock_time_set = 1; }
+    t->has_height_lock = (uint8_t)opt(r);
+    if (t->has_height_lock) { t->height_lock = vu32(r); z->tin_lock_time_set = 1; }
+    t->script_sig = opt_vec(r);
+    t->value = vu64(r);
+    t->script_pubkey = vec_u8(r);
+    t->redeem_script = opt_vec(r);
+    partial_sigs(r, t);
+    t->sighash_type = u8(r);
+    bip32_map(r, t);
     fixed_key_map(r, 20, 0);             /* ripemd160_preimages */
     fixed_key_map(r, 32, 0);             /* sha256_preimages */
     fixed_key_map(r, 20, 0);             /* hash160_preimages */
@@ -305,7 +341,15 @@ static void transparent(rd *r, zc_pczt *z)
 {
     uint32_t n = count(r);
     z->n_tin = n > 0xFFFF ? 0xFFFF : (uint16_t)n;
-    for (uint32_t i = 0; i < n && OK(r); i++) t_input(r, z);
+    for (uint32_t i = 0; i < n && OK(r); i++) {
+        static zc_tin scratch;
+        if (i < ZC_MAX_T_INPUTS) {
+            t_input(r, z, &z->tin[i]);
+        } else {
+            r->over_cap = 1;
+            t_input(r, z, &scratch);
+        }
+    }
     n = count(r);
     for (uint32_t i = 0; i < n && OK(r); i++) {
         static zc_tout scratch;

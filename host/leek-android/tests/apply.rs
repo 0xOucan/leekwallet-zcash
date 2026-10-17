@@ -120,3 +120,44 @@ fn signatures_over_a_changed_memo_are_refused() {
     let err = leek_android::apply_signatures_to(&full, &honest, &zsig).unwrap_err();
     assert!(err.contains("different PCZT"), "{err}");
 }
+
+/// Roadmap 10.1: transparent signatures in a version 2 .zsig apply to the
+/// full PCZT whether the device saw it or its compact view, and the
+/// transaction extracts with every input's signature verified.
+#[test]
+fn transparent_signatures_apply_and_the_transaction_verifies() {
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
+    for name in ["t_shield", "t_mixed"] {
+        let full = v(&format!("pczt/{name}.pczt"));
+        let compact = v(&format!("pczt/{name}_compact.pczt"));
+        assert_eq!(leek_android::compact_view(&full).unwrap(), compact, "{name}: the app's compact view");
+        for sent in [&full, &compact] {
+            let zsig = soft_sign(sent);
+            assert_eq!(zsig[4], 2, "version 2");
+            let signed = leek_android::apply_signatures_to(&full, sent, &zsig).expect("applies");
+            let proven = zecz::authorize::prove(Pczt::parse(&signed).unwrap()).unwrap();
+            let finalized = pczt::roles::spend_finalizer::SpendFinalizer::new(proven).finalize_spends().unwrap();
+            pczt::roles::tx_extractor::TransactionExtractor::new(finalized)
+                .extract(UnwrapErr(SysRng))
+                .expect("the extracted transaction's signatures verify");
+        }
+    }
+}
+
+#[test]
+fn a_bad_transparent_signature_is_refused_on_android() {
+    let full = v("pczt/t_shield.pczt");
+    let zsig = soft_sign(&full);
+    // The first entry is transparent: pool 0, index, length, DER, pubkey.
+    assert_eq!(zsig[39], 0);
+    let l = zsig[44] as usize;
+    let mut bad = zsig.clone();
+    bad[45 + l - 3] ^= 1;
+    assert!(apply_signatures(&full, &bad).is_err(), "corrupted signature applied");
+    let mut bad = zsig.clone();
+    bad[45 + l + 5] ^= 1;
+    assert!(apply_signatures(&full, &bad).is_err(), "another key applied");
+    let mut bad = zsig;
+    bad[4] = 1;
+    assert!(apply_signatures(&full, &bad).unwrap_err().contains("pool 0"), "a version 1 file with a transparent entry");
+}

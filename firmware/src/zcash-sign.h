@@ -82,6 +82,16 @@ int zcash_sign_check(const zs_summary **out);
  */
 int zcash_sign_sign(zs_sig *sigs, uint32_t max, uint32_t *n_out);
 
+/* A transparent signature as it leaves the device: DER, then the sighash
+ * type byte (always SIGHASH_ALL). 9..73 bytes. */
+#define ZCASH_TSIG_MAX 73
+
+/**
+ * Encode a pool 0 signature's r || s as DER || 0x01 (FORMATS.md). Returns
+ * the length, 0 if `s` is not a transparent signature.
+ */
+size_t zcash_tsig_encode(const zs_sig *s, uint8_t out[ZCASH_TSIG_MAX]);
+
 /** Drop the upload and anything derived from it. */
 void zcash_sign_reset(void);
 
