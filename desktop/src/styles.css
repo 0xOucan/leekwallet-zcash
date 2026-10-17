@@ -198,6 +198,14 @@ h3 { font-size: var(--text-sm); font-weight: 500; margin: var(--space-4) 0 var(-
 /* Six digits compared with the device's screen: large, spaced, mono. */
 .passkey { font-size: var(--text-xl); letter-spacing: 0.2em; }
 
+/* ----------------------------------------------------------------- receive */
+
+/* The QR code beside the address on a wide window, above it on a narrow
+ * one. Always black on white (its own SVG), with the quiet zone. */
+.receive { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-start; margin-bottom: var(--space-3); }
+.receive .addr { flex: 1 1 16rem; margin-bottom: 0; }
+.qr { width: 192px; height: 192px; flex: none; border-radius: var(--radius); background: #fff; image-rendering: pixelated; }
+
 /* Lists without a total row. */
 .kv--plain dt:nth-last-of-type(-n+2), .kv--plain dd:nth-last-of-type(-n+2),
 .kv--single dt, .kv--single dd { border-top: none; padding-top: 0; }

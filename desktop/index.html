@@ -119,15 +119,34 @@
 
         <section class="panel" id="receive-panel" hidden aria-labelledby="receive-h">
           <h2 id="receive-h">Receive</h2>
-          <p>Unified address (Orchard and transparent receivers).</p>
-          <div class="addr" id="ua"></div>
+          <p id="ua-label">Unified address (Orchard and transparent receivers).</p>
+          <div class="receive">
+            <img id="ua-qr" class="qr" alt="QR code of the unified address" width="192" height="192" hidden />
+            <div class="addr" id="ua"></div>
+          </div>
           <div class="row receive-actions">
             <button id="copy-ua" type="button">Copy</button>
+            <button id="new-addr-btn" type="button"
+                    title="Show another address of this wallet, so payers cannot link their payments">New address</button>
             <button id="verify-btn" type="button" hidden
                     title="The device checks that this address is its own and shows it for you to compare">Verify on device</button>
           </div>
           <p id="verify-status" class="muted" role="status"></p>
           <p class="formerr" id="verify-err" role="alert"></p>
+
+          <div id="taddr-box" hidden>
+            <h3>Transparent address</h3>
+            <div class="notice notice--danger" role="note">
+              <strong>PUBLIC.</strong> Everything sent to this address, its
+              amount and this address itself are visible to anyone on the
+              blockchain, forever. Use it only for a payer that cannot pay a
+              unified address (some exchanges), then shield the funds.
+            </div>
+            <div class="addr" id="taddr"></div>
+            <div class="row">
+              <button id="copy-taddr" type="button">Copy</button>
+            </div>
+          </div>
         </section>
 
         <section class="panel" id="send-panel" hidden aria-labelledby="send-h">

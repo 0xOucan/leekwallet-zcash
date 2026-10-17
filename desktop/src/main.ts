@@ -101,6 +101,13 @@ interface Addresses {
   orchardOnly: string;
 }
 
+interface NewAddress {
+  unified: string;
+  /** Decimal string: it can exceed 2^53. */
+  diversifierIndex: string;
+  transparent: string | null;
+}
+
 interface Imported {
   alreadyImported: boolean;
   birthday: number;
@@ -253,11 +260,48 @@ function showScanned(scanned: number, tip: number, birthday: number): void {
     scanned >= tip ? `Up to date at block ${tip}.` : `Scanned to block ${scanned} of ${tip}.`;
 }
 
+/**
+ * The address the receive card shows: the default one at start, or the one
+ * "New address" rotated to, for the rest of the session.
+ */
+let rotated: NewAddress | null = null;
+
 async function renderAddresses(): Promise<void> {
   const a = await invoke<Addresses>("addresses");
+  showUa(rotated ? rotated.unified : a.unified, rotated);
+  $("taddr-box").hidden = a.transparent === null;
+  if (a.transparent !== null) {
+    $("taddr").textContent = chunk(a.transparent);
+    $("taddr").dataset["raw"] = a.transparent;
+  }
+}
+
+function showUa(unified: string, fresh: NewAddress | null): void {
   const ua = $("ua");
-  ua.textContent = chunk(a.unified);
-  ua.dataset["raw"] = a.unified;
+  ua.textContent = chunk(unified);
+  ua.dataset["raw"] = unified;
+  $("ua-label").textContent =
+    fresh === null
+      ? "Unified address (Orchard and transparent receivers)."
+      : fresh.transparent === null
+        ? "A new unified address (Orchard only: the transparent receivers in reserve are all handed out until one is paid)."
+        : "A new unified address (Orchard and transparent receivers). Earlier addresses keep working.";
+  $("verify-status").textContent = "";
+  $("verify-err").textContent = "";
+  void drawQr(unified);
+}
+
+async function drawQr(text: string): Promise<void> {
+  const img = $<HTMLImageElement>("ua-qr");
+  try {
+    const svg = await invoke<string>("qr_svg", { text });
+    // The address on screen may have changed while the QR was drawn.
+    if (($("ua").dataset["raw"] ?? "") !== text) return;
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    img.hidden = false;
+  } catch {
+    img.hidden = true;
+  }
 }
 
 async function renderBalances(): Promise<void> {
@@ -356,18 +400,36 @@ void tauri?.event?.listen?.<SyncProgress>("sync://progress", ({ payload: p }) =>
   }
 });
 
-$("copy-ua").addEventListener("click", async () => {
-  const raw = $("ua").dataset["raw"] ?? "";
+/** Copies the raw text of `source` (its data-raw) and says so on `btn`. */
+async function copyFrom(btn: HTMLElement, source: HTMLElement): Promise<void> {
+  const raw = source.dataset["raw"] ?? source.textContent ?? "";
   try {
     await navigator.clipboard.writeText(raw);
-    $("copy-ua").textContent = "Copied";
-    setTimeout(() => ($("copy-ua").textContent = "Copy"), 1500);
+    btn.textContent = "Copied";
+    setTimeout(() => (btn.textContent = "Copy"), 1500);
   } catch {
     // Clipboard denied: select the text so it can be copied by hand.
     const r = document.createRange();
-    r.selectNodeContents($("ua"));
+    r.selectNodeContents(source);
     getSelection()?.removeAllRanges();
     getSelection()?.addRange(r);
+  }
+}
+
+$("copy-ua").addEventListener("click", () => void copyFrom($("copy-ua"), $("ua")));
+$("copy-taddr").addEventListener("click", () => void copyFrom($("copy-taddr"), $("taddr")));
+
+$("new-addr-btn").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("new-addr-btn");
+  btn.disabled = true;
+  $("verify-err").textContent = "";
+  try {
+    rotated = await invoke<NewAddress>("next_address");
+    showUa(rotated.unified, rotated);
+  } catch (e) {
+    $("verify-err").textContent = errText(e);
+  } finally {
+    btn.disabled = false;
   }
 });
 

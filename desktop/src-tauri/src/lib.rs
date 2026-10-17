@@ -142,6 +142,24 @@ async fn addresses(state: State<'_, AppState>) -> Result<backend::AddressesDto, 
     off_thread(move || backend::addresses(&p)).await
 }
 
+/// Rotates the receive address to a fresh diversified one.
+#[tauri::command]
+async fn next_address(state: State<'_, AppState>) -> Result<backend::NewAddressDto, String> {
+    let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
+    let p = state.profile.clone();
+    off_thread(move || {
+        let _guard = guard;
+        backend::next_address(&p)
+    })
+    .await
+}
+
+/// A QR code of `text` (an address), as SVG.
+#[tauri::command]
+fn qr_svg(text: String) -> Result<String, String> {
+    backend::qr_svg(&text).map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 async fn tip(state: State<'_, AppState>) -> Result<backend::TipDto, String> {
     let server = state.profile.server.clone();
@@ -359,6 +377,8 @@ pub fn run() {
             sync,
             balances,
             addresses,
+            next_address,
+            qr_svg,
             tip,
             list_ports,
             ble_scan,

@@ -243,3 +243,39 @@ pub fn tip(server: &str) -> Result<TipDto> {
     let t = block_on(wallet::tip(server))??;
     Ok(TipDto { server: t.server, chain_name: t.chain_name, height: t.height, vendor: t.vendor, version: t.version })
 }
+
+// ----------------------------------------------------------------- receive
+
+/// A fresh diversified address from [`next_address`].
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewAddressDto {
+    pub unified: String,
+    /// Decimal: a diversifier index can exceed what a JSON number holds.
+    pub diversifier_index: String,
+    /// Its transparent receiver; None for an Orchard-only address.
+    pub transparent: Option<String>,
+}
+
+/// Rotates to a new diversified address of the account. The wallet
+/// records it, so what is paid to it is found when syncing.
+pub fn next_address(profile: &Profile) -> Result<NewAddressDto> {
+    let a = Wallet::open(profile.clone())?.next_address()?;
+    Ok(NewAddressDto { unified: a.unified, diversifier_index: a.diversifier_index.to_string(), transparent: a.transparent })
+}
+
+/// `text` as a QR code in SVG, black on white with its quiet zone in any
+/// theme (scanners expect dark on light). Error correction M: an address
+/// is long, and a screen is clean.
+pub fn qr_svg(text: &str) -> Result<String> {
+    use qrcode::render::svg;
+    use qrcode::{EcLevel, QrCode};
+    let code = QrCode::with_error_correction_level(text.as_bytes(), EcLevel::M).context("too long for a QR code")?;
+    Ok(code
+        .render::<svg::Color>()
+        .min_dimensions(256, 256)
+        .dark_color(svg::Color("#000000"))
+        .light_color(svg::Color("#ffffff"))
+        .quiet_zone(true)
+        .build())
+}
