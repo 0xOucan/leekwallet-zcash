@@ -180,10 +180,17 @@
         <section class="panel" id="send-panel" hidden aria-labelledby="send-h">
           <h2 id="send-h">Send</h2>
           <form id="send-form" novalidate>
+            <label class="field" id="send-contact-field" hidden>
+              <span>Contact</span>
+              <select id="send-contact">
+                <option value="">Type an address below, or pick a contact</option>
+              </select>
+            </label>
             <label class="field">
               <span>To (unified, Orchard or transparent address)</span>
               <textarea id="send-to" rows="2" spellcheck="false" autocomplete="off"></textarea>
             </label>
+            <p class="muted" id="send-to-name"></p>
             <label class="field">
               <span id="send-amount-label">Amount (ZEC)</span>
               <input id="send-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.001" />
@@ -233,6 +240,26 @@
           <p class="formerr" id="history-err" role="alert"></p>
         </section>
 
+        <section class="panel" id="contacts-panel" hidden aria-labelledby="contacts-h">
+          <h2 id="contacts-h">Contacts</h2>
+          <p>Names for addresses you pay, kept on this computer only.</p>
+          <ul class="contacts" id="contacts"></ul>
+          <form id="contact-form" novalidate>
+            <label class="field">
+              <span>Name</span>
+              <input id="contact-name" type="text" maxlength="64" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Address (unified, Orchard or transparent)</span>
+              <textarea id="contact-address" rows="2" spellcheck="false" autocomplete="off"></textarea>
+            </label>
+            <div class="row">
+              <button class="primary" id="contact-save" type="submit">Add contact</button>
+              <button id="contact-cancel" type="button" hidden>Cancel</button>
+            </div>
+            <p class="formerr" id="contact-err" role="alert"></p>
+          </form>
+        </section>
       </main>
     </div>
     <script type="module" src="/src/main.ts"></script>

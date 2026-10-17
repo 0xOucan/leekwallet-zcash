@@ -235,6 +235,30 @@ h3 { font-size: var(--text-sm); font-weight: 500; margin: var(--space-4) 0 var(-
 .tx__id code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
 .tx__id button { height: 28px; padding: 0 var(--space-3); font-size: var(--text-xs); flex: none; }
 
+/* ---------------------------------------------------------------- contacts */
+
+.field select {
+  width: 100%; height: 36px;
+  padding: 0 var(--space-2);
+  font: inherit; font-size: var(--text-sm);
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--control-border); border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.contacts { list-style: none; margin: 0; padding: 0; }
+.contacts > li {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
+  border-top: 1px solid var(--border);
+  padding: var(--space-3) 0;
+  font-size: var(--text-sm);
+}
+.contacts > li:first-child { border-top: none; padding-top: 0; }
+.contacts button { height: 28px; padding: 0 var(--space-3); font-size: var(--text-xs); flex: none; }
+.contact__name { font-weight: 500; }
+.contact__addr { flex: 1 1 100%; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; order: 3; }
+#contacts:not(:empty) { margin-bottom: var(--space-4); }
+
 /* Lists without a total row. */
 .kv--plain dt:nth-last-of-type(-n+2), .kv--plain dd:nth-last-of-type(-n+2),
 .kv--single dt, .kv--single dd { border-top: none; padding-top: 0; }

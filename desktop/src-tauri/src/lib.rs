@@ -10,6 +10,7 @@
 //! lightwalletd or a person reading the device's screen.
 
 pub mod backend;
+pub mod contacts;
 pub mod hardware;
 pub mod link;
 
@@ -35,6 +36,8 @@ const DEVICE_BUSY: &str = "the LeekWallet is busy with another request; finish t
 /// The app's one profile, fixed at startup, and the device session.
 pub struct AppState {
     profile: Profile,
+    /// The address book file, `<app data dir>/contacts-<test|main>.json`.
+    contacts: PathBuf,
     /// A sync, import or send is running; another is refused meanwhile.
     busy: Arc<AtomicBool>,
     /// A device call is running. The device answers one request at a time
@@ -140,6 +143,34 @@ async fn balances(state: State<'_, AppState>) -> Result<Option<backend::Balances
 async fn addresses(state: State<'_, AppState>) -> Result<backend::AddressesDto, String> {
     let p = state.profile.clone();
     off_thread(move || backend::addresses(&p)).await
+}
+
+// ---------------------------------------------------------------- contacts
+
+/// The address book for this network, sorted by name.
+#[tauri::command]
+async fn contacts_list(state: State<'_, AppState>) -> Result<Vec<contacts::Contact>, String> {
+    let path = state.contacts.clone();
+    off_thread(move || contacts::list(&path)).await
+}
+
+/// Adds a contact, or changes the one called `replacing`. Returns the book.
+#[tauri::command]
+async fn contact_save(
+    state: State<'_, AppState>,
+    name: String,
+    address: String,
+    replacing: Option<String>,
+) -> Result<Vec<contacts::Contact>, String> {
+    let (path, network) = (state.contacts.clone(), state.profile.network);
+    off_thread(move || contacts::save(&path, network, &name, &address, replacing.as_deref())).await
+}
+
+/// Removes the contact called `name`. Returns the book.
+#[tauri::command]
+async fn contact_remove(state: State<'_, AppState>, name: String) -> Result<Vec<contacts::Contact>, String> {
+    let path = state.contacts.clone();
+    off_thread(move || contacts::remove(&path, &name)).await
 }
 
 /// The account's transactions, newest first.
@@ -385,8 +416,10 @@ pub fn run() {
             let network = network_from_env();
             let server = std::env::var("LEEKZ_SERVER").ok().filter(|s| !s.is_empty());
             let profile = Profile::new(network, data_dir(app.handle(), network)?, server);
+            let contacts_file = contacts::path_in(&app.path().app_data_dir()?, network);
             app.manage(AppState {
                 profile,
+                contacts: contacts_file,
                 busy: Arc::new(AtomicBool::new(false)),
                 device_busy: Arc::new(AtomicBool::new(false)),
                 device: Arc::new(Mutex::new(None)),
@@ -413,7 +446,10 @@ pub fn run() {
             verify_address,
             propose_send,
             propose_shield,
-            sign_and_send
+            sign_and_send,
+            contacts_list,
+            contact_save,
+            contact_remove
         ])
         .run(tauri::generate_context!())
         .expect("error while running LeekWallet Zcash");

@@ -119,6 +119,11 @@ interface Tx {
   recipients: { address: string; valueZat: number }[];
 }
 
+interface Contact {
+  name: string;
+  address: string;
+}
+
 interface NewAddress {
   unified: string;
   /** Decimal string: it can exceed 2^53. */
@@ -222,6 +227,7 @@ async function refresh(): Promise<void> {
   $("receive-panel").hidden = !s.hasAccount;
   $("send-panel").hidden = !(s.hasAccount && s.hardware);
   $("history-panel").hidden = !s.hasAccount;
+  $("contacts-panel").hidden = !s.hasAccount;
   $("verify-btn").hidden = !s.hardware;
   renderDevice();
   if (!s.hasAccount) {
@@ -235,7 +241,7 @@ async function refresh(): Promise<void> {
     $("sync-status").textContent = `Not synced yet. Scanning starts at the birthday, block ${s.birthday ?? "?"}.`;
   }
   setConn("connected", s.hardware ? `LeekWallet account · ZFP ${s.zfp ?? "?"}` : "Watch-only account");
-  await Promise.all([renderAddresses(), renderBalances(), renderHistory()]);
+  await Promise.all([renderAddresses(), renderBalances(), loadContacts(), renderHistory()]);
 }
 
 /** The device panel: the link chooser, or the connected device. */
@@ -787,6 +793,7 @@ $("sign-btn").addEventListener("click", async () => {
   txid.textContent = sent.txid;
   txid.dataset["raw"] = sent.txid;
   $<HTMLFormElement>("send-form").reset();
+  showRecipientName();
   showSendStage("sent");
   await afterTransaction();
 });
@@ -931,6 +938,7 @@ async function renderHistory(): Promise<void> {
     return;
   }
   $("history-empty").hidden = txs.length > 0;
+  const names = new Map(contactList.map((c) => [c.address, c.name]));
   list.replaceChildren(
     ...txs.map((t) => {
       const li = document.createElement("li");
@@ -943,7 +951,8 @@ async function renderHistory(): Promise<void> {
       li.append(head);
       if (t.feeZat !== null && !incoming) li.append(el("div", "tx__fee", `Fee ${formatZec(t.feeZat, ticker)}`));
       for (const r of t.recipients) {
-        li.append(el("div", "tx__to", `To ${chunk(r.address)}`));
+        const who = names.get(r.address);
+        li.append(el("div", "tx__to", `To ${who ? `${who} · ` : ""}${chunk(r.address)}`));
       }
       for (const m of t.memos) li.append(el("p", "tx__memo", m));
       const id = el("div", "tx__id");
@@ -961,6 +970,152 @@ async function renderHistory(): Promise<void> {
 }
 
 $("history-refresh").addEventListener("click", () => void renderHistory());
+
+// ----------------------------------------------------------------- contacts
+
+let contactList: Contact[] = [];
+/** The contact being edited, by its name; null when adding. */
+let editing: string | null = null;
+
+async function loadContacts(): Promise<void> {
+  try {
+    contactList = await invoke<Contact[]>("contacts_list");
+    $("contact-err").textContent = "";
+  } catch (e) {
+    contactList = [];
+    $("contact-err").textContent = errText(e);
+  }
+  renderContacts();
+}
+
+function renderContacts(): void {
+  const list = $("contacts");
+  list.replaceChildren(
+    ...contactList.map((c) => {
+      const li = document.createElement("li");
+      const pay = el("button", "", "Pay");
+      pay.type = "button";
+      pay.hidden = $("send-panel").hidden;
+      pay.addEventListener("click", () => pickContact(c));
+      const edit = el("button", "", "Edit");
+      edit.type = "button";
+      edit.addEventListener("click", () => startEdit(c));
+      // Two presses, so a slip does not lose a contact: the webview has no
+      // confirm dialog on every platform.
+      const del = el("button", "", "Delete");
+      del.type = "button";
+      let armed = 0;
+      del.addEventListener("click", () => {
+        if (armed) {
+          clearTimeout(armed);
+          void removeContact(c);
+          return;
+        }
+        del.textContent = "Really delete?";
+        armed = window.setTimeout(() => {
+          armed = 0;
+          del.textContent = "Delete";
+        }, 3000);
+      });
+      li.append(el("span", "contact__name", c.name), el("span", "statusbar__spacer"), pay, edit, del, el("span", "contact__addr", chunk(c.address)));
+      return li;
+    }),
+  );
+  // The send form's picker.
+  const sel = $<HTMLSelectElement>("send-contact");
+  const keep = sel.value;
+  sel.replaceChildren(sel.options[0] ?? new Option("Type an address below, or pick a contact", ""));
+  for (const c of contactList) sel.append(new Option(c.name, c.address));
+  sel.value = contactList.some((c) => c.address === keep) ? keep : "";
+  $("send-contact-field").hidden = contactList.length === 0;
+  showRecipientName();
+}
+
+/** Fills the send form with a contact's address. */
+function pickContact(c: Contact): void {
+  showSendStage("form");
+  $<HTMLTextAreaElement>("send-to").value = c.address;
+  $<HTMLSelectElement>("send-contact").value = c.address;
+  showRecipientName();
+  $("send-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  $<HTMLInputElement>("send-amount").focus();
+}
+
+/** Names the recipient when the address typed is a contact's. */
+function showRecipientName(): void {
+  const to = $<HTMLTextAreaElement>("send-to").value.trim();
+  const c = contactList.find((x) => x.address === to);
+  $("send-to-name").textContent = c ? `Contact: ${c.name}` : "";
+  $<HTMLSelectElement>("send-contact").value = c ? c.address : "";
+}
+
+$("send-contact").addEventListener("change", () => {
+  const addr = $<HTMLSelectElement>("send-contact").value;
+  if (addr !== "") $<HTMLTextAreaElement>("send-to").value = addr;
+  showRecipientName();
+});
+$("send-to").addEventListener("input", showRecipientName);
+
+function startEdit(c: Contact): void {
+  editing = c.name;
+  $<HTMLInputElement>("contact-name").value = c.name;
+  $<HTMLTextAreaElement>("contact-address").value = c.address;
+  $("contact-save").textContent = "Save contact";
+  $("contact-cancel").hidden = false;
+  $("contact-err").textContent = "";
+  $<HTMLInputElement>("contact-name").focus();
+}
+
+function stopEdit(): void {
+  editing = null;
+  $<HTMLFormElement>("contact-form").reset();
+  $("contact-save").textContent = "Add contact";
+  $("contact-cancel").hidden = true;
+  $("contact-name").setAttribute("aria-invalid", "false");
+  $("contact-address").setAttribute("aria-invalid", "false");
+}
+
+$("contact-cancel").addEventListener("click", () => {
+  stopEdit();
+  $("contact-err").textContent = "";
+});
+
+$<HTMLFormElement>("contact-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const name = $<HTMLInputElement>("contact-name").value.trim();
+  const address = $<HTMLTextAreaElement>("contact-address").value.trim();
+  const err = $("contact-err");
+  $("contact-name").setAttribute("aria-invalid", String(name === ""));
+  $("contact-address").setAttribute("aria-invalid", String(address === ""));
+  if (name === "" || address === "") {
+    err.textContent = "Enter a name and an address.";
+    return;
+  }
+  const btn = $<HTMLButtonElement>("contact-save");
+  btn.disabled = true;
+  try {
+    contactList = await invoke<Contact[]>("contact_save", { name, address, replacing: editing });
+    err.textContent = "";
+    stopEdit();
+    renderContacts();
+    void renderHistory();
+  } catch (e) {
+    err.textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function removeContact(c: Contact): Promise<void> {
+  try {
+    contactList = await invoke<Contact[]>("contact_remove", { name: c.name });
+    if (editing === c.name) stopEdit();
+    renderContacts();
+    void renderHistory();
+  } catch (e) {
+    $("contact-err").textContent = errText(e);
+  }
+}
 
 // -------------------------------------------------------------------- theme
 

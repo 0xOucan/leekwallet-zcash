@@ -2,7 +2,7 @@
 //! a watch-only import of the public test account (abandon x23 art,
 //! vectors/keys.json), a sync with progress events, and the wallet
 //! screens: history (a real transaction stored in an offline wallet),
-//! receive addresses and their QR code, shield refusals.
+//! receive addresses and their QR code, shield refusals, contacts.
 //!
 //! The testnet test is #[ignore]d; run it with
 //! `cargo test --test backend -- --ignored`.
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use leekwallet_zcash_lib::backend::{self, SyncProgress};
-use leekwallet_zcash_lib::hardware;
+use leekwallet_zcash_lib::{contacts, hardware};
 use serde_json::Value;
 use zecz::wallet::{AccountBirthday, AccountSpec};
 use zecz::{Network, Profile, Wallet};
@@ -171,6 +171,59 @@ fn shield_refusals() {
     let e = format!("{:#}", hardware::propose_shield(&dev).unwrap_err());
     assert!(e.contains("not synced"), "{e}");
     assert!(!dev.pending_dir().exists());
+}
+
+#[test]
+fn contacts_are_stored_as_json() {
+    let d = TempDir::new("contacts");
+    let path = contacts::path_in(&d.0.join("app"), TEST);
+    assert!(path.ends_with("app/contacts-test.json"));
+    assert!(contacts::list(&path).unwrap().is_empty());
+
+    let zoo = key_vector("test/zoo-vote/pp0/acct0");
+    let abandon = key_vector("test/abandon-art/pp0/acct1");
+    let zoo_ua = zoo["ua"].as_str().unwrap();
+    let t = abandon["transparent_address"].as_str().unwrap();
+
+    contacts::save(&path, TEST, "  zoo  ", zoo_ua, None).unwrap();
+    let book = contacts::save(&path, TEST, "Alice", t, None).unwrap();
+    // Sorted by name, ignoring case; names trimmed.
+    let names: Vec<&str> = book.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["Alice", "zoo"]);
+    assert_eq!(contacts::list(&path).unwrap(), book);
+
+    // The file: versioned JSON, readable by hand.
+    let json: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(json["version"], 1);
+    assert_eq!(json["contacts"][0]["name"], "Alice");
+    assert_eq!(json["contacts"][0]["address"], t);
+
+    // Refusals: names are unique ignoring case; addresses must be payable
+    // on this network; empty and overlong names.
+    let e = format!("{:#}", contacts::save(&path, TEST, "ALICE", zoo_ua, None).unwrap_err());
+    assert!(e.contains("already a contact"), "{e}");
+    let main_ua = key_vector("main/abandon-art/pp0/acct0")["ua"].as_str().unwrap().to_string();
+    let e = format!("{:#}", contacts::save(&path, TEST, "Bob", &main_ua, None).unwrap_err());
+    assert!(e.contains("not a valid test address"), "{e}");
+    assert!(contacts::save(&path, TEST, "  ", zoo_ua, None).is_err());
+    assert!(contacts::save(&path, TEST, &"n".repeat(contacts::MAX_NAME + 1), zoo_ua, None).is_err());
+    assert_eq!(contacts::list(&path).unwrap().len(), 2);
+
+    // Rename (and readdress) one; then remove one.
+    let book = contacts::save(&path, TEST, "Zoo Vote", zoo["ua_orchard_only"].as_str().unwrap(), Some("zoo")).unwrap();
+    assert_eq!(book.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Alice", "Zoo Vote"]);
+    assert_eq!(book[1].address, zoo["ua_orchard_only"].as_str().unwrap());
+    assert!(contacts::save(&path, TEST, "X", zoo_ua, Some("nobody")).is_err());
+    let book = contacts::remove(&path, "Alice").unwrap();
+    assert_eq!(book.len(), 1);
+    assert!(contacts::remove(&path, "Alice").is_err());
+    assert_eq!(contacts::list(&path).unwrap(), book);
+    // No temporary file left behind.
+    assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+
+    // A file this app cannot read is an error, not an empty book.
+    std::fs::write(&path, b"{not json").unwrap();
+    assert!(contacts::list(&path).is_err());
 }
 
 #[test]
