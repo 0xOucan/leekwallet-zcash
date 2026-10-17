@@ -333,6 +333,15 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 - Pair and import over USB and Bluetooth, sign over both.
 - Address verification on the device.
 - `.zkv` card creation as in `zecz zkv-new`.
+- Done on PC (`desktop/src-tauri/src/hardware.rs`, `link.rs`): connect over
+  USB serial or Bluetooth LE (leek-transport-ble adapted to leek-device's
+  `FramePort`), pair with the passkey shown in the app, import with the
+  birthday from the device or the user (recorded on the device), "Verify on
+  device" on the receive card, and send: review (payments, change, fee),
+  compact PCZT signed on the device, then prove and broadcast. Tested
+  against `zdev` (pair, import, verify, sign; the signatures prove and
+  extract). Left: the board over USB and Bluetooth, a broadcast send from
+  the app, and `.zkv` card creation (moved to 8.4).
 
 **8.4 Wallet screens (M).** Balance (Orchard, Ironwood, transparent), receive (UA, QR, "verify on device"), send with memo, history, contacts.
 

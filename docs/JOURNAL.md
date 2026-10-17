@@ -532,3 +532,42 @@ checked on Xtensa).
   the transparent key at that index) and only then shows it. Foreign,
   mixed, Sapling-bearing and malformed addresses are refused before the
   screen. Vectors from librustzcash at indices 1, 7, 2^31+5 and 88 bits.
+
+### 8.3 Desktop hardware accounts (2026-10-16)
+- The desktop app imports and spends a LeekWallet account, over USB or
+  Bluetooth. Done on PC against `zdev`; the board is next.
+- Backend (`desktop/src-tauri`):
+  - `src/link.rs`: USB through leek-transport-serial (ports listed with
+    the board's VID 303a first). Bluetooth through leek-transport-ble:
+    leek-device could not use it directly (btleplug is async, `FramePort`
+    is blocking), so `BlePort` runs it on a one-worker runtime, keeps the
+    23-byte MTU floor, and disconnects explicitly on drop (the stale
+    BlueZ subscription fix in LeekWallet's transport).
+  - `src/hardware.rs`: the flows of `zecz device-init`,
+    `device-show-address`, `send --compact`, `sign-device` and `finish`.
+    The birthday comes from the user, else from the device; one the
+    device lacked is recorded there. Before verifying or signing, the app
+    checks that the paired device holds the wallet's seed (new
+    `Wallet::key_origin` in zecz-core), so another board is refused with
+    both ZFPs before anything is uploaded. Device error codes read as
+    sentences (rejected, timed out, locked, session ended, refused to
+    sign with its reason), with the device's message after them.
+  - Commands `list_ports`, `ble_scan`, `device_pair` (passkey on
+    `device://passkey`), `device_session`, `device_disconnect`,
+    `device_import`, `verify_address`, `propose_send` (compact view) and
+    `sign_and_send` (steps on `device://status`, returns the txid). The
+    paired session stays open between commands; one device call at a
+    time; a failed link or a dropped session closes it.
+- Frontend: a LeekWallet panel (link chooser, passkey, import with the
+  birthday), "Verify on device" on the receive card, and a send form with
+  a review (payments, change, fee, total) and "Sign on LeekWallet".
+- Tests: `tests/device_zdev.rs`, 5 offline plus 1 `#[ignore]`d on
+  testnet. Against zdev: pair, import, a second companion taking the
+  birthday from the device, verify the wallet's address and refuse a
+  foreign one, sign `iw_send_shielded_compact` and prove and extract the
+  result with the full PCZT; a rejection on the device; a wallet of
+  another seed. All pass, with the existing backend and zecz-core tests.
+- CI: `libdbus-1-dev` added for btleplug on Linux. Bluetooth compiles but
+  is untested here (no radio, no board).
+- Left: the board over USB and Bluetooth, a broadcast send from the app,
+  and `.zkv` card creation (with 8.4).
