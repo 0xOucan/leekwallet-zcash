@@ -16,9 +16,13 @@
 //      same account, same balances, same scan height, and a sync after
 //      it scans only the new blocks;
 //   7. restarts the whole browser (same profile) and checks it again.
+//   5b. the board, as zdev (firmware/sim): pairs from an extension page,
+//       imports the account from it (birthday asked, then recorded on the
+//       board), checks a rotated address on it, refuses a foreign one.
 // Opt-in, needs funds on the abandon-art testnet account (public keys, so
 // anyone may have spent them): BROADCAST=1 also proposes a send to self,
-// signs it with the dev soft signer, proves, extracts and broadcasts it.
+// signs it with the dev soft signer, proves, extracts and broadcasts it;
+// BROADCAST=board does the same with zdev signing through the board code.
 //
 // Env: BIRTHDAY, LWD (gRPC-web endpoint), HEADED=1, KEEP=1 (keep profile).
 import { chromium } from 'playwright-core';
@@ -26,6 +30,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PtyLink, startZdev } from './zdev.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, '..', 'dist');
@@ -208,6 +213,74 @@ try {
     check('propose without enough funds fails cleanly', err !== null, err?.slice(0, 100));
   }
 
+  // 5b. The board (9.3), as zdev: the extension's own board code, in this
+  // extension page, with WebCrypto and the vendored ChaCha20-Poly1305,
+  // talking to the firmware's protocol over a bridge to zdev's PTY.
+  const z = await startZdev({ yes: true });
+  if (!z) {
+    check('board: zdev', false, 'zdev could not be built (make -C firmware/sim build/zdev)');
+  } else {
+    try {
+      const pty = new PtyLink(z.link);
+      await page.exposeFunction('zdevSend', (type, payload) => pty.send(type, Uint8Array.from(payload)));
+      await page.exposeFunction('zdevRecv', async (ms) => {
+        const f = await pty.recv(ms);
+        return { type: f.type, payload: Array.from(f.payload) };
+      });
+      await page.exposeFunction('zdevDrain', () => pty.drain());
+      t0 = Date.now();
+      const board = await page.evaluate(
+        async ([birthday, rotated, foreign]) => {
+          const { BoardHost } = await import('./src/board/host.js');
+          const link = {
+            kind: 'usb',
+            label: 'zdev',
+            send: (type, payload) => window.zdevSend(type, Array.from(payload)),
+            recv: async (ms) => {
+              const f = await window.zdevRecv(ms);
+              return { type: f.type, payload: new Uint8Array(f.payload) };
+            },
+            drain: () => window.zdevDrain(),
+            close: async () => {},
+          };
+          const states = [];
+          window.board = new BoardHost({ engine: (m, p) => window.t.call(m, p), openLink: async () => link, onState: (s) => states.push(s) });
+          const out = {};
+          await window.board.run('connect', { kind: 'usb' });
+          out.passkey = states.find((s) => s.phase === 'pairing')?.passkey;
+          out.phase = window.board.state.phase;
+          out.needs = await window.board.run('importAccount', { network: 'test' }).then(() => null, (e) => e.need ?? e.message);
+          out.imp = await window.board.run('importAccount', { network: 'test', birthday });
+          out.again = await window.board.run('importAccount', { network: 'test' });
+          out.shown = await window.board.run('showAddress', { network: 'test', ua: rotated });
+          out.foreign = await window.board.run('showAddress', { network: 'test', ua: foreign }).then(() => null, (e) => e.message);
+          return out;
+        },
+        [BIRTHDAY, next.unified, keys.find((k) => k.name === 'test/abandon-art/pp0/acct1').ua],
+      );
+      check('board: pairs with zdev from an extension page (WebCrypto X25519, vendored ChaCha20-Poly1305)', board.phase === 'ready' && board.passkey === z.passkeys.at(-1), `passkey ${board.passkey}, ${ms(t0)}`);
+      check('board: no birthday on the board yet, so it asks', board.needs === 'birthday');
+      check('board: zGetAccount imports as the same device account (same UFVK and origin)', board.imp.account.uuid === uuid && board.imp.imported === false && board.imp.board.seedFingerprint === vector.seed_fingerprint && board.imp.storedOnBoard === true, `ZFP ${board.imp.account.shortFingerprint}`);
+      check("board: the next import takes the board's birthday", board.again.birthdayFromBoard && board.again.birthday === BIRTHDAY);
+      check("board: the engine's default address is the board's", board.imp.addresses.unified === board.imp.board.ua);
+      check('board: zShowAddress confirms a rotated address', board.shown.ua === next.unified, `diversifier index ${next.diversifierIndex}`);
+      check('board: zShowAddress refuses an address not its own', !!board.foreign, board.foreign?.slice(0, 80));
+      if (process.env.BROADCAST === 'board' && b && b.spendable > 20_000) {
+        t0 = Date.now();
+        const sent = await page.evaluate(async (to) => {
+          const prop = await window.t.call('proposeSend', { to, amountZat: 1000, memo: 'leekwallet chrome 9.3 (zdev)', compact: true });
+          return window.board.run('signAndFinish', { network: 'test', accountIndex: 0, signerView: prop.signerView, broadcast: true });
+        }, ua0);
+        check('board: a send signed by zdev, proven, extracted and broadcast', sent.broadcast && sent.txid?.length === 64, `txid ${sent.txid}, ${ms(t0)}`);
+      }
+      await pty.close();
+    } catch (e) {
+      check('board: no exception', false, String(e?.stack ?? e));
+    } finally {
+      z.stop();
+    }
+  }
+
   // 6. Reload the extension: the wallet comes back from OPFS.
   page = await reloadExtension(ctx, id, page);
   st = await call(page, 'open', { network: 'test', server: LWD });
@@ -247,11 +320,19 @@ try {
   });
   const shown = await popup.evaluate(() => ({ total: document.getElementById('total')?.textContent, ua: document.getElementById('ua')?.textContent }));
   check('the popup shows the balance and an address', !!shown.total && shown.ua?.startsWith('utest1'), `${shown.total}`);
+  // The board in the popup: the device-account screens are there, and
+  // "Connect over USB" with no port granted (headless: none exists) asks
+  // for the browser's chooser, which a tab can open.
+  const boardUi = await popup.evaluate(() => ({ board: !!document.getElementById('board'), send: !!document.getElementById('send'), verify: !!document.getElementById('verify') }));
+  check('the popup shows the board, send and verify controls for a device account', boardUi.board && boardUi.send && boardUi.verify);
+  await popup.click('#connect-usb');
+  const granted = await popup.waitForSelector('#grant-usb', { timeout: 30e3 }).then(() => true, () => false);
+  check('USB with no port granted: the offscreen document asks for the chooser', granted);
   await popup.screenshot({ path: join(tmpdir(), 'leek-zcash-popup.png'), fullPage: true });
   await popup.close();
 
   // Opt-in: a real send, broadcast.
-  if (process.env.BROADCAST) {
+  if (process.env.BROADCAST && process.env.BROADCAST !== 'board') {
     t0 = Date.now();
     const out = await page.evaluate(async ([to, mnemonic]) => {
       const t = window.t;
