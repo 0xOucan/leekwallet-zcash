@@ -463,7 +463,8 @@ fn cmd_sign_device(profile: &Profile, port: &str, account: u32, input: &Path, ou
     fs::write(out, z.to_bytes()?)?;
     println!("Device signed {} spend(s); sighash {}", z.entries.len(), hex::encode(sighash));
     for e in &z.entries {
-        println!("  {:?} action {}", e.pool, e.index);
+        let what = if e.pool == zsig::Pool::Transparent { "input" } else { "action" };
+        println!("  {:?} {what} {}", e.pool, e.index);
     }
     println!("Signatures -> {}", out.display());
     Ok(())
@@ -477,7 +478,8 @@ fn cmd_sign_soft(profile: &Profile, mnemonic: &str, passphrase: &str, account: u
     fs::write(out, z.to_bytes()?)?;
     println!("Signed {} spend(s) of {} (sha256 {})", z.entries.len(), input.display(), hex::encode(z.pczt_sha256));
     for e in &z.entries {
-        println!("  {:?} action {}", e.pool, e.index);
+        let what = if e.pool == zsig::Pool::Transparent { "input" } else { "action" };
+        println!("  {:?} {what} {}", e.pool, e.index);
     }
     println!("Signatures -> {}", out.display());
     Ok(())

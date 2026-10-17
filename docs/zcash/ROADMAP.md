@@ -400,7 +400,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 
 ## Phase 10: Firmware follow-ups
 
-- **10.1 Transparent inputs (L):** done on PC (zdev end to end); the board and a testnet shield remain.
+- **10.1 Transparent inputs (L): done; first shield signed on the board (2026-10-16).**
   - Sign P2PKH spends (ZIP 244 transparent digests; secp256k1 ECDSA) in both backends, with review pages.
   - Needed to shield funds received on a t-address, and for some swap refunds.
   - Done when: a testnet `zecz shield` signed on the board confirms, and the
