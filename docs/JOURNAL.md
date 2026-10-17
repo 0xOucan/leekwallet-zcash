@@ -851,3 +851,21 @@ checked on Xtensa).
   extension (`warmProver`, `prove` are in the API, not exercised here),
   wasm-opt, a sync from an old birthday, the board (9.3), software
   wallets (9.4).
+
+### 10.3 Mainnet: one birthday per network, and the board paired on mainnet (2026-10-17)
+- Found before the first mainnet import: the board kept one birthday per
+  account whatever the network, so recording the mainnet birthday would
+  have overwritten the testnet one, and a testnet height (far above
+  mainnet's tip) served on mainnet would hide every note. The firmware
+  now keys records by account and network (testnet keeps the old NVS key,
+  so existing records still read); `zSetAccountMeta` takes `network`;
+  every companion passes its own. Tested in test_zcash_meta and via zdev;
+  flashed to the board.
+- The board paired with `zecz --network main` over USB, the account was
+  imported at birthday 3,520,600 (same ZFP as on testnet: one seed, coin
+  type 133 instead of 1), and the mainnet birthday was recorded on the
+  board next to the testnet one. The board's own Receive screen, switched
+  to Mainnet, shows the u1/t1 addresses zecz derived.
+- Next: receive a small amount, send some back and shield, all signed on
+  the board (docs/zcash/MAINNET.md). Real mainnet addresses and txids are
+  kept out of the repository on purpose.
