@@ -29,16 +29,16 @@ fn vector(name: &str) -> (Value, Vec<u8>) {
     (e, bytes)
 }
 
+/// Builds zdev from the current firmware sources, once per test binary.
+/// Always through make (incremental): reusing an existing binary only when
+/// it is missing once ran these tests against a stale device.
 fn zdev_binary() -> Option<PathBuf> {
+    static BUILT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let sim = repo().join("firmware/sim");
-    let bin = sim.join("build/zdev");
-    if !bin.exists() {
-        let ok = Command::new("make").arg("-C").arg(&sim).arg("build/zdev").status().is_ok_and(|s| s.success());
-        if !ok {
-            return None;
-        }
-    }
-    Some(bin)
+    let ok = *BUILT.get_or_init(|| {
+        Command::new("make").arg("-C").arg(&sim).arg("build/zdev").status().is_ok_and(|s| s.success())
+    });
+    ok.then(|| sim.join("build/zdev"))
 }
 
 /// A running zdev, killed on drop.
