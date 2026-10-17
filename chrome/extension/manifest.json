@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "LeekWallet Zcash",
   "version": "0.1.0",
-  "description": "A Zcash wallet in the browser: Orchard and Ironwood, synced and proven locally. Signing on the LeekWallet board comes next.",
-  "minimum_chrome_version": "116",
+  "description": "A Zcash wallet in the browser: Orchard and Ironwood, synced and proven locally. Signed on the LeekWallet board over USB or Bluetooth.",
+  "minimum_chrome_version": "133",
   "action": {
     "default_title": "LeekWallet Zcash",
     "default_popup": "popup.html"

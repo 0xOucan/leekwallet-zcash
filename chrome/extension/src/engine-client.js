@@ -4,6 +4,7 @@
 //   const status = await engine.call('open', { network: 'test' });
 //   engine.onEvent((ev) => ...);         // sync / prove / import progress
 //   engine.onHost((h) => ...);           // engine up/down, busy, last sync
+//   engine.onBoard((b) => ...);          // the USB board (offscreen), `board.*` calls
 //
 // Every method of the engine's message API (chrome/README.md) goes through
 // `call`. Errors reject with an Error carrying the engine's message.
@@ -14,7 +15,10 @@ export class EngineClient {
   #pending = new Map();
   #eventListeners = new Set();
   #hostListeners = new Set();
+  #boardListeners = new Set();
   host = null;
+  /** The USB board's state, from the offscreen document (src/board/host.js). */
+  board = null;
 
   static async connect() {
     // The service worker creates the offscreen document if it is not there
@@ -34,6 +38,11 @@ export class EngineClient {
         for (const f of this.#hostListeners) f(m.host);
         return;
       }
+      if (m.board) {
+        this.board = m.board;
+        for (const f of this.#boardListeners) f(m.board);
+        return;
+      }
       if (m.event) {
         for (const f of this.#eventListeners) f(m.event);
         return;
@@ -41,7 +50,7 @@ export class EngineClient {
       const p = this.#pending.get(m.id);
       if (!p) return;
       this.#pending.delete(m.id);
-      if ('error' in m) p.reject(new Error(m.error));
+      if ('error' in m) p.reject(Object.assign(new Error(m.error), m.errorData ?? {}));
       else p.resolve(m.result);
     });
     this.#port.onDisconnect.addListener(() => {
@@ -74,6 +83,11 @@ export class EngineClient {
   onEvent(f) {
     this.#eventListeners.add(f);
     return () => this.#eventListeners.delete(f);
+  }
+
+  onBoard(f) {
+    this.#boardListeners.add(f);
+    return () => this.#boardListeners.delete(f);
   }
 
   onHost(f) {

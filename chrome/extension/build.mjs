@@ -9,9 +9,11 @@
 //   engine/      ../engine/pkg (the WASM engine and its JS glue)
 //   tokens.css   firmware/app/src/tokens.css (LeekWallet's design tokens)
 //   icons/       firmware/app/extension/icons
+//   src/vendor/  @noble/ciphers from node_modules (vendor.mjs)
 import { cp, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { vendor } from './vendor.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..', '..');
@@ -24,6 +26,9 @@ if (!(await exists(join(pkg, 'leek_chrome_engine_bg.wasm')))) {
   console.error(`no engine in ${pkg}: run chrome/engine/build.sh first`);
   process.exit(1);
 }
+
+// @noble/ciphers (ChaCha20-Poly1305 for the board's session) into src/vendor/.
+await vendor();
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
@@ -48,6 +53,8 @@ const required = [
   'offscreen.html',
   'src/offscreen.js',
   'src/engine-worker.js',
+  'src/board/host.js',
+  'src/vendor/noble-ciphers/chacha.js',
   'engine/leek_chrome_engine.js',
   'engine/leek_chrome_engine_bg.wasm',
   ...Object.values(manifest.icons),

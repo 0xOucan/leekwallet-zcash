@@ -5,7 +5,9 @@
 // outlives it; a page (the popup) closes whenever it loses focus. This
 // document stays until the browser closes, so the engine keeps syncing
 // with the popup shut, and the popup finds it mid-sync when it reopens.
-// In 9.3 the board link (Web Serial, Web Bluetooth) lives here too.
+// The board over USB lives here too (src/board/): Web Serial needs a
+// document, and a signature must outlive the popup. Bluetooth cannot: the
+// BluetoothDevice stays in the tab that chose it (src/board/ble-link.js).
 //
 // Port protocol (name "engine"), JSON both ways:
 //   page -> here: { id, method, params }
@@ -14,6 +16,12 @@
 //                 { host }                          engine state changes, to every page
 // `hostState` is answered here: whether the engine is up, what it is doing,
 // and the last sync progress, so a popup opened mid-sync can show it.
+// `board.<op>` calls go to the USB board (BoardHost.run), answered with
+// `{ id, result }` or `{ id, error, errorData }`, and its state goes to every
+// page as `{ board }`.
+
+import { BoardHost, BoardNeeds } from './board/host.js';
+import { SerialLink, isBoardPort } from './board/serial-link.js';
 
 const ports = new Set();
 let worker = null;
@@ -144,6 +152,39 @@ function callEngine(method, params) {
   });
 }
 
+// ------------------------------------------------------------ the board
+
+const board = new BoardHost({
+  engine: callEngine,
+  onState: (state) => broadcast({ board: state }),
+  async openLink(kind, onClose) {
+    if (kind !== 'usb') throw new Error('Bluetooth runs in an extension tab, not here');
+    if (!navigator.serial) throw new Error('This browser has no Web Serial: use desktop Chrome, Edge or Brave.');
+    // Ports the user granted from a tab (requestPort needs a gesture).
+    const ports = (await navigator.serial.getPorts()).filter(isBoardPort);
+    if (!ports.length) throw new BoardNeeds('usbPermission', 'Choose the board once in the browser\'s USB chooser.');
+    let lastError = null;
+    for (const port of ports) {
+      try {
+        return await SerialLink.open(port, onClose);
+      } catch (e) {
+        lastError = e; // another program has it open, or it was unplugged
+      }
+    }
+    throw new Error(`cannot open the board's serial port: ${lastError?.message ?? lastError} (is another program, zecz or the desktop app, using it?)`);
+  },
+});
+
+function boardCall(port, id, op, params) {
+  board.run(op, params ?? {}).then(
+    (result) => reply({ port, id }, { result }),
+    (e) => {
+      const errorData = e instanceof BoardNeeds ? { need: e.need, tip: e.tip ?? null, account: e.account ?? null } : undefined;
+      reply({ port, id }, { error: String(e?.message ?? e), errorData });
+    },
+  );
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'engine') return;
   ports.add(port);
@@ -154,12 +195,17 @@ chrome.runtime.onConnect.addListener((port) => {
   });
   port.onMessage.addListener(({ id, method, params }) => {
     if (method === 'hostState') {
-      reply({ port, id }, { result: { ...host } });
+      reply({ port, id }, { result: { ...host, board: { ...board.state } } });
+      return;
+    }
+    if (typeof method === 'string' && method.startsWith('board.')) {
+      boardCall(port, id, method.slice(6), params);
       return;
     }
     send(port, id, method, params);
   });
   port.postMessage({ host: { ...host } });
+  port.postMessage({ board: { ...board.state } });
 });
 
 startWorker();
