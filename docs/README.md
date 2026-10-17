@@ -1,0 +1,19 @@
+# Documentation
+
+| Document | What it covers |
+|---|---|
+| [zcash/ROADMAP.md](zcash/ROADMAP.md) | The plan, phase by phase, each step with a "done when" check and its status |
+| [JOURNAL.md](JOURNAL.md) | What was done at each step, what broke, what was measured, and the transactions signed on the board |
+| [zcash/ANALYSIS.md](zcash/ANALYSIS.md) | Why: the starting point, options and decisions |
+| [zcash/PLAN.md](zcash/PLAN.md) | Architecture: board, companions, formats |
+| [zcash/FORMATS.md](zcash/FORMATS.md) | `.zsig` (v1, v2), `.zkv` seed cards, the SD card layout |
+| [zcash/MAINNET.md](zcash/MAINNET.md) | Checklist for the first mainnet tests with real funds |
+| [zcash/CHROME-ENGINE.md](zcash/CHROME-ENGINE.md) | The browser engine study: numbers and the chosen design |
+| [TOOLCHAIN.md](TOOLCHAIN.md) | Toolchains and versions |
+| [../firmware/docs/PROTOCOL.md](../firmware/docs/PROTOCOL.md) | The device protocol: pairing, session, every call |
+| [../firmware/docs/WIRING-S3CAM.md](../firmware/docs/WIRING-S3CAM.md) | Wiring the board, screen, encoder and buttons |
+
+Component READMEs: [host](../host/README.md), [desktop](../desktop/README.md),
+[chrome](../chrome/README.md), [vectors](../vectors/README.md),
+[firmware](../firmware/README.md), [firmware/sim](../firmware/sim/README.md),
+and the [Android app](https://github.com/0xOucan/leekwallet-zcash-android).

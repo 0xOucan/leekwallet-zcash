@@ -46,8 +46,9 @@ outputs.
 | **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; testnet sends signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen |
 | **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
 | **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
-| **Chrome extension** | Engine proven: our librustzcash compiled to WebAssembly syncs, builds, proves and extracts a transaction inside an extension worker ([CHROME-ENGINE.md](docs/zcash/CHROME-ENGINE.md)). The extension itself is next |
-| **Mainnet, NEAR Intents** | Planned (firmware Phase 10, then swaps on every companion) |
+| **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, import, sync, balances, address. Board link and software wallets next ([chrome/README.md](chrome/README.md)) |
+| **Mainnet** | Ready on the PC: mainnet vectors and tests, servers of the wrong chain refused, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation. Testnet stays the default. First real send: [MAINNET.md](docs/zcash/MAINNET.md) |
+| **NEAR Intents** | Planned, after the first mainnet send |
 
 ## What works
 
@@ -94,15 +95,12 @@ Everything runs at 3.3 V.
 |---|---|
 | `firmware/` | Device firmware (ESP-IDF 5.5 via PlatformIO), forked from LeekWallet with its history. Zcash code in `src/zcash-*.c`, the C signer in `components/zsign-c`, the Rust signer in `components/zsign-rust` |
 | `firmware/sim/` | Host simulator and tests: the firmware's C code built for Linux with fakes for the hardware; `zdev`, a simulated device on a PTY |
-| `host/zecz-core` | The `zecz` library: watch-only wallet, PCZT builder, prover, broadcaster (shared by the CLI and the desktop app) |
-| `host/zecz-cli` | `zecz`, the command line over `zecz-core` |
-| `host/leek-device` | Device client shared by `zecz` and Android: pairing, session, calls, `.zsig` |
-| `host/leek-android` | Native library for the Android app (JNI): device client, compact view, applying signatures |
+| `host/` | Rust crates ([README](host/README.md)): `zecz-core` (the wallet engine), `zecz-cli` (`zecz`), `leek-device` (the board's client and `.zsig`), `leek-android` (JNI library for the app) |
 | `desktop/` | LeekWallet Zcash desktop app (Tauri 2) on `zecz-core`, for Linux, Windows and macOS |
-| `chrome/engine-spike/` | The browser engine test: librustzcash in WebAssembly, run in an MV3 extension worker |
-| `.github/workflows/` | CI: host tests, and desktop builds on the three systems |
-| `vectors/` | Key, PCZT (valid, compact and refused) and `.zsig` test vectors, and their generator |
-| `docs/zcash/` | [ANALYSIS](docs/zcash/ANALYSIS.md), [PLAN](docs/zcash/PLAN.md), [ROADMAP](docs/zcash/ROADMAP.md), [FORMATS](docs/zcash/FORMATS.md) |
+| `chrome/` | The Chrome extension: `engine/` (Rust → WebAssembly), `extension/` (MV3), `engine-spike/` (the 9.1 study) |
+| `.github/workflows/` | CI: host tests, desktop builds on the three systems, the Chrome engine and extension |
+| `vectors/` | Key and PCZT test vectors (valid, compact, mainnet, transparent, refused) and their generators ([README](vectors/README.md)) |
+| `docs/` | Roadmap, journal, formats, mainnet checklist, browser engine study ([index](docs/README.md)) |
 | `docs/JOURNAL.md` | What was done at each step, what broke, what was measured |
 
 The Android app lives in its own repository,
@@ -165,8 +163,11 @@ The full plan, with a "done when" check for each step, is in
 - [x] Desktop: pair with the board, sign, verify address (8.3), wallet screens (8.4)
 - [x] Firmware: transparent inputs, first shield signed on the board (10.1)
 - [x] Chrome: a full Zcash engine runs in the browser (9.1)
-- [ ] Chrome extension: the engine, software wallets, the board over Web Serial / Web Bluetooth (9.2+)
-- [ ] Firmware: mainnet, several accounts, Bluetooth bonding, security review (Phase 10)
+- [x] Chrome extension engine, stored on OPFS, with a popup (9.2)
+- [x] Mainnet ready on the PC, testnet kept as the default option (10.3)
+- [ ] First mainnet send signed on the board
+- [ ] Chrome extension: the board over Web Serial / Web Bluetooth (9.3), software wallets (9.4)
+- [ ] Firmware: several accounts, Bluetooth bonding, security review (Phase 10)
 - [ ] NEAR Intents swaps signed on the board, on Android, desktop and Chrome
 - [ ] A proper account type in the Android app and an offer to Zodl upstream
 - [ ] Releases and the hackathon submission
