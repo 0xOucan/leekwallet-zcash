@@ -335,6 +335,15 @@ pub fn next_address(profile: &Profile) -> Result<NewAddressDto> {
     Ok(NewAddressDto { unified: a.unified, diversifier_index: a.diversifier_index.to_string(), transparent: a.transparent })
 }
 
+/// The wallet's address for a swap (NEAR Intents refunds and payouts):
+/// with `fresh`, a new Orchard-only address recorded in the wallet, so the
+/// swap service sees no transparent receiver and cannot link one swap to
+/// the next; otherwise the default Orchard-only one (for a price preview).
+pub fn swap_address(profile: &Profile, fresh: bool) -> Result<String> {
+    let mut w = Wallet::open(profile.clone())?;
+    Ok(if fresh { w.next_shielded_address()?.unified } else { w.addresses()?.orchard_only })
+}
+
 /// `text` as a QR code in SVG, black on white with its quiet zone in any
 /// theme (scanners expect dark on light). Error correction M: an address
 /// is long, and a screen is clean.

@@ -27,11 +27,15 @@ pub struct Settings {
     /// one; absent means the network's default.
     #[serde(default)]
     pub servers: BTreeMap<String, String>,
+    /// An optional NEAR Intents 1Click API key (partner JWT) for swaps;
+    /// `LEEKZ_1CLICK_API_KEY` overrides it. Set by hand, never shown.
+    #[serde(default, rename = "oneClickApiKey", skip_serializing_if = "Option::is_none")]
+    pub one_click_api_key: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { version: VERSION, network: "test".into(), servers: BTreeMap::new() }
+        Settings { version: VERSION, network: "test".into(), servers: BTreeMap::new(), one_click_api_key: None }
     }
 }
 

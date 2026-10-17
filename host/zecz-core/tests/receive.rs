@@ -85,3 +85,28 @@ fn next_address_rotates() {
     // The default address is unchanged.
     assert_eq!(w.addresses().unwrap(), default);
 }
+
+#[test]
+fn next_shielded_address_is_fresh_and_orchard_only() {
+    let d = TempDir::new();
+    let kv = key_vector("test/abandon-art/pp0/acct0");
+    let ufvk = UnifiedFullViewingKey::decode(&TEST, kv["ufvk"].as_str().unwrap()).unwrap();
+    let birthday =
+        AccountBirthday::from_parts(ChainState::empty(BlockHeight::from_u32(TEST_NU5 - 1), BlockHash([0; 32])), None);
+    let spec = AccountSpec::view_only(kv["ufvk"].as_str().unwrap().into(), "watch");
+    let (mut w, _) = Wallet::init_with_birthday(Profile::new(TEST, d.0.join("w"), None), &spec, &birthday).unwrap();
+    let default = w.addresses().unwrap();
+
+    let mut seen = vec![default.unified.clone(), default.orchard_only.clone()];
+    // Past the transparent gap limit too: it never needs a gap address.
+    for _ in 0..14 {
+        let a = w.next_shielded_address().unwrap();
+        assert_ne!(a.diversifier_index, 0);
+        assert!(a.transparent.is_none());
+        assert!(!seen.contains(&a.unified), "address repeated: {a:?}");
+        seen.push(a.unified.clone());
+        let j = zip32::DiversifierIndex::try_from(a.diversifier_index).unwrap();
+        assert_eq!(ufvk.address(j, UnifiedAddressRequest::ORCHARD).unwrap().encode(&TEST), a.unified);
+    }
+    assert_eq!(w.addresses().unwrap(), default);
+}

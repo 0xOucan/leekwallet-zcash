@@ -13,6 +13,7 @@ pub mod backend;
 pub mod contacts;
 pub mod hardware;
 pub mod link;
+pub mod near;
 pub mod settings;
 
 use std::path::{Path, PathBuf};
@@ -53,6 +54,10 @@ pub struct AppState {
     device: Arc<Mutex<Option<DeviceSession>>>,
     /// The last proposed send: its id and the signer view for the device.
     proposal: Arc<Mutex<Option<(String, Vec<u8>)>>>,
+    /// Held while the swaps file is read and rewritten.
+    swaps_lock: Arc<Mutex<()>>,
+    /// 1Click's token list and when it was fetched.
+    swap_tokens: Arc<Mutex<Option<(std::time::Instant, Vec<near::Token>)>>>,
 }
 
 impl AppState {
@@ -63,6 +68,17 @@ impl AppState {
     /// The address book of the selected network.
     fn contacts_path(&self) -> PathBuf {
         contacts::path_in(&self.app_data, self.profile().network)
+    }
+
+    /// The swaps of the selected network.
+    fn swaps_path(&self) -> PathBuf {
+        near::path_in(&self.app_data, self.profile().network)
+    }
+
+    /// The 1Click client, with the API key if one is set.
+    fn one_click(&self) -> near::OneClick<near::Http> {
+        let saved = settings::load(&settings::path_in(&self.app_data)).unwrap_or_default();
+        near::OneClick::new(near::Http::default(), near::api_key(saved.one_click_api_key.as_deref()))
     }
 
     fn network_dto(&self) -> settings::NetworkDto {
@@ -421,6 +437,7 @@ async fn sign_and_send(
     let dguard = BusyGuard::take(&state.device_busy, DEVICE_BUSY)?;
     let wguard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
     let (slot, profile, proposal) = (state.device.clone(), state.profile(), state.proposal.clone());
+    let (swaps_path, swaps_lock) = (state.swaps_path(), state.swaps_lock.clone());
     off_thread(move || {
         let _guards = (dguard, wguard);
         hardware::check_mainnet_confirmed(&profile, confirm_mainnet.unwrap_or(false))?;
@@ -432,7 +449,191 @@ async fn sign_and_send(
         let zsig = with_device(&slot, |s| hardware::device_sign(&profile, s, &view, &status))?;
         let sent = hardware::finish(&profile, &view, &zsig, true, &status)?;
         *proposal.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        // The deposit of a swap: its txid goes with the swap, so polling
+        // tells 1Click about it, even after a restart.
+        let _lock = swaps_lock.lock().unwrap_or_else(|p| p.into_inner());
+        if let Err(e) = near::record_deposit(&swaps_path, &proposal_id, &sent.txid) {
+            eprintln!("LeekWallet Zcash: deposit {} not recorded with its swap: {e:#}", sent.txid);
+        }
         Ok(sent)
+    })
+    .await
+}
+
+// ------------------------------------------------------------------- swaps
+
+/// What the swap screen needs to know before anything else.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SwapInfo {
+    /// "test" or "main". Swaps are mainnet only; testnet previews prices.
+    network: String,
+    /// A 1Click API key is set: no extra platform fee, confidential quotes.
+    authenticated: bool,
+    api_key_env: &'static str,
+    explorer: &'static str,
+    default_slippage_bps: u32,
+    max_slippage_bps: u32,
+}
+
+#[tauri::command]
+async fn swap_info(state: State<'_, AppState>) -> Result<SwapInfo, String> {
+    Ok(SwapInfo {
+        network: state.profile().net_name().to_string(),
+        authenticated: state.one_click().has_api_key(),
+        api_key_env: near::API_KEY_ENV,
+        explorer: near::EXPLORER,
+        default_slippage_bps: near::DEFAULT_SLIPPAGE_BPS,
+        max_slippage_bps: near::MAX_SLIPPAGE_BPS,
+    })
+}
+
+/// How long the token list (with its USD prices) is reused.
+const TOKENS_FRESH: std::time::Duration = std::time::Duration::from_secs(300);
+
+type TokenCache = Mutex<Option<(std::time::Instant, Vec<near::Token>)>>;
+
+fn tokens_cached(cache: &TokenCache, client: &near::OneClick<near::Http>) -> anyhow::Result<Vec<near::Token>> {
+    if let Some((at, t)) = &*cache.lock().unwrap_or_else(|p| p.into_inner()) {
+        if at.elapsed() < TOKENS_FRESH {
+            return Ok(t.clone());
+        }
+    }
+    let t = client.tokens().map_err(|e| anyhow::anyhow!(near::explain(&e, None)))?;
+    *cache.lock().unwrap_or_else(|p| p.into_inner()) = Some((std::time::Instant::now(), t.clone()));
+    Ok(t)
+}
+
+/// The assets 1Click swaps (cached for five minutes).
+#[tauri::command]
+async fn swap_tokens(state: State<'_, AppState>) -> Result<Vec<near::Token>, String> {
+    let (cache, client) = (state.swap_tokens.clone(), state.one_click());
+    off_thread(move || tokens_cached(&cache, &client)).await
+}
+
+/// A quote. A dry one only prices the swap (testnet: only this). A real
+/// one, on mainnet, gets a deposit address and a fresh Orchard-only
+/// address of this wallet for the refund (from ZEC) or the payout (into
+/// ZEC), and is stored with the swaps.
+#[tauri::command]
+async fn swap_quote(state: State<'_, AppState>, params: near::QuoteParams) -> Result<near::SwapRecord, String> {
+    // A real quote records a new address in the wallet.
+    let guard = if params.dry { None } else { Some(BusyGuard::take(&state.busy, WALLET_BUSY)?) };
+    let (profile, cache, client) = (state.profile(), state.swap_tokens.clone(), state.one_click());
+    let (path, lock) = (state.swaps_path(), state.swaps_lock.clone());
+    off_thread(move || {
+        let _guard = guard;
+        if profile.network == Network::MainNetwork && !params.dry {
+            let s = backend::profile_status(&profile)?;
+            if !s.has_account {
+                anyhow::bail!("Import an account first: a swap pays to and from this wallet.");
+            }
+            if params.direction == near::Direction::FromZec && !s.hardware {
+                anyhow::bail!(
+                    "This is a watch-only account; nothing could sign the deposit. Import the account from a LeekWallet to swap from ZEC."
+                );
+            }
+        }
+        let tokens = tokens_cached(&cache, &client)?;
+        let fresh = !params.dry;
+        let own = || -> anyhow::Result<String> {
+            match backend::swap_address(&profile, fresh) {
+                Ok(a) => Ok(a),
+                // A price preview needs no wallet.
+                Err(_) if !fresh => Ok(near::PREVIEW_ADDRESS.to_string()),
+                Err(e) => Err(e),
+            }
+        };
+        let spendable = || -> anyhow::Result<Option<u64>> { Ok(backend::balances(&profile)?.map(|b| b.spendable)) };
+        let ctx = near::QuoteContext {
+            network: profile.network,
+            own_address: &own,
+            spendable: &spendable,
+            now: time::OffsetDateTime::now_utc(),
+        };
+        let rec = near::request_quote(&client, &tokens, &ctx, &params)?;
+        if !rec.dry {
+            let _lock = lock.lock().unwrap_or_else(|p| p.into_inner());
+            near::save(&path, &rec)?;
+        }
+        Ok(rec)
+    })
+    .await
+}
+
+/// Builds the deposit of a swap from ZEC: the quoted amount to its deposit
+/// address, a send like any other (compact signer view), returned for the
+/// review and signed by `sign_and_send`, which records the txid with the
+/// swap. Refused off mainnet, for an expired quote, or without the funds.
+#[tauri::command]
+async fn swap_execute(state: State<'_, AppState>, id: String) -> Result<hardware::ProposalDto, String> {
+    let guard = BusyGuard::take(&state.busy, WALLET_BUSY)?;
+    let (profile, slot) = (state.profile(), state.proposal.clone());
+    let (path, lock) = (state.swaps_path(), state.swaps_lock.clone());
+    off_thread(move || {
+        let _guard = guard;
+        let _lock = lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut rec = near::get(&path, &id)?;
+        let zat = near::check_executable(&rec, profile.network, time::OffsetDateTime::now_utc())?;
+        near::check_funds(backend::balances(&profile)?.map(|b| b.spendable), zat)?;
+        let address = rec.deposit_address.clone().unwrap_or_default();
+        let (dto, view) = hardware::propose_send(&profile, &address, &near::zat_to_zec(zat), None)?;
+        // What the device will be asked to sign is exactly the deposit.
+        let pays = dto.payments.len() == 1 && dto.payments[0].recipient == address && dto.payments[0].amount_zat == zat;
+        if !pays {
+            anyhow::bail!("the proposal does not pay exactly the quoted deposit; not signing it");
+        }
+        rec.proposal_id = Some(dto.id.clone());
+        near::save(&path, &rec)?;
+        *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some((dto.id.clone(), view));
+        Ok(dto)
+    })
+    .await
+}
+
+/// Asks 1Click where a swap stands (telling it the deposit txid first if
+/// it has not heard it) and returns the updated swap.
+#[tauri::command]
+async fn swap_status(state: State<'_, AppState>, id: String) -> Result<near::SwapRecord, String> {
+    let client = state.one_click();
+    let (path, lock) = (state.swaps_path(), state.swaps_lock.clone());
+    off_thread(move || {
+        let mut rec = {
+            let _lock = lock.lock().unwrap_or_else(|p| p.into_inner());
+            near::get(&path, &id)?
+        };
+        // The network calls run without the lock.
+        near::refresh_status(&client, &mut rec, time::OffsetDateTime::now_utc());
+        let _lock = lock.lock().unwrap_or_else(|p| p.into_inner());
+        let current = near::get(&path, &id)?;
+        // A deposit recorded meanwhile wins; the next poll reports on it.
+        if current.deposit_txid != rec.deposit_txid {
+            return Ok(current);
+        }
+        near::save(&path, &rec)?;
+        Ok(rec)
+    })
+    .await
+}
+
+/// The swaps of this network, newest first.
+#[tauri::command]
+async fn swap_list(state: State<'_, AppState>) -> Result<Vec<near::SwapRecord>, String> {
+    let (path, lock) = (state.swaps_path(), state.swaps_lock.clone());
+    off_thread(move || {
+        let _lock = lock.lock().unwrap_or_else(|p| p.into_inner());
+        near::list(&path)
+    })
+    .await
+}
+
+/// Removes a swap that can no longer move funds. Returns the rest.
+#[tauri::command]
+async fn swap_forget(state: State<'_, AppState>, id: String) -> Result<Vec<near::SwapRecord>, String> {
+    let (path, lock) = (state.swaps_path(), state.swaps_lock.clone());
+    off_thread(move || {
+        let _lock = lock.lock().unwrap_or_else(|p| p.into_inner());
+        near::forget(&path, &id)
     })
     .await
 }
@@ -503,6 +704,8 @@ pub fn run() {
                 device_busy: Arc::new(AtomicBool::new(false)),
                 device: Arc::new(Mutex::new(None)),
                 proposal: Arc::new(Mutex::new(None)),
+                swaps_lock: Arc::new(Mutex::new(())),
+                swap_tokens: Arc::new(Mutex::new(None)),
             });
             Ok(())
         })
@@ -531,7 +734,14 @@ pub fn run() {
             contact_remove,
             network_settings,
             set_network,
-            set_server
+            set_server,
+            swap_info,
+            swap_tokens,
+            swap_quote,
+            swap_execute,
+            swap_status,
+            swap_list,
+            swap_forget
         ])
         .run(tauri::generate_context!())
         .expect("error while running LeekWallet Zcash");

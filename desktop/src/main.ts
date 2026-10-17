@@ -241,6 +241,7 @@ async function refresh(): Promise<void> {
   $("send-panel").hidden = !(s.hasAccount && s.hardware);
   $("history-panel").hidden = !s.hasAccount;
   $("contacts-panel").hidden = !s.hasAccount;
+  $("swap-panel").hidden = !s.hasAccount;
   $("verify-btn").hidden = !s.hardware;
   renderDevice();
   if (!s.hasAccount) {
@@ -254,7 +255,7 @@ async function refresh(): Promise<void> {
     $("sync-status").textContent = `Not synced yet. Scanning starts at the birthday, block ${s.birthday ?? "?"}.`;
   }
   setConn("connected", s.hardware ? `LeekWallet account · ZFP ${s.zfp ?? "?"}` : "Watch-only account");
-  await Promise.all([renderAddresses(), renderBalances(), loadContacts(), renderHistory()]);
+  await Promise.all([renderAddresses(), renderBalances(), loadContacts(), renderHistory(), loadSwapScreen()]);
 }
 
 /** The device panel: the link chooser, or the connected device. */
@@ -724,12 +725,13 @@ $<HTMLFormElement>("send-form").addEventListener("submit", async (ev) => {
   btn.disabled = true;
   try {
     proposal = await invoke<Proposal>("propose_send", { to, amount, memo: memo.trim() === "" ? null : memo });
-    // A shielding under review shares the one pending slot; this replaced it.
+    // A shielding or swap deposit under review shares the one pending slot; this replaced it.
     if (shieldProposal) {
       shieldProposal = null;
       showShieldStage("idle");
       void renderBalances();
     }
+    dropSwapReview();
     renderReview(proposal);
     $("sign-status").textContent = "";
     $("sign-err").textContent = "";
@@ -869,6 +871,7 @@ $("shield-btn").addEventListener("click", async () => {
       proposal = null;
       showSendStage("form");
     }
+    dropSwapReview();
     const kv = $("shield-kv");
     kv.replaceChildren();
     const row = (k: string, v: string) => {
@@ -1201,6 +1204,7 @@ function resetForNetwork(): void {
   for (const id of ["send-form", "import-form", "device-import-form", "contact-form"]) $<HTMLFormElement>(id).reset();
   showSendStage("form");
   showShieldStage("idle");
+  resetSwaps();
   $<HTMLProgressElement>("sync-bar").value = 0;
 }
 
@@ -1248,6 +1252,603 @@ async function saveServer(server: string | null): Promise<void> {
 
 $("server-save").addEventListener("click", () => void saveServer($<HTMLInputElement>("server-input").value.trim()));
 $("server-default").addEventListener("click", () => void saveServer(null));
+
+// -------------------------------------------------------------------- swaps
+
+// NEAR Intents through 1Click (backend: src-tauri/src/near.rs). The backend
+// asks for quotes, keeps every swap with a deposit address in its own file,
+// builds the ZEC deposit as an ordinary send, and asks 1Click for the
+// status; this screen only draws and polls.
+
+interface SwapToken {
+  assetId: string;
+  decimals: number;
+  blockchain: string;
+  symbol: string;
+  price: number | null;
+}
+
+interface SwapInfo {
+  network: string;
+  authenticated: boolean;
+  apiKeyEnv: string;
+  explorer: string;
+  defaultSlippageBps: number;
+  maxSlippageBps: number;
+}
+
+type SwapState =
+  | "quoted" | "expired" | "deposited" | "depositSeen" | "incomplete" | "processing"
+  | "success" | "refunded" | "failed";
+
+interface SwapAsset {
+  assetId: string;
+  symbol: string;
+  blockchain: string;
+  decimals: number;
+}
+
+interface SwapTxLink {
+  hash: string;
+  explorerUrl: string;
+}
+
+interface Swap {
+  id: string;
+  dry: boolean;
+  createdAt: string;
+  direction: "fromZec" | "toZec";
+  origin: SwapAsset;
+  destination: SwapAsset;
+  amountIn: string;
+  amountInFormatted: string;
+  amountInUsd: string | null;
+  minAmountInFormatted: string | null;
+  amountOutFormatted: string;
+  amountOutUsd: string | null;
+  minAmountOutFormatted: string;
+  slippageBps: number;
+  deadline: string | null;
+  timeEstimateSecs: number | null;
+  refundFeeFormatted: string | null;
+  depositAddress: string | null;
+  depositMemo: string | null;
+  depositTransparent: boolean;
+  recipient: string;
+  refundTo: string;
+  confidentiality: string;
+  authenticated: boolean;
+  proposalId: string | null;
+  depositTxid: string | null;
+  depositSubmitted: boolean;
+  state: SwapState;
+  apiStatus: string | null;
+  updatedAt: string | null;
+  checkedAt: string | null;
+  details: {
+    amountInFormatted: string | null;
+    amountOutFormatted: string | null;
+    depositedAmountFormatted: string | null;
+    refundedAmountFormatted: string | null;
+    refundReason: string | null;
+    originChainTxHashes: SwapTxLink[];
+    destinationChainTxHashes: SwapTxLink[];
+  } | null;
+  lastError: string | null;
+}
+
+const FINAL_SWAP: SwapState[] = ["success", "refunded", "failed"];
+const POLL_MS = 20_000;
+
+let swapInfo: SwapInfo | null = null;
+let swapTokens: SwapToken[] = [];
+let swaps: Swap[] = [];
+/** The quote on screen (dry or real). */
+let swapQuote: Swap | null = null;
+/** The deposit under review, and the swap it pays. */
+let swapProposal: Proposal | null = null;
+let swapPaying: Swap | null = null;
+let pollTimer = 0;
+
+function swapDirection(): "fromZec" | "toZec" {
+  return $<HTMLInputElement>("swap-to").checked ? "toZec" : "fromZec";
+}
+
+function selectedToken(): SwapToken | null {
+  const id = $<HTMLSelectElement>("swap-asset").value;
+  return swapTokens.find((t) => t.assetId === id) ?? null;
+}
+
+const chainName = (c: string): string => c.toUpperCase();
+const assetName = (a: { symbol: string; blockchain: string }): string =>
+  a.blockchain === "zec" ? a.symbol : `${a.symbol} on ${chainName(a.blockchain)}`;
+
+function when(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function usd(v: string | null): string {
+  if (!v) return "";
+  const n = Number(v);
+  return Number.isFinite(n) ? ` (≈ $${n.toFixed(2)})` : "";
+}
+
+/** The labels and notes of the form for the direction and asset chosen. */
+function renderSwapForm(): void {
+  const dir = swapDirection();
+  const t = selectedToken();
+  const other = t ? assetName(t) : "the other asset";
+  const main = isMainnet();
+  $("swap-asset-label").textContent = dir === "fromZec" ? "Receive" : "Pay with";
+  $("swap-amount-label").textContent = dir === "fromZec" ? "Amount to send (ZEC)" : `Amount to pay (${other})`;
+  $("swap-addr-label").textContent =
+    dir === "fromZec"
+      ? `Recipient's address on ${t ? chainName(t.blockchain) : "the destination chain"}`
+      : `Your refund address on ${t ? chainName(t.blockchain) : "the paying chain"} (if the swap fails, 1Click refunds there)`;
+  const auth = swapInfo?.authenticated ?? false;
+  const conf = $<HTMLInputElement>("swap-confidential");
+  conf.disabled = !auth;
+  if (!auth) conf.checked = false;
+  let privacy =
+    dir === "fromZec"
+      ? "Refunds come back to a fresh shielded (Orchard) address of this wallet. The deposit address 1Click gives is " +
+        "usually transparent: the deposit and its amount are public on the Zcash chain (the rest of your wallet is not)."
+      : "The ZEC arrives at a fresh shielded (Orchard) address of this wallet, so the payout is private on the Zcash chain.";
+  if (!auth) privacy += ` No 1Click API key is set (${swapInfo?.apiKeyEnv ?? "LEEKZ_1CLICK_API_KEY"}): 1Click adds a 0.25% fee.`;
+  $("swap-privacy").textContent = privacy;
+  $("swap-testnote").hidden = main;
+  $("swap-quote-btn").hidden = !main;
+}
+
+async function loadSwapScreen(): Promise<void> {
+  try {
+    swapInfo = await invoke<SwapInfo>("swap_info");
+    if ($<HTMLInputElement>("swap-slippage").value === "") {
+      $<HTMLInputElement>("swap-slippage").value = String(swapInfo.defaultSlippageBps / 100);
+    }
+  } catch (e) {
+    $("swap-err").textContent = errText(e);
+  }
+  renderSwapForm();
+  await Promise.all([loadSwapTokens(), loadSwaps()]);
+}
+
+async function loadSwapTokens(): Promise<void> {
+  const sel = $<HTMLSelectElement>("swap-asset");
+  try {
+    swapTokens = (await invoke<SwapToken[]>("swap_tokens")).filter((t) => t.blockchain !== "zec");
+  } catch (e) {
+    sel.replaceChildren(new Option("The asset list could not be loaded", ""));
+    $("swap-err").textContent = errText(e);
+    return;
+  }
+  const keep = sel.value;
+  sel.replaceChildren(...swapTokens.map((t) => new Option(`${t.symbol} · ${chainName(t.blockchain)}`, t.assetId)));
+  const usdcSol = swapTokens.find((t) => t.symbol === "USDC" && t.blockchain === "sol");
+  sel.value = swapTokens.some((t) => t.assetId === keep) ? keep : (usdcSol?.assetId ?? swapTokens[0]?.assetId ?? "");
+  renderSwapForm();
+}
+
+async function loadSwaps(): Promise<void> {
+  try {
+    swaps = await invoke<Swap[]>("swap_list");
+    $("swap-list-err").textContent = "";
+  } catch (e) {
+    swaps = [];
+    $("swap-list-err").textContent = errText(e);
+  }
+  renderSwaps();
+  schedulePoll();
+}
+
+function showSwapStage(stage: "form" | "quote" | "review"): void {
+  $("swap-form").hidden = stage !== "form";
+  $("swap-quote").hidden = stage !== "quote";
+  $("swap-review").hidden = stage !== "review";
+}
+
+/** The pending slot was taken by a send or a shielding: the deposit review is gone. */
+function dropSwapReview(): void {
+  if (!swapProposal) return;
+  swapProposal = null;
+  swapPaying = null;
+  showSwapStage("form");
+}
+
+function resetSwaps(): void {
+  window.clearTimeout(pollTimer);
+  swaps = [];
+  swapQuote = null;
+  swapProposal = null;
+  swapPaying = null;
+  for (const id of ["swap-err", "swap-quote-err", "swap-sign-err", "swap-sign-status", "swap-list-err"]) $(id).textContent = "";
+  $<HTMLTextAreaElement>("swap-addr").value = "";
+  $<HTMLInputElement>("swap-amount").value = "";
+  showSwapStage("form");
+  renderSwaps();
+}
+
+for (const id of ["swap-from", "swap-to", "swap-asset"]) $(id).addEventListener("change", renderSwapForm);
+
+async function requestSwapQuote(dry: boolean): Promise<void> {
+  const err = $("swap-err");
+  err.textContent = "";
+  const t = selectedToken();
+  const amount = $<HTMLInputElement>("swap-amount").value.trim();
+  const addr = $<HTMLTextAreaElement>("swap-addr").value.trim();
+  const slip = Number($<HTMLInputElement>("swap-slippage").value.trim());
+  const maxSlip = (swapInfo?.maxSlippageBps ?? 1000) / 100;
+  const badAmount = !/^\d*(\.\d+)?$/.test(amount) || amount === "" || amount === "." || Number(amount) <= 0;
+  $("swap-amount").setAttribute("aria-invalid", String(badAmount));
+  $("swap-addr").setAttribute("aria-invalid", String(addr === ""));
+  if (!t) {
+    err.textContent = "Choose an asset.";
+    return;
+  }
+  if (badAmount || addr === "") {
+    err.textContent = "Enter an amount and an address.";
+    return;
+  }
+  if (!Number.isFinite(slip) || slip <= 0 || slip > maxSlip) {
+    err.textContent = `Slippage between 0.01% and ${maxSlip}%.`;
+    return;
+  }
+  const direction = swapDirection();
+  const params = {
+    direction,
+    asset: t.assetId,
+    amount,
+    recipient: direction === "fromZec" ? addr : null,
+    refundTo: direction === "toZec" ? addr : null,
+    slippageBps: Math.round(slip * 100),
+    dry,
+    confidential: $<HTMLInputElement>("swap-confidential").checked,
+  };
+  const btns = [$<HTMLButtonElement>("swap-quote-btn"), $<HTMLButtonElement>("swap-preview-btn")];
+  btns.forEach((b) => (b.disabled = true));
+  try {
+    swapQuote = await invoke<Swap>("swap_quote", { params });
+    renderSwapQuote(swapQuote);
+    showSwapStage("quote");
+    if (!swapQuote.dry) await loadSwaps();
+  } catch (e) {
+    err.textContent = errText(e);
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+}
+
+$<HTMLFormElement>("swap-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  if (isMainnet()) void requestSwapQuote(false);
+});
+$("swap-preview-btn").addEventListener("click", () => void requestSwapQuote(true));
+
+function kvRows(kv: HTMLElement, rows: [string, string][]): void {
+  kv.replaceChildren();
+  for (const [k, v] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = k;
+    const dd = document.createElement("dd");
+    dd.textContent = v;
+    kv.append(dt, dd);
+  }
+}
+
+function renderSwapQuote(q: Swap): void {
+  const inName = assetName(q.origin);
+  const outName = assetName(q.destination);
+  const rate = Number(q.amountOutFormatted) / Number(q.amountInFormatted);
+  const rows: [string, string][] = [
+    ["You pay", `${q.amountInFormatted} ${inName}${usd(q.amountInUsd)}`],
+    ["You receive about", `${q.amountOutFormatted} ${outName}${usd(q.amountOutUsd)}`],
+    ["At least", `${q.minAmountOutFormatted} ${outName} (slippage ${q.slippageBps / 100}%)`],
+  ];
+  if (Number.isFinite(rate)) rows.push(["Rate", `1 ${q.origin.symbol} ≈ ${rate.toPrecision(6)} ${q.destination.symbol}`]);
+  if (q.minAmountInFormatted && q.direction === "toZec") rows.push(["Least deposit swapped", `${q.minAmountInFormatted} ${inName}`]);
+  if (q.refundFeeFormatted) rows.push(["Refund fee (if refunded)", `${q.refundFeeFormatted} ${q.origin.symbol}`]);
+  rows.push(["Fees", q.authenticated ? "1Click's, included in the amount received" : "1Click's plus 0.25% (no API key), included"]);
+  if (q.timeEstimateSecs !== null) rows.push(["Takes about", `${Math.max(1, Math.round(q.timeEstimateSecs / 60))} min after the deposit confirms`]);
+  if (!q.dry) rows.push(["Deposit by", when(q.deadline)]);
+  rows.push([q.direction === "fromZec" ? "Recipient" : "Into (this wallet)", chunk(q.recipient)]);
+  rows.push(["Refunds to", q.direction === "fromZec" ? `${chunk(q.refundTo)} (this wallet, shielded)` : chunk(q.refundTo)]);
+  if (q.confidentiality !== "public") rows.push(["Confidentiality", q.confidentiality]);
+  kvRows($("swap-quote-kv"), rows);
+  $("swap-quote-h").textContent = q.dry ? "Price preview (dry run)" : "Quote";
+
+  const box = $("swap-deposit-box");
+  const dep = q.depositAddress;
+  box.hidden = dep === null;
+  if (dep !== null) {
+    $("swap-deposit-label").textContent =
+      q.direction === "fromZec"
+        ? `Deposit address (Zcash${q.depositTransparent ? ", transparent: the deposit is public" : ""}). "Review the deposit" builds the send; the LeekWallet shows this address.`
+        : `Pay ${q.amountInFormatted} ${inName} from your ${chainName(q.origin.blockchain)} wallet to this address, before ${when(q.deadline)}. Only ${inName}: anything else is lost.`;
+    $("swap-deposit").textContent = dep;
+    $("swap-deposit").dataset["raw"] = dep;
+    void drawSwapQr(q.direction === "toZec" ? dep : null);
+  }
+  $("swap-review-btn").hidden = q.dry || q.direction !== "fromZec";
+  $("swap-quote-note").textContent = q.dry
+    ? "A preview only: no deposit address was made. " + (isMainnet() ? "Get a quote to swap." : "Swaps need Mainnet.")
+    : q.direction === "fromZec"
+      ? "1Click's quote, not checked by the LeekWallet. Nothing is sent until you sign the deposit on the device."
+      : "The swap appears below; this app follows it until the ZEC arrives (sync to see it in the balance).";
+  $("swap-quote-err").textContent = "";
+}
+
+async function drawSwapQr(text: string | null): Promise<void> {
+  const img = $<HTMLImageElement>("swap-deposit-qr");
+  img.hidden = true;
+  if (text === null) return;
+  try {
+    const svg = await invoke<string>("qr_svg", { text });
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    img.hidden = false;
+  } catch {
+    /* the address is on screen */
+  }
+}
+
+$("copy-swap-deposit").addEventListener("click", () => void copyFrom($("copy-swap-deposit"), $("swap-deposit")));
+$("swap-back-btn").addEventListener("click", () => {
+  swapQuote = null;
+  showSwapStage("form");
+});
+$("swap-review-btn").addEventListener("click", () => {
+  if (swapQuote) void reviewDeposit(swapQuote);
+});
+
+/** Builds the ZEC deposit of `s` and shows it for review. */
+async function reviewDeposit(s: Swap): Promise<void> {
+  const err = swapQuote && !$("swap-quote").hidden ? $("swap-quote-err") : $("swap-list-err");
+  err.textContent = "";
+  try {
+    const p = await invoke<Proposal>("swap_execute", { id: s.id });
+    // It took the one pending slot from a send or a shielding.
+    if (proposal) {
+      proposal = null;
+      showSendStage("form");
+    }
+    if (shieldProposal) {
+      shieldProposal = null;
+      showShieldStage("idle");
+      void renderBalances();
+    }
+    swapProposal = p;
+    swapPaying = s;
+    const pay = p.payments[0];
+    const rows: [string, string][] = [
+      ["Swap", `${s.amountInFormatted} ZEC → about ${s.amountOutFormatted} ${assetName(s.destination)}`],
+      ["Deposit to", chunk(pay ? pay.recipient : s.depositAddress ?? "")],
+      ["Amount", `${formatZec(pay ? pay.amountZat : 0, ticker)} · ${pay ? pay.pool : ""}`],
+    ];
+    for (const c of p.change) rows.push(["Change", `${formatZec(c.valueZat, ticker)} · ${c.pool}`]);
+    rows.push(["Fee", formatZec(p.feeZat, ticker)]);
+    rows.push(["Total", formatZec(p.totalZat, ticker)]);
+    kvRows($("swap-review-kv"), rows);
+    $("swap-review-note").textContent =
+      `The device shows the deposit address${s.depositTransparent ? " (transparent, with its warning)" : ""} and the amount: ` +
+      `compare them with the ones here. Deposit before ${when(s.deadline)}; ` +
+      `a built transaction also expires about 40 blocks after ${p.targetHeight}.`;
+    $("swap-sign-status").textContent = "";
+    $("swap-sign-err").textContent = "";
+    armMainnetConfirm("swap-main-confirm", "swap-sign-btn");
+    showSwapStage("review");
+    $("swap-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    err.textContent = errText(e);
+    await loadSwaps();
+  }
+}
+
+$("swap-main-confirm").addEventListener("change", () => {
+  $<HTMLButtonElement>("swap-sign-btn").disabled = isMainnet() && !$<HTMLInputElement>("swap-main-confirm").checked;
+});
+
+$("swap-cancel-btn").addEventListener("click", () => {
+  swapProposal = null;
+  swapPaying = null;
+  showSwapStage(swapQuote ? "quote" : "form");
+});
+
+$("swap-sign-btn").addEventListener("click", async () => {
+  if (!swapProposal || !swapPaying) return;
+  const paying = swapPaying;
+  const sent = await signOnDevice(swapProposal, {
+    sign: "swap-sign-btn",
+    cancel: "swap-cancel-btn",
+    bar: "swap-bar",
+    status: "swap-sign-status",
+    err: "swap-sign-err",
+    confirm: "swap-main-confirm",
+  });
+  if (!sent) return;
+  swapProposal = null;
+  swapPaying = null;
+  swapQuote = null;
+  $<HTMLFormElement>("swap-form").reset();
+  $<HTMLInputElement>("swap-slippage").value = String((swapInfo?.defaultSlippageBps ?? 100) / 100);
+  renderSwapForm();
+  showSwapStage("form");
+  // The backend recorded the txid with the swap; tell 1Click at once.
+  await loadSwaps();
+  await checkSwap(paying.id);
+  await afterTransaction();
+});
+
+const STEPS: { key: string; label: string }[] = [
+  { key: "quoted", label: "Quoted" },
+  { key: "deposit", label: "Deposit sent" },
+  { key: "seen", label: "Deposit seen" },
+  { key: "processing", label: "Swapping" },
+  { key: "done", label: "Done" },
+];
+
+function stepIndex(s: SwapState): number {
+  switch (s) {
+    case "quoted":
+    case "expired":
+      return 0;
+    case "deposited":
+      return 1;
+    case "depositSeen":
+    case "incomplete":
+      return 2;
+    case "processing":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+const STATE_TEXT: Record<SwapState, string> = {
+  quoted: "Waiting for the deposit",
+  expired: "Expired: no deposit before the deadline (a late one is refunded)",
+  deposited: "Deposit broadcast; waiting for 1Click to see it",
+  depositSeen: "1Click saw the deposit",
+  incomplete: "Less than the quote needs arrived; 1Click refunds it after the deadline unless more comes",
+  processing: "Swapping",
+  success: "Done",
+  refunded: "Refunded",
+  failed: "Failed",
+};
+
+function timeline(s: Swap): HTMLElement {
+  const ol = el("ol", "timeline");
+  const now = stepIndex(s.state);
+  STEPS.forEach((st, i) => {
+    let label = st.label;
+    if (i === 4 && s.state === "refunded") label = "Refunded";
+    if (i === 4 && s.state === "failed") label = "Failed";
+    if (i === 0 && s.state === "expired") label = "Expired";
+    const li = el("li", "", `${i > 0 ? "→ " : ""}${label}`);
+    const bad = (i === 4 && (s.state === "refunded" || s.state === "failed")) || (i === 0 && s.state === "expired");
+    li.dataset["step"] = bad ? "bad" : i < now ? "done" : i === now ? (s.state === "success" ? "done" : "now") : "todo";
+    ol.append(li);
+  });
+  return ol;
+}
+
+function copyLine(cls: string, label: string, value: string, title: string): HTMLElement {
+  const row = el("div", "tx__id");
+  const code = el("code", cls, `${label} ${value}`);
+  code.dataset["raw"] = value;
+  const copy = el("button", "", "Copy");
+  copy.type = "button";
+  copy.title = title;
+  copy.addEventListener("click", () => void copyFrom(copy, code));
+  row.append(code, copy);
+  return row;
+}
+
+function renderSwaps(): void {
+  const list = $("swap-list");
+  $("swap-empty").hidden = swaps.length > 0;
+  list.replaceChildren(
+    ...swaps.map((s) => {
+      const li = document.createElement("li");
+      const head = el("div", "tx__head");
+      const kind = s.direction === "fromZec" ? `ZEC → ${assetName(s.destination)}` : `${assetName(s.origin)} → ZEC`;
+      head.append(el("span", "tx__kind", kind), el("span", "tx__when", when(s.createdAt)));
+      head.append(el("span", "tx__amount", `${s.amountInFormatted} ${s.origin.symbol} → ${s.details?.amountOutFormatted ?? `≈ ${s.amountOutFormatted}`} ${s.destination.symbol}`));
+      li.append(head, timeline(s));
+      li.append(el("div", "swap__line", STATE_TEXT[s.state] ?? s.state));
+      if (s.state === "quoted" || s.state === "expired") li.append(el("div", "swap__line", `Deposit by ${when(s.deadline)}`));
+      if (s.direction === "toZec" && (s.state === "quoted" || s.state === "incomplete")) {
+        li.append(el("div", "swap__line", `Pay ${s.amountInFormatted} ${assetName(s.origin)} to the deposit address below, from your wallet on ${chainName(s.origin.blockchain)}.`));
+      }
+      const d = s.details;
+      if (d?.refundedAmountFormatted) {
+        li.append(el("div", "swap__line", `Refunded ${d.refundedAmountFormatted} ${s.origin.symbol} to ${chunk(s.refundTo)}${d.refundReason ? ` (${d.refundReason})` : ""}`));
+      }
+      if (s.depositAddress) li.append(copyLine("", "Deposit", s.depositAddress, "Copy the deposit address (look it up on " + (swapInfo?.explorer ?? "explorer.near-intents.org") + ")"));
+      if (s.depositTxid) li.append(copyLine("", "Deposit tx", s.depositTxid, "Copy the deposit transaction id"));
+      for (const t of d?.destinationChainTxHashes ?? []) {
+        li.append(copyLine("", "Payout", t.explorerUrl || t.hash, "Copy the payout transaction (explorer link)"));
+      }
+      if (s.lastError) li.append(el("div", "swap__line", `Last check: ${s.lastError}`));
+      else if (s.checkedAt) li.append(el("div", "swap__line", `Checked ${when(s.checkedAt)}${s.apiStatus ? ` · 1Click: ${s.apiStatus}` : ""}`));
+
+      const actions = el("div", "swap__actions");
+      if (s.direction === "fromZec" && s.state === "quoted" && !s.depositTxid && profile?.hardware) {
+        const pay = el("button", "primary", "Review the deposit");
+        pay.type = "button";
+        pay.addEventListener("click", () => void reviewDeposit(s));
+        actions.append(pay);
+      }
+      if (!FINAL_SWAP.includes(s.state)) {
+        const chk = el("button", "", "Check now");
+        chk.type = "button";
+        chk.addEventListener("click", () => void checkSwap(s.id));
+        actions.append(chk);
+      }
+      const removable = FINAL_SWAP.includes(s.state) || s.state === "expired" ||
+        (s.direction === "fromZec" && s.state === "quoted" && !s.depositTxid);
+      if (removable) {
+        const rm = el("button", "", "Remove");
+        rm.type = "button";
+        rm.title = "Forget this swap on this computer (it can no longer move funds)";
+        rm.addEventListener("click", async () => {
+          try {
+            swaps = await invoke<Swap[]>("swap_forget", { id: s.id });
+            renderSwaps();
+          } catch (e) {
+            $("swap-list-err").textContent = errText(e);
+          }
+        });
+        actions.append(rm);
+      }
+      li.append(actions);
+      return li;
+    }),
+  );
+}
+
+async function checkSwap(id: string): Promise<void> {
+  try {
+    const s = await invoke<Swap>("swap_status", { id });
+    const i = swaps.findIndex((x) => x.id === id);
+    const was = i >= 0 ? swaps[i] : undefined;
+    if (i >= 0) swaps[i] = s;
+    else swaps.unshift(s);
+    renderSwaps();
+    // ZEC arrived or came back: show it.
+    if (was && was.state !== s.state && (s.state === "success" || s.state === "refunded")) {
+      void renderBalances();
+      void renderHistory();
+    }
+  } catch (e) {
+    $("swap-list-err").textContent = errText(e);
+  }
+}
+
+/** Follows every swap that is not final while the swap screen is shown on mainnet. */
+function schedulePoll(): void {
+  window.clearTimeout(pollTimer);
+  const open = swaps.filter((s) => !FINAL_SWAP.includes(s.state));
+  if (!isMainnet() || open.length === 0) return;
+  pollTimer = window.setTimeout(async () => {
+    if (!$("swap-panel").hidden) {
+      for (const s of open) await checkSwap(s.id);
+    }
+    schedulePoll();
+  }, POLL_MS);
+}
+
+$("swap-refresh").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("swap-refresh");
+  btn.disabled = true;
+  $("swap-list-err").textContent = "";
+  try {
+    for (const s of swaps.filter((x) => !FINAL_SWAP.includes(x.state))) await checkSwap(s.id);
+    schedulePoll();
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // -------------------------------------------------------------------- theme
 

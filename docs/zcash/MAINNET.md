@@ -140,3 +140,56 @@ Record each txid, the link (USB/BLE) and the companion in
   Restore the 24 words (and passphrase) onto a reflashed LeekWallet and
   import again; account 0, coin type 133. Any other wallet must support
   NU6.3 (Ironwood) to see funds received or shielded after it.
+
+## A tiny NEAR Intents swap (roadmap 8.6)
+
+From the desktop app, with the board, on the mainnet wallet above. The
+swap service is NEAR Intents' 1Click: the app cannot check its rate or
+its deposit address, the board shows only what it pays.
+
+**Before.** The mainnet wallet is synced and holds at least 0.004 ZEC
+spendable (shielded). You have an address of your own on the other chain
+(say USDC on Solana, or on NEAR) that can receive the asset; nobody
+else's. Amounts: 1Click's minimum for ZEC → USDC was 0.00132 ZEC on
+2026-10-17; use **0.003 ZEC** (about the price of a coffee). A refund
+would cost about 0.00032 ZEC. No API key is needed (1Click then adds
+0.25%); leave "Confidential" off.
+
+1. **Preview.** Swap card: "ZEC → another asset", pick the asset, amount
+   0.003, your address on that chain, slippage 1%. "Preview price" (dry
+   run): the rate, the minimum received and "about N min" appear. Nothing
+   is created.
+2. **Quote.** "Get quote". Check: you pay 0.003 ZEC; you receive about
+   …; at least …; recipient = your address (character by character);
+   refunds to a `u1…` address of this wallet; "Deposit by" about two
+   hours ahead. Note the deposit address and whether the card says
+   transparent (`t1…`) or unified (`u1…`): record which in the journal.
+3. **Review the deposit.** The review shows one payment of exactly 0.003
+   ZEC to that deposit address, the change and the fee. Tick the
+   mainnet box, "Sign on LeekWallet", ACCEPT on the board after checking
+   on its pages: the deposit address (a `t1…` one comes with the
+   transparent warning), 0.003 ZEC, the fee, Network: Mainnet. Note the
+   txid.
+4. **Follow it.** The swap in the list goes "Deposit sent" → "Deposit
+   seen" (after about one block) → "Swapping" → "Done", polled every 20 s
+   ("Check now" polls at once). It shows the payout transaction on the
+   other chain; check it arrived in your wallet there. The deposit
+   address can also be looked up on explorer.near-intents.org.
+5. **If it is refunded** (rate moved past the slippage, or the deposit
+   came late): the state says Refunded with the reason; the ZEC (minus
+   the refund fee) comes back to the `u1…` refund address; sync to see
+   it. Nothing else to do.
+6. **Optional, into ZEC.** "Another asset → ZEC", e.g. 2 USDC, your
+   refund address on that chain, "Get quote": the card shows a deposit
+   address on that chain with a QR code and the deadline. Pay exactly
+   that amount from your wallet there, before the deadline, nothing
+   else. The swap goes to Done and the ZEC arrives shielded; sync.
+
+Stop and press NO on the board if its address differs from the app's,
+the amount is not the quoted one, or it says Testnet. Record in
+docs/JOURNAL.md the route, the amounts, the deposit address type and the
+time it took; keep txids and addresses out of the repository.
+
+The swaps are kept in `<app data dir>/swaps-main.json` (quote, 1Click's
+signature, deposit txid, last status), so a restart keeps following
+them; keep the file until the swap is done: it is what a dispute needs.

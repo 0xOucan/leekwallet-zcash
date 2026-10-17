@@ -695,6 +695,27 @@ impl Wallet {
         bail!("the wallet keeps handing out its default address")
     }
 
+    /// Generates and records a fresh Orchard-only unified address: for a
+    /// counterparty that should neither see a transparent receiver nor link
+    /// this payment to others (a swap service's refund or payout address).
+    /// It uses no transparent gap address, so it never runs out.
+    pub fn next_shielded_address(&mut self) -> Result<DiversifiedAddress> {
+        let (id, _) = self.the_account()?;
+        let net = self.profile.network;
+        for _ in 0..2 {
+            let (ua, j) = self
+                .db
+                .get_next_available_address(id, UnifiedAddressRequest::ORCHARD)
+                .map_err(|e| anyhow!("address generation: {e}"))?
+                .ok_or_else(|| anyhow!("account vanished"))?;
+            if u128::from(j) == 0 {
+                continue;
+            }
+            return Ok(DiversifiedAddress { unified: ua.encode(&net), diversifier_index: u128::from(j), transparent: None });
+        }
+        bail!("the wallet keeps handing out its default address")
+    }
+
     /// The account's transactions, newest first (unmined ones on top), at
     /// most `limit`: from zcash_client_sqlite's `v_transactions` and
     /// `v_tx_outputs` views.

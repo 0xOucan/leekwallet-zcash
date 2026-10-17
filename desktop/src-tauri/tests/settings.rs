@@ -36,6 +36,23 @@ fn err_text<T>(r: anyhow::Result<T>) -> String {
 }
 
 #[test]
+fn the_1click_api_key_is_kept_and_never_written_when_absent() {
+    let d = TempDir::new("apikey");
+    let path = settings::path_in(&d.0);
+    // A file without the key is written without it.
+    settings::switch_network(&path, &d.0, MAIN).unwrap();
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("oneClickApiKey"));
+    // A key set by hand survives a network switch and a server change.
+    let mut s = settings::load(&path).unwrap();
+    s.one_click_api_key = Some("partner.jwt".into());
+    settings::save(&path, &s).unwrap();
+    settings::switch_network(&path, &d.0, TEST).unwrap();
+    settings::save_server(&path, TEST, Some("https://testnet.example:443")).unwrap();
+    assert_eq!(settings::load(&path).unwrap().one_click_api_key.as_deref(), Some("partner.jwt"));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("\"oneClickApiKey\": \"partner.jwt\""));
+}
+
+#[test]
 fn testnet_until_switched_and_the_switch_is_saved() {
     let d = TempDir::new("switch");
     let app = &d.0;

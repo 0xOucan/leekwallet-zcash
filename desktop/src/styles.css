@@ -290,3 +290,18 @@ button.danger { background: #A33329; color: #FFFFFF; border-color: #A33329; }
 /* Lists without a total row. */
 .kv--plain dt:nth-last-of-type(-n+2), .kv--plain dd:nth-last-of-type(-n+2),
 .kv--single dt, .kv--single dd { border-top: none; padding-top: 0; }
+
+/* ------------------------------------------------------------------- swaps */
+
+.field-check { display: flex; gap: var(--space-2); align-items: flex-start; font-size: var(--text-sm); margin-bottom: var(--space-3); cursor: pointer; }
+.field-check input { margin-top: 0.25em; flex: none; }
+.swaps-head { margin-top: var(--space-4); }
+.swaps-head h3 { margin: 0; }
+/* The steps of a swap: done ones in the accent colour, the current one bold. */
+.timeline { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: var(--space-2) 0 0; padding: 0; font-size: var(--text-xs); color: var(--muted); }
+.timeline li[data-step="done"] { color: var(--accent); }
+.timeline li[data-step="now"] { color: var(--text); font-weight: 600; }
+.timeline li[data-step="bad"] { color: var(--danger); font-weight: 600; }
+.swap__line { color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; margin-top: var(--space-1); }
+.swap__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.swap__actions button { height: 28px; padding: 0 var(--space-3); font-size: var(--text-xs); }
