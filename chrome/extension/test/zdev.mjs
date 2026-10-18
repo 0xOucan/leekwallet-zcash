@@ -31,14 +31,18 @@ export function zdevBinary() {
 
 /**
  * A running zdev. `yes`: answer every question on the "device" yes; else
- * write answers with `answer('y')`. `passkeys` collects what it showed.
+ * write answers with `answer('y')`. `passphrase`: a BIP 39 passphrase on
+ * the abandon-art mnemonic, for a board with another wallet. `passkeys`
+ * collects what it showed.
  */
-export async function startZdev({ yes = true } = {}) {
+export async function startZdev({ yes = true, passphrase = null } = {}) {
   const bin = zdevBinary();
   if (!bin) return null;
   const dir = mkdtempSync(join(tmpdir(), 'leek-zdev-'));
   const link = join(dir, 'port');
-  const child = spawn(bin, ['--link', link, ...(yes ? ['--yes'] : [])], { stdio: ['pipe', 'pipe', 'pipe'] });
+  // A passphrase makes another seed, so another wallet (another board).
+  const args = ['--link', link, ...(yes ? ['--yes'] : []), ...(passphrase ? ['--passphrase', passphrase] : [])];
+  const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   const z = { child, link, dir, passkeys: [], out: '', questions: 0 };
   child.stdout.on('data', (d) => {
     const s = d.toString();

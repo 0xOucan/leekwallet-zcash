@@ -88,4 +88,20 @@ export async function grantUsb() {
   }
 }
 
+/**
+ * Why there is no `navigator.bluetooth`, and how to turn it on. Brave hides
+ * Web Bluetooth behind its own flag; on Linux, Chromium (Chrome and Brave)
+ * also keeps it behind "Experimental Web Platform features" (Web Bluetooth
+ * CG, implementation-status.md).
+ */
+export function bluetoothHelp(nav = navigator) {
+  const ua = nav.userAgent ?? '';
+  const linux = /Linux/.test(ua) && !/Android|CrOS/.test(ua);
+  if (nav.brave?.isBrave) {
+    return `Web Bluetooth is off in Brave. Enable brave://flags/#brave-web-bluetooth-api${linux ? ' and, on Linux, also brave://flags/#enable-experimental-web-platform-features' : ''}, relaunch Brave, then press Bluetooth again.`;
+  }
+  if (linux) return 'On Linux, Chrome has Web Bluetooth only with chrome://flags/#enable-experimental-web-platform-features enabled. Enable it, relaunch, then press Bluetooth again.';
+  return 'This browser has no Web Bluetooth. Use desktop Chrome, Edge or Brave, or connect over USB.';
+}
+
 export const inTab = () => new URLSearchParams(location.search).has('tab');

@@ -417,7 +417,9 @@ Not the thin forwarder planned before: its own software wallets, the board over 
   - `chrome/extension/src/board/`: the protocol in plain ES modules (framing, CBOR, the v2 session with WebCrypto X25519/HKDF and vendored ChaCha20-Poly1305, every `z*` call, the `.zsig` writer), a twin of `leek-device`.
   - USB lives in the offscreen document (granted once from a tab); Bluetooth in the tab that chose the device. The popup connects, shows the six digits, imports the board's account (its birthday per network, or asks and records it), verifies the shown address on the board, sends and shields with a review and the mainnet real-funds tick.
   - Tested against zdev: Node over the USB framing and a fake GATT server at MTU 23, and from an extension page in headless Chromium with the real engine.
-  - Left: the same over Bluetooth; a testnet send over USB, for the "done when" as written (mainnet went first); QR through the webcam; accounts other than 0.
+  - Testnet and mainnet sends signed on the board over USB in Brave 152 (the user's run).
+  - **Board data hidden without the board (2026-10-17).** A device account is shown only while a board whose seed fingerprint matches it is connected (read with `zGetAccount` on connect); otherwise the popup shows the board section and "Connect your LeekWallet board to see this wallet." The data stays on OPFS and keeps syncing. Another board sees none of it and is offered its own import. "Forget this board" (confirmed) deletes the account through the engine's new `deleteAccount`. Also: the Bluetooth button opens the tab whatever the popup sees, and the tab says which flag enables Web Bluetooth (Brave's own, and on Linux Experimental Web Platform features); a USB timeout says to check the board is unlocked and its Link set to USB, and "Switch to Bluetooth" ends the USB session; an unmined send to self shows the fee, not -0.
+  - Left: the same over Bluetooth on the board; QR through the webcam; accounts other than 0.
 
 **9.4 Dapp interface (M).**
 - Zcash has no EIP-1193. Offer `window.zcash`: connect, accounts, `sendTransaction(zip321)`, `signPczt`.

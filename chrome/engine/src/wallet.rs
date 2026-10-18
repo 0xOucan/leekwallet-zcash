@@ -578,6 +578,22 @@ impl Wallet {
         bail!("the wallet keeps handing out its default address")
     }
 
+    /// Removes one account and everything synced for it only
+    /// (zcash_client_sqlite's `delete_account`), with its proposals and the
+    /// transactions extracted from them. The other accounts, and the chain
+    /// data they share, stay.
+    pub fn delete_account(&mut self, uuid: &str) -> Result<AccountInfo> {
+        let (id, _) = self.account(Some(uuid))?;
+        let info = self.account_info(id)?;
+        self.db().delete_account(id).map_err(|e| anyhow!("deleting the account: {e}"))?;
+        self.leek.execute(
+            "DELETE FROM sent WHERE txid IN (SELECT txid FROM pending WHERE account_uuid = ?1 AND txid IS NOT NULL)",
+            [uuid],
+        )?;
+        self.leek.execute("DELETE FROM pending WHERE account_uuid = ?1", [uuid])?;
+        Ok(info)
+    }
+
     // --------------------------------------------------------------- sync
 
     /// zecz `Wallet::sync`: scans until the wallet is up to date, `batch`

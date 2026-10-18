@@ -9,7 +9,7 @@
 // through EngineClient. Both publish the same state to the popup.
 //
 //   const host = new BoardHost({ openLink, engine, onState });
-//   await host.run('connect', { kind: 'usb' });
+//   await host.run('connect', { kind: 'usb', network: 'test' });
 //   await host.run('importAccount', { network: 'test' });
 //   await host.run('signAndFinish', { network, accountIndex, signerView, broadcast: true });
 
@@ -35,8 +35,13 @@ export class BoardHost {
   #device = null;
   #busy = null;
   #abort = null;
-  /** What the popup draws. Plain JSON: it crosses runtime ports. */
-  state = { phase: 'disconnected', kind: null, label: null, passkey: null, waiting: null, task: null, error: null, lastResult: null };
+  /**
+   * What the popup draws. Plain JSON: it crosses runtime ports.
+   * `seedFingerprint` is the ZIP 32 fingerprint of the seed the board has
+   * unlocked, read once connected: the popup shows a device account only
+   * while the board that holds its seed is connected.
+   */
+  state = { phase: 'disconnected', kind: null, label: null, passkey: null, waiting: null, task: null, error: null, seedFingerprint: null, lastResult: null };
 
   constructor({ openLink, engine, onState }) {
     this.#openLink = openLink;
@@ -85,7 +90,7 @@ export class BoardHost {
     const d = this.#device;
     this.#device = null;
     await d?.link.close().catch(() => {});
-    this.#set({ phase: 'disconnected', passkey: null, waiting: null, task: null, error: why === 'disconnected' ? null : why });
+    this.#set({ phase: 'disconnected', passkey: null, waiting: null, task: null, seedFingerprint: null, error: why === 'disconnected' ? null : why });
   }
 
   #ready() {
@@ -99,9 +104,9 @@ export class BoardHost {
     return s;
   }
 
-  async op_connect({ kind }, signal) {
+  async op_connect({ kind, network = 'test' }, signal) {
     if (this.#device) await this.#close('disconnected');
-    this.#set({ phase: 'connecting', kind, label: null, passkey: null, waiting: null, error: null });
+    this.#set({ phase: 'connecting', kind, label: null, passkey: null, waiting: null, seedFingerprint: null, error: null });
     let link;
     try {
       link = await this.#openLink(kind, (why) => {
@@ -123,7 +128,12 @@ export class BoardHost {
       this.#set({ phase: 'unlocking', waiting: null });
       await device.ensureUnlocked({ signal, onWaiting: () => this.#set({ waiting: 'pin' }) });
       const features = await device.zGetFeatures().catch(() => null);
-      this.#set({ phase: 'ready', passkey: null, waiting: null, features });
+      // Which wallet this is. The fingerprint is the seed's, the same on
+      // both networks; deriving the account takes the board a few seconds.
+      this.#set({ waiting: 'wallet' });
+      // Without it (an error on the board) no device account is shown.
+      const acc = await device.zGetAccount(0, network).catch(() => null);
+      this.#set({ phase: 'ready', passkey: null, waiting: null, features, seedFingerprint: acc?.seedFingerprint ?? null });
       return { ...this.state };
     } catch (e) {
       await this.#close(String(e?.message ?? e));
@@ -146,6 +156,7 @@ export class BoardHost {
     await this.#checkNetwork(network);
     this.#set({ task: { op: 'importAccount', phase: 'account' } });
     const acc = await device.zGetAccount(accountIndex, network);
+    if (acc.seedFingerprint !== this.state.seedFingerprint) this.#set({ seedFingerprint: acc.seedFingerprint });
     let height = acc.birthday;
     if (height == null) {
       if (birthday == null || !(Number(birthday) > 0)) {
@@ -190,7 +201,8 @@ export class BoardHost {
     const zsig = toHex(encodeZsig(signed.sha256, signed.entries));
     this.#set({ task: { op: 'sign', phase: 'finish', signatures: signed.entries.length } });
     const fin = await this.#engine('finish', { signerView, zsig, broadcast });
-    const result = { txid: fin.txid, broadcast: fin.broadcast, size: fin.size, proveMs: fin.proveMs, sighash: toHex(signed.sighash), signatures: signed.entries.length, network, at: Date.now() };
+    // Kept with the wallet that signed it: the popup shows it only to that board.
+    const result = { txid: fin.txid, broadcast: fin.broadcast, size: fin.size, proveMs: fin.proveMs, sighash: toHex(signed.sighash), signatures: signed.entries.length, network, seedFingerprint: this.state.seedFingerprint, accountIndex, at: Date.now() };
     this.#set({ lastResult: result });
     return { ...result, zsig };
   }

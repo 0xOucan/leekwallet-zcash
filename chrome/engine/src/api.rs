@@ -149,6 +149,11 @@ pub async fn dispatch(state: &State, method: &str, params: Value, on_event: OnEv
             let birthday = params.get("birthday").and_then(Value::as_u64).map(|b| b as u32);
             serde_json::to_value(w.import(&spec, birthday, on_event).await?)?
         }
+        "deleteAccount" => {
+            // "Forget this board": the account must be named, never defaulted.
+            let removed = w.delete_account(req_str(&params, "account")?)?;
+            json!({ "removed": removed })
+        }
         "addresses" => serde_json::to_value(w.addresses(account)?)?,
         "nextAddress" => serde_json::to_value(w.next_address(account)?)?,
         "sync" => {
