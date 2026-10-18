@@ -19,6 +19,12 @@
 //   5b. the board, as zdev (firmware/sim): pairs from an extension page,
 //       imports the account from it (birthday asked, then recorded on the
 //       board), checks a rotated address on it, refuses a foreign one.
+//   8. the popup: with no board it shows the board section only, nothing
+//      of the board's wallet; connected over Bluetooth (a stand-in for
+//      navigator.bluetooth whose GATT server is zdev) it shows the wallet,
+//      and hides it again on Disconnect; a board with another wallet (zdev
+//      with a passphrase) sees none of it and is offered its own import;
+//      "Forget this board" deletes the account.
 // Opt-in, needs funds on the abandon-art testnet account (public keys, so
 // anyone may have spent them): BROADCAST=1 also proposes a send to self,
 // signs it with the dev soft signer, proves, extracts and broadcasts it;
@@ -31,6 +37,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PtyLink, startZdev } from './zdev.mjs';
+import { BleReassembler, chunkForBle, encodeFrame } from '../src/board/framing.js';
+import { historyEntry } from '../src/format.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, '..', 'dist');
@@ -123,6 +131,57 @@ async function reloadExtension(ctx, id, page) {
   return openPage(ctx, id);
 }
 
+/**
+ * Opens the popup as a tab whose navigator.bluetooth is a stand-in: its
+ * one device's GATT server is zdev at `ptyPath`, reached through Node
+ * (chunks at MTU 23 both ways, as the board's ble.c). The popup's own
+ * code, BleLink included, runs unchanged.
+ */
+async function popupWithBluetooth(ctx, id, ptyPath) {
+  const popup = await ctx.newPage();
+  popup.on('pageerror', (e) => console.log(`  [popup error] ${e.message}`));
+  const pty = new PtyLink(ptyPath);
+  const reasm = new BleReassembler();
+  await popup.exposeFunction('bleWrite', async (chunk) => {
+    const f = reasm.push(Uint8Array.from(chunk));
+    if (f) await pty.send(f.type, f.payload);
+  });
+  await popup.addInitScript(() => {
+    const listeners = [];
+    const rx = { addEventListener: (ev, f) => listeners.push(f), startNotifications: async () => rx, stopNotifications: async () => rx };
+    const tx = { writeValueWithResponse: (c) => window.bleWrite(Array.from(c)) };
+    window.bleNotify = (bytes) => {
+      const value = new DataView(Uint8Array.from(bytes).buffer);
+      for (const f of listeners) f({ target: { value } });
+    };
+    const service = { getCharacteristic: async (uuid) => (uuid.endsWith('2') ? tx : rx) };
+    const device = { name: 'zdev', addEventListener() {}, gatt: { connect: async () => ({ getPrimaryService: async () => service }), disconnect() {} } };
+    Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice: async () => device }, configurable: true });
+  });
+  let open = true;
+  (async () => {
+    while (open) {
+      let f;
+      try {
+        f = await pty.recv(3600e3);
+      } catch {
+        return;
+      }
+      for (const c of chunkForBle(encodeFrame(f.type, f.payload), 23)) await popup.evaluate((b) => window.bleNotify(b), Array.from(c)).catch(() => {});
+    }
+  })();
+  await popup.goto(`chrome-extension://${id}/popup.html?tab&connect=ble`);
+  popup.closeBridge = async () => {
+    open = false;
+    await pty.close();
+    await popup.close().catch(() => {});
+  };
+  return popup;
+}
+
+const text = (popup) => popup.evaluate(() => document.body.innerText);
+const has = (popup, sel) => popup.evaluate((s) => !!document.querySelector(s), sel);
+
 let { ctx, id } = await launch();
 console.log(`extension ${id}, profile ${profile}`);
 try {
@@ -197,6 +256,8 @@ try {
   check('address rotation gives a new address', next.unified !== ua0 && next.diversifierIndex !== '0', `index ${next.diversifierIndex}`);
   const history = await call(page, 'history', { account: uuid, limit: 20 });
   check('history', Array.isArray(history), `${history.length} transactions`);
+  const lines = history.map(historyEntry);
+  check('history lines: no send shows as -0', lines.every((l) => l.amount !== '-0.00000000 ZEC'), `${lines.filter((l) => l.label.startsWith('sent to yourself')).length} sent to yourself`);
   const kind = await call(page, 'checkAddress', { address: next.unified });
   check('checkAddress', kind.kind === 'unified');
   st = await call(page, 'status');
@@ -309,27 +370,68 @@ try {
   check('mainnet opens in its own database', main.network === 'main' && main.accounts.length === 0, main.server);
   await call(page, 'open', { network: 'test', server: LWD });
 
-  // The popup itself renders the wallet.
+  // 8. The popup. No board connected: the board section only, nothing of
+  // the board's wallet.
   const popup = await ctx.newPage();
-  await popup.goto(`chrome-extension://${id}/popup.html?tab`);
-  popup.on('console', (m) => console.log(`  [popup] ${m.text()}`));
   popup.on('pageerror', (e) => console.log(`  [popup error] ${e.message}`));
-  await popup.waitForSelector('#total', { timeout: 120e3 }).catch(async (e) => {
-    console.log(`  popup shows: ${await popup.evaluate(() => document.body.innerText)}`);
+  await popup.goto(`chrome-extension://${id}/popup.html?tab`);
+  await popup.waitForSelector('#connect-to-see', { timeout: 120e3 }).catch(async (e) => {
+    console.log(`  popup shows: ${await text(popup)}`);
     throw e;
   });
-  const shown = await popup.evaluate(() => ({ total: document.getElementById('total')?.textContent, ua: document.getElementById('ua')?.textContent }));
-  check('the popup shows the balance and an address', !!shown.total && shown.ua?.startsWith('utest1'), `${shown.total}`);
-  // The board in the popup: the device-account screens are there, and
+  let shownText = await text(popup);
+  const leaks = await popup.evaluate(() => ['#total', '#ua', '#history', '#send', '#txid', '#sync', '#import'].filter((s) => document.querySelector(s)));
+  check('without its board the popup shows nothing of the wallet', leaks.length === 0 && !shownText.includes(ua0) && !shownText.includes('ZEC'), leaks.join(' ') || 'board section only');
+  const bt = await popup.evaluate(() => ({ native: !!navigator.bluetooth, disabled: document.getElementById('connect-ble')?.disabled, help: document.getElementById('ble-help')?.textContent ?? null }));
+  check('the Bluetooth button stays usable; without Web Bluetooth the tab says how to enable it', bt.disabled === false && (bt.native || /flags/.test(bt.help ?? '')), bt.native ? 'this Chromium has navigator.bluetooth' : bt.help);
   // "Connect over USB" with no port granted (headless: none exists) asks
   // for the browser's chooser, which a tab can open.
-  const boardUi = await popup.evaluate(() => ({ board: !!document.getElementById('board'), send: !!document.getElementById('send'), verify: !!document.getElementById('verify') }));
-  check('the popup shows the board, send and verify controls for a device account', boardUi.board && boardUi.send && boardUi.verify);
   await popup.click('#connect-usb');
   const granted = await popup.waitForSelector('#grant-usb', { timeout: 30e3 }).then(() => true, () => false);
   check('USB with no port granted: the offscreen document asks for the chooser', granted);
-  await popup.screenshot({ path: join(tmpdir(), 'leek-zcash-popup.png'), fullPage: true });
   await popup.close();
+
+  // Its board (zdev, abandon-art) over Bluetooth: the wallet appears.
+  let zb = await startZdev({ yes: true });
+  if (!zb) {
+    check('popup with the board: zdev', false, 'zdev could not be built');
+  } else {
+    try {
+      t0 = Date.now();
+      let bp = await popupWithBluetooth(ctx, id, zb.link);
+      await bp.waitForSelector('#ble-press', { timeout: 60e3 });
+      await bp.click('#connect-ble');
+      await bp.waitForSelector('#total', { timeout: 180e3 }).catch(async (e) => {
+        console.log(`  popup shows: ${await text(bp)}`);
+        throw e;
+      });
+      const ui = await bp.evaluate(() => ({ ua: document.getElementById('ua')?.textContent, board: document.getElementById('board-ready')?.textContent, send: !!document.getElementById('send'), verify: !!document.getElementById('verify'), forget: !!document.getElementById('forget') }));
+      check('its board connected (Bluetooth): the popup shows the balance, address, send and verify', ui.ua === ua0 && ui.send && ui.verify && /Bluetooth/.test(ui.board), `${ui.board}, ${ms(t0)}`);
+      check('"Forget this board" is offered to that board', ui.forget);
+      await bp.click('#disconnect');
+      await bp.waitForSelector('#connect-to-see', { timeout: 30e3 });
+      shownText = await text(bp);
+      check('Disconnect hides the wallet again', !(await has(bp, '#total')) && !shownText.includes(ua0) && !shownText.includes('ZEC'));
+      await bp.closeBridge();
+
+      // A board with another wallet: none of this one, and its own import.
+      const zo = await startZdev({ yes: true, passphrase: 'leekwallet-e2e-other-board' });
+      try {
+        const op = await popupWithBluetooth(ctx, id, zo.link);
+        await op.waitForSelector('#ble-press', { timeout: 60e3 });
+        await op.click('#connect-ble');
+        await op.waitForSelector('#import-board', { timeout: 120e3 });
+        shownText = await text(op);
+        const other = await op.evaluate(() => ['#total', '#ua', '#history', '#send', '#forget', '#connect-to-see'].filter((s) => document.querySelector(s)));
+        check('a board with another wallet sees none of it and is offered its own import', other.length === 0 && !shownText.includes(ua0) && !shownText.includes('ZEC'), other.join(' ') || 'import only');
+        await op.closeBridge();
+      } finally {
+        zo.stop();
+      }
+    } catch (e) {
+      check('popup with the board: no exception', false, String(e?.stack ?? e));
+    }
+  }
 
   // Opt-in: a real send, broadcast.
   if (process.env.BROADCAST && process.env.BROADCAST !== 'board') {
@@ -345,6 +447,28 @@ try {
     check('broadcast: propose, sign (soft), prove, extract, send', out.fin.broadcast && out.fin.txid.length === 64, `txid ${out.fin.txid}, ${out.fin.size} B, prove ${Math.round(out.fin.proveMs)} ms, ${ms(t0)}`);
   } else {
     console.log('skip broadcast (opt-in: BROADCAST=1, needs funds on the abandon-art testnet account)');
+  }
+
+  // "Forget this board": its account and synced data go; the board stays.
+  if (zb) {
+    try {
+      const bp = await popupWithBluetooth(ctx, id, zb.link);
+      await bp.waitForSelector('#ble-press', { timeout: 60e3 });
+      await bp.click('#connect-ble');
+      await bp.waitForSelector('#forget', { timeout: 180e3 });
+      await bp.click('#forget');
+      await bp.waitForSelector('#forget-confirm', { timeout: 10e3 });
+      await bp.click('#forget-yes');
+      await bp.waitForSelector('#import-board', { timeout: 180e3 });
+      st = await call(page, 'status');
+      const gone = await call(page, 'balances', { account: uuid }).then(() => false, () => true);
+      check('"Forget this board" (confirmed) deletes the account and its data', st.accounts.length === 0 && gone && !(await has(bp, '#total')), `${(st.dbBytes / 1e6).toFixed(2)} MB left (chain data)`);
+      await bp.closeBridge();
+    } catch (e) {
+      check('forget: no exception', false, String(e?.stack ?? e));
+    } finally {
+      zb.stop();
+    }
   }
   if (mem?.memoryMb) console.log(`  WASM memory ${mem.memoryMb.toFixed(0)} MB`);
 } catch (e) {
