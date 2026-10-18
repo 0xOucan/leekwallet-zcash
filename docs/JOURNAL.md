@@ -1072,3 +1072,46 @@ checked on Xtensa).
   `e2e.mjs` 41/41 (step 8 drives the popup with a stand-in
   `navigator.bluetooth` bridged to zdev).
 - Left: try it on the board (USB, then Bluetooth with the Linux flag).
+
+### 6.14 Zcash in the LeekWallet Companion (2026-10-17)
+- The Companion (firmware/app) did only EVM. It now has a Zcash section,
+  first in the home accordion, on branch `companion-zcash`.
+- Protocol: the Companion does its protocol work in TypeScript (the
+  codec and session in packages/core, the Client in main.ts; src-tauri
+  only moves frames), so the `z*` calls went there
+  (`packages/core/src/zcash.ts`, the same calls, timeouts and checks as
+  leek-device and the chrome twin) rather than linking leek-device into
+  Rust, which would have meant a second pairing for one set of methods.
+- Board tools: network switch (testnet default, mainnet behind a "real
+  ZEC" warning and banner), the board's account per network, QR and
+  copy, verify on the board, set the birthday, and "Sign a file": a
+  `.pczt` from zecz, the desktop app or Zodl, sent as it is, signed on
+  the board, the `.zsig` saved to the downloads folder through a small
+  Rust command (the webviews ignore download links). Board errors are
+  shown verbatim, so the coming network guard reads as the board words it.
+- Wallet: zecz linked into src-tauri behind a default feature. Import,
+  sync, propose, finish, contacts and the per-network server are the
+  desktop app's modules compiled in by `#[path]`; `zwallet.rs` is the
+  commands. The board stays in the webview's session: propose in Rust,
+  zSign through the Client after checking the board holds the wallet's
+  seed, finish in Rust. Screens after Zodl's (balance and pools, hide
+  balances, sync progress, shield prompt, rotating addresses, send with
+  memo and review, history with memos, contacts, server). Both networks
+  live side by side under `<app data>/zcash`.
+- Android: zecz-core cross-compiles for aarch64-linux-android with the
+  NDK here (SQLite, secp256k1, ring, Halo 2) once its serial port became
+  a default feature the Companion turns off. The arm64 debug APK builds
+  (235 MB, the Rust library 218 MB unstripped), wallet included.
+- Tests: `packages/core/test/zcash.test.ts` (golden `.zsig`, reply
+  checks, chunking, amounts) in `pnpm test`; `pnpm test:zdev` pairs with
+  zdev through the Companion's own framing and session and signs the PCZT
+  vectors on both networks, plus a board that says no; `cargo test --lib`
+  25 (the save command, the import refusals, and an online import and
+  sync of the public test account against testnet lightwalletd). A
+  headless run of the built page with a stand-in backend drew the
+  wallet, the review and the mainnet warning without a page error.
+- Left: run it on the board (desktop, then the phone over USB and
+  Bluetooth); a testnet send and shield signed on the board, then a small
+  mainnet one; the `.pczt` file picker and proving time on the phone; the
+  wallet is only on screen while a board is connected and unlocked (the
+  accordion's rule), unlike Zodl.

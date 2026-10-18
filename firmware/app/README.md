@@ -278,6 +278,71 @@ The relay (`wss://relay.walletconnect.org`, in the CSP allowlist by exact name)
 is a third party. It sees that a wallet and a dapp are talking and when; the
 payloads are encrypted end to end, and no key ever leaves the device.
 
+## Zcash
+
+The first section after unlocking is **Zcash**, for the LeekWallet Zcash
+firmware (docs/zcash/ROADMAP.md 6.14). It runs over the same encrypted session
+as everything else here: the `z*` methods of firmware/docs/PROTOCOL.md are
+`packages/core/src/zcash.ts`, called through main.ts's Client, so the board is
+paired once per connection and Zcash and EVM calls never interleave.
+
+**Network.** Testnet unless switched; Mainnet asks first ("Mainnet moves real
+ZEC") and keeps a danger banner up while it is on. The choice is the
+Companion's, per Zcash, independent of the EVM chain. Each network has its own
+wallet, server and address book; nothing is shared between them. A board that
+refuses a request for the other network (its network guard) is shown in the
+board's own words: every board error is displayed verbatim, with its code.
+
+**Board** (any build):
+- Read the board's account for the network and account number: unified and
+  transparent address (QR, copy), viewing key, seed fingerprint and birthday.
+- *Verify on the board*: `zShowAddress`; the board pages the address and the
+  user answers there.
+- *Set on the board*: the birthday for that network (`zSetAccountMeta`).
+
+**Sign a file**: open an unsigned `.pczt` made by zecz, the desktop app or
+Zodl; the board checks it, shows every output and the fee, and signs on ACCEPT.
+The `.zsig` is saved to the downloads folder (the app's own `Download` folder
+on Android, under `Android/data/com.leekwallet.companion/files/`). The file is
+sent as it is: its `.zsig` names the hash of exactly those bytes, which is what
+the wallet that kept the PCZT checks. A compact view is the builder's choice
+(`zecz send --compact`); the wallet below always builds one.
+
+**Wallet** (builds with the `zcash-wallet` feature, the default): the board's
+viewing key synced from lightwalletd by zecz (host/zecz-core), the engine of the
+CLI and the desktop app. Its import, sync, propose, finish, address book and
+server settings are the desktop app's own modules, compiled in from
+`desktop/src-tauri/src` (`src-tauri/src/lib.rs`); `src-tauri/src/zwallet.rs` is
+the commands. The screens follow Zodl's as a feature reference (nothing of its
+code is used):
+
+- *Wallet*: set up from the board (birthday from the board, typed, or today's
+  tip), then the balance (hideable), the pools, sync with progress, the
+  "transparent funds, shield them" prompt, and recent activity.
+- *Receive*: the shielded address, a new one on request (all of them reach the
+  wallet), verify on the board, the transparent address, QR and copy.
+- *Send*: recipient (or a contact's name), amount, memo with its byte count
+  (none to a transparent address), a review with fee and change, and on
+  mainnet a confirmation to tick. Then: the board's seed is checked against
+  the wallet's, the compact signer view is signed on the board, and the
+  wallet proves, broadcasts and shows the txid.
+- *Activity*: history with memos, recipients, fee, and an explorer link.
+- *Contacts*, *Settings* (server per network, checked before it is saved;
+  wallet info; forget this network's wallet).
+
+Data lives in the app data directory under `zcash/` (`wallets/<test|main>`,
+`settings.json`, `contacts-<net>.json`): viewing keys and what they have seen,
+never a spending key.
+
+Tests: `pnpm test` includes `packages/core/test/zcash.test.ts` (the golden
+`.zsig`, reply checks, chunking, amounts); `pnpm test:zdev` pairs with zdev
+(`make -C firmware/sim build/zdev`, the firmware's protocol on a PTY) using the
+Companion's framing and session, and signs the PCZT vectors on both networks;
+`cargo test --lib` in src-tauri covers the save command and the import checks,
+and `cargo test --lib -- --ignored online` imports and syncs the public test
+account against testnet lightwalletd. To drive the desktop app against zdev,
+start zdev with `--link /tmp/zdev` and the app with `LEEK_SERIAL_PORT=/tmp/zdev`.
+
 ## Status
 
 Implemented:
