@@ -1072,3 +1072,20 @@ checked on Xtensa).
   `e2e.mjs` 41/41 (step 8 drives the popup with a stand-in
   `navigator.bluetooth` bridged to zdev).
 - Left: try it on the board (USB, then Bluetooth with the Linux flag).
+
+### 9.3 Chrome extension on the real board: testnet send, Bluetooth (2026-10-17)
+- Testnet over USB: a 0.0001 ZEC send to the wallet's own address with a
+  memo, signed on the board, proven in the extension and accepted
+  (txid `c165714353f138d51e8135fd633731c9b8e3266b0816e6655c58043efbe6c053`).
+  Before it was mined the history line read -0.00000000 ZEC: the engine
+  subtracts the fee from an unmined send to yourself. Now "sent to yourself".
+- Bluetooth: dead at first in Brave with `#brave-web-bluetooth-api` on. On
+  Linux, Chromium also needs `#enable-experimental-web-platform-features`;
+  with both, the tab paired with the board and it confirmed the address.
+- The board's wallet hidden without the board, and "Forget this board",
+  tried on the board: the forgotten account and its data were gone.
+- An unrelated Android scare: both Android apps got the board's "derivation
+  failed" right after pairing, over USB and Bluetooth, while the extension
+  worked. It did not come back with logs recording (the board's log showed
+  pair, unlock, zGetAccount in about a second); cause unknown. Watch for it.
+- 9.3 is done except QR through the webcam.
