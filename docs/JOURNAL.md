@@ -1014,7 +1014,7 @@ checked on Xtensa).
   `chrome/extension/dist`, the board on USB (`303a:1001`).
 - Testnet: paired, imported account 0 (ZFP 551A1FD4, the board's testnet
   birthday 4,506,700), synced to the tip through ChainSafe's gRPC-web
-  proxy; the balance and history matched the other companions.
+  proxy: 0.12349 ZEC, all Ironwood, with its send and receive history.
 - Mainnet: switched the popup and the board, imported (birthday 3,520,600),
   synced; "Verify on the board" confirmed the shown address. A 0.0001 ZEC
   send to the wallet's own address with a memo: the review showed amount,
