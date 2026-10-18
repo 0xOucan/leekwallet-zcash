@@ -177,6 +177,130 @@
           safety property of docs/UI-L5-SPEC.md §3, and it lives in
           sectionHidden() in src/nav.ts with a test that needs no browser.
         -->
+        <!--
+          Zcash (docs/zcash/ROADMAP.md 6.13). The board's Zcash account and
+          its PCZT signer, over the same encrypted session as everything
+          else on this screen (packages/core/src/zcash.ts). The network is
+          chosen here, for Zcash only, and is independent of the EVM chain
+          below: testnet is the default and mainnet is a deliberate switch
+          with a warning, because an address of the wrong network reads as
+          valid until somebody sends to it.
+        -->
+        <section class="acc" id="seczcash" hidden>
+          <h2 class="acc__hd">
+            <button type="button" class="acc__toggle" id="hdrzcash"
+                    aria-expanded="false" aria-controls="zcashpanel">
+              <span class="acc__text">
+                <span class="acc__title">Zcash</span>
+                <span class="acc__desc" id="zhdrdesc">Testnet</span>
+              </span>
+              <span class="acc__chev" aria-hidden="true"></span>
+            </button>
+          </h2>
+          <section class="panel zcash" id="zcashpanel" aria-labelledby="zcashhead" hidden>
+            <h3 id="zcashhead" class="visually-hidden">Zcash</h3>
+            <div class="row znet" role="group" aria-label="Zcash network">
+              <button type="button" id="znettest" class="secondary" aria-pressed="true">Testnet</button>
+              <button type="button" id="znetmain" class="secondary" aria-pressed="false">Mainnet</button>
+              <label class="znet__acct">Account
+                <input id="zaccount" inputmode="numeric" autocomplete="off" value="0" size="3" /></label>
+            </div>
+            <div class="notice notice--danger" id="zmainask" role="alertdialog" aria-labelledby="zmainasktext" hidden>
+              <p id="zmainasktext"><strong>Mainnet moves real ZEC.</strong> Addresses,
+                balances and signatures from here on are for real money. A
+                mistake cannot be undone, and nobody can reverse a payment.</p>
+              <div class="row">
+                <button type="button" id="zmainyes" class="danger">Switch to mainnet</button>
+                <button type="button" id="zmainno" class="secondary">Stay on testnet</button>
+              </div>
+            </div>
+            <p class="notice notice--danger" id="zmainbanner" hidden>
+              Mainnet: real ZEC. Check every address and amount on the board's
+              own screen before you accept.
+            </p>
+
+            <div class="ztabs" role="tablist" aria-label="Zcash">
+              <button type="button" role="tab" id="ztab-board" aria-controls="zpane-board" aria-selected="true">Board</button>
+              <button type="button" role="tab" id="ztab-file" aria-controls="zpane-file" aria-selected="false">Sign a file</button>
+            </div>
+
+            <!-- The board's account: viewing key and addresses. Read on request,
+                 never on a timer: deriving an Orchard account takes the board
+                 seconds, and nothing here needs it until somebody asks. -->
+            <section id="zpane-board" role="tabpanel" aria-labelledby="ztab-board">
+              <div class="row">
+                <button type="button" id="zread">Read the board's account</button>
+              </div>
+              <p class="muted" id="zstatus" role="status" aria-live="polite"></p>
+              <div id="zacct" hidden>
+                <p class="addr-path-label muted">Unified address</p>
+                <div class="addr" id="zua"></div>
+                <div class="row">
+                  <button type="button" id="zverify">Verify on the board</button>
+                  <button type="button" id="zuaqr" class="secondary" aria-expanded="false" aria-controls="zqr">Show QR code</button>
+                  <button type="button" id="zuacopy" class="secondary">Copy</button>
+                </div>
+                <p class="addr-path-label muted">Transparent address</p>
+                <div class="addr" id="ztaddr"></div>
+                <div class="row">
+                  <button type="button" id="ztqr" class="secondary" aria-expanded="false" aria-controls="zqr">Show QR code</button>
+                  <button type="button" id="ztcopy" class="secondary">Copy</button>
+                </div>
+                <!-- Drawn here from what the board reported: a convenience, not
+                     evidence. "Verify on the board" is the check that counts. -->
+                <div class="addr-qr" id="zqr" hidden></div>
+                <dl class="kv">
+                  <dt>Seed fingerprint</dt><dd id="zfp"></dd>
+                  <dt>Birthday</dt><dd id="zbday"></dd>
+                </dl>
+                <details>
+                  <summary>Unified full viewing key</summary>
+                  <p class="muted">Whoever holds it sees every payment of this
+                    account, forever, but cannot spend. Give it only to a wallet
+                    you run.</p>
+                  <div class="addr" id="zufvk"></div>
+                  <button type="button" id="zufvkcopy" class="secondary">Copy viewing key</button>
+                </details>
+                <div class="row">
+                  <label class="field"><span>Birthday (block height the wallet was created at)</span>
+                    <input id="zbdayin" inputmode="numeric" autocomplete="off" placeholder="e.g. 3100000" /></label>
+                  <button type="button" id="zbdayset" class="secondary">Set on the board</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- A PCZT from zecz, the desktop app or Zodl: sent as it is (its
+                 .zsig names the hash of exactly these bytes), reviewed and
+                 accepted on the board, and the .zsig saved for the wallet
+                 that made the file to finish. -->
+            <section id="zpane-file" role="tabpanel" aria-labelledby="ztab-file" hidden>
+              <p class="muted">Open an unsigned <code>.pczt</code> made by a
+                wallet that holds this board's viewing key (zecz, the desktop
+                app, Zodl). The board checks it, shows every output and the fee,
+                and signs only when you accept on its last page. The signatures
+                are saved as a <code>.zsig</code> for that wallet to finish and
+                broadcast.</p>
+              <label class="field"><span>PCZT file</span>
+                <input id="zpczt" type="file" accept=".pczt,application/octet-stream" /></label>
+              <dl class="kv" id="zpcztinfo" hidden>
+                <dt>File</dt><dd id="zpcztname"></dd>
+                <dt>Size</dt><dd id="zpcztsize"></dd>
+                <dt>SHA-256</dt><dd id="zpcztsha"></dd>
+              </dl>
+              <div class="row">
+                <button type="button" id="zsign" disabled>Sign on the board</button>
+              </div>
+              <progress id="zsignbar" value="0" max="1" hidden></progress>
+              <p class="muted" id="zsignstatus" role="status" aria-live="polite"></p>
+              <dl class="kv" id="zsigned" hidden>
+                <dt>Sighash approved</dt><dd id="zsighash"></dd>
+                <dt>Signatures</dt><dd id="zsigcount"></dd>
+                <dt>Saved to</dt><dd id="zsigpath"></dd>
+              </dl>
+            </section>
+          </section>
+        </section>
+
         <section class="acc" id="secbalances" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdrbalances"

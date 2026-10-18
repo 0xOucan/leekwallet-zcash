@@ -21,6 +21,9 @@ import { DeviceError } from "./transport.ts";
 
 export type ZNetwork = "main" | "test";
 
+/** SHA-256, as the .zsig names a PCZT. Re-exported so the app needs no hash dependency of its own. */
+export { sha256 };
+
 /** The companion's request function: one encrypted call, one reply. */
 export type ZCall = (
   method: string,

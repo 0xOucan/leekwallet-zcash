@@ -24,6 +24,10 @@ mod ble;
 mod camera;
 mod serial;
 
+// The board's output to disk: the `.zsig` of a PCZT signed on the board,
+// written where the user can pick it up (the webviews cannot save a file).
+mod files;
+
 // The one thing in this backend that is not "move bytes to the device": an
 // outbound JSON-RPC call, made here rather than in the webview because the CSP
 // governs the webview and not this process. It is what a user-supplied RPC
@@ -195,7 +199,8 @@ pub fn run() {
             flash::flash_ports,
             flash::flash_detect,
             flash::flash_write,
-            camera::camera_exposure
+            camera::camera_exposure,
+            files::save_download
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the LeekWallet companion");

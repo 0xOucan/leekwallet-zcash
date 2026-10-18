@@ -15,8 +15,9 @@ import {
   derivationsInvalidated, UNKNOWN_STATUS, type DeviceStatus,
 } from "../packages/core/src/device-state.ts";
 import {
-  availableTransports, listPorts, TauriSerialTransport, type HardwareKind,
+  availableTransports, invoker, listPorts, TauriSerialTransport, type HardwareKind,
 } from "./tauri-transport.ts";
+import { initZcash, type ZcashView } from "./zcash-view.ts";
 import { BleTransport, scanBle, BLE_NOT_FOUND } from "./ble-transport.ts";
 import { createPublicClient, custom, defineChain, parseEther, serializeTransaction,
          isAddress, type Chain, type Hex, type Address } from "viem";
@@ -874,6 +875,9 @@ const busy = (on: boolean): void => {
  */
 let openSection: Section | null = null;
 
+/** The Zcash section, once initialised (src/zcash-view.ts). */
+let zcashView: ZcashView | null = null;
+
 /** Whether the post-unlock world (the home accordion) is on screen at all.
  * Everything nav.ts names stays hidden while this is false, `openSection`
  * notwithstanding — the same "outer gate, inner choice" shape
@@ -941,6 +945,8 @@ function setShellVisible(visible: boolean): void {
     void refreshAllChainBalances("home shown");
   } else {
     clearSignatureBadge();
+    // Nothing the board said about its Zcash account outlives the session.
+    zcashView?.reset();
     // Leaving the home screen is the same "stop showing a stale number about
     // whoever was here before" moment clearBalances() already covers.
     allChainRows = new Map();
@@ -4461,6 +4467,17 @@ $("flashback").addEventListener("click", goToLauncher);
 for (const section of SECTIONS) {
   $(SECTION_HEADER_IDS[section]).addEventListener("click", () => toggleHomeSection(section));
 }
+
+/* Zcash (src/zcash-view.ts). Its calls ride the Client like every other
+ * request, and only once the session is encrypted: every z* method is in
+ * the board's keys tier, which refuses plaintext. */
+zcashView = initZcash({
+  call: () => (client?.encrypted ? (m, p, t) => (client as Client).call(m, p, t) : null),
+  log,
+  copy: (text) => copyText(text),
+  qr: (text) => qrSvg(text),
+  invoke: invoker,
+});
 
 $("connect").addEventListener("click", () => void connect());
 $("unlock").addEventListener("click", () => void unlock());

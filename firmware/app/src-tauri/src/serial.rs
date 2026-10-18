@@ -55,9 +55,19 @@ pub struct Connection(tokio::sync::Mutex<Option<UsbTransport<tauri::Wry>>>);
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub fn ports() -> Result<Vec<Port>, String> {
-    list_ports()
+    let mut found: Vec<Port> = list_ports()
         .map(|v| v.into_iter().map(Port::from).collect())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    /* A port the enumeration cannot see, named by whoever started the app:
+     * zdev's pseudo-terminal (firmware/sim, `--link /tmp/zdev`), which is the
+     * whole board protocol with no board. Listed first and as the likely
+     * device so the ordinary Connect picks it. Development only, and only
+     * ever a path the user typed into their own environment. */
+    if let Some(path) = std::env::var_os("LEEK_SERIAL_PORT") {
+        let name = path.to_string_lossy().into_owned();
+        found.insert(0, Port { name, description: "LEEK_SERIAL_PORT".into(), likely_device: true });
+    }
+    Ok(found)
 }
 
 /// Android needs the plugin's state to enumerate through `UsbManager`, and the
