@@ -17,7 +17,15 @@ export const ERR = {
   SESSION: 0x0400,
   BUSY: 0x0401,
   ZSIGN_BASE: 0x0500,
+  /** The request named the other network than the board's Settings > Network. */
+  BOARD_NETWORK: 0x0500 | 40,
 };
+
+/** What to tell the user when the board refused `asked` ("main" or "test") because it is set to the other network. */
+export function wrongNetworkMessage(asked) {
+  const [app, board] = asked === 'main' ? ['Mainnet', 'Testnet'] : ['Testnet', 'Mainnet'];
+  return `The board is set to ${board}, but this wallet is on ${app}. Switch the board to ${app} in Settings → Network, or switch this wallet to ${board}.`;
+}
 
 /** Replies can take as long as a person reading the review pages. */
 export const USER_TIMEOUT = 150e3;
@@ -28,7 +36,7 @@ const DERIVE = 90e3;
 export class DeviceError extends Error {
   constructor(code, message) {
     const what =
-      (code & 0xff00) === ERR.ZSIGN_BASE
+      (code & 0xff00) === ERR.ZSIGN_BASE && code !== ERR.BOARD_NETWORK
         ? `the board refused to sign: ${message} (code -${code & 0xff})`
         : `board error 0x${code.toString(16).padStart(4, '0')}: ${message}`;
     super(what);
@@ -181,6 +189,19 @@ export class Device {
 
   /** One encrypted request and its reply. */
   async call(method, fields = {}, timeout = SHORT) {
+    try {
+      return await this.#call(method, fields, timeout);
+    } catch (e) {
+      if (e instanceof DeviceError && e.code === ERR.BOARD_NETWORK && fields.network) {
+        const out = new DeviceError(e.code, e.deviceMessage);
+        out.message = wrongNetworkMessage(fields.network);
+        throw out;
+      }
+      throw e;
+    }
+  }
+
+  async #call(method, fields, timeout) {
     if (this.#broken) throw new Error(`${this.#broken}; reconnect to the board`);
     const session = this.#session;
     if (!session) throw new Error('not paired with the board');
