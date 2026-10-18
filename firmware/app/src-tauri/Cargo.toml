@@ -18,8 +18,17 @@ tauri-build = { version = "2", features = [] }
 # `aarch64-linux-android-clang` and the NDK ships the name with the API level in
 # it, so CC_/AR_ have to point at the real files. The android scripts in
 # package.json set them; with that done the target builds.
-default = ["rpc-proxy"]
+default = ["rpc-proxy", "zcash-wallet"]
 rpc-proxy = ["dep:reqwest", "dep:rustls", "dep:webpki-roots"]
+
+# The Zcash wallet (src/zwallet.rs): sync, balances, history, send and
+# shield, over zecz (host/zecz-core), the engine of the zecz CLI and the
+# desktop app. Behind a feature because it is most of this binary's size
+# (librustzcash, Halo 2, SQLite) and because a build that only carries the
+# board tools (account, address check, PCZT signing) is a meaningful thing
+# to ship. Without it the Zcash section offers those and says nothing of a
+# wallet; the webview asks `zw_available`.
+zcash-wallet = ["dep:zecz-core", "dep:anyhow", "dep:qrcode"]
 
 # The USB firmware flasher (T65). Behind a feature because espflash pulls in a
 # sizeable dependency tree for something most builds do not need, and because a
@@ -87,6 +96,15 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "c
 # when this dependency is bumped and a release is cut.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"], optional = true }
 webpki-roots = { version = "1", optional = true }
+
+# The wallet engine. `default-features = false` drops its serial port: the
+# board is reached through the webview's session, never from here, and the
+# `serialport` crate cannot build for Android at all.
+zecz-core = { path = "../../../host/zecz-core", default-features = false, optional = true }
+anyhow = { version = "1", optional = true }
+# The desktop app's backend module, compiled in (src/lib.rs), draws its own
+# receive QR; unused here (the webview draws one) but part of that module.
+qrcode = { version = "=0.14.1", default-features = false, features = ["svg"], optional = true }
 
 # `#[tokio::test]` for the policy tests. Not a runtime dependency: the command
 # itself runs on the async runtime Tauri already provides.
@@ -160,6 +178,15 @@ tauri-plugin-serialplugin = "3.0.2"
 # from; `cargo build` without --release is still unstripped and still symbolic.
 [profile.release]
 strip = true
+
+# Scanning (trial decryption) and Halo 2 proving are unbearably slow
+# unoptimized (the desktop app's rule, desktop/src-tauri/Cargo.toml), and a
+# debug APK is what ANDROID.md builds. Dependencies are always optimized
+# and carry no debug info, which also keeps the debug APK's library small;
+# this crate itself stays quick to rebuild and debuggable.
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
 
 # Tauri builds Android as a shared library loaded by the JVM, not an executable
 # with a main(). Without this the linker produces something the APK cannot load.

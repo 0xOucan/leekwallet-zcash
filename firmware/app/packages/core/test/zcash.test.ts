@@ -13,7 +13,7 @@ import { sha256 } from "@noble/hashes/sha256";
 import type { CborValue } from "../src/cbor.ts";
 import { DeviceError } from "../src/transport.ts";
 import {
-  checkPczt, encodeZsig, networkOf, parseZsig, toHex, zErrorText, zGetAccount, ZPool,
+  checkPczt, encodeZsig, explorerTx, formatZec, MEMO_BYTES, memoBytes, networkOf, parseZsig, toHex, zErrorText, zGetAccount, ZPool,
   zSetBirthday, zShowAddress, zSign, zsigName, type ZCall,
 } from "../src/zcash.ts";
 
@@ -149,6 +149,18 @@ group("an error the companion has never heard of reads as the board wrote it");
   const e = new DeviceError(0x0105, "board is set to testnet");
   check(zErrorText(e).includes("board is set to testnet"), zErrorText(e));
   check(/^The board refused: .*parse/.test(zErrorText(new DeviceError(0x050a, "parse"))), "a 0x05xx refusal");
+}
+
+group("amounts, memos and explorer links");
+{
+  check(formatZec(0) === "0" && formatZec(150_000_000) === "1.5" && formatZec(10_000) === "0.0001", "formatZec");
+  check(formatZec(-12_345) === "-0.00012345" && formatZec(2_100_000_000_000_000) === "21000000", "sign and size");
+  let threw = false;
+  try { formatZec(0.5); } catch { threw = true; }
+  check(threw, "a fractional zatoshi");
+  check(memoBytes("é") === 2 && MEMO_BYTES === 512, "memo bytes are UTF-8");
+  check(explorerTx("test", "ab".repeat(32))!.startsWith("https://testnet."), "testnet explorer");
+  check(explorerTx("main", "nope") === null, "not a txid");
 }
 
 console.log(`\n${failures ? "FAILED" : "PASSED"} (${failures} failure${failures === 1 ? "" : "s"})`);

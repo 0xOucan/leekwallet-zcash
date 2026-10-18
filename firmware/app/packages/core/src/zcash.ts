@@ -391,3 +391,32 @@ export function zErrorText(e: unknown): string {
   }
   return e instanceof Error ? e.message : String(e);
 }
+
+/* ---------------------------------------------------------------- wallet */
+
+/** 1 ZEC = 10^8 zatoshi. */
+export const ZAT_PER_ZEC = 100_000_000;
+
+/**
+ * Zatoshi as ZEC, every decimal kept but trailing zeros trimmed: "1.5",
+ * "0.0001", "0". Integer arithmetic only, so no amount is rounded on its
+ * way to the screen.
+ */
+export function formatZec(zat: number): string {
+  if (!Number.isSafeInteger(zat)) throw new Error(`${zat} is not a whole number of zatoshi`);
+  const a = Math.abs(zat);
+  const whole = Math.floor(a / ZAT_PER_ZEC);
+  const frac = String(a % ZAT_PER_ZEC).padStart(8, "0").replace(/0+$/, "");
+  return `${zat < 0 ? "-" : ""}${whole}${frac ? `.${frac}` : ""}`;
+}
+
+/** The most a memo holds (ZIP 302), in UTF-8 bytes. */
+export const MEMO_BYTES = 512;
+
+export const memoBytes = (memo: string): number => new TextEncoder().encode(memo).length;
+
+/** A block explorer's page for a transaction, for the link under a sent one. */
+export function explorerTx(network: ZNetwork, txid: string): string | null {
+  if (!/^[0-9a-f]{64}$/.test(txid)) return null;
+  return `https://${network === "main" ? "mainnet" : "testnet"}.zcashexplorer.app/transactions/${txid}`;
+}

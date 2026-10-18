@@ -18,6 +18,7 @@ import {
   availableTransports, invoker, listPorts, TauriSerialTransport, type HardwareKind,
 } from "./tauri-transport.ts";
 import { initZcash, type ZcashView } from "./zcash-view.ts";
+import { initZcashWallet } from "./zcash-wallet.ts";
 import { BleTransport, scanBle, BLE_NOT_FOUND } from "./ble-transport.ts";
 import { createPublicClient, custom, defineChain, parseEther, serializeTransaction,
          isAddress, type Chain, type Hex, type Address } from "viem";
@@ -4478,6 +4479,16 @@ zcashView = initZcash({
   qr: (text) => qrSvg(text),
   invoke: invoker,
 });
+/* The wallet (sync, send, history), when this build has it: src-tauri's
+ * zwallet.rs over zecz. A build without it keeps the board tools above. */
+void initZcashWallet({
+  call: () => (client?.encrypted ? (m, p, t) => (client as Client).call(m, p, t) : null),
+  log,
+  copy: (text) => copyText(text),
+  qr: (text) => qrSvg(text),
+  invoke: invoker,
+  open: (url) => void openExternal(url),
+}, zcashView);
 
 $("connect").addEventListener("click", () => void connect());
 $("unlock").addEventListener("click", () => void unlock());

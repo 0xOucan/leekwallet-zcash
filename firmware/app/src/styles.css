@@ -911,3 +911,10 @@ main {
 .ztabs [role="tab"] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; }
 .ztabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); }
 .zcash progress { width: 100%; }
+.zbal { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.zbal__amount { font-size: 1.75rem; font-family: var(--font-mono); }
+.zhist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.zhist > li { border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); overflow-wrap: anywhere; }
+.zhist__head { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-sm); }
+.zhist__amt { font-family: var(--font-mono); }
+.zhist__amt[data-dir="in"] { color: var(--accent); }
