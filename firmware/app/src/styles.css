@@ -898,3 +898,23 @@ main {
   color: var(--fg, #e6e9ee);
   border-bottom-color: var(--accent, #6ee7a8);
 }
+
+/* Zcash (src/zcash-view.ts). The network switch is two pressed-state buttons
+ * rather than a select so the current network shows without opening
+ * anything; mainnet is drawn in the danger colour wherever it appears. */
+.znet button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.znet #znetmain[aria-pressed="true"] { border-color: var(--danger); color: var(--danger); }
+.znet__acct { display: inline-flex; gap: var(--space-2); align-items: center; margin-left: auto; font-size: var(--text-sm); color: var(--muted); }
+.znet__acct input { width: 4rem; }
+#hdrzcash[data-net="mainnet"] .acc__desc { color: var(--danger); }
+.ztabs { display: flex; gap: var(--space-1); flex-wrap: wrap; margin: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.ztabs [role="tab"] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; }
+.ztabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); }
+.zcash progress { width: 100%; }
+.zbal { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.zbal__amount { font-size: 1.75rem; font-family: var(--font-mono); }
+.zhist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.zhist > li { border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); overflow-wrap: anywhere; }
+.zhist__head { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-sm); }
+.zhist__amt { font-family: var(--font-mono); }
+.zhist__amt[data-dir="in"] { color: var(--accent); }

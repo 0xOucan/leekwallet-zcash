@@ -274,6 +274,11 @@ One codebase for both: our app is the Zodl fork with our branding. The hardware 
 - Rebase `leekwallet` on each Zodl release.
 - The diff outside `feature-leekwallet` stays small on purpose.
 
+**6.14 Zcash in the LeekWallet Companion (M).** The Companion (firmware/app, Tauri: Linux, macOS, Windows, Android as `com.leekwallet.companion`) gains a Zcash section beside its EVM screens, one app for both networks with their data kept apart (unlike the Zodl fork, two apps).
+- Board tools, over the Companion's own session (`packages/core/src/zcash.ts`): network switch (testnet default, mainnet behind a warning), the board's account (UFVK, UA, t-address, fingerprint, birthday per network), QR and copy, verify on the board, set the birthday, and signing a `.pczt` file into a `.zsig`. Board errors shown verbatim.
+- The wallet, over zecz linked into src-tauri with the desktop app's modules compiled in: import from the board, sync, balance and pools, rotating addresses, send with memo and review, shield prompt, history, contacts, server per network. Screens after Zodl's.
+- Done when: on desktop and on the phone, a testnet wallet imported from the board syncs, receives, and sends and shields signed on the board; the same on mainnet with a small amount; `pnpm test`, `pnpm test:zdev` and `cargo test` pass.
+
 Not planned: SD card in the app. Android's removable-storage rules and missing slots make it worse than QR there. If it is ever wanted, it becomes "export/import file" through the system picker.
 
 ---

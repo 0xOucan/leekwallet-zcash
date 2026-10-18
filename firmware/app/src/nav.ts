@@ -21,14 +21,15 @@
  * from mounted content (mountApps(), src/apps/mount.ts), independent of this
  * module. */
 export type Section =
-  | "balances" | "chain" | "receive" | "send" | "apps" | "connect" | "activity";
+  | "zcash" | "balances" | "chain" | "receive" | "send" | "apps" | "connect" | "activity";
 
 /** Display order, top to bottom. */
 export const SECTIONS: readonly Section[] =
-  ["balances", "chain", "receive", "send", "apps", "connect", "activity"];
+  ["zcash", "balances", "chain", "receive", "send", "apps", "connect", "activity"];
 
 /** The body each header expands: the panel that holds the section's content. */
 export const SECTION_PANEL_IDS: Record<Section, string> = {
+  zcash: "zcashpanel",
   balances: "walletmenu",
   chain: "chainpanel",
   receive: "addrpanel",
@@ -41,6 +42,7 @@ export const SECTION_PANEL_IDS: Record<Section, string> = {
 /** The `<section class="acc">` wrapper: header plus body. Hidden as a whole
  * while the shell is closed, so no bare header strip survives a lock. */
 export const SECTION_WRAPPER_IDS: Record<Section, string> = {
+  zcash: "seczcash",
   balances: "secbalances",
   chain: "secchain",
   receive: "secreceive",
@@ -52,6 +54,7 @@ export const SECTION_WRAPPER_IDS: Record<Section, string> = {
 
 /** The header `<button>` that toggles the section. */
 export const SECTION_HEADER_IDS: Record<Section, string> = {
+  zcash: "hdrzcash",
   balances: "hdrbalances",
   chain: "hdrchain",
   receive: "hdrreceive",
