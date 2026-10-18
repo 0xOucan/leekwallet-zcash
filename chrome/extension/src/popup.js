@@ -3,13 +3,21 @@
 // and the board (9.3): connect over USB or Bluetooth, import its account,
 // check an address on its screen, send and shield signed on it.
 //
+// A device account (imported from a board) is shown only while the board
+// that holds its seed is connected: its seed fingerprint, read from the
+// board on connect, must match the account's. Otherwise the popup shows
+// the board section and nothing of the wallet; the synced data stays on
+// OPFS, so reconnecting shows it at once. View-only accounts are always
+// shown.
+//
 // It owns nothing: every answer comes from the engine through
 // EngineClient, and the few choices it remembers (network, endpoint,
 // account) are in chrome.storage.local. Text from the chain (memos,
 // addresses) only ever goes into textContent.
 
 import { EngineClient } from './engine-client.js';
-import { LocalBoard, RemoteBoard, grantUsb, inTab } from './board-client.js';
+import { formatZec, historyEntry } from './format.js';
+import { LocalBoard, RemoteBoard, bluetoothHelp, grantUsb, inTab } from './board-client.js';
 
 const root = document.getElementById('root');
 const query = new URLSearchParams(location.search);
@@ -43,6 +51,10 @@ const ui = {
   signing: null, // progress line while the board signs and the engine finishes
   lastTx: null,
   verified: null, // the address the board confirmed
+  shown: null, // the account whose data ui.balances/addresses/history hold
+  confirmForget: false,
+  quietCancel: false, // a sync stopped by the popup itself, not the user
+  switching: null, // 'ble' after "Switch to Bluetooth" ended the USB session
 };
 
 // ------------------------------------------------------------- helpers
@@ -63,14 +75,6 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-export function formatZec(zat) {
-  const z = BigInt(zat ?? 0);
-  const neg = z < 0n;
-  const a = neg ? -z : z;
-  const s = `${a / 100000000n}.${(a % 100000000n).toString().padStart(8, '0')}`;
-  return `${neg ? '-' : ''}${s} ZEC`;
-}
-
 async function loadPrefs() {
   const got = await chrome.storage.local.get({ prefs: ui.prefs });
   ui.prefs = { ...ui.prefs, ...got.prefs };
@@ -82,8 +86,14 @@ async function savePrefs() {
 
 const net = () => ui.prefs.network;
 const server = () => ui.prefs.servers[net()] || DEFAULT_SERVERS[net()];
+/** The fingerprint of the seed on the connected board, or null. */
+const boardFingerprint = () => (ui.boardState?.phase === 'ready' ? ui.boardState.seedFingerprint ?? null : null);
+/** A device account only while its board is connected; a view-only one always. */
+const visible = (a) => a.kind !== 'device' || (!!boardFingerprint() && a.origin?.seedFingerprint === boardFingerprint());
+const visibleAccounts = () => (ui.status?.accounts ?? []).filter(visible);
+const hiddenAccounts = () => (ui.status?.accounts ?? []).filter((a) => !visible(a));
 const account = () => {
-  const accts = ui.status?.accounts ?? [];
+  const accts = visibleAccounts();
   const chosen = ui.prefs.account[net()];
   return accts.find((a) => a.uuid === chosen)?.uuid ?? accts[0]?.uuid;
 };
@@ -114,23 +124,62 @@ async function openNetwork() {
   await refresh();
 }
 
+/** Drops the data of the account shown before, when another (or none) is shown now. */
+function showAccount(acct) {
+  if (ui.shown === (acct ?? null)) return;
+  ui.shown = acct ?? null;
+  ui.balances = null;
+  ui.addresses = null;
+  ui.rotated = null;
+  ui.history = [];
+  ui.verified = null;
+  ui.proposal = null;
+  ui.lastTx = null;
+  ui.confirmForget = false;
+}
+
 async function refresh() {
   ui.status = await ui.engine.call('status');
   const acct = account();
+  showAccount(acct);
   if (!acct) return;
-  ui.addresses ??= await ui.engine.call('addresses', { account: acct });
-  ui.balances = await ui.engine.call('balances', { account: acct });
-  ui.history = await ui.engine.call('history', { account: acct, limit: 10 });
+  const addresses = await ui.engine.call('addresses', { account: acct });
+  const balances = await ui.engine.call('balances', { account: acct });
+  const history = await ui.engine.call('history', { account: acct, limit: 10 });
+  // The board may have gone while the engine answered.
+  if (account() !== acct) return;
+  ui.addresses ??= addresses;
+  ui.balances = balances;
+  ui.history = history;
   // Shown on the next open while a sync holds the engine (calls queue
-  // behind it).
-  const { status, balances, addresses, history } = ui;
-  await chrome.storage.local.set({ [`cache-${net()}`]: { status, balances, addresses, history } });
+  // behind it), and only while this account is.
+  await chrome.storage.local.set({ [`cache-${net()}`]: { status: ui.status, shown: acct, balances, addresses, history } });
 }
 
+/** The last answers, while a sync holds the engine: an account's data only while it is shown. */
 async function loadCache() {
   const key = `cache-${net()}`;
   const c = (await chrome.storage.local.get(key))[key];
-  if (c) Object.assign(ui, c);
+  if (!c) return;
+  ui.status = c.status;
+  showAccount(account());
+  if (c.shown && c.shown === account()) Object.assign(ui, { balances: c.balances, addresses: c.addresses, history: c.history });
+}
+
+/** The board came or went: show or hide its account's data. */
+function onBoardChanged() {
+  const acct = account();
+  if ((acct ?? null) === ui.shown || !ui.status) return;
+  showAccount(acct);
+  render();
+  if (!acct) return;
+  // From the cache at once (a sync may hold the engine), then fresh.
+  void loadCache()
+    .then(() => (render(), refresh()))
+    .then(render, (e) => {
+      ui.error = String(e?.message ?? e);
+      render();
+    });
 }
 
 async function sync() {
@@ -140,7 +189,7 @@ async function sync() {
   render();
   try {
     const r = await ui.engine.call('sync', {});
-    if (r.cancelled) ui.error = 'Sync stopped. The next sync carries on from here.';
+    if (r.cancelled && !ui.quietCancel) ui.error = 'Sync stopped. The next sync carries on from here.';
     await refresh();
   } catch (e) {
     ui.error = String(e?.message ?? e);
@@ -182,9 +231,11 @@ async function switchNetwork(n) {
   ui.needBirthday = null;
   ui.verified = null;
   ui.lastTx = null;
+  ui.confirmForget = false;
   await savePrefs();
   await guarded('Opening…', openNetwork);
-  if (account()) void sync();
+  // Hidden accounts sync too; nothing of theirs is shown.
+  if (ui.status?.accounts?.length) void sync();
 }
 
 async function saveServer(value) {
@@ -221,10 +272,14 @@ function useBoard(b) {
   ui.board = b;
   ui.boardState = b.state;
   b.onState((s) => {
+    if (ui.board !== b) return; // a board this page no longer uses
     ui.boardState = s;
     if (s.task?.op === 'sign') ui.signing = signLine(s.task) ?? ui.signing;
+    if (s.phase === 'ready') ui.switching = null;
     render();
+    onBoardChanged();
   });
+  onBoardChanged();
 }
 
 function signLine(t) {
@@ -243,9 +298,10 @@ async function openTab(connect) {
 async function connectUsb() {
   if (ui.board?.kind !== 'usb') useBoard(new RemoteBoard(ui.engine));
   ui.needUsbGrant = false;
+  ui.switching = null;
   await guarded('Connecting to the board…', async () => {
     try {
-      await ui.board.run('connect', { kind: 'usb' });
+      await ui.board.run('connect', { kind: 'usb', network: net() });
     } catch (e) {
       if (e.need === 'usbPermission') {
         ui.needUsbGrant = true;
@@ -274,19 +330,60 @@ async function grantAndConnectUsb() {
 }
 
 async function connectBluetooth() {
+  // The popup only opens the tab: the chooser needs one, and whether the
+  // browser has Web Bluetooth is checked there (an extension popup may
+  // lack navigator.bluetooth where a tab has it).
   if (!inTab()) return openTab('ble');
+  if (!navigator.bluetooth) {
+    ui.error = bluetoothHelp();
+    return render();
+  }
   const local = new LocalBoard(ui.engine);
   try {
     await local.chooseBluetooth(); // the click's gesture
   } catch (e) {
-    if (e?.name !== 'NotFoundError') {
-      ui.error = String(e?.message ?? e);
-      render();
-    }
+    // Closing the chooser is a NotFoundError too; its text says which.
+    ui.error = `Bluetooth: ${e?.message ?? e}`;
+    render();
     return;
   }
+  // The USB session, if any, ends: the board serves one link at a time.
+  if (ui.board?.kind === 'usb' && ui.boardState?.phase !== 'disconnected') await ui.board.run('disconnect').catch(() => {});
+  ui.error = null;
+  ui.switching = null;
   useBoard(local);
-  await guarded('Connecting over Bluetooth…', () => local.run('connect', { kind: 'ble' }));
+  await guarded('Connecting over Bluetooth…', () => local.run('connect', { kind: 'ble', network: net() }));
+}
+
+/** From a USB connection: end it, and say what to do next. */
+async function switchToBluetooth() {
+  await guarded(null, () => ui.board.run('disconnect'));
+  ui.switching = 'ble';
+  render();
+}
+
+/** "Forget this board": its accounts on this network, and all synced for them. */
+async function forgetBoard() {
+  const fp = boardFingerprint();
+  const mine = (ui.status?.accounts ?? []).filter((a) => a.kind === 'device' && fp && a.origin?.seedFingerprint === fp);
+  ui.confirmForget = false;
+  await guarded('Forgetting this board…', async () => {
+    // A sync holds the engine until it ends: stop it first.
+    if (ui.syncing) {
+      ui.quietCancel = true;
+      await ui.engine.call('cancelSync');
+    }
+    try {
+      for (const a of mine) await ui.engine.call('deleteAccount', { account: a.uuid });
+    } finally {
+      ui.quietCancel = false;
+    }
+    await chrome.storage.local.remove(`cache-${net()}`);
+    delete ui.prefs.account[net()];
+    await savePrefs();
+    showAccount(null);
+    await refresh();
+  });
 }
 
 async function importFromBoard(birthday = null) {
@@ -376,17 +473,26 @@ function boardSection() {
   const busy = !!ui.busy || !!ui.signing;
   const lines = [];
   if (s.phase === 'disconnected' || s.phase === 'connecting') {
+    if (hiddenAccounts().length) lines.push(h('p', { class: 'notice', id: 'connect-to-see' }, 'Connect your LeekWallet board to see this wallet.'));
     lines.push(
-      h('p', { class: 'muted' }, 'Sign on your LeekWallet board. It serves one link at a time, USB or Bluetooth, set on the board (Settings → Link).'),
+      ui.switching === 'ble'
+        ? h('p', { class: 'notice', id: 'switch-steps' }, 'USB disconnected. On the board, set Settings → Link to Bluetooth, then press Bluetooth here.')
+        : h('p', { class: 'muted' }, 'Sign on your LeekWallet board. It serves one link at a time, USB or Bluetooth, set on the board (Settings → Link). To switch: Disconnect, change Link on the board, then use the other button.'),
       ui.needUsbGrant && inTab()
         ? h('div', { class: 'row' }, h('button', { class: 'primary', id: 'grant-usb', onclick: () => void grantAndConnectUsb() }, 'Choose the board (USB)'))
         : h(
             'div',
             { class: 'row' },
             h('button', { id: 'connect-usb', onclick: () => void connectUsb(), disabled: busy || s.phase === 'connecting' }, 'Connect over USB'),
-            h('button', { id: 'connect-ble', onclick: () => void connectBluetooth(), disabled: busy || s.phase === 'connecting' || !navigator.bluetooth }, 'Bluetooth'),
+            h('button', { id: 'connect-ble', class: ui.switching === 'ble' ? 'primary' : null, onclick: () => void connectBluetooth(), disabled: busy || s.phase === 'connecting' }, 'Bluetooth'),
           ),
-      inTab() ? null : h('p', { class: 'muted' }, 'Bluetooth, and the first USB connection, open this wallet in a tab: Chrome draws its device chooser there.'),
+      inTab()
+        ? navigator.bluetooth
+          ? query.get('connect') === 'ble' && !ui.board?.kind?.startsWith('ble')
+            ? h('p', { class: 'muted', id: 'ble-press' }, 'Press Bluetooth to choose the board in the browser\'s list.')
+            : null
+          : h('p', { class: 'notice', id: 'ble-help' }, bluetoothHelp())
+        : h('p', { class: 'muted' }, 'Bluetooth, and the first USB connection, open this wallet in a tab: the browser draws its device chooser there.'),
     );
   } else if (s.phase === 'pairing') {
     lines.push(
@@ -396,16 +502,34 @@ function boardSection() {
       h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'),
     );
   } else if (s.phase === 'unlocking') {
-    lines.push(h('p', { id: 'board-pin' }, s.waiting === 'pin' ? 'Enter your PIN on the board.' : 'Paired. Checking that the board is unlocked…'), h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'));
+    const line = s.waiting === 'pin' ? 'Enter your PIN on the board.' : s.waiting === 'wallet' ? 'Unlocked. Reading which wallet the board holds…' : 'Paired. Checking that the board is unlocked…';
+    lines.push(h('p', { id: 'board-pin' }, line), h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'));
   } else if (s.phase === 'ready') {
+    const fp = boardFingerprint();
+    const known = fp && (ui.status?.accounts ?? []).some((a) => a.kind === 'device' && a.origin?.seedFingerprint === fp);
     lines.push(
       h(
         'div',
         { class: 'row' },
         h('span', { class: 'grow', id: 'board-ready' }, `Connected: ${s.label ?? s.kind}${s.kind === 'ble' ? ' (keep this tab open)' : ''}`),
-        h('button', { class: 'link', onclick: () => void guarded(null, () => ui.board.run('disconnect')), disabled: busy }, 'Disconnect'),
+        s.kind === 'usb' ? h('button', { class: 'link', id: 'switch-ble', onclick: () => void switchToBluetooth(), disabled: busy }, 'Switch to Bluetooth') : null,
+        h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, () => ui.board.run('disconnect')), disabled: busy }, 'Disconnect'),
       ),
+      fp ? null : h('p', { class: 'notice bad' }, 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),
     );
+    if (known && ui.confirmForget) {
+      lines.push(
+        h('p', { class: 'notice', id: 'forget-confirm' }, `Forget this board? Its ${NETWORKS[net()]} account and everything synced for it are deleted from this browser. The board and its funds are not touched; importing it again syncs from its birthday.`),
+        h(
+          'div',
+          { class: 'row' },
+          h('button', { class: 'primary', id: 'forget-yes', onclick: () => void forgetBoard(), disabled: busy }, 'Forget'),
+          h('button', { onclick: () => ((ui.confirmForget = false), render()) }, 'Keep'),
+        ),
+      );
+    } else if (known) {
+      lines.push(h('div', { class: 'row' }, h('button', { class: 'link', id: 'forget', onclick: () => ((ui.confirmForget = true), render()), disabled: busy }, 'Forget this board')));
+    }
   }
   if (s.error && s.phase === 'disconnected') lines.push(h('p', { class: 'notice bad' }, s.error));
   return h('section', { id: 'board' }, h('h2', {}, 'Board'), lines);
@@ -506,7 +630,7 @@ function sendSection() {
     ui.signing ? h('p', { class: 'notice', id: 'signing' }, ui.signing) : null,
     ui.lastTx
       ? h('p', { class: 'notice', id: 'txid' }, `Sent${ui.lastTx.broadcast ? '' : ' (not broadcast)'}: `, h('code', {}, ui.lastTx.txid))
-      : ui.boardState?.lastResult?.network === net() && !ui.signing
+      : ui.boardState?.lastResult?.network === net() && ui.boardState.lastResult.seedFingerprint === boardFingerprint() && !ui.signing
         ? h('p', { class: 'muted' }, 'Last signed on the board: ', h('code', {}, ui.boardState.lastResult.txid))
         : null,
   );
@@ -626,14 +750,10 @@ function historySection() {
     h(
       'ul',
       { class: 'history' },
-      ui.history.map((t) =>
-        h(
-          'li',
-          {},
-          h('span', {}, `${t.kind}${t.minedHeight ? ` @${t.minedHeight}` : ' (unmined)'}`),
-          h('span', { class: 'mono' }, `${t.deltaZat < 0 ? '-' : '+'}${formatZec(t.amountZat)}`),
-        ),
-      ),
+      ui.history.map((t) => {
+        const { label, amount } = historyEntry(t);
+        return h('li', {}, h('span', {}, label), h('span', { class: 'mono' }, amount));
+      }),
     ),
   );
 }
@@ -663,7 +783,7 @@ function importSection() {
 
 function settingsSection() {
   const input = h('input', { type: 'text', value: ui.prefs.servers[net()] ?? '', placeholder: DEFAULT_SERVERS[net()], spellcheck: 'false' });
-  const accts = ui.status?.accounts ?? [];
+  const accts = visibleAccounts();
   return h(
     'details',
     {},
@@ -698,7 +818,7 @@ function settingsSection() {
             ),
           )
         : null,
-      ui.status?.accounts?.length ? h('p', { class: 'muted' }, `Wallet database: ${(ui.status.dbBytes / 1e6).toFixed(1)} MB on this browser's storage.`) : null,
+      accts.length ? h('p', { class: 'muted' }, `Wallet database: ${(ui.status.dbBytes / 1e6).toFixed(1)} MB on this browser's storage.`) : null,
       h(
         'button',
         {
@@ -760,7 +880,10 @@ function render() {
           historySection(),
         ]
       : engineOk && ui.status
-        ? [boardSection(), boardImportSection(), importSection()]
+        ? hiddenAccounts().length
+          ? // A board's wallet is stored here: nothing but the board until it connects.
+            [boardSection(), boardImportSection()]
+          : [boardSection(), boardImportSection(), importSection()]
         : null,
     engineOk && ui.status ? settingsSection() : null,
   );
@@ -804,7 +927,8 @@ async function main() {
   });
   if (query.get('connect') === 'usb') ui.needUsbGrant = true;
   render();
-  if (account() && !ui.syncing) void sync();
+  // Hidden accounts sync too; nothing of theirs is shown.
+  if (ui.status?.accounts?.length && !ui.syncing) void sync();
 }
 
 // `?bare`: the page without the popup's own logic, for test/e2e.mjs,
