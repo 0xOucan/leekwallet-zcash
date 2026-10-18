@@ -16,7 +16,7 @@
 // signs.
 
 import { BleReassembler, chunkForBle, encodeFrame } from './framing.js';
-import { FrameQueue } from './link.js';
+import { FrameQueue, linkTimeoutHint } from './link.js';
 
 export const GATT = {
   service: '6c65656b-7761-6c6c-6574-000000000001',
@@ -95,7 +95,9 @@ export class BleLink {
   }
 
   recv(timeoutMs) {
-    return this.#queue.next(timeoutMs);
+    return this.#queue.next(timeoutMs).catch((e) => {
+      throw linkTimeoutHint(e, 'Bluetooth');
+    });
   }
 
   drain() {

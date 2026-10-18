@@ -21,6 +21,9 @@ const { BleReassembler, FRAME, UsbFrameDecoder, chunkForBle, encodeFrame, encode
 const { Device, DeviceError, ERR, toHex, fromHex: fromHexT } = await import('../src/board/device.js');
 const { BoardHost, BoardNeeds } = await import('../src/board/host.js');
 const { BleLink } = await import('../src/board/ble-link.js');
+const { SerialLink } = await import('../src/board/serial-link.js');
+const { LinkTimeout, linkTimeoutHint } = await import('../src/board/link.js');
+const { bluetoothHelp } = await import('../src/board-client.js');
 const { encodeZsig, parseZsig, POOL } = await import('../src/board/zsig.js');
 const { Session, deriveKeys, generateKeyPair, sharedSecret } = await import('../src/board/session.js');
 const { repo, startZdev, PtyLink, fakeBluetoothDevice, zdevBinary } = await import('./zdev.mjs');
@@ -279,9 +282,12 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
     const states = [];
     const host = new BoardHost({ engine, openLink: async () => new PtyLink(z.link), onState: (s) => states.push(s) });
     try {
-      await host.run('connect', { kind: 'usb' });
+      await host.run('connect', { kind: 'usb', network: 'test' });
       assert.equal(host.state.phase, 'ready');
       assert.ok(states.some((s) => s.phase === 'pairing' && /^\d{6}$/.test(s.passkey) && s.passkey === z.passkeys.at(-1)));
+      // Which wallet: the popup shows a device account only to its board.
+      assert.equal(host.state.seedFingerprint, key('test/abandon-art/pp0/acct0').seed_fingerprint);
+      assert.ok(states.some((s) => s.phase === 'unlocking' && s.waiting === 'wallet'));
 
       await assert.rejects(host.run('importAccount', { network: 'test' }), (e) => e instanceof BoardNeeds && e.need === 'birthday' && e.tip === 4_600_000);
       const k = key('test/abandon-art/pp0/acct0');
@@ -307,7 +313,54 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
       assert.equal(toHex(z2.pcztSha256), sha256hex(bytes));
       assert.equal(r.txid, 'ab'.repeat(32));
       assert.equal(host.state.lastResult.txid, r.txid);
+      assert.equal(host.state.lastResult.seedFingerprint, k.seed_fingerprint);
       assert.ok(states.some((s) => s.task?.phase === 'review'));
+      await host.run('disconnect');
+      assert.equal(host.state.seedFingerprint, null);
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('another wallet on the board (a passphrase) has another fingerprint', async () => {
+    const z = await startZdev({ yes: true, passphrase: 'leekwallet-other-board' });
+    const host = new BoardHost({ engine: fakeEngine('test').engine, openLink: async () => new PtyLink(z.link) });
+    try {
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      assert.equal(host.state.phase, 'ready');
+      assert.match(host.state.seedFingerprint, /^[0-9a-f]{64}$/);
+      assert.notEqual(host.state.seedFingerprint, key('test/abandon-art/pp0/acct0').seed_fingerprint);
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('a USB timeout says what to check, closes the port, and Bluetooth connects next', async () => {
+    const z = await startZdev({ yes: true });
+    const port = silentSerialPort();
+    const host = new BoardHost({
+      engine: fakeEngine('test').engine,
+      async openLink(kind, onClose) {
+        if (kind === 'ble') return BleLink.open(fakeBluetoothDevice(z.link), onClose);
+        // The board set to Bluetooth: the serial port opens and nothing answers.
+        const serial = await SerialLink.open(port, onClose);
+        return { kind: 'usb', label: serial.label, send: (t, p) => serial.send(t, p), recv: () => serial.recv(300), drain: () => serial.drain(), close: () => serial.close() };
+      },
+    });
+    try {
+      const hint = /did not answer over USB within \d+ s\. Is it unlocked, and is its Link set to USB \(Settings → Link\)\?/;
+      await assert.rejects(host.run('connect', { kind: 'usb', network: 'test' }), hint);
+      assert.equal(host.state.phase, 'disconnected');
+      assert.match(host.state.error, hint);
+      assert.ok(port.closed, 'the serial port is released');
+      // Nothing is left running: Bluetooth goes at once.
+      await host.run('connect', { kind: 'ble', network: 'test' });
+      assert.equal(host.state.phase, 'ready');
+      assert.equal(host.state.kind, 'ble');
+      assert.equal(host.state.error, null);
+      assert.equal(host.state.seedFingerprint, key('test/abandon-art/pp0/acct0').seed_fingerprint);
     } finally {
       await host.run('disconnect');
       z.stop();
@@ -329,6 +382,44 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
       await host.run('disconnect');
       z.stop();
     }
+  });
+});
+
+/** A Web Serial port whose board serves the other link: it opens, and never answers. */
+function silentSerialPort() {
+  return {
+    closed: false,
+    getInfo: () => ({ usbVendorId: 0x303a, usbProductId: 0x1001 }),
+    async open() {
+      this.readable = new ReadableStream({ pull: () => new Promise(() => {}) });
+      this.writable = new WritableStream({ write() {} });
+    },
+    async setSignals() {},
+    async close() {
+      this.closed = true;
+    },
+  };
+}
+
+describe('link timeouts and Web Bluetooth help', () => {
+  test('a timeout names the link and its setting on the board', () => {
+    const e = linkTimeoutHint(new LinkTimeout(10e3), 'Bluetooth');
+    assert.ok(e instanceof LinkTimeout);
+    assert.equal(e.message, 'the board did not answer over Bluetooth within 10 s. Is it unlocked, and is its Link set to Bluetooth (Settings → Link)?');
+    const other = new Error('x');
+    assert.equal(linkTimeoutHint(other, 'USB'), other);
+  });
+
+  test('how to turn Web Bluetooth on: Brave, Chrome on Linux, elsewhere', () => {
+    const linux = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
+    const brave = bluetoothHelp({ userAgent: linux, brave: { isBrave: async () => true } });
+    assert.match(brave, /brave:\/\/flags\/#brave-web-bluetooth-api/);
+    assert.match(brave, /brave:\/\/flags\/#enable-experimental-web-platform-features/);
+    const chromeLinux = bluetoothHelp({ userAgent: linux });
+    assert.match(chromeLinux, /chrome:\/\/flags\/#enable-experimental-web-platform-features/);
+    const win = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
+    assert.doesNotMatch(bluetoothHelp({ userAgent: win, brave: { isBrave: async () => true } }), /experimental/);
+    assert.match(bluetoothHelp({ userAgent: win }), /no Web Bluetooth/);
   });
 });
 

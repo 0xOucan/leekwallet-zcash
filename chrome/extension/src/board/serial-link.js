@@ -15,7 +15,7 @@
 // request; `reader.cancel()` before `port.close()`, or the close hangs.
 
 import { UsbFrameDecoder, encodeUsbFrame } from './framing.js';
-import { FrameQueue } from './link.js';
+import { FrameQueue, linkTimeoutHint } from './link.js';
 
 /** Espressif's VID; the ESP32-S3 USB-Serial-JTAG PID. A chooser filter, not identity: the passkey is. */
 export const USB_FILTERS = [{ usbVendorId: 0x303a, usbProductId: 0x1001 }, { usbVendorId: 0x303a }];
@@ -114,7 +114,9 @@ export class SerialLink {
   }
 
   recv(timeoutMs) {
-    return this.#queue.next(timeoutMs);
+    return this.#queue.next(timeoutMs).catch((e) => {
+      throw linkTimeoutHint(e, 'USB');
+    });
   }
 
   drain() {

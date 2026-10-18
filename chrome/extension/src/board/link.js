@@ -9,10 +9,23 @@
 // Links push decoded frames into a FrameQueue; `recv` takes them in order.
 
 export class LinkTimeout extends Error {
-  constructor(ms) {
-    super(`the board did not answer within ${Math.round(ms / 1000)} s`);
+  constructor(ms, over = null) {
+    super(`the board did not answer${over ? ` over ${over}` : ''} within ${Math.round(ms / 1000)} s`);
     this.name = 'LinkTimeout';
+    this.ms = ms;
   }
+}
+
+/**
+ * A timeout on a link that may not be the one the board serves: it says
+ * what to check. The board answers on one link at a time, set on it
+ * (Settings → Link), and a locked board does not answer the pairing.
+ */
+export function linkTimeoutHint(e, link) {
+  if (!(e instanceof LinkTimeout)) return e;
+  const out = new LinkTimeout(e.ms, link);
+  out.message += `. Is it unlocked, and is its Link set to ${link} (Settings → Link)?`;
+  return out;
 }
 
 export class LinkClosed extends Error {
