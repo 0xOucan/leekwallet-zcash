@@ -105,6 +105,21 @@ static uint32_t stub_hd_account;
 
 uint32_t ui_hd_account(void)          { return stub_hd_account; }
 
+/* The board's Settings > Network, 0 mainnet / 1 testnet. Testnet after
+ * fresh_device(), because most of this suite asks for testnet; a test that
+ * asks for mainnet switches it first, as the user would on the board. */
+static uint8_t stub_zcash_network = 1;
+uint8_t ui_zcash_network(void)        { return stub_zcash_network; }
+
+/* The board's notice of a refused network: how often, and for what. */
+static int     wrong_network_notices;
+static uint8_t wrong_network_asked = 0xFF;
+void ui_notify_wrong_network(uint8_t asked)
+{
+    wrong_network_notices++;
+    wrong_network_asked = asked;
+}
+
 void ui_request_session_confirm(void) { session_confirm_prompts++; }
 
 /* M-2. On hardware this is "is a screen up that the user has to answer"; here
@@ -435,6 +450,9 @@ static void fresh_device(void)
     protocol_set_rx_enabled(true);
 
     stub_hd_account = 0;
+    stub_zcash_network = 1;
+    wrong_network_notices = 0;
+    wrong_network_asked = 0xFF;
     stash_len = 0;
     host_tx = host_rx = 0;
     session_up = false;
@@ -1494,6 +1512,7 @@ static void test_zget_account(void)
                 if (ZV_KEYS[i].network == net && ZV_KEYS[i].account == (uint32_t)acct &&
                     !ZV_KEYS[i].passphrase[0]) { v = &ZV_KEYS[i]; break; }
             }
+            stub_zcash_network = (uint8_t)net;
             send_encrypted(payload, zget_account_request(payload, sizeof(payload), acct,
                                                          net ? "test" : "main"));
             Frame f = next_reply();
@@ -1516,6 +1535,7 @@ static void test_zget_account(void)
                   it.value == (uint32_t)acct, "account not echoed");
         }
     }
+    stub_zcash_network = 1;
 }
 
 /* -------------------------------------------------------- zSetAccountMeta */
@@ -1806,6 +1826,7 @@ static void test_zshow_address(void)
     printf("== zShowAddress on mainnet: the u1 address, shown as mainnet\n");
     const zv_key_vector *m = &ZV_KEYS[0];   /* main/abandon-art/pp0/acct0 */
     CHECK(m->network == 0 && strncmp(m->ua, "u1", 2) == 0, "ZV_KEYS[0] is not the mainnet vector");
+    stub_zcash_network = 0;   /* Settings > Network: Mainnet */
     address_checks = 0;
     shown_network = 0xFF;
     send_encrypted(payload, zshow_request(payload, sizeof payload, 0, "main"));
@@ -1831,9 +1852,150 @@ static void test_zshow_address(void)
     address_checks = 0;
     send_encrypted(big, zshow_ua_request_on(big, sizeof big, v->ua, "main"));
     expect_error(T_ENC_ERROR, E_ZSIGN(-14), "a testnet address on a mainnet request");
+    stub_zcash_network = 1;
     send_encrypted(big, zshow_ua_request_on(big, sizeof big, m->ua, "test"));
     expect_error(T_ENC_ERROR, E_ZSIGN(-14), "a mainnet address on a testnet request");
     CHECK(address_checks == 0, "an address of the other network reached the screen");
+}
+
+/* ------------------------------------------------- the board's network */
+
+/* The refusal: the code, a message naming both networks, and one notice on
+ * the board's screen (since the last refusal) for the network asked for. */
+static void expect_wrong_network(const char *board, const char *asked, uint8_t asked_net,
+                                 const char *what)
+{
+    Frame f = next_reply();
+    uint32_t code = 0;
+    CborItem it;
+    char text[160] = "";
+    CHECK(f.present && f.type == T_ENC_ERROR && error_code(&f, &code) &&
+          code == E_ZSIGN(ZSIGN_E_BOARD_NETWORK),
+          "%s: not refused with 0x%04X (got 0x%04X)", what, E_ZSIGN(ZSIGN_E_BOARD_NETWORK), code);
+    if (f.present && cbor_map_find(f.payload, f.len, "message", &it)) {
+        cbor_text_copy(&it, text, sizeof text);
+    }
+    char want[160];
+    snprintf(want, sizeof want,
+             "the board is set to %s; switch it to %s in Settings > Network, or use the %s app",
+             board, asked, board);
+    CHECK(strcmp(text, want) == 0, "%s: message \"%s\"", what, text);
+    CHECK(wrong_network_notices == 1 && wrong_network_asked == asked_net,
+          "%s: the board did not say so on its screen", what);
+    wrong_network_notices = 0;
+}
+
+static size_t zset_meta_request_on(uint8_t *buf, size_t cap, uint32_t birthday,
+                                   const char *network)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 3 + (network != NULL));
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zSetAccountMeta");
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, 0);
+    cbor_write_text(&w, "birthday");
+    cbor_write_uint(&w, birthday);
+    if (network) {
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, network);
+    }
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+/* A board set to one network answers for that network only (roadmap 10.3:
+ * a board on Testnet once gave a mainnet app the mainnet account). Refused
+ * before anything is derived, for every request that names a network. */
+static void test_board_network(void)
+{
+    printf("== the board answers only for its own network (Settings > Network)\n");
+    fresh_device();
+    zmeta__reset_for_test();
+    confirmed_session(27);
+    device_unlocked();
+    uint8_t payload[160];
+    const zv_key_vector *m = &ZV_KEYS[0];   /* main/abandon-art/pp0/acct0 */
+
+    /* Set to Testnet: every mainnet request is refused, nothing derived. */
+    stub_zcash_network = ZS_NET_TEST;
+    int calls = fake_zcash_derive_calls;
+    address_checks = 0;
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "main"));
+    expect_wrong_network("Testnet", "Mainnet", ZS_NET_MAIN, "zGetAccount main on a testnet board");
+    send_encrypted(payload, zshow_request(payload, sizeof payload, 0, "main"));
+    expect_wrong_network("Testnet", "Mainnet", ZS_NET_MAIN, "zShowAddress main on a testnet board");
+    send_encrypted(payload, zset_meta_request_on(payload, sizeof payload, 3520600, "main"));
+    expect_wrong_network("Testnet", "Mainnet", ZS_NET_MAIN, "zSetAccountMeta main on a testnet board");
+    uint8_t sha[32] = { 0 };
+    send_encrypted(payload, zsign_begin_req(payload, sizeof payload, 1000, sha, 32, "main"));
+    expect_wrong_network("Testnet", "Mainnet", ZS_NET_MAIN, "zSignBegin main on a testnet board");
+    CHECK(fake_zcash_derive_calls == calls, "derived for a refused network");
+    CHECK(address_checks == 0, "a refused network reached the address screen");
+    ZcashMeta meta;
+    CHECK(!zmeta_get(0, ZMETA_NET_MAIN, &meta) || meta.birthday == 0,
+          "a refused birthday was recorded");
+
+    /* The board's own network still works. */
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "test"));
+    Frame f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "zGetAccount test on a testnet board");
+    /* No network on zSetAccountMeta still means testnet (the companions that
+     * leave it out are testnet-only). */
+    send_encrypted(payload, zset_meta_request_on(payload, sizeof payload, 3000000, NULL));
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "zSetAccountMeta without a network on testnet");
+    CHECK(zmeta_get(0, ZMETA_NET_TEST, &meta) && meta.birthday == 3000000,
+          "the birthday without a network was not filed under testnet");
+
+    /* Switched to Mainnet: the answers flip. */
+    stub_zcash_network = ZS_NET_MAIN;
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "test"));
+    expect_wrong_network("Mainnet", "Testnet", ZS_NET_TEST, "zGetAccount test on a mainnet board");
+    send_encrypted(payload, zshow_request(payload, sizeof payload, 0, "test"));
+    expect_wrong_network("Mainnet", "Testnet", ZS_NET_TEST, "zShowAddress test on a mainnet board");
+    send_encrypted(payload, zset_meta_request_on(payload, sizeof payload, 3100000, NULL));
+    expect_wrong_network("Mainnet", "Testnet", ZS_NET_TEST,
+                         "zSetAccountMeta without a network on a mainnet board");
+    send_encrypted(payload, zsign_begin_req(payload, sizeof payload, 1000, sha, 32, "test"));
+    expect_wrong_network("Mainnet", "Testnet", ZS_NET_TEST, "zSignBegin test on a mainnet board");
+    CHECK(zmeta_get(0, ZMETA_NET_TEST, &meta) && meta.birthday == 3000000,
+          "a refused request changed the testnet birthday");
+
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "main"));
+    f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    char text[256];
+    CHECK(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len) &&
+          cbor_map_find(body, body_len, "ua", &it) && cbor_text_copy(&it, text, sizeof text) &&
+          strcmp(text, m->ua) == 0, "zGetAccount main on a mainnet board");
+
+    /* Switched while a PCZT was uploading: zSignFinish refuses it, and the
+     * upload is gone. */
+    printf("== a switch during an upload refuses zSignFinish\n");
+    const zv_pczt_vector *v = &ZV_PCZT[0];
+    size_t len = 0;
+    uint8_t *pczt = load_vector(v->file, &len);
+    CHECK(pczt != NULL, "cannot read %s", v->file);
+    if (pczt) {
+        fake_wallet_preload(v->mnemonic);
+        sha256_Raw(pczt, len, sha);
+        stub_zcash_network = ZS_NET_TEST;
+        CHECK(zsign_upload(pczt, len, sha), "upload failed");
+        stub_zcash_network = ZS_NET_MAIN;
+        int reviews = zsign_reviews;
+        send_encrypted(payload, zsign_simple_req(payload, sizeof payload, "zSignFinish"));
+        expect_wrong_network("Mainnet", "Testnet", ZS_NET_TEST, "zSignFinish after a switch");
+        CHECK(zsign_reviews == reviews, "a refused network reached the review screen");
+        stub_zcash_network = ZS_NET_TEST;
+        send_encrypted(payload, zsign_simple_req(payload, sizeof payload, "zSignFinish"));
+        expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_STATE), "the refused upload survived");
+        free(pczt);
+    }
+    zcash_sign_reset();
+    stub_zcash_network = ZS_NET_TEST;
 }
 
 /* ----------------------------------------------------------- selectWallet */
@@ -3265,6 +3427,7 @@ static int run_all_tests(void)
     test_zcash_waits_for_the_wallet();
     test_zget_features();
     test_zshow_address();
+    test_board_network();
     test_zsign();
     test_set_passphrase();
     test_ble_carries_the_same_frames();

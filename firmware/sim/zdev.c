@@ -9,16 +9,24 @@
  * the sim's fake wallet rather than the encrypted vault. Never use it with a
  * seed that holds real funds.
  *
- *   build/zdev [--mnemonic "..."] [--passphrase P] [--yes] [--link /tmp/zdev]
+ *   build/zdev [--mnemonic "..."] [--passphrase P] [--network test|main] [--yes]
+ *              [--link /tmp/zdev]
  *
  * Prints the PTY path (and makes --link a symlink to it); point the
  * companion's --port there.
+ *
+ * --network is the board's Settings > Network (default test, or the
+ * ZDEV_NETWORK environment variable): like a board, zdev answers only for
+ * that network and refuses the other with 0x0528. SIGUSR1 switches it to
+ * Mainnet and SIGUSR2 to Testnet while it runs, as the user would on the
+ * board, keeping the pairing and everything stored.
  */
 #define _DEFAULT_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <pty.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +57,18 @@ static const char *DEFAULT_MNEMONIC =
 
 static int  pty_master = -1;
 static bool auto_yes = false;
+
+/* Settings > Network: 0 mainnet, 1 testnet (ZS_NET_*). Written by the signal
+ * handlers, read by protocol.c through ui_zcash_network(). A signal raised
+ * before a request is written is handled before zdev reads that request: the
+ * handler runs on the way out of the poll() or read() that would see it. */
+static volatile sig_atomic_t board_network = 1;
+static volatile sig_atomic_t network_switched = 0;
+
+static void on_mainnet(int sig) { (void)sig; board_network = 0; network_switched = 1; }
+static void on_testnet(int sig) { (void)sig; board_network = 1; network_switched = 1; }
+
+static const char *network_title(int network) { return network == 0 ? "Mainnet" : "Testnet"; }
 
 /* ------------------------------------------------------------ the port */
 
@@ -133,6 +153,13 @@ static bool question_pending;
 static SignOutcome outcome = SIGN_PENDING;
 
 uint32_t ui_hd_account(void) { return 0; }
+uint8_t ui_zcash_network(void) { return (uint8_t)board_network; }
+
+void ui_notify_wrong_network(uint8_t asked)
+{
+    printf("\n[device] Wrong network: the app asked for %s; this device is set to %s.\n",
+           network_title(asked), network_title(board_network));
+}
 bool ui_user_is_answering(void) { return question_pending; }
 void ui_request_unlock(void) { printf("[device] unlock requested (already unlocked)\n"); }
 void ui_request_lock(void) { printf("[device] lock requested\n"); }
@@ -194,21 +221,37 @@ void ui_sign_expire(void) { question_pending = false; }
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: zdev [--mnemonic WORDS] [--passphrase P] [--yes] [--link PATH]\n");
+    fprintf(stderr, "usage: zdev [--mnemonic WORDS] [--passphrase P] [--network test|main] [--yes] "
+                    "[--link PATH]\n");
     exit(2);
 }
 
 int main(int argc, char **argv)
 {
     const char *mnemonic = DEFAULT_MNEMONIC, *passphrase = NULL, *link_path = NULL;
+    const char *network = getenv("ZDEV_NETWORK");
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--mnemonic") && i + 1 < argc) mnemonic = argv[++i];
         else if (!strcmp(argv[i], "--passphrase") && i + 1 < argc) passphrase = argv[++i];
+        else if (!strcmp(argv[i], "--network") && i + 1 < argc) network = argv[++i];
         else if (!strcmp(argv[i], "--link") && i + 1 < argc) link_path = argv[++i];
         else if (!strcmp(argv[i], "--yes")) auto_yes = true;
         else usage();
     }
+    if (network && *network) {
+        if (strcmp(network, "main") && strcmp(network, "test")) usage();
+        board_network = strcmp(network, "main") == 0 ? 0 : 1;
+    }
     setvbuf(stdout, NULL, _IOLBF, 0);
+
+    /* No SA_RESTART: poll() returns EINTR, and the loop reports the switch. */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = on_mainnet;
+    sigaction(SIGUSR1, &sa, NULL);
+    sa.sa_handler = on_testnet;
+    sigaction(SIGUSR2, &sa, NULL);
 
     /* An unlocked device holding the seed, as after PIN entry on a board. */
     fake_nvs_reset();
@@ -245,6 +288,7 @@ int main(int argc, char **argv)
     printf("zdev: LeekWallet Zcash dev device on %s%s%s\n", name, link_path ? " -> " : "",
            link_path ? link_path : "");
     printf("zdev: DEV ONLY. Fake vault; never use a seed holding real funds.\n");
+    printf("zdev: Settings > Network: %s\n", network_title(board_network));
 
     protocol_set_rx_enabled(true);
     for (;;) {
@@ -258,6 +302,10 @@ int main(int argc, char **argv)
             ssize_t n = read(pty_master, rxq + rxq_len, RXQ_CAP - rxq_len);
             if (n > 0) rxq_len += (size_t)n;
             protocol__pump_for_test();
+        }
+        if (network_switched) {
+            network_switched = 0;
+            printf("[device] Settings > Network: %s\n", network_title(board_network));
         }
         if (session_confirm_pending) {
             session_confirm_pending = false;

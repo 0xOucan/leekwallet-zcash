@@ -337,6 +337,28 @@ your wallet is a protocol that a malicious host can erase your wallet with.
 `unlock` does not carry a PIN. It asks the device to prompt; the user types on the device; the
 response says whether it worked. The PIN never crosses the wire in any form.
 
+### The board's network
+
+The board answers for one Zcash network: the one its owner chose under
+Settings → Network on the board (persisted; Mainnet out of the box). Every
+request that names a `network` (`zGetAccount`, `zShowAddress`,
+`zSetAccountMeta`, `zSignBegin`) is refused when it names the other one,
+before anything is derived, with error `0x0528` and a message naming both:
+
+```
+0x7E { code: 0x0528,
+       message: "the board is set to Testnet; switch it to Mainnet in Settings > Network, or use the Testnet app" }
+```
+
+The board says so on its screen too ("Wrong network", the app's network and
+its own), for four seconds or until a button. `zSignFinish` checks again,
+because the setting can be switched while a PCZT uploads; it then drops the
+upload. A companion turns `0x0528` into a sentence of its own naming the
+setting to change (leek-device's `wrong_network_message`, the extension's
+`wrongNetworkMessage`). A board on Testnet once handed a mainnet app the
+mainnet account without a word; a user who believes the board is on the
+other network can send real funds believing them play money.
+
 ### Zcash account metadata
 
 ```
@@ -349,7 +371,10 @@ zSetAccountMeta { account?: uint, network?: "main"|"test", birthday?: uint, labe
 `birthday` is present in `zGetAccount` only when the device has one for that
 account and network of the open seed (records are per network: the same
 account is born at a far lower height on mainnet; `network` defaults to
-`"test"` in `zSetAccountMeta` for companions that predate it): a companion set it with `zSetAccountMeta`, or the
+`"test"` in `zSetAccountMeta` for companions that predate it, all of them
+testnet-only, and not to the board's setting, which would file a testnet
+birthday under mainnet; on a board set to Mainnet a request without
+`network` is refused with `0x0528` like any testnet one): a companion set it with `zSetAccountMeta`, or the
 seed came from an SD `.zkv` file that carried it. A companion should use it
 instead of asking the user, and set it after an import when it was absent.
 Fields left out of `zSetAccountMeta` keep their values. `label` is at most 32
@@ -424,7 +449,10 @@ from the signers (`zsign_types.h`: 0x0A parse, 0x0B branch, 0x0C foreign
 spend, 0x0D output commitment, 0x0E user address, 0x0F value balance,
 0x10 unsupported bundle, 0x11 network, ...) or `-ZSIGN_E_*` from the
 intake (`zcash-sign.h`: 0x1E out of order, 0x1F size, 0x20 offset, 0x21
-hash, 0x22 incomplete, 0x23 backends disagree, ...).
+hash, 0x22 incomplete, 0x23 backends disagree, ...). 0x11 is a PCZT for
+another network than the request names; 0x28 (`ZSIGN_E_BOARD_NETWORK`) is a
+request for another network than the board's setting, and is not only
+zSign's (above, "The board's network").
 
 ### Signing
 
@@ -611,6 +639,7 @@ lock, an account change — is caught without a new flag to remember.
 | `0x0401` | Transport busy; the request was refused, not acted on — resend it |
 | `0x0202` | Outside the decodable set (section 6bis) |
 | `0x05xx` | The device will not sign this PCZT; the low byte is the reason (Zcash signing, above) |
+| `0x0528` | The request names the other Zcash network than the board's Settings → Network; nothing was derived (section 4, "The board's network") |
 
 ### A reply matches the frame type of the request that caused it
 

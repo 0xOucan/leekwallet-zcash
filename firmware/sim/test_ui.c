@@ -50,6 +50,7 @@ void        pin__reset_static_state_for_test(void);
 void        ui__reset_static_state_for_test(void);
 bool        ui__check_autolock_for_test(void);
 void        ui__service_sign_expiry_for_test(void);
+void        ui__service_wrong_network_for_test(void);
 void        ui__service_lock_hold_for_test(void);
 void        fake_button_hold(button_id_t id);
 void        fake_button_release(void);
@@ -789,6 +790,52 @@ static void test_address_check(void)
     ui_sign_expire();
     ui__service_sign_expiry_for_test();
     CHECK(ui_get_screen() != SCREEN_ADDRESS_CHECK, "an expired question stayed up");
+}
+
+/* A companion asked for the other network and was refused (protocol.c): the
+ * board says so over whatever is on screen, for a few seconds or until a
+ * press, and that press does nothing else. */
+static void test_wrong_network_notice(void)
+{
+    printf("== a refused network is said on the board's screen\n");
+    boot_unlocked_with_seed();
+    go(SCREEN_SETTINGS);
+    CHECK(select_menu_item("Net Mainnet"), "Network is not in Settings");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_zcash_network() == 1, "not set to testnet");
+    go(SCREEN_MAIN_MENU);
+
+    ui_notify_wrong_network(0);   /* a mainnet app, from the protocol task */
+    ui__service_wrong_network_for_test();
+    idle_pump();
+    CHECK_SCREEN(fake_oled_contains("Wrong network") && fake_oled_contains("App: Mainnet") &&
+                 fake_oled_contains("Board: Testnet") && fake_oled_contains("Settings > Network"),
+                 "the refusal was not shown");
+
+    /* A press dismisses it and does nothing else. */
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "the press reached the screen under the notice");
+    CHECK_SCREEN(!fake_oled_contains("Wrong network"), "the notice stayed after a press");
+
+    /* Or it goes by itself. */
+    ui_notify_wrong_network(0);
+    ui__service_wrong_network_for_test();
+    idle_pump();
+    CHECK_SCREEN(fake_oled_contains("Wrong network"), "the second refusal was not shown");
+    fake_clock_advance_us(3 * 1000 * 1000);
+    ui__service_wrong_network_for_test();
+    idle_pump();
+    CHECK_SCREEN(fake_oled_contains("Wrong network"), "the notice went too soon");
+    fake_clock_advance_us(2 * 1000 * 1000);
+    ui__service_wrong_network_for_test();
+    idle_pump();
+    CHECK_SCREEN(!fake_oled_contains("Wrong network") && ui_get_screen() == SCREEN_MAIN_MENU,
+                 "the notice did not go, or took the screen with it");
+
+    go(SCREEN_SETTINGS);
+    select_menu_item("Net Testnet");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_zcash_network() == 0, "could not switch back");
 }
 
 /* ============================================================================
@@ -2803,6 +2850,7 @@ int main(void)
     test_receive_shows_the_whole_address();
     test_sd_card_save_and_load();
     test_address_check();
+    test_wrong_network_notice();
     test_sd_card_signing();
     test_qr_airgap_signing();
     test_scan_assembles_then_refuses_every_type();

@@ -365,6 +365,7 @@ const char *zcash_sign_strerror(int code)
         case ZSIGN_E_WORKER:          return "Zcash worker unavailable";
         case ZSIGN_E_LOCKED:          return "device is locked";
         case ZSIGN_E_VERIFY:          return "signature failed verification";
+        case ZSIGN_E_BOARD_NETWORK:   return "the board is set to the other network";
         default:                      return "refused";
     }
 }

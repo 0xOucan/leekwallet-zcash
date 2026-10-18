@@ -273,7 +273,9 @@ static void send_frame(uint8_t type, const uint8_t *payload, size_t len)
  */
 static void send_error_ex(uint16_t code, const char *message, bool allow_encrypt)
 {
-    uint8_t out[128];
+    /* Room for the longest message (the wrong-network one, ~95 characters)
+     * with the CBOR around it and the session tag. */
+    uint8_t out[160];
     CborWriter w;
     cbor_writer_init(&w, out, sizeof(out));
 
@@ -631,6 +633,38 @@ static void send_zsign_refusal(int rc)
     send_error((uint16_t)(ERR_ZSIGN_BASE | ((unsigned)-rc & 0xFF)), zcash_sign_strerror(rc));
 }
 
+static const char *network_title(uint8_t network)
+{
+    return network == ZCASH_NET_MAIN ? "Mainnet" : "Testnet";
+}
+
+/* The board answers only for the network its owner chose under Settings >
+ * Network. A board set to Testnet once handed a mainnet app the mainnet
+ * account without a word, and an owner who believes the board is on the
+ * other network can send real funds believing them play money, or wait
+ * for funds on an address they are not watching. So a request for the other
+ * network is refused before anything is derived, with a reason that names
+ * both, and the board says so on its screen. True if `network` is the
+ * board's; otherwise the refusal has been sent.
+ *
+ * ui_zcash_network() is one byte the UI task writes and this task reads:
+ * the read cannot tear, and a switch made while a request is in flight
+ * applies from the next request. */
+static bool network_is_the_boards(uint8_t network)
+{
+    const uint8_t board = ui_zcash_network();
+    if (network == board) {
+        return true;
+    }
+    char why[100];
+    snprintf(why, sizeof why,
+             "the board is set to %s; switch it to %s in Settings > Network, or use the %s app",
+             network_title(board), network_title(network), network_title(board));
+    ui_notify_wrong_network(network);
+    send_error((uint16_t)(ERR_ZSIGN_BASE | (unsigned)-ZSIGN_E_BOARD_NETWORK), why);
+    return false;
+}
+
 /* zSignBegin / zSignChunk / zSignFinish. Writes the result into `w` and
  * returns true, or sends an error and returns false. */
 static bool handle_zsign(const char *method, const uint8_t *payload, size_t len, CborWriter *w)
@@ -672,8 +706,11 @@ static bool handle_zsign(const char *method, const uint8_t *payload, size_t len,
             send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
             return false;
         }
-        rc = zcash_sign_begin(total, hash.data, account,
-                              strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST);
+        const uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+        if (!network_is_the_boards(network)) {
+            return false;
+        }
+        rc = zcash_sign_begin(total, hash.data, account, network);
         if (rc != ZS_OK) {
             send_zsign_refusal(rc);
             return false;
@@ -709,7 +746,12 @@ static bool handle_zsign(const char *method, const uint8_t *payload, size_t len,
         return true;
     }
 
-    /* zSignFinish: check, review, sign. */
+    /* zSignFinish: check, review, sign. The setting is checked again: it
+     * may have been switched on the board while the PCZT was uploading. */
+    if (zcash_sign_received() > 0 && !network_is_the_boards(zcash_sign_network())) {
+        zcash_sign_reset();
+        return false;
+    }
     const zs_summary *summary = NULL;
     rc = zcash_sign_check(&summary);
     if (rc != ZS_OK) {
@@ -1095,6 +1137,9 @@ static void dispatch(const uint8_t *payload, size_t len)
             return;
         }
         uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+        if (!network_is_the_boards(network)) {
+            return;
+        }
 
         static ZcashAccount acct;
         WalletError werr = wait_for_wallet();
@@ -1197,6 +1242,9 @@ static void dispatch(const uint8_t *payload, size_t len)
             return;
         }
         const uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+        if (!network_is_the_boards(network)) {
+            return;
+        }
         /* Optional "ua": the address the app displays, which may be any of
          * the account's diversified addresses (wallets rotate them). The
          * device shows it only once its own keys prove it is the account's;
@@ -1279,13 +1327,12 @@ static void dispatch(const uint8_t *payload, size_t len)
             }
             account = (uint32_t)item.value;
         }
-        WalletError werr = wait_for_wallet();
-        if (werr != WALLET_OK) {
-            send_wallet_error(werr);
-            return;
-        }
         /* The network the birthday belongs to. Optional for the companions
-         * that predate it, all of which were testnet-only. */
+         * that predate it, all of which were testnet-only, so absent still
+         * means testnet rather than the board's setting: a birthday from
+         * a testnet companion filed under mainnet would be a mainnet
+         * birthday nobody chose. The guard below then refuses it on a
+         * board set to Mainnet, as it refuses that companion's zGetAccount. */
         uint8_t network = ZCASH_NET_TEST;
         if (cbor_map_find(payload, len, "network", &item)) {
             char net_name[8];
@@ -1295,6 +1342,14 @@ static void dispatch(const uint8_t *payload, size_t len)
                 return;
             }
             network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+        }
+        if (!network_is_the_boards(network)) {
+            return;
+        }
+        WalletError werr = wait_for_wallet();
+        if (werr != WALLET_OK) {
+            send_wallet_error(werr);
+            return;
         }
         ZcashMeta meta;
         zmeta_get(account, network, &meta);   /* fields not sent are kept */
