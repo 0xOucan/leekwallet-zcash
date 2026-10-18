@@ -18,8 +18,10 @@ screen, and send or shield signed on it, proven and broadcast here.
 Tested against zdev (the firmware's protocol on a PTY), and on the real
 board over USB in Brave 152: pairing, import and sync on testnet and
 mainnet, an address confirmed on the board, and a mainnet send signed on
-the board, proven and broadcast from the extension. Bluetooth is not yet
-tried on the board. No software wallets yet (9.4), no QR yet.
+the board, proven and broadcast from the extension (and testnet sends
+since). A board's wallet is shown only while that board is connected.
+Bluetooth is not yet tried on the board. No software wallets yet (9.4),
+no QR yet.
 
 ## How it fits together
 
@@ -101,6 +103,45 @@ proposal, show a review (payments, fee, change), require a real-funds tick
 on mainnet, then sign on the board and prove, extract and broadcast in the
 engine, showing the txid.
 
+**A board's wallet is shown only with that board.** On connect,
+`BoardHost` reads which wallet the board holds: the ZIP 32 seed
+fingerprint of its unlocked seed (`zGetAccount` of account 0; the same on
+both networks), kept in its state as `seedFingerprint`. The popup shows a
+device account only while a board is connected (USB in the offscreen
+document, or Bluetooth in this tab) whose fingerprint is the account's.
+Otherwise it shows the board section and "Connect your LeekWallet board
+to see this wallet.": no balance, address, history, send form, nor the
+last txid signed (which carries its fingerprint too). Nothing is
+deleted: the wallet stays on OPFS and keeps syncing in the background,
+and the popup's cache in `chrome.storage.local` is read back only for the
+account it was written for, so a reconnect shows the wallet at once. A
+board with another seed (another board, or a passphrase) sees none of it
+and is offered the import of its own account. View-only accounts (a
+UFVK pasted without a board) are always shown. Note the popup and a tab
+each see their own Bluetooth board: a wallet shown in the tab that holds
+the Bluetooth connection stays hidden in the toolbar popup.
+
+"Forget this board", with a confirmation, deletes that board's account
+on the selected network and everything synced for it (the engine's
+`deleteAccount`, zcash_client_sqlite's `delete_account`, plus its
+proposals and extracted transactions in `leek.sqlite`); other accounts
+and the chain data stay. It is offered while the board is connected. For
+a lost board, Settings → "Delete the … wallet" removes the whole network
+wallet.
+
+**Switching links.** The board serves one link at a time (Settings →
+Link). To switch: Disconnect (or "Switch to Bluetooth" from a USB
+connection), change Link on the board, then use the other button. A USB
+timeout says "the board did not answer over USB within 10 s. Is it
+unlocked, and is its Link set to USB (Settings → Link)?", and the port is
+closed, so Bluetooth can connect at once. In the toolbar popup the
+Bluetooth button only opens the tab; the tab checks for
+`navigator.bluetooth` and, without it, says how to enable Web Bluetooth:
+in Brave `brave://flags/#brave-web-bluetooth-api`, and on Linux (Chrome
+and Brave alike) also `#enable-experimental-web-platform-features`, which
+Chromium requires there (Web Bluetooth CG implementation status). An
+error from the browser's chooser is shown as it is.
+
 ## Build
 
 Prerequisites (once):
@@ -144,6 +185,7 @@ sync. The popup can also be opened as a tab:
 ```sh
 cd chrome/extension
 node --test test/board.test.mjs    # the board protocol in Node against zdev (no browser, no board)
+node --test test/format.test.mjs   # the popup's amounts and history lines
 node test/e2e.mjs                  # headless Chromium (Playwright's, ~/.cache/ms-playwright)
 BROADCAST=1 node test/e2e.mjs      # opt-in: also sends 1,000 zat to itself and broadcasts
 BROADCAST=board node test/e2e.mjs  # the same, signed by zdev through the board code
@@ -161,7 +203,15 @@ the "device", and `BoardHost` with a stand-in engine. The `.zsig` writer
 re-encodes `vectors/zsig/iw_send_shielded.zsig` byte for byte.
 
 `e2e.mjs` also drives zdev from an extension page (step 5b) through a
-bridge to its PTY: the same modules, with Chromium's WebCrypto.
+bridge to its PTY: the same modules, with Chromium's WebCrypto. Step 8
+drives the popup itself (as a tab) with a stand-in `navigator.bluetooth`
+whose GATT server is zdev: no board, nothing of the wallet shown; its
+board over Bluetooth, the wallet; Disconnect, hidden again; zdev with a
+passphrase (another wallet), only its own import offered; then "Forget
+this board" deletes the account. `board.test.mjs` also checks the board's
+fingerprint on connect, and that after a USB timeout (a port that never
+answers) the message names the Link setting, the port is released and
+Bluetooth connects next.
 
 `e2e.mjs` loads `dist/`, imports the abandon-art testnet account 0 UFVK
 from `vectors/keys.json` as a device account (birthday `BIRTHDAY`, default
@@ -206,6 +256,7 @@ wallet's first account.
 | `wipe` | `network` | `{ removed }`: deletes that network's files |
 | `accounts` | | `[ { uuid, name, birthday, kind: "device"\|"viewOnly", origin, shortFingerprint, ufvk } ]` |
 | `importAccount` | `ufvk`, `birthday?` (none: chain tip), `name?`, `origin?: { seedFingerprint, accountIndex }` | `{ imported, account, addresses }`. With `origin`, a device account (zecz `AccountSpec::device`); without, view-only. The same UFVK again: `imported: false`. |
+| `deleteAccount` | `account` (required) | `{ removed }`: the account and what was synced for it only, its proposals and extracted transactions; other accounts stay |
 | `addresses` | `account?` | `{ unified, diversifierIndex, transparent, orchardOnly }` |
 | `nextAddress` | `account?` | `{ unified, diversifierIndex, transparent }`: a fresh diversified address (rotation) |
 | `checkAddress` | `address`, `network?` | `{ kind: "unified"\|"transparent" }` |

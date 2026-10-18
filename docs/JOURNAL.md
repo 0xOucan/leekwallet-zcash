@@ -1024,3 +1024,51 @@ checked on Xtensa).
 - Nothing needed fixing.
 - Left: Bluetooth (Web Bluetooth behind `brave://flags/#brave-web-bluetooth-api`),
   a testnet send over USB, QR.
+
+### 9.3 Board data hidden without the board (2026-10-17)
+- From the user's run on the board in Brave 152 over USB (testnet and
+  mainnet sends signed there), four things to fix.
+- The popup showed the board account's balance, addresses, history and
+  send form after Disconnect, or with the board gone. Decided: a device
+  account is shown only while a board whose seed fingerprint matches it
+  is connected. `BoardHost` now reads the fingerprint on connect
+  (`zGetAccount` of account 0; one more key derivation on the board, a
+  few seconds) and the popup filters accounts by it. Without the board:
+  the board section and "Connect your LeekWallet board to see this
+  wallet.", nothing else, not even the last txid signed. The data stays
+  on OPFS and keeps syncing; the popup's cache is read back only for the
+  account it was written for, so a reconnect is instant. Another board
+  (zdev with a passphrase in the test) sees none of it and is offered
+  its own import.
+- "Forget this board": the engine had only `wipe` (a whole network), so
+  it gained `deleteAccount` over zcash_client_sqlite's `delete_account`,
+  which removes one account and the transactions only it touched, plus
+  its proposals and extracted transactions in `leek.sqlite`. Offered
+  while the board is connected, with a confirmation; for a lost board,
+  Settings → Delete the network wallet.
+- Bluetooth greyed out: the button was disabled whenever the popup had
+  no `navigator.bluetooth`. In the popup it now only opens the tab, which
+  checks and says how to enable it. On Linux Chromium keeps Web Bluetooth
+  behind `#enable-experimental-web-platform-features` (Web Bluetooth CG
+  implementation status), Brave on top of its own
+  `brave://flags/#brave-web-bluetooth-api`: likely why it stayed off for
+  the user with Brave's flag on. Headless Chromium on Linux has no
+  `navigator.bluetooth` either, which the e2e test shows.
+- USB to Bluetooth: a USB timeout now says "the board did not answer
+  over USB within 10 s. Is it unlocked, and is its Link set to USB
+  (Settings → Link)?". The session was already closed after a timeout;
+  a test now shows the port released and Bluetooth connecting right
+  after. A USB connection gets "Switch to Bluetooth" (ends the USB
+  session, then says to change Link on the board), and the board section
+  says how to switch. The tab shows the chooser's error text as is.
+- "sent -0.00000000 ZEC": an unmined send to the wallet's own address
+  (0.0001 ZEC, fee 0.0001). The history takes the known fee off the
+  balance change when nothing went to another address, leaving 0. Once
+  mined it showed -0.0001, so only the popup changed: such a line reads
+  "sent to yourself" with the balance change. zecz-core has the same
+  code but was left alone, as the case was not reproduced there.
+- Tests: `board.test.mjs` 27/27 (new: the fingerprint, another wallet,
+  USB timeout then Bluetooth, the hints), `format.test.mjs` 3/3,
+  `e2e.mjs` 41/41 (step 8 drives the popup with a stand-in
+  `navigator.bluetooth` bridged to zdev).
+- Left: try it on the board (USB, then Bluetooth with the Linux flag).
