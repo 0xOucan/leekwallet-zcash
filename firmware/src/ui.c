@@ -604,8 +604,12 @@ static void menu_rebuild(void)
  * the bound is a UI bound and not a derivation one. */
 static uint32_t hd_account = 0;
 
-/* The network the receive screens show addresses for; see UI_KEY_NETWORK. */
-static uint8_t zcash_network = 0;
+/* The board's network: what the receive screens show addresses for, and the
+ * only one a companion's requests are answered for (see UI_KEY_NETWORK).
+ * Written by the UI task only; read by the protocol task through
+ * ui_zcash_network(). One byte, so the read never tears; volatile, so the
+ * protocol task never acts on a stale copy after the user switched it. */
+static volatile uint8_t zcash_network = 0;
 
 #if LEEK_HAS_ZCASH
 /* The transaction review (SCREEN_ZSIGN_REVIEW). Up here because two flows
@@ -960,6 +964,48 @@ uint32_t ui_hd_account(void)
 uint8_t ui_zcash_network(void)
 {
     return zcash_network;
+}
+
+/* A request for the other network was refused (ui_notify_wrong_network).
+ * Pending: the network the companion asked for, plus one; 0 for none. Set
+ * by the protocol task, taken by the UI task, which then shows the notice
+ * until wrong_network_until_us. */
+#define WRONG_NETWORK_NOTICE_US (4 * 1000 * 1000)
+static volatile uint8_t wrong_network_pending = 0;
+static uint8_t wrong_network_asked;
+static int64_t wrong_network_until_us = 0;
+
+void ui_notify_wrong_network(uint8_t asked)
+{
+    wrong_network_pending = (uint8_t)(asked + 1);
+    ui_invalidate();
+}
+
+static void service_wrong_network(void)
+{
+    const uint8_t pending = wrong_network_pending;
+    if (pending) {
+        wrong_network_pending = 0;
+        wrong_network_asked = (uint8_t)(pending - 1);
+        wrong_network_until_us = esp_timer_get_time() + WRONG_NETWORK_NOTICE_US;
+        ui_invalidate();
+    } else if (wrong_network_until_us && esp_timer_get_time() >= wrong_network_until_us) {
+        wrong_network_until_us = 0;
+        ui_invalidate();
+    }
+}
+
+/* Drawn instead of the screen while it lasts; the screen comes back as it
+ * was. Short on purpose: the companion shows the whole sentence. */
+static void render_wrong_network(void)
+{
+    oled_clear();
+    oled_draw_string_centered(0, "Wrong network");
+    oled_draw_string_centered(2, wrong_network_asked ? "App: Testnet" : "App: Mainnet");
+    oled_draw_string_centered(3, zcash_network ? "Board: Testnet" : "Board: Mainnet");
+    oled_draw_string_centered(5, "Refused. Change it");
+    oled_draw_string_centered(6, "Settings > Network");
+    oled_draw_string(7, 0, "                OK");
 }
 
 static void zcash_network_toggle(void)
@@ -5709,6 +5755,14 @@ void ui_handle_button(button_id_t btn)
      * behaviour somebody expects from a device that went quiet. */
     ble_transport_advertise_again();
 
+    /* The wrong-network notice takes the press that dismisses it: the
+     * screen under it is not visible, so its buttons must not act. */
+    if (wrong_network_until_us) {
+        wrong_network_until_us = 0;
+        ui_invalidate();
+        return;
+    }
+
     if (screens[current_screen] && screens[current_screen]->on_button) {
         screens[current_screen]->on_button(btn);
     }
@@ -5716,7 +5770,9 @@ void ui_handle_button(button_id_t btn)
 
 void ui_render(void)
 {
-    if (screens[current_screen] && screens[current_screen]->render) {
+    if (wrong_network_until_us) {
+        render_wrong_network();
+    } else if (screens[current_screen] && screens[current_screen]->render) {
         screens[current_screen]->render();
     }
     /* Screens draw into the buffer; the panel changes exactly once, here. */
@@ -5879,6 +5935,7 @@ void ui_task(void *pvParameters)
         }
 
         service_sign_expiry();
+        service_wrong_network();
 
         if (host_passphrase_pending) {
             host_passphrase_pending = false;
@@ -5944,6 +6001,7 @@ int         ui__pin_option_for_test(void) { return current_digit; }
  * copy of the rule would pass while the device kept a passphrase applied. */
 bool ui__check_autolock_for_test(void) { return lock_check_timeout(); }
 void ui__service_sign_expiry_for_test(void) { service_sign_expiry(); }
+void ui__service_wrong_network_for_test(void) { service_wrong_network(); }
 void ui__service_lock_hold_for_test(void) { service_lock_hold(); }
 void ui__service_host_lock_for_test(void) { service_host_lock(); }
 void ui__service_qr_out_for_test(void) { service_qr_out(); }
@@ -6053,6 +6111,8 @@ void ui__reset_static_state_for_test(void)
     lock_timeout_stored_choice = 1;
     brightness_choice = 5;
     zcash_network = 0;
+    wrong_network_pending = 0;
+    wrong_network_until_us = 0;
     memzero(master_xfp, sizeof(master_xfp));
     memzero(master_zfp, sizeof(master_zfp));
     last_activity_us = 0;

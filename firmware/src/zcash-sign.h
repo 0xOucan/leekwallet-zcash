@@ -41,6 +41,11 @@
 #define ZSIGN_E_WORKER     (-37)   /* the Zcash worker did not run the job */
 #define ZSIGN_E_LOCKED     (-38)   /* no seed available (device locked) */
 #define ZSIGN_E_VERIFY     (-39)   /* a fresh signature failed verification */
+/* The request names the other network than the board's own setting
+ * (Settings > Network). Raised by protocol.c for every Zcash request that
+ * names a network, before anything is derived: a board set to one network
+ * answers for that network only. */
+#define ZSIGN_E_BOARD_NETWORK (-40)
 
 /* Consensus branch IDs both backends accept (each checks its own copy:
  * zsign-rust ALLOWED_BRANCHES, zsign-c BRANCH_NU6_3/BRANCH_NU7; the host suite

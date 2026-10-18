@@ -90,7 +90,7 @@ export class BoardHost {
     const d = this.#device;
     this.#device = null;
     await d?.link.close().catch(() => {});
-    this.#set({ phase: 'disconnected', passkey: null, waiting: null, task: null, seedFingerprint: null, error: why === 'disconnected' ? null : why });
+    this.#set({ phase: 'disconnected', passkey: null, waiting: null, task: null, seedFingerprint: null, accountError: null, error: why === 'disconnected' ? null : why });
   }
 
   #ready() {
@@ -106,7 +106,7 @@ export class BoardHost {
 
   async op_connect({ kind, network = 'test' }, signal) {
     if (this.#device) await this.#close('disconnected');
-    this.#set({ phase: 'connecting', kind, label: null, passkey: null, waiting: null, seedFingerprint: null, error: null });
+    this.#set({ phase: 'connecting', kind, label: null, passkey: null, waiting: null, seedFingerprint: null, accountError: null, error: null });
     let link;
     try {
       link = await this.#openLink(kind, (why) => {
@@ -131,9 +131,11 @@ export class BoardHost {
       // Which wallet this is. The fingerprint is the seed's, the same on
       // both networks; deriving the account takes the board a few seconds.
       this.#set({ waiting: 'wallet' });
-      // Without it (an error on the board) no device account is shown.
-      const acc = await device.zGetAccount(0, network).catch(() => null);
-      this.#set({ phase: 'ready', passkey: null, waiting: null, features, seedFingerprint: acc?.seedFingerprint ?? null });
+      // Without it (an error on the board) no device account is shown,
+      // and the popup says why (a board set to the other network, say).
+      let accountError = null;
+      const acc = await device.zGetAccount(0, network).catch((e) => ((accountError = String(e?.message ?? e)), null));
+      this.#set({ phase: 'ready', passkey: null, waiting: null, features, seedFingerprint: acc?.seedFingerprint ?? null, accountError });
       return { ...this.state };
     } catch (e) {
       await this.#close(String(e?.message ?? e));

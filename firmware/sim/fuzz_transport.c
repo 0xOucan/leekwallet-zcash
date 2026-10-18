@@ -47,6 +47,10 @@ void protocol__reset_for_test(void);
 /* ------------------------------------------------------------- UI stubs */
 
 uint32_t ui_hd_account(void) { return 0; }
+/* Testnet, as fresh_device() in test_protocol.c: the fuzzer reaches the
+ * Zcash handlers on either network, and one of them past the guard. */
+uint8_t ui_zcash_network(void) { return 1; }
+void ui_notify_wrong_network(uint8_t asked) { (void)asked; }
 void ui_request_session_confirm(void) { }
 /* Never mid-answer: the fuzzer's business is the parsers, and a handshake
  * refused halfway through a run would silence the one target that reaches
@@ -60,6 +64,11 @@ void ui_request_passphrase_confirm(uint32_t fingerprint) { (void)fingerprint; }
  * looking for happens in the parse, which is upstream of the prompt. */
 SignOutcome ui_sign_outcome(void) { return SIGN_REJECTED; }
 void ui_request_zsign_review(const zs_summary *s, uint8_t network) { (void)s; (void)network; }
+void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
+                             uint8_t network)
+{
+    (void)ua; (void)t_address; (void)account; (void)network;
+}
 void ui_sign_clear(void) { }
 void ui_sign_expire(void) { }
 

@@ -515,7 +515,7 @@ function boardSection() {
         s.kind === 'usb' ? h('button', { class: 'link', id: 'switch-ble', onclick: () => void switchToBluetooth(), disabled: busy }, 'Switch to Bluetooth') : null,
         h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, () => ui.board.run('disconnect')), disabled: busy }, 'Disconnect'),
       ),
-      fp ? null : h('p', { class: 'notice bad' }, 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),
+      fp ? null : h('p', { class: 'notice bad', id: 'board-account-error' }, s.accountError ?? 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),
     );
     if (known && ui.confirmForget) {
       lines.push(

@@ -244,10 +244,21 @@ uint32_t ui_hd_account(void);
 
 /**
  * The Zcash network the receive screens show addresses for: ZS_NET_MAIN (0)
- * or ZS_NET_TEST (1), set under Settings > Network and persisted. A view
- * only; signing follows the network the PCZT declares.
+ * or ZS_NET_TEST (1), set under Settings > Network and persisted. The
+ * board's network: a companion's request for the other one is refused
+ * (protocol.c, network_is_the_boards), and signing also checks the network
+ * the PCZT declares. Read from the protocol task; see zcash_network in ui.c.
  */
 uint8_t ui_zcash_network(void);
+
+/**
+ * A companion asked for the other network than ui_zcash_network(), and the
+ * protocol task refused it (PROTOCOL.md, error 0x0528). The board says so
+ * on its screen for a few seconds, over whatever is there; any button
+ * dismisses it. `asked` is the network the companion named. Safe from the
+ * protocol task: it only raises a flag.
+ */
+void ui_notify_wrong_network(uint8_t asked);
 
 void ui_request_session_confirm(void);
 

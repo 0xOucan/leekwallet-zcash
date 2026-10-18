@@ -112,13 +112,19 @@ impl Zdev {
     }
 }
 
+/// zdev on testnet (its Settings > Network), or on `net` with `start_on`.
 fn start(tag: &str, auto_yes: bool) -> Option<Zdev> {
+    start_on(tag, auto_yes, "test")
+}
+
+fn start_on(tag: &str, auto_yes: bool, net: &str) -> Option<Zdev> {
     let bin = zdev_binary()?;
     let dir = std::env::temp_dir().join(format!("leekz-desktop-zdev-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let link = dir.join("port");
     let mut cmd = Command::new(bin);
-    cmd.arg("--link").arg(&link).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.arg("--link").arg(&link).arg("--network").arg(net);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
     if auto_yes {
         cmd.arg("--yes");
     }
@@ -132,7 +138,10 @@ fn start(tag: &str, auto_yes: bool) -> Option<Zdev> {
 
 macro_rules! zdev_or_skip {
     ($tag:expr, $yes:expr) => {
-        match start($tag, $yes) {
+        zdev_or_skip!($tag, $yes, "test")
+    };
+    ($tag:expr, $yes:expr, $net:expr) => {
+        match start_on($tag, $yes, $net) {
             Some(z) => z,
             None => {
                 eprintln!("SKIPPED: zdev could not be built (make -C firmware/sim build/zdev)");
@@ -341,7 +350,7 @@ fn another_seed_is_refused_before_anything_is_sent() {
 /// sign_and_send needs the user's extra confirmation.
 #[test]
 fn mainnet_flows_and_a_session_bound_to_its_network() {
-    let z = zdev_or_skip!("main", true);
+    let z = zdev_or_skip!("main", true, "main");
     let d = TempDir::new("main");
     let main = Profile::new(Network::MainNetwork, d.0.join("wallets/main"), None);
     let test = Profile::new(TEST, d.0.join("wallets/test"), None);
@@ -388,6 +397,26 @@ fn mainnet_flows_and_a_session_bound_to_its_network() {
     let e = err_text(hardware::sign_and_send(&main, &mut s, &view, false, &seen.status()));
     assert!(e.to_string().contains("mainnet transaction of real ZEC"), "{e:#}");
     assert!(seen.steps().is_empty(), "the device was asked: {:?}", seen.steps());
+}
+
+/// A board set to Testnet refuses a mainnet wallet (and the other way
+/// round), and the app says which setting to change.
+#[test]
+fn a_board_on_the_other_network_is_explained() {
+    let z = zdev_or_skip!("other-net", true);
+    let d = TempDir::new("other-net");
+    let main = Profile::new(Network::MainNetwork, d.0.join("wallets/main"), None);
+    let seen = Seen::default();
+    let port = z.port();
+    let dev = link::open_usb(&port).expect("open zdev");
+    let e = err_text(hardware::connect(dev, "usb", &port, 0, &main, &seen.passkey(), &seen.status()));
+    assert!(zecz::device::is_code(&e, zecz::device::ERR_BOARD_NETWORK), "{e:#}");
+    let why = hardware::explain(&e);
+    assert!(
+        why.starts_with("The board is set to Testnet, but this app is on Mainnet. Switch the board to Mainnet in Settings → Network, or use the Testnet app."),
+        "{why}"
+    );
+    assert!(!main.exists(), "nothing written for a refused network");
 }
 
 #[test]

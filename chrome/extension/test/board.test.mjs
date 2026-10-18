@@ -18,7 +18,7 @@ await vendor();
 
 const { decodeCbor, encodeCbor } = await import('../src/board/cbor.js');
 const { BleReassembler, FRAME, UsbFrameDecoder, chunkForBle, encodeFrame, encodeUsbFrame } = await import('../src/board/framing.js');
-const { Device, DeviceError, ERR, toHex, fromHex: fromHexT } = await import('../src/board/device.js');
+const { Device, DeviceError, ERR, toHex, fromHex: fromHexT, wrongNetworkMessage } = await import('../src/board/device.js');
 const { BoardHost, BoardNeeds } = await import('../src/board/host.js');
 const { BleLink } = await import('../src/board/ble-link.js');
 const { SerialLink } = await import('../src/board/serial-link.js');
@@ -154,6 +154,7 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
 
   test('zGetAccount: the testnet and mainnet accounts of the vectors', async () => {
     for (const network of ['test', 'main']) {
+      await z.switchNetwork(network);
       const k = key(`${network}/abandon-art/pp0/acct0`);
       const a = await dev.zGetAccount(0, network);
       assert.equal(a.ufvk, k.ufvk, network);
@@ -161,6 +162,7 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
       assert.equal(a.tAddress, k.transparent_address, network);
       assert.equal(a.seedFingerprint, k.seed_fingerprint, network);
     }
+    await z.switchNetwork('test');
     const a1 = await dev.zGetAccount(1, 'test');
     assert.equal(a1.ufvk, key('test/abandon-art/pp0/acct1').ufvk);
   });
@@ -168,9 +170,27 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
   test('zSetAccountMeta keeps one birthday per network', async () => {
     assert.equal((await dev.zGetAccount(0, 'test')).birthday, null);
     assert.equal(await dev.zSetBirthday(0, 'test', 4_501_000), true);
+    await z.switchNetwork('main');
     assert.equal(await dev.zSetBirthday(0, 'main', 3_520_600), true);
-    assert.equal((await dev.zGetAccount(0, 'test')).birthday, 4_501_000);
     assert.equal((await dev.zGetAccount(0, 'main')).birthday, 3_520_600);
+    await z.switchNetwork('test');
+    assert.equal((await dev.zGetAccount(0, 'test')).birthday, 4_501_000);
+  });
+
+  test('the board answers only for its own network, and the message says which to change', async () => {
+    const isWrongNetwork = (asked) => (e) => e instanceof DeviceError && e.code === ERR.BOARD_NETWORK && e.message === wrongNetworkMessage(asked);
+    assert.match(wrongNetworkMessage('main'), /^The board is set to Testnet, but this wallet is on Mainnet\. Switch the board to Mainnet in Settings → Network/);
+    await assert.rejects(dev.zGetAccount(0, 'main'), isWrongNetwork('main'));
+    await assert.rejects(dev.zShowAddress(0, 'main', key('main/abandon-art/pp0/acct0').ua), isWrongNetwork('main'));
+    await assert.rejects(dev.zSetBirthday(0, 'main', 3_600_000), isWrongNetwork('main'));
+    await assert.rejects(dev.zSign(vector('main_iw_send_shielded_compact').bytes, 0, 'main'), isWrongNetwork('main'));
+    assert.match(z.out, /Wrong network: the app asked for Mainnet; this device is set to Testnet/);
+    await z.switchNetwork('main');
+    await assert.rejects(dev.zGetAccount(0, 'test'), isWrongNetwork('test'));
+    assert.match(wrongNetworkMessage('test'), /^The board is set to Mainnet, but this wallet is on Testnet\./);
+    assert.equal((await dev.zGetAccount(0, 'main')).birthday, 3_520_600, 'a refused birthday replaced the stored one');
+    await z.switchNetwork('test');
+    assert.equal((await dev.zGetAccount(0, 'test')).ua, key('test/abandon-art/pp0/acct0').ua);
   });
 
   test('zShowAddress confirms the account address and refuses another', async () => {
@@ -211,7 +231,9 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
 
   test('zSign on mainnet', async () => {
     const { v, bytes } = vector('main_iw_send_shielded_compact');
+    await z.switchNetwork('main');
     const r = await dev.zSign(bytes, 0, 'main');
+    await z.switchNetwork('test');
     assert.equal(toHex(r.sighash), v.sighash);
   });
 
@@ -378,6 +400,26 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
       await assert.rejects(host.run('signAndFinish', { network: 'main', signerView: view, confirmMainnet: true }), /engine is test, not main/);
       assert.equal(calls.filter((c) => c.method === 'finish').length, 0);
       assert.equal(host.state.phase, 'ready');
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('a board set to the other network: connected, no wallet shown, and the popup says which setting to change', async () => {
+    const z = await startZdev({ yes: true, network: 'test' });
+    const host = new BoardHost({ engine: fakeEngine('main').engine, openLink: async () => new PtyLink(z.link) });
+    try {
+      await host.run('connect', { kind: 'usb', network: 'main' });
+      assert.equal(host.state.phase, 'ready');
+      assert.equal(host.state.seedFingerprint, null);
+      assert.equal(host.state.accountError, wrongNetworkMessage('main'));
+      await assert.rejects(host.run('importAccount', { network: 'main' }), (e) => e.code === ERR.BOARD_NETWORK && e.message === wrongNetworkMessage('main'));
+      assert.equal(host.state.error, wrongNetworkMessage('main'));
+      await z.switchNetwork('main');
+      await host.run('connect', { kind: 'usb', network: 'main' });
+      assert.equal(host.state.seedFingerprint, key('main/abandon-art/pp0/acct0').seed_fingerprint);
+      assert.equal(host.state.accountError, null);
     } finally {
       await host.run('disconnect');
       z.stop();

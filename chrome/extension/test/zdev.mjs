@@ -32,16 +32,18 @@ export function zdevBinary() {
 /**
  * A running zdev. `yes`: answer every question on the "device" yes; else
  * write answers with `answer('y')`. `passphrase`: a BIP 39 passphrase on
- * the abandon-art mnemonic, for a board with another wallet. `passkeys`
- * collects what it showed.
+ * the abandon-art mnemonic, for a board with another wallet. `network`:
+ * the board's Settings > Network ('test' or 'main'), the only network it
+ * answers for; `switchNetwork(net)` changes it while it runs, as the user
+ * would on the board. `passkeys` collects what it showed.
  */
-export async function startZdev({ yes = true, passphrase = null } = {}) {
+export async function startZdev({ yes = true, passphrase = null, network = 'test' } = {}) {
   const bin = zdevBinary();
   if (!bin) return null;
   const dir = mkdtempSync(join(tmpdir(), 'leek-zdev-'));
   const link = join(dir, 'port');
   // A passphrase makes another seed, so another wallet (another board).
-  const args = ['--link', link, ...(yes ? ['--yes'] : []), ...(passphrase ? ['--passphrase', passphrase] : [])];
+  const args = ['--link', link, '--network', network, ...(yes ? ['--yes'] : []), ...(passphrase ? ['--passphrase', passphrase] : [])];
   const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   const z = { child, link, dir, passkeys: [], out: '', questions: 0 };
   child.stdout.on('data', (d) => {
@@ -52,6 +54,17 @@ export async function startZdev({ yes = true, passphrase = null } = {}) {
   });
   child.stderr.on('data', (d) => (z.out += d.toString()));
   z.answer = (a) => child.stdin.write(`${a}\n`);
+  // SIGUSR1 Mainnet, SIGUSR2 Testnet; resolves once zdev says it switched.
+  z.switchNetwork = async (net) => {
+    const title = net === 'main' ? 'Mainnet' : 'Testnet';
+    const seen = z.out.split(`Settings > Network: ${title}`).length;
+    child.kill(net === 'main' ? 'SIGUSR1' : 'SIGUSR2');
+    const t0 = Date.now();
+    while (z.out.split(`Settings > Network: ${title}`).length === seen) {
+      if (Date.now() - t0 > 5e3) throw new Error(`zdev did not switch to ${title}: ${z.out.slice(-500)}`);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
   z.stop = () => {
     child.kill();
     rmSync(dir, { recursive: true, force: true });

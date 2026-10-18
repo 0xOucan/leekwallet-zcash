@@ -48,6 +48,17 @@ struct Zdev {
     _dir: PathBuf,
 }
 
+impl Zdev {
+    /// Settings > Network on the "board" (main or test), as the user would
+    /// switch it: the pairing and everything stored stay. zdev handles the
+    /// signal before it reads the next request.
+    fn switch_network(&self, net: &str) {
+        let sig = if net == "main" { "-USR1" } else { "-USR2" };
+        let ok = Command::new("kill").arg(sig).arg(self.child.id().to_string()).status();
+        assert!(ok.is_ok_and(|s| s.success()), "could not switch zdev to {net}");
+    }
+}
+
 impl Drop for Zdev {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -56,13 +67,19 @@ impl Drop for Zdev {
     }
 }
 
+/// zdev on testnet (its Settings > Network), or on `net` with `start_on`.
 fn start(tag: &str, auto_yes: bool) -> Option<Zdev> {
+    start_on(tag, auto_yes, "test")
+}
+
+fn start_on(tag: &str, auto_yes: bool, net: &str) -> Option<Zdev> {
     let bin = zdev_binary()?;
     let dir = std::env::temp_dir().join(format!("zecz-zdev-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let link = dir.join("port");
     let mut cmd = Command::new(bin);
-    cmd.arg("--link").arg(&link).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.arg("--link").arg(&link).arg("--network").arg(net);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
     if auto_yes {
         cmd.arg("--yes");
     }
@@ -83,7 +100,10 @@ fn connect(z: &Zdev) -> Device {
 
 macro_rules! zdev_or_skip {
     ($tag:expr, $yes:expr) => {
-        match start($tag, $yes) {
+        zdev_or_skip!($tag, $yes, "test")
+    };
+    ($tag:expr, $yes:expr, $net:expr) => {
+        match start_on($tag, $yes, $net) {
             Some(z) => z,
             None => {
                 eprintln!("SKIPPED: zdev could not be built (make -C firmware/sim build/zdev)");
@@ -200,12 +220,15 @@ fn the_device_remembers_the_birthday_a_companion_gives_it() {
     assert!(device::get_uint(&a1, "birthday").is_err(), "account 1 got account 0's birthday");
 
     // One birthday per network: a mainnet import must not replace the
-    // testnet one (it once did, on the board).
+    // testnet one (it once did, on the board). The board is switched to
+    // Mainnet first: it answers for its own network only.
+    z.switch_network("main");
     let m = dev.z_get_account(0, "main").expect("mainnet account");
     assert!(device::get_uint(&m, "birthday").is_err(), "mainnet read the testnet birthday");
     assert!(dev.z_set_birthday(0, "main", 3_520_600).expect("set main"));
     let m = dev.z_get_account(0, "main").expect("mainnet account");
     assert_eq!(device::get_uint(&m, "birthday").unwrap(), 3_520_600);
+    z.switch_network("test");
     let a = dev.z_get_account(0, "test").expect("account");
     assert_eq!(device::get_uint(&a, "birthday").unwrap(), 3_000_123, "the testnet birthday was replaced");
 }
@@ -258,7 +281,7 @@ fn key_vector(name: &str) -> Value {
 /// an address on mainnet, and is refused before the screen.
 #[test]
 fn the_device_serves_the_mainnet_account() {
-    let z = zdev_or_skip!("main-account", true);
+    let z = zdev_or_skip!("main-account", true, "main");
     let mut dev = connect(&z);
     let v = key_vector("main/abandon-art/pp0/acct0");
     let a = dev.z_get_account(0, "main").expect("account");
@@ -272,7 +295,9 @@ fn the_device_serves_the_mainnet_account() {
     dev.z_show_address(0, "main", v["ua_orchard_only"].as_str().unwrap()).expect("the Orchard-only u1 address");
     let t = key_vector("test/abandon-art/pp0/acct0");
     assert!(dev.z_show_address(0, "main", t["ua"].as_str().unwrap()).is_err(), "a testnet address shown on mainnet");
+    z.switch_network("test");
     assert!(dev.z_show_address(0, "test", v["ua"].as_str().unwrap()).is_err(), "a mainnet address shown on testnet");
+    z.switch_network("main");
     let m1 = key_vector("main/abandon-art/pp0/acct1");
     let err = dev.z_show_address(0, "main", m1["ua"].as_str().unwrap()).expect_err("account 1's address");
     assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 14), "{err}");
@@ -286,7 +311,7 @@ fn the_device_serves_the_mainnet_account() {
 fn the_device_signs_mainnet_and_refuses_the_other_network() {
     use rand::{rand_core::UnwrapErr, rngs::SysRng};
 
-    let z = zdev_or_skip!("main-sign", true);
+    let z = zdev_or_skip!("main-sign", true, "main");
     let mut dev = connect(&z);
     for name in ["main_iw_send_shielded_compact", "main_t_shield_compact"] {
         let (v, sent) = vector(name);
@@ -305,8 +330,45 @@ fn the_device_signs_mainnet_and_refuses_the_other_network() {
     for name in ["r_main_on_test", "r_main_shield_on_test", "r_test_on_main", "r_test_shield_on_main"] {
         let (v, bytes) = vector(name);
         let net = v["network"].as_str().unwrap();
+        // The board set to the network the request names, so the signer
+        // itself sees the PCZT's other network.
+        z.switch_network(net);
         let err = dev.z_sign(&bytes, 0, net, |_, _| {}).expect_err("must refuse");
         // ZS_E_NETWORK = -17.
         assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 17), "{name}: {err}");
     }
+}
+
+/// The board answers for its own Settings > Network only (roadmap 10.3: a
+/// board set to Testnet once gave the mainnet app the mainnet account). A
+/// request for the other network is refused with its own code and a message
+/// naming both; switching the setting flips which one is answered.
+#[test]
+fn the_board_answers_only_for_its_own_network() {
+    let z = zdev_or_skip!("board-network", true);
+    let mut dev = connect(&z);
+    let t = key_vector("test/abandon-art/pp0/acct0");
+    let m = key_vector("main/abandon-art/pp0/acct0");
+
+    // Set to Testnet: mainnet is refused, every way it can be asked.
+    let refused = [
+        dev.z_get_account(0, "main").map(|_| ()).expect_err("zGetAccount main"),
+        dev.z_show_address(0, "main", m["ua"].as_str().unwrap()).expect_err("zShowAddress main"),
+        dev.z_set_birthday(0, "main", 3_520_600).map(|_| ()).expect_err("zSetAccountMeta main"),
+        dev.z_sign(&vector("main_iw_send_shielded_compact").1, 0, "main", |_, _| {}).map(|_| ()).expect_err("zSign main"),
+    ];
+    for err in refused {
+        assert!(device::is_code(&err, device::ERR_BOARD_NETWORK), "{err:#}");
+        let text = format!("{err:#}");
+        assert!(text.starts_with("The board is set to Testnet, but this app is on Mainnet. Switch the board to Mainnet in Settings → Network, or use the Testnet app."), "{text}");
+    }
+    assert_eq!(device::get_text(&dev.z_get_account(0, "test").unwrap(), "ua").unwrap(), t["ua"].as_str().unwrap());
+
+    // Switched to Mainnet on the board: the answers flip, same session.
+    z.switch_network("main");
+    assert_eq!(device::get_text(&dev.z_get_account(0, "main").unwrap(), "ua").unwrap(), m["ua"].as_str().unwrap());
+    let err = dev.z_get_account(0, "test").expect_err("zGetAccount test on a mainnet board");
+    assert!(device::is_code(&err, device::ERR_BOARD_NETWORK), "{err:#}");
+    assert!(format!("{err:#}").starts_with("The board is set to Mainnet, but this app is on Testnet."), "{err:#}");
+    assert!(device::get_uint(&dev.z_get_account(0, "main").unwrap(), "birthday").is_err(), "a refused birthday was kept");
 }
