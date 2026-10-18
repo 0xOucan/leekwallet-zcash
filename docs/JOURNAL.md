@@ -1008,3 +1008,19 @@ checked on Xtensa).
   ignored live dry quote, which passed), zecz-core `receive.rs`.
 - Next: a tiny mainnet swap from the app with the board
   (docs/zcash/MAINNET.md, "A tiny NEAR Intents swap").
+
+### 9.3 Chrome extension on the real board, USB (2026-10-17)
+- Brave 152 (native, not the Flatpak), the extension loaded unpacked from
+  `chrome/extension/dist`, the board on USB (`303a:1001`).
+- Testnet: paired, imported account 0 (ZFP 551A1FD4, the board's testnet
+  birthday 4,506,700), synced to the tip through ChainSafe's gRPC-web
+  proxy; the balance and history matched the other companions.
+- Mainnet: switched the popup and the board, imported (birthday 3,520,600),
+  synced; "Verify on the board" confirmed the shown address. A 0.0001 ZEC
+  send to the wallet's own address with a memo: the review showed amount,
+  fee and Ironwood change, Sign stayed off until the real-funds box was
+  ticked, the board signed (one signature), the extension proved and
+  broadcast, and the network accepted it. The txid is kept out of the repo.
+- Nothing needed fixing.
+- Left: Bluetooth (Web Bluetooth behind `brave://flags/#brave-web-bluetooth-api`),
+  a testnet send over USB, QR.

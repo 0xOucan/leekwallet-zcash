@@ -15,8 +15,11 @@ Status (9.3): watch-only and device accounts, sync, balances, addresses,
 and the board over USB (Web Serial) and Bluetooth (Web Bluetooth): pair
 with the six digits, import the board's account, check an address on its
 screen, and send or shield signed on it, proven and broadcast here.
-Tested against zdev (the firmware's protocol on a PTY), not yet on a
-board; no software wallets yet (9.4), no QR yet.
+Tested against zdev (the firmware's protocol on a PTY), and on the real
+board over USB in Brave 152: pairing, import and sync on testnet and
+mainnet, an address confirmed on the board, and a mainnet send signed on
+the board, proven and broadcast from the extension. Bluetooth is not yet
+tried on the board. No software wallets yet (9.4), no QR yet.
 
 ## How it fits together
 
@@ -238,8 +241,8 @@ document `hostState`.
 
 ## Not yet
 
-- 9.3: a send signed on a real board from the extension (USB, then
-  Bluetooth); QR through the webcam. Account 0 only.
+- 9.3: Bluetooth on the real board (USB works); QR through the webcam.
+  Account 0 only.
 - 9.4: software wallets (create/restore, passphrase, WebCrypto), several
   accounts in the popup.
 - The proving key is not cached across sessions; wasm-opt is used only
