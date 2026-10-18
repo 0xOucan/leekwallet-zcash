@@ -451,6 +451,14 @@ Not the thin forwarder planned before: its own software wallets, the board over 
   - Left: the first real mainnet receive, address check, send and shield
     on the board, with zecz and the desktop app, following
     `docs/zcash/MAINNET.md`.
+  - The board's network (2026-10-17): a board set to Testnet answered the
+    mainnet Android app with the mainnet account. The board now answers
+    only for its own Settings → Network: every request for the other
+    network is refused before any derivation (error `0x0528`, PROTOCOL.md
+    "The board's network"), the board shows "Wrong network", and zecz, the
+    desktop app, Android and the extension name the setting to change.
+    zdev takes `--network` and switches on SIGUSR1/SIGUSR2. Left: try it
+    on the board with each companion.
 - **10.4 Several accounts (S).** Account selection carried by every companion, not only account 0.
 - **10.5 Bluetooth bonding (M).** Today every connection pairs with the six digits; optionally remember a host.
 - **10.6 Security review (M).**

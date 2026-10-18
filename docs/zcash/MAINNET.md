@@ -8,10 +8,21 @@ watch-only mainnet sync); this checklist is for the board.
 ## Before you start
 
 - **Firmware.** The board runs a build with transparent inputs (roadmap
-  10.1, commit `ad54431` or later; `main` at `44c2f8a` is fine). No
-  firmware change is needed for mainnet: the network travels in every
-  request. Its signers accept branch `0x37a5165b` (NU6.3), which mainnet
-  is on; NU7 (`0x77190ad9`) is testnet only.
+  10.1, commit `ad54431` or later) and the network guard (branch
+  `board-network-guard`, 2026-10-17, or later). The network travels in
+  every request, and the board answers only for its own: see the next
+  point. Its signers accept branch `0x37a5165b` (NU6.3), which mainnet is
+  on; NU7 (`0x77190ad9`) is testnet only.
+- **The board's network.** On the board, Settings → `Net Mainnet` (the
+  out-of-the-box setting; it is persisted). The board refuses every
+  request for the other network (error `0x0528`), and says so on its
+  screen ("Wrong network", the app's network and its own): the board's
+  setting must match the app's. A board left on Testnet refuses the
+  mainnet app with "The board is set to Testnet, but this app is on
+  Mainnet. Switch the board to Mainnet in Settings → Network, or use the
+  Testnet app." Before this guard, a board on Testnet answered the mainnet
+  app anyway, so the setting said one network while the app used the
+  other.
 - **Backup.** The 24 words of the seed on the board are written down on
   paper, checked word by word against the device, and kept offline. Note
   the ZFP (seed fingerprint) from the home screen and any passphrase.
@@ -40,9 +51,9 @@ watch-only mainnet sync); this checklist is for the board.
   page says **Network: Mainnet** and **Upgrade: NU6.3**; a shield shows one
   "From k of n" page per coin with its `t1…` address and its
   `Path .../scope/index` (the device re-derives the key under coin type 133).
-- **On-device Receive** (no companion): Settings → `Net Mainnet` first;
-  the receive pages then say `MAIN`. USB and Bluetooth requests do not
-  depend on this setting.
+- **On-device Receive** (no companion): with Settings → `Net Mainnet`,
+  the receive pages say `MAIN`. The same setting decides which network
+  USB and Bluetooth requests are answered for.
 
 Anything that says Testnet, TAZ, `utest`/`tm`, or coin type 1: press NO
 and stop.
@@ -114,7 +125,9 @@ Build once: `cd host && cargo build --release -p zecz-cli`; below,
    LeekWallet, check the device pages, ACCEPT. Note the txid.
 5. Shield the transparent funds the same way (its own tick box).
 6. Switching back to Testnet disconnects the board and reopens the testnet
-   wallet; switching to Mainnet again reopens the mainnet one.
+   wallet; switching to Mainnet again reopens the mainnet one. The board
+   must be switched too (Settings → Network on the board), or it refuses
+   the app's requests and the app says which setting to change.
 
 Record each txid, the link (USB/BLE) and the companion in
 `docs/JOURNAL.md`.
@@ -122,9 +135,13 @@ Record each txid, the link (USB/BLE) and the companion in
 ## When something fails
 
 - **Nothing was signed** unless the device showed ACCEPT and you pressed
-  it. A refusal before review names its reason: `-17` is the other
-  network (wrong `--network` or app network), `-12` is not this seed's
-  account. Fix the network and start again.
+  it. A refusal before review names its reason: `-17` is a PCZT of the
+  other network (wrong `--network` or app network), `-12` is not this
+  seed's account. Fix the network and start again.
+- **"The board is set to Testnet, but this app is on Mainnet"** (error
+  `0x0528`, also "Wrong network" on the board): the board's Settings →
+  Network differs from the app's. Nothing was derived or signed. Switch
+  the board (or the app) and connect again.
 - **Signed but not broadcast** (finish failed, app error after signing):
   the transaction is in the wallet and in `<data dir>/sent/<txid>.tx`.
   Nothing moves until it is mined; if it never is, it expires about 40

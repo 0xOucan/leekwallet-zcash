@@ -1072,3 +1072,45 @@ checked on Xtensa).
   `e2e.mjs` 41/41 (step 8 drives the popup with a stand-in
   `navigator.bluetooth` bridged to zdev).
 - Left: try it on the board (USB, then Bluetooth with the Linux flag).
+
+### 10.3 The board refuses the other network (2026-10-17)
+- Seen by the user: the board was set to Testnet (Settings → Network) and
+  the mainnet Android app read the mainnet account from it anyway. The
+  setting only chose what the board's own receive screens showed; every
+  request carried its own network and was answered for it. Decided, for
+  safety: someone who thinks the board is on one network while the app
+  uses the other can lose funds, so the board answers for its own
+  setting only.
+- Firmware: zGetAccount, zShowAddress, zSetAccountMeta and zSignBegin
+  refuse the other network before anything is derived, with error
+  `0x0528` (`ZSIGN_E_BOARD_NETWORK`, -40, the next free code after the
+  intake's -39) and "the board is set to Testnet; switch it to Mainnet in
+  Settings > Network, or use the Testnet app" (both networks named the
+  right way round). zSignFinish checks again, since the setting can change
+  during an upload, and drops the upload. The board shows "Wrong network",
+  the app's network and its own for four seconds or until a button; that
+  press does nothing else. The setting is one volatile byte written by the
+  UI task and read by the protocol task. The error buffer went from 128 to
+  160 bytes for the longer message.
+- zSetAccountMeta without `network`: still testnet, not the board's
+  setting. The companions that leave it out are testnet-only; filing their
+  birthday under mainnet would give mainnet a birthday nobody chose. On a
+  board set to Mainnet such a request is refused like any testnet one.
+- Companions: leek-device's `Device::call` adds "The board is set to
+  Testnet, but this app is on Mainnet. Switch the board to Mainnet in
+  Settings → Network, or use the Testnet app." over the DeviceError (zecz,
+  desktop, Android). The extension says the same with "or switch this
+  wallet to Testnet", and the popup shows it after connect, where it only
+  said that the board did not say which wallet it holds.
+- zdev: `--network test|main` (or `ZDEV_NETWORK`, default test); SIGUSR1
+  switches it to Mainnet and SIGUSR2 to Testnet while it runs, keeping the
+  pairing and what it stored. The tests that use both networks on one zdev
+  switch it as a user would. The fuzzer also got its missing
+  `ui_request_show_address` stub and links again.
+- Tests: `make -C firmware/sim test` passes (40 suites; new: the refusals,
+  same network works, switching flips it, a switch during an upload, the
+  notice on the screen); `cd host && cargo test` 73 passed, 5 ignored;
+  `desktop/src-tauri` 31 passed, 3 ignored; `board.test.mjs` 29/29.
+  `pio run -e esp32s3cam` builds. `e2e.mjs` not run: no `chrome/engine/pkg`
+  in this checkout.
+- Left: try it on the board with each companion, both settings.
