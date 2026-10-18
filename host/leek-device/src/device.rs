@@ -43,6 +43,9 @@ pub const ERR_USER_TIMEOUT: u64 = 0x0201;
 pub const ERR_SESSION: u64 = 0x0400;
 pub const ERR_BUSY: u64 = 0x0401;
 pub const ERR_ZSIGN_BASE: u64 = 0x0500;
+/// The request named the other network than the board's own setting
+/// (Settings > Network on the board): refused before anything was derived.
+pub const ERR_BOARD_NETWORK: u64 = ERR_ZSIGN_BASE | 40;
 
 /// An error frame from the device.
 #[derive(Debug)]
@@ -53,7 +56,7 @@ pub struct DeviceError {
 
 impl std::fmt::Display for DeviceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.code & 0xFF00 == ERR_ZSIGN_BASE {
+        if self.code & 0xFF00 == ERR_ZSIGN_BASE && self.code != ERR_BOARD_NETWORK {
             write!(f, "device refused to sign: {} (code -{})", self.message, self.code & 0xFF)
         } else {
             write!(f, "device error 0x{:04X}: {}", self.code, self.message)
@@ -100,6 +103,16 @@ pub fn derive(shared: &[u8; 32], host_pub: &[u8; 32], device_pub: &[u8; 32],
     let p = okm(LABEL_PASSKEY);
     let n = u32::from_be_bytes([p[0], p[1], p[2], p[3]]) % 1_000_000;
     Keys { h2d: okm(LABEL_H2D), d2h: okm(LABEL_D2H), passkey: format!("{n:06}") }
+}
+
+/// What to tell the user when the board refused `asked` (a request's
+/// "network", "main" or "test") because it is set to the other network.
+pub fn wrong_network_message(asked: &str) -> String {
+    let (app, board) = if asked == "main" { ("Mainnet", "Testnet") } else { ("Testnet", "Mainnet") };
+    format!(
+        "The board is set to {board}, but this app is on {app}. Switch the board to {app} in \
+         Settings → Network, or use the {board} app."
+    )
 }
 
 /// 4 zero bytes ‖ 8-byte big-endian counter, as the firmware builds it.
@@ -329,6 +342,19 @@ impl Device {
 
     /// One encrypted request and its reply.
     pub fn call(&mut self, method: &str, fields: Vec<(&str, Value)>, timeout: Duration) -> Result<Value> {
+        // Kept for the board's wrong-network refusal, which is worded here.
+        let asked = fields.iter().find_map(|(k, v)| match (*k, v) {
+            ("network", Value::Text(n)) => Some(n.clone()),
+            _ => None,
+        });
+        self.call_inner(method, fields, timeout).map_err(|e| match &asked {
+            // Context keeps the DeviceError underneath, so is_code still works.
+            Some(n) if is_code(&e, ERR_BOARD_NETWORK) => e.context(wrong_network_message(n)),
+            _ => e,
+        })
+    }
+
+    fn call_inner(&mut self, method: &str, fields: Vec<(&str, Value)>, timeout: Duration) -> Result<Value> {
         let plain = cbor(&request(method, fields))?;
         let sealed = self.session.as_ref().ok_or_else(|| anyhow!("not paired"))?.seal(&plain)?;
         let debug = std::env::var_os("ZECZ_DEBUG").is_some();
@@ -494,6 +520,18 @@ pub fn is_code(e: &anyhow::Error, code: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wrong_network_is_named_both_ways() {
+        let m = wrong_network_message("main");
+        assert!(m.starts_with("The board is set to Testnet, but this app is on Mainnet."), "{m}");
+        assert!(m.contains("Switch the board to Mainnet in Settings → Network, or use the Testnet app."), "{m}");
+        let t = wrong_network_message("test");
+        assert!(t.starts_with("The board is set to Mainnet, but this app is on Testnet."), "{t}");
+        assert!(t.contains("or use the Mainnet app."), "{t}");
+        let e = DeviceError { code: ERR_BOARD_NETWORK, message: "x".into() };
+        assert_eq!(e.to_string(), "device error 0x0528: x");
+    }
 
     #[test]
     fn nonce_layout_matches_the_firmware() {
