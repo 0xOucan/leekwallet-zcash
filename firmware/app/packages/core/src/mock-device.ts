@@ -6,9 +6,10 @@
  * single highest-leverage thing for parallel work, since UI development stops
  * waiting on firmware.
  *
- * It is a protocol mock, not a wallet: derivation is deterministic nonsense and
- * signatures are not real. Anything that needs true BIP32 or secp256k1 belongs
- * on hardware or in the C host suite, which already has both.
+ * It is a protocol mock, not a wallet: it models the session, the PIN, the
+ * wallet and passphrase state, and nothing that holds a key. The Zcash
+ * methods (zGetAccount, zSign...) are not here: those are tested against
+ * zdev, the firmware's own protocol on a PTY (test/zcash-zdev.test.ts).
  *
  * The parts modelled carefully are the ones that catch UI bugs: permission
  * tiers, the confirmation round-trip, user rejection, and the fact that the
@@ -19,8 +20,6 @@ import { encodeCbor, decodeCbor, type CborValue } from "./cbor.ts";
 import { encodeFrame, FrameDecoder, FrameType } from "./framing.ts";
 import { ErrorCode, type Transport } from "./transport.ts";
 import { PROTOCOL_VERSION } from "./session.ts";
-import { describeCall, isDecodable } from "./eth-decode.ts";
-import { describeTypedData, inspectTypedData } from "./eip712.ts";
 
 export interface MockOptions {
   /** Milliseconds each command takes. Real key derivation costs ~1 s. */
@@ -57,13 +56,9 @@ export interface MockOptions {
   autoConfirmSession?: boolean;
 
   /**
-   * Whether the simulated device has blind signing switched on (T16).
-   *
-   * Default false, which is a real device out of the box. On the hardware this
-   * is five deliberate button presses behind a warning screen and no command
-   * can change it, so it is an option here rather than a method: a test asks
-   * for a device that is already in the weaker mode, it does not put one there
-   * over the wire.
+   * The `blindSigning` flag the firmware still reports in getFeatures (a
+   * setting inherited from LeekWallet; nothing on the Zcash firmware reads
+   * it). Here only so the conformance vectors that set it compare.
    */
   blindSigning?: boolean;
 }
@@ -71,10 +66,6 @@ export interface MockOptions {
 type Handler = (params: Record<string, CborValue>) => CborValue;
 
 const DEVICE_LABEL = "LeekWallet (mock)";
-
-/* Six rows of twenty characters — what the OLED can actually show, and so what
- * the firmware will accept. See eth_message_is_displayable(). */
-const MESSAGE_MAX_BYTES = 120;
 
 /* Fixed so the pairing UI has something stable to render. A real device
  * derives this from the handshake; see session.ts. */
@@ -311,16 +302,14 @@ export class MockDevice implements Transport {
 
     ping: () => ({ pong: 1 }),
 
-    /* Exactly the three fields protocol.c writes. `initialized` was invented
+    /* Exactly the fields protocol.c writes. `initialized` was invented
      * here and existed nowhere else, so app code could branch on a field real
      * hardware never sends. */
     getFeatures: () => ({
-      model: "LeekWallet-mock",
-      firmware: "0.1.0-mock",
-      /* The real state, as the device reports it. An app that decides whether
-       * to refuse a call before the walk to the device reads this field, so a
-       * mock that always said 0 would never exercise the other branch. */
       blindSigning: this.opts.blindSigning ? 1 : 0,
+      chain: "zcash",
+      firmware: "0.1.0-mock",
+      model: "LeekWallet-mock",
     }),
 
     getStatus: () => ({
@@ -415,213 +404,18 @@ export class MockDevice implements Transport {
         throw new MockRejection(ErrorCode.MalformedFrame, "passphrase must be printable ASCII");
       }
 
-      /* The device applies it, derives the resulting wallet and asks the owner
-       * to recognise the ADDRESS. That address is the whole safety argument for
-       * letting a host type a passphrase at all, so it is what the reply
-       * carries. The mock used to answer `{fingerprint}`, a field no firmware
-       * ever sends, which meant app code could be written against a
-       * confirmation the device cannot produce.
-       *
-       * Account 0 whatever the device is browsing, as protocol.c does: the
-       * question the screen asks is which SEED, and the answer must not depend
-       * on an unrelated menu setting. */
-      const address = mockAddress("0", this.activeWallet, true);
-      this.confirm(`Confirm passphrase wallet ${address} on device`);
+      /* The device applies it, derives the resulting seed and asks the owner
+       * to recognise its fingerprint, which is what the reply carries: the
+       * seed is the question that screen asks, the same for every account
+       * and network (protocol.c). */
+      const fingerprint = mockFingerprint(this.activeWallet, true);
+      this.confirm(`Confirm passphrase seed ${fingerprint.toString(16).padStart(8, "0")} on device`);
       /* Set only after the confirmation: a rejection must leave the device in
        * the wallet it was already in, or the owner ends up signing from one
        * they refused. confirm() throws on refusal, so this line is the
        * approval. */
       this.passphraseActive = true;
-      return { address, passphrase: 1 };
-    },
-
-    getAddress: (p) => {
-      this.requireUnlocked();
-      const index = addressIndex(p);
-      const path = String(p["path"] ?? `m/44'/60'/0'/0/${index}`);
-
-      if (p["display"]) this.confirm(`Show address for ${path}`);
-      /* `{address, index}`, the device's shape, and nothing else. Echoing the
-       * requested `path` back would let host code read a field real hardware
-       * never sends - and worse, believe the device agreed with its reading of
-       * the path when all the device ever kept was the trailing index. */
-      return {
-        address: mockAddress(String(index), this.activeWallet, this.passphraseActive),
-        index,
-      };
-    },
-
-    signTransaction: (p) => {
-      this.requireUnlocked();
-      const index = addressIndex(p);
-      const path = `m/44'/60'/0'/0/${index}`;
-      const to = p["to"];
-      const toHex = to instanceof Uint8Array ? "0x" + hex(to) : String(to ?? "");
-
-      /* chainId is mandatory and must be an unsigned integer. The same address
-       * exists on every EVM chain, so a signature made without knowing the
-       * chain is a replay waiting to happen; protocol.c refuses rather than
-       * defaulting to 1. */
-      const chainId = p["chainId"];
-      if (typeof chainId !== "number" || !Number.isInteger(chainId) || chainId < 0) {
-        throw new MockRejection(ErrorCode.MalformedFrame, "chainId required");
-      }
-
-      /* The size bound comes before the decodability check, in that order,
-       * because that is the order protocol.c applies them: an oversized blob is
-       * a malformed request (0x0001), not an undecodable call (0x0202), and a
-       * client that distinguishes the two must see the same code the device
-       * sends. It also refuses to let the host choose the device's memory
-       * usage. */
-      const dataLength = byteLength(p["data"]);
-      if (dataLength > ETH_MAX_DATA) {
-        throw new MockRejection(ErrorCode.MalformedFrame, "calldata too large to display");
-      }
-
-      /* Refuse what the firmware refuses (T50), and never less. A mock that is
-       * more permissive than the device certifies code the device rejects -
-       * which has happened twice. */
-      const { ok, call } = isDecodable({ to, data: p["data"] });
-      if (!ok) {
-        /* The escape hatch (T16), and exactly as narrow as protocol.c makes it:
-         * blind signing on AND a recipient still present. The mock refused
-         * both cases unconditionally, which reads as the safer error to make
-         * but is the same class of bug in the other direction — an app whose
-         * blind-signing branch nothing ever executed, certified by a mock that
-         * could not reach it. Contract creation stays refused however the
-         * setting is set: with no recipient the confirmation has nothing true
-         * left on it. */
-        const hasTo = to instanceof Uint8Array ? to.length === 20 : typeof to === "string" && to.length > 2;
-        if (!(hasTo && this.opts.blindSigning)) {
-          throw new MockRejection(
-            ErrorCode.Undecodable,
-            "this device cannot show what that call does",
-          );
-        }
-      }
-
-      // The confirmation names the source as well as the destination: a host
-      // that quietly changes the path must be visible on the device (T47).
-      /* A blind confirmation is a different screen, not a vaguer one: it leads
-       * with the warning, because the only true things left on it are the
-       * recipient and the amount. */
-      this.confirm(
-        ok
-          ? `Sign ${describeCall(call)} from ${path} to ${toHex}`
-          : `BLIND call from ${path} to ${toHex}`,
-      );
-      /* `{index, r, s, yParity}` - the device's shape. yParity is 0 or 1 and
-       * never the legacy 27/28: a client that masks the low bit of 27 inverts
-       * it, and the resulting signature recovers to an address nobody owns,
-       * which reads as "you have no funds" rather than "the signature is
-       * wrong". Emitting the same values here means the reassembly code is
-       * exercised before it meets hardware. */
-      return {
-        index,
-        r: new Uint8Array(32).fill(0x11),
-        s: new Uint8Array(32).fill(0x22),
-        yParity: index & 1,
-      };
-    },
-
-    signMessage: (p) => {
-      this.requireUnlocked();
-      const index = addressIndex(p);
-      const raw = p["message"];
-      if (typeof raw !== "string") {
-        throw new MockRejection(ErrorCode.MalformedFrame, "message must be text");
-      }
-
-      /* The device displays the whole message and signs exactly what it
-       * displayed, so it refuses anything it cannot render: printable ASCII
-       * only, and no longer than the six twenty-character rows the screen has
-       * (PROTOCOL.md 6e). Accepting more here than protocol.c accepts is the
-       * mock being more permissive than the device, which is the one thing it
-       * must never be - an emoji in a message would pass every test and fail
-       * on hardware. */
-      /* Length in BYTES, not in whatever byteLength() makes of a hex-looking
-       * string - it is written for calldata and reads text as hex. Printable
-       * ASCII makes the two the same number, which is exactly why the
-       * printability check comes first. */
-      /* Two refusals, two codes, and in the firmware's order. Too long is
-       * MALFORMED: the host built a request the device could not have held,
-       * and no setting reopens it. Unrenderable is UNDECODABLE: the bytes
-       * fitted, the screen has no glyphs for them. The mock answered 0x0202 to
-       * both, so a client branching on the two — and the app does, since one is
-       * worth retrying shorter and the other is not — was tested against a
-       * distinction that did not exist here. */
-      if (raw.length > MESSAGE_MAX_BYTES) {
-        throw new MockRejection(ErrorCode.MalformedFrame, "message too long to display");
-      }
-      /* `*`, not `+`: the empty message is displayable and the device signs it.
-       * personal_sign("") is a request dapps really make, and a mock that
-       * refused it meant app code could carry a branch for an error the
-       * hardware never sends. */
-      if (!/^[\x20-\x7e]*$/.test(raw)) {
-        throw new MockRejection(
-          ErrorCode.Undecodable,
-          "this device cannot display that message",
-        );
-      }
-
-      this.confirm(`Sign message from m/44'/60'/0'/0/${index}: ${raw.slice(0, 40)}`);
-
-      /* Same shape as signTransaction. One reply format for one kind of
-       * answer; a client that parses one parses the other. */
-      return {
-        index,
-        r: new Uint8Array(32).fill(0x33),
-        s: new Uint8Array(32).fill(0x44),
-        yParity: index & 1,
-      };
-    },
-
-    signTypedData: (p) => {
-      this.requireUnlocked();
-      const index = addressIndex(p);
-
-      /* The order of these three refusals is the order protocol.c applies
-       * them, and the codes differ because they mean different things to a
-       * client. A request with no `types` is malformed (0x0001) — the host
-       * built it wrong. A document the device cannot hash and one it cannot
-       * show are both 0x0202, but only the second is reopened by blind
-       * signing, and getting that backwards would let a host believe an array
-       * document becomes signable once the owner opts in. It never does: the
-       * only way to sign it would be to take a digest from the host, which is
-       * the thing this device exists not to do. */
-      const verdict = inspectTypedData(p);
-      if (verdict.kind === "malformed") {
-        throw new MockRejection(ErrorCode.MalformedFrame, "typed data request is incomplete");
-      }
-      if (verdict.kind === "unhashable") {
-        throw new MockRejection(
-          ErrorCode.Undecodable,
-          "this device cannot compute that structure's hash",
-        );
-      }
-      if (verdict.kind === "unrenderable" && !this.opts.blindSigning) {
-        throw new MockRejection(
-          ErrorCode.Undecodable,
-          "this device cannot show all of that structure",
-        );
-      }
-
-      /* What the device screen would say. Blind is a different screen, not a
-       * shorter one: it leads with the warning and shows the digest rather
-       * than a field list that would read as complete. */
-      const where = `from m/44'/60'/0'/0/${index}`;
-      this.confirm(
-        verdict.kind === "unrenderable"
-          ? `BLIND typed data ${verdict.render.primaryType} ${where}`
-          : `Sign ${describeTypedData(verdict.render)} ${where}`,
-      );
-
-      return {
-        index,
-        r: new Uint8Array(32).fill(0x55),
-        s: new Uint8Array(32).fill(0x66),
-        yParity: index & 1,
-      };
+      return { fingerprint, passphrase: 1 };
     },
   };
 
@@ -658,91 +452,20 @@ class MockRejection extends Error {
   }
 }
 
-const hex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
-
-/**
- * `ETH_MAX_DATA` in src/eth-tx.h — what the device can hold and describe.
- *
- * 640 since Aqua: a ship() is about 600 bytes and the old 256 refused it for
- * capacity while the screen could have drawn every field.
- *
- * 768 since 2026-09-10, and the reason is a caution about that "about". A
- * ONE-leg ship is 612 bytes; a TWO-leg ship is 676, and 640 sits between them.
- * So the limit was set from the smaller of the two shapes this app actually
- * builds, and the real position -- two-sided, the one the runbook calls a real
- * market rather than a demonstration -- was refused on hardware with 0x0001.
- * No test caught it because none pushed a two-leg ship through this mock.
- *
- * Must not drift from the firmware — a mock that accepts more than the device
- * certifies broken code, and a mock that accepts less refuses requests the
- * device would take.
- */
-const ETH_MAX_DATA = 768;
-
 /** Longest passphrase protocol.c will accept: 63 bytes plus its terminator. */
 const PASSPHRASE_MAX_BYTES = 63;
 
-/** Highest address index the device will derive; see protocol.c. */
-const MAX_ADDRESS_INDEX = 0x7fffffff;
-
-/** Calldata as the device measures it, in bytes, whatever form it arrived in. */
-function byteLength(data: CborValue | undefined): number {
-  if (data instanceof Uint8Array) return data.length;
-  if (typeof data === "string") {
-    const body = data.startsWith("0x") ? data.slice(2) : data;
-    // Round up: an odd nibble count is malformed anyway and eth-decode.ts
-    // rejects it, so err towards "too long" rather than "just fits".
-    return Math.ceil(body.length / 2);
-  }
-  return 0;
-}
-
 /**
- * Which address the request names, with the device's precedence.
- *
- * `index` wins over `path`, exactly as protocol.c reads them — the firmware
- * once read only `index`, ignored `path`, and derived address zero ten times,
- * so the mock resolves it the same way rather than parsing the whole path and
- * hiding the difference.
+ * Deterministic stand-in for a seed fingerprint (a uint32, as the device
+ * reports it). NOT a real one: it exists so that changing wallet or
+ * passphrase visibly changes the answer the way a real device would.
  */
-function addressIndex(p: Record<string, CborValue>): number {
-  let index: number;
-  if (typeof p["index"] === "number") {
-    index = p["index"];
-  } else if (typeof p["path"] === "string") {
-    const tail = p["path"].slice(p["path"].lastIndexOf("/") + 1);
-    index = Number.parseInt(tail, 10);
-  } else {
-    index = 0;
-  }
-
-  /* Above 0x7FFFFFFF is a hardened index, which BIP32 encodes differently and
-   * the device refuses rather than silently deriving a different key. */
-  if (!Number.isInteger(index) || index < 0 || index > MAX_ADDRESS_INDEX) {
-    throw new MockRejection(ErrorCode.MalformedFrame, "address index out of range");
-  }
-  return index;
-}
-
-/**
- * Deterministic stand-in for a derived address.
- *
- * NOT a real derivation — it exists so the UI has stable, distinct addresses to
- * render, and so that changing wallet, path or passphrase visibly changes the
- * result the way a real device would.
- */
-function mockAddress(path: string, wallet: number, passphrase: boolean): string {
-  const seed = `${path}|${wallet}|${passphrase ? "pp" : "no"}`;
+function mockFingerprint(wallet: number, passphrase: boolean): number {
+  const seed = `${wallet}|${passphrase ? "pp" : "no"}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < seed.length; i++) {
     h ^= seed.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
-  let out = "";
-  let state = h;
-  for (let i = 0; i < 40; i++) {
-    state = Math.imul(state ^ (state >>> 15), 0x2545f491) >>> 0;
-    out += (state & 0xf).toString(16);
-  }
-  return "0x" + out;
+  return h;
 }

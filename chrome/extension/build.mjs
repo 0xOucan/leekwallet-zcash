@@ -8,7 +8,7 @@
 // dist/ mirrors this directory, plus:
 //   engine/      ../engine/pkg (the WASM engine and its JS glue)
 //   tokens.css   firmware/app/src/tokens.css (LeekWallet's design tokens)
-//   icons/       firmware/app/extension/icons
+//   icons/       icons/ (LeekWallet's icons)
 //   src/vendor/  @noble/ciphers from node_modules (vendor.mjs)
 import { cp, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -42,7 +42,7 @@ await cp(pkg, join(dist, 'engine'), {
   filter: (p) => !/\.d\.ts$|package\.json$|\.gitignore$/.test(p),
 });
 await cp(join(repo, 'firmware/app/src/tokens.css'), join(dist, 'tokens.css'));
-await cp(join(repo, 'firmware/app/extension/icons'), join(dist, 'icons'), { recursive: true });
+await cp(join(here, 'icons'), join(dist, 'icons'), { recursive: true });
 
 // The manifest is copied, never generated: it is the file that declares the
 // permissions, so it is reviewed as written. Check it names files we built.

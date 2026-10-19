@@ -127,7 +127,7 @@ main { flex: 1; width: 100%; max-width: 640px; margin: 0 auto; padding: var(--sp
   }
   /* The warning and the log are read straight through, so they get the width.
    * Everything else is a form or a list and reads better in a column. */
-  .notice, #logpanel, .diagnostics, .launcher, .destination { grid-column: 1 / -1; }
+  .notice, #logpanel, .diagnostics, .launcher { grid-column: 1 / -1; }
   /* Grid items ignore the panel's own bottom margin; the gap does that job. */
   .panel, .notice { margin-bottom: 0; }
 }
@@ -206,8 +206,8 @@ p  { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-sm);
 }
 .destination__back:hover { color: var(--text); }
 
-/* Full-flash disclosure on the flasher panel (L2). Closed by default like
- * .custom-chain, but the summary is danger-coloured: this one gates the
+/* Full-flash disclosure on the flasher panel (L2). Closed by default, and
+ * the summary is danger-coloured: this one gates the
  * operation that erases every wallet, not a convenience field. */
 .flashmode-full {
   margin: var(--space-2) 0 var(--space-3);
@@ -293,22 +293,6 @@ button.danger { color: var(--danger); border-color: var(--danger); }
   letter-spacing: 0.02em;
 }
 
-.addr-list { display: flex; flex-direction: column; gap: var(--space-1); }
-
-.addr-item {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  cursor: pointer;
-  text-align: left; height: auto; width: 100%;
-}
-.addr-item[aria-selected="true"] { border-color: var(--accent); background: var(--bg); }
-.addr-item__index {
-  font-family: var(--font-mono); font-size: var(--text-xs);
-  color: var(--muted); min-width: 3ch;
-}
-
 /* ------------------------------------------------------- states & notices */
 
 .muted { color: var(--muted); }
@@ -323,104 +307,17 @@ button.danger { color: var(--danger); border-color: var(--danger); }
 }
 .notice--danger { border-left-color: var(--danger); }
 
-/* Selecting a mainnet changes what a mistake costs, so it must not read like
- * the same grey hint the testnets get. */
-.chainnote[data-net="mainnet"] { color: var(--danger); }
+/* ------------------------------------------------------- the proposal */
 
-/* Which operator was actually reached. Sits directly under the selector it
- * qualifies, and is a plain report rather than a warning: failing over is
- * normal, and the only thing being said is who ended up hearing the request. */
-.rpcused {
-  margin-top: calc(var(--space-2) * -1);
-  font-size: var(--text-sm);
-}
-
-/* ------------------------------------------------------- advisory preview */
-
-/* Visually a margin note, not a result. Dashed border and no accent colour on
- * purpose: the app's confident styling belongs to things the app is entitled
- * to assert, and its reading of a transaction is not one of them. A green
- * "checked" card here would be the lie PROTOCOL.md 6c warns about. */
+/* Visually a margin note, not a result: the send review drawn here is this
+ * app's reading of what it proposed, and the board's screen is the one that
+ * counts. Dashed border and no accent colour on purpose. */
 .preview {
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   padding: var(--space-3);
   margin-bottom: var(--space-3);
   background: var(--bg);
-}
-.preview__tag {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  margin-bottom: var(--space-2);
-}
-.preview__summary {
-  color: var(--text);
-  font-size: var(--text-sm);
-  margin-bottom: var(--space-3);
-}
-.preview__warnings { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
-.preview__warnings li {
-  border-left: 2px solid var(--warn);
-  padding: var(--space-1) var(--space-3);
-  margin-bottom: var(--space-2);
-  font-size: var(--text-sm);
-}
-.preview__warnings li[data-severity="high"] { border-left-color: var(--danger); }
-.preview__authority {
-  margin: var(--space-3) 0 0;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border);
-  color: var(--text);
-  font-size: var(--text-xs);
-}
-
-/* ------------------------------------------- unverified descriptor (7730) */
-
-/* One step further down the confidence ladder than .preview, and it has to
- * look like it. The preview above is at least this app reading the bytes it is
- * about to send; this box is a label written by a third party, delivered
- * unsigned, that the device will never see and cannot check. So: inset, dimmer
- * text, a warn-coloured edge rather than the neutral one, and the word
- * UNVERIFIED both on the box and in front of every single label inside it.
- *
- * The per-label prefix is CSS rather than text so it cannot be forgotten by a
- * future caller that builds rows some other way, and so it cannot be spoofed
- * away by a descriptor whose own label happens to read "verified". */
-.unverified-desc {
-  border: 1px dashed var(--warn);
-  border-left-width: 3px;
-  border-radius: var(--radius);
-  padding: var(--space-3);
-  margin: var(--space-3) 0 0 var(--space-3);
-  background: transparent;
-}
-.unverified-desc__tag {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--warn);
-  margin-bottom: var(--space-2);
-}
-.unverified-desc__intent {
-  margin: 0 0 var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-.unverified-desc .kv dt::before { content: "UNVERIFIED · "; color: var(--warn); }
-.unverified-desc .kv dd { color: var(--muted); }
-.unverified-desc__conflicts { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
-.unverified-desc__conflicts li {
-  border-left: 2px solid var(--danger);
-  padding: var(--space-1) var(--space-3);
-  margin-bottom: var(--space-2);
-  font-size: var(--text-sm);
-}
-.unverified-desc__notice {
-  margin: var(--space-3) 0 0;
-  font-size: var(--text-xs);
-  color: var(--text);
 }
 
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); font-size: var(--text-sm); }
@@ -479,8 +376,8 @@ button.danger { color: var(--danger); border-color: var(--danger); }
   cursor: pointer;
 }
 
-/* Same treatment as the text inputs: an RPC URL is a monospace thing people
- * check character by character. */
+/* Same treatment as the text inputs: what goes in one (a memo, a server
+ * URL) is checked character by character. */
 .field textarea {
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -499,140 +396,16 @@ button.danger { color: var(--danger); border-color: var(--danger); }
 .field--check input { width: auto; height: auto; }
 .field--check > span { margin-bottom: 0; }
 
-/* ----------------------------------------------------- custom networks */
-
-/* Folded away by default. Adding a network is a deliberate act with real
- * consequences for what the app will talk to, and it should not sit open next
- * to the fields people use every day. */
-.custom-chain {
-  margin-bottom: var(--space-4);
-  padding: var(--space-3);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-}
-.custom-chain > summary {
-  cursor: pointer;
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-.custom-chain[open] > summary { margin-bottom: var(--space-3); }
-.cclist { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
-.cclist li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  padding: var(--space-1) 0;
-}
-
-/* ---------------------------------------------------------------- balances
- *
- * The visual rule mirrors the trust rule: raw units and the contract address
- * are set in the ordinary text colour, and anything scaled or named sits in a
- * dashed warning-coloured box with the word UNVERIFIED in front of it — the
- * same treatment the ERC-7730 descriptor block gets, because it is the same
- * kind of claim. A stale figure is dimmed and prefixed in the markup, so it
- * cannot read as current even at a glance.
- */
-
-/* L3 — the wallet menu's all-chain balances (docs/UI-L3-SPEC.md). Type
- * carries the hierarchy per §2e: a big account line, quiet rows underneath,
- * no boxes-within-boxes. The four states are told apart by text, not only by
- * the dimming below — "unavailable" and "—" are different words on the page,
- * not the same grey pixel with different tooltips. */
-.walletmenu { margin-bottom: var(--space-4); }
-.walletmenu__accountline { font-size: var(--text-lg); font-weight: 500; }
-.walletmenu__address { margin-top: var(--space-1); }
-.walletmenu__chains { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
-.walletmenu__chain {
-  border-top: 1px solid var(--border);
-  padding: var(--space-3) 0;
-}
-.walletmenu__chainname { font-size: var(--text-sm); margin-bottom: var(--space-1); }
-.walletmenu__asset {
-  display: flex; justify-content: space-between; gap: var(--space-3);
-  font-family: var(--font-mono); font-size: var(--text-sm);
-  padding: 2px 0;
-}
-.walletmenu__asset[data-state="unavailable"],
-.walletmenu__asset[data-state="error"],
-.walletmenu__asset[data-state="reading"] { color: var(--muted); }
-
-.walletmenu__unified { margin-top: var(--space-3); }
-.walletmenu__unifiedhead {
-  margin: var(--space-3) 0 0;
-  font-size: var(--text-sm); font-weight: 500; color: var(--muted);
-}
-
 /*
- * The home accordion (L6, docs/UI-L6-SPEC.md).
+ * The Zcash home (#seczcash): the wallet is the screen once the board is
+ * unlocked. The class name is the old accordion's; the header is gone.
  *
- * Every section header is a real <button> carrying aria-expanded, so it is a
- * tab stop and announces its own state; none of this styling removes the
- * focus ring. 56px minimum height keeps the row above the 44px touch floor
- * with room to spare, and the whole row is the target rather than the
- * chevron.
- *
- * Only opacity and transform are animated — never height, which cannot be
- * animated from `auto` without measuring and which reflows the page under the
- * user's finger on every frame. The body is shown and hidden with [hidden],
- * which is instant; the movement is a 4px settle, and prefers-reduced-motion
- * removes even that.
+ * Only opacity and transform are animated, never height; the body is shown
+ * and hidden with [hidden], and prefers-reduced-motion removes the settle.
  */
-.acc { border-bottom: 1px solid var(--border); }
-.acc__hd { margin: 0; font-size: inherit; font-weight: inherit; }
-.acc__toggle {
-  display: flex; align-items: center; gap: var(--space-3);
-  width: 100%;
-  min-height: 56px;
-  padding: var(--space-3) var(--space-2);
-  background: transparent;
-  border: none;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--motion) ease-out;
-}
-.acc__toggle:hover { background: var(--surface-2); }
-.acc__toggle[aria-expanded="true"] { background: var(--surface-2); }
-.acc__text {
-  display: flex; flex-direction: column; gap: 2px;
-  flex: 1 1 auto; min-width: 0;
-}
-.acc__title { font-size: var(--text-lg); font-weight: 500; line-height: 1.5; }
-.acc__desc {
-  font-size: var(--text-sm); color: var(--muted); line-height: 1.5;
-  /* A chain name or a long total wraps rather than widening the page: this
-     runs at phone width and nothing here may cause a horizontal scroll. */
-  overflow-wrap: anywhere;
-}
-/* A pending signature, badged so a user mid-flow in a mini-app can see where
-   to go without opening every section (docs/UI-L6-SPEC.md §4). Colour is not
-   the only signal — it carries words, and role="status" announces it. */
-.acc__badge {
-  flex: 0 0 auto;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius);
-  background: var(--warn);
-  color: var(--accent-fg);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
-.acc__chev {
-  flex: 0 0 auto;
-  width: 9px; height: 9px;
-  border-right: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
-  transform: rotate(45deg);
-  transition: transform var(--motion) ease-out;
-}
-.acc__toggle[aria-expanded="true"] .acc__chev { transform: rotate(-135deg); }
-
-/* The body sits flush under its header: the panel chrome would otherwise draw
+/* The panel sits flush in its section: the panel chrome would otherwise draw
    a second box inside the section's own rule. */
-.acc > .panel, .acc > .walletmenu, .acc > .destination {
+.acc > .panel {
   border: none;
   background: transparent;
   margin-bottom: 0;
@@ -644,44 +417,7 @@ button.danger { color: var(--danger); border-color: var(--danger); }
   to   { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .acc__toggle, .acc__chev { transition: none; }
-  .acc > .panel, .acc > .walletmenu, .acc > .destination { animation: none; }
-}
-
-.balances { margin-top: var(--space-4); }
-.balances__native { font-family: var(--font-mono); font-size: var(--text-lg); }
-.balances__native[data-stale="true"] { color: var(--muted); }
-
-.tokenlist { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
-.token {
-  border-top: 1px solid var(--border);
-  padding: var(--space-3) 0;
-}
-.token__addr { font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; }
-.token__amount { font-family: var(--font-mono); font-size: var(--text-sm); }
-
-.unverified-amount {
-  border: 1px dashed var(--warn);
-  border-left-width: 3px;
-  border-radius: var(--radius);
-  padding: var(--space-2) var(--space-3);
-  margin: var(--space-2) 0;
-  font-size: var(--text-sm);
-}
-.unverified-amount__tag {
-  color: var(--warn);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: var(--text-xs);
-  margin-right: var(--space-2);
-}
-
-/* The conversion note under the amount field. Warning-coloured because the
- * multiplication it describes rests on a number nothing checked. */
-.amountnote:not(:empty) {
-  border-left: 2px solid var(--warn);
-  padding: var(--space-1) var(--space-3);
-  margin-top: var(--space-2);
+  .acc > .panel { animation: none; }
 }
 
 /* --------------------------------------------------------------- handheld */
@@ -706,12 +442,6 @@ main {
 @media (pointer: coarse) {
   button { height: 44px; }
   .field input, .field select { height: 44px; }
-  /* Address rows are the tap target for choosing where funds come from, so
-   * they get room even though their height is content-driven. `min-height`
-   * rather than `height`, because a wrapped address must still be allowed to
-   * grow the row: shrinking it to fit would be the one thing this layout must
-   * never do to an address. */
-  .addr-item { padding: var(--space-3); min-height: 44px; }
   /* A tablet is a coarse pointer with a lot of width, so the buttons that sit
    * in a row need a floor as well as a height or they end up 44px tall and
    * thumb-narrow. */
@@ -760,81 +490,9 @@ main {
   .row > button { flex: 1 1 auto; }
 }
 
-/* ---------------------------------------------------------- walletconnect */
-
-/* A pending request is a card with a border, not a modal. A modal would train
- * "dismiss the thing in the way", and this is the screen a user is meant to
- * read before walking to the device. */
-.wc-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-3);
-  margin: var(--space-4) 0;
-  background: var(--bg);
-}
-.wc-card h3 { margin: 0 0 var(--space-2); font-size: var(--text-sm); }
-
-/* The message, verbatim and monospaced. Same characters the device will show,
- * wrapped rather than truncated: a message shortened with an ellipsis is not
- * the message you would be signing. */
-.wc-message {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-2);
-  margin: var(--space-2) 0;
-}
-
-/* The approval-cap editor. Solid border where the preview above it is dashed:
- * the preview is this app describing what a dapp asked for, and this is the
- * one place on the card where the user changes it. They should not read as the
- * same kind of thing. */
-.wc-cap {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-3);
-  margin-bottom: var(--space-3);
-  background: var(--bg);
-}
-.wc-cap h4 { margin: 0 0 var(--space-2); font-size: var(--text-sm); }
-
-.wc-sessions { display: grid; gap: var(--space-2); }
-.wc-session {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: var(--space-1) var(--space-3);
-  align-items: center;
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-sm);
-}
-/* The dapp's own name and URL span the first column; the button sits beside. */
-.wc-session > strong, .wc-session > span { grid-column: 1; overflow-wrap: anywhere; }
-.wc-session > button { grid-column: 2; grid-row: 1 / span 3; }
-
-.wc-video { width: 100%; max-width: 320px; border-radius: var(--radius); margin: var(--space-3) 0; }
-
-/* An unset project ID is not an error the user caused, so it is not styled as
- * one — but it does stop the panel working, so it is not muted away either. */
-#wcprojecthint[data-problem="yes"] { color: var(--text); }
-
-/* The selected address, shown on its own.
- *
- * The QR sits on white regardless of theme: a scanner needs dark-on-light, and
- * a QR that inverts with the page is one that stops working at night. */
-.addr-detail {
-  margin: 0.75rem 0 1rem;
-  padding: 0.75rem;
-  border: 1px solid var(--line, #333);
-  border-radius: 6px;
-}
-/* Small label directly above the path it names — type carries the hierarchy
- * (UI-SPEC-V2.md §2e), so no border or box is needed to tie the two together. */
+/* A QR on white regardless of theme: a scanner needs dark-on-light, and a
+ * QR that inverts with the page is one that stops working at night. */
 .addr-path-label { margin: 0.5rem 0 0.15rem; }
-.addr-path { margin: 0 0 0.25rem; }
 
 .addr-qr {
   display: flex;
@@ -849,58 +507,6 @@ main {
   height: auto;
 }
 
-/* --------------------------------------------- rule-engine findings (Layer A)
-
-   Findings share the warnings list rather than getting a box of their own:
-   they are host-side advisory judgements of exactly the same standing as the
-   interpreter's own warnings, and a prettier box would be this app rating its
-   own opinions. Nothing here has a "pass" state to style, because there is no
-   such value to render - see rules.ts.
-
-   The closing note is dimmed and borderless so it reads as a caveat rather
-   than as one more finding. It is drawn even when the list above it is empty,
-   because "no findings" is a statement about these rules and not about the
-   transaction. */
-.preview__warnings li[data-severity="medium"] { border-left-color: var(--warn); }
-.preview__warnings li[data-severity="note"] {
-  border-left-color: transparent;
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-.finding__subject {
-  display: inline-block;
-  margin-top: var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
-}
-
-/* -------------------------------------------------------- mini-app tabs
-   One app on screen at a time. The strip only appears when more than one
-   applies to the chain, so a single app is not given a tab that does nothing
-   but sit there looking clickable. */
-.apptabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1px;
-  margin-bottom: 0.75rem;
-}
-.apptab {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.45rem 0.9rem;
-  cursor: pointer;
-  background: var(--bg-raised, #1a1d23);
-  color: var(--fg-muted, #9aa4b2);
-  border: 1px solid var(--border, #2a2f38);
-  border-bottom: 2px solid transparent;
-}
-.apptab:hover { color: var(--fg, #e6e9ee); }
-.apptab.on {
-  color: var(--fg, #e6e9ee);
-  border-bottom-color: var(--accent, #6ee7a8);
-}
-
 /* Zcash (src/zcash-view.ts). The network switch is two pressed-state buttons
  * rather than a select so the current network shows without opening
  * anything; mainnet is drawn in the danger colour wherever it appears. */
@@ -908,7 +514,6 @@ main {
 .znet #znetmain[aria-pressed="true"] { border-color: var(--danger); color: var(--danger); }
 .znet__acct { display: inline-flex; gap: var(--space-2); align-items: center; margin-left: auto; font-size: var(--text-sm); color: var(--muted); }
 .znet__acct input { width: 4rem; }
-#hdrzcash[data-net="mainnet"] .acc__desc { color: var(--danger); }
 .ztabs { display: flex; gap: var(--space-1); flex-wrap: wrap; margin: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .ztabs [role="tab"] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; }
 .ztabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); }
@@ -921,31 +526,23 @@ main {
 .zhist__amt { font-family: var(--font-mono); }
 .zhist__amt[data-dir="in"] { color: var(--accent); }
 
-/* ------------------------------------------------------------ app mode */
+/* ------------------------------------------------------------ home */
 
-/* src/app-mode.ts. The Zcash wallet (the default) shows nothing of the EVM
- * side; `!important` because script sets `.hidden` on some of these and a
- * Zcash build must not show them whatever the script believes. */
-html[data-mode="zcash"] .evm-only { display: none !important; }
-html[data-mode="full"] .zcash-only { display: none !important; }
-
-/* The Zcash wallet is the home screen, not one section of an accordion: no
- * header to collapse it, and the full width on a large screen. */
-html[data-mode="zcash"] #hdrzcash { display: none !important; }
-html[data-mode="zcash"] #seczcash { border-bottom: 0; }
-html[data-mode="zcash"] #seczcash > .panel { margin-top: 0; }
+/* The Zcash wallet is the home screen, the full width on a large screen. */
+#seczcash { border-bottom: 0; }
+#seczcash > .panel { margin-top: 0; }
 @media (min-width: 900px) and (min-height: 600px) {
-  html[data-mode="zcash"] #seczcash { grid-column: 1 / -1; }
+  #seczcash { grid-column: 1 / -1; }
 }
 
 /* Once the board is unlocked and the wallet is up, the Device panel shrinks
  * to what is still useful there (the link and Disconnect): the passkey was
  * compared, and the wallet is what the screen is for. */
-html[data-mode="zcash"][data-shell="open"] #devicepanel :is(#connectback, #devicehint, #pairing, #connect, #unlock) {
+html[data-shell="open"] #devicepanel :is(#connectback, #devicehint, #pairing, #connect, #unlock) {
   display: none !important;
 }
-html[data-mode="zcash"][data-shell="open"] #devicepanel > h2 { display: none; }
-html[data-mode="zcash"][data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bottom: var(--space-3); }
+html[data-shell="open"] #devicepanel > h2 { display: none; }
+html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bottom: var(--space-3); }
 
 .connproblem p { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
 .connproblem p:last-child { margin-bottom: 0; }

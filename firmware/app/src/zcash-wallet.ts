@@ -26,7 +26,7 @@ import type { Invoke } from "./tauri-transport.ts";
 import { networkLabel, type ZcashDeps, type ZcashView } from "./zcash-view.ts";
 
 interface Pool { total: number; spendable: number; pending: number }
-interface Status {
+export interface Status {
   network: string; server: string; dataDir: string; hasAccount: boolean;
   birthday: number | null; fullyScanned: number | null; chainTip: number | null;
   hardware: boolean; zfp: string | null; defaultServer: string;
@@ -72,14 +72,28 @@ export interface WalletDeps extends ZcashDeps {
   open(url: string): void;
 }
 
-export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promise<void> {
+/** What the diagnostics report says about the wallet (main.ts). */
+export interface WalletDiagnostics {
+  /** The last zw_status of the wallet on screen, or null before one. */
+  status: Status | null;
+  /** When lightwalletd last answered (a sync, the tip, a server check). */
+  lastContact: Date | null;
+  /** How the last sync ended, and when. */
+  lastSync: { at: Date; text: string } | null;
+}
+
+export interface ZcashWallet {
+  diagnostics(): WalletDiagnostics;
+}
+
+export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promise<ZcashWallet | null> {
   const invoke0 = deps.invoke();
-  if (!invoke0) return;
+  if (!invoke0) return null;
   const invoke: Invoke = invoke0;
   try {
     await invoke<boolean>("zw_available");
   } catch {
-    return; // a build without the wallet: the board tools are all there is
+    return null; // a build without the wallet: the board tools are all there is
   }
   for (const el of Array.from(document.querySelectorAll<HTMLElement>("#zcashpanel [data-wallet]"))) el.hidden = false;
 
@@ -88,6 +102,9 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   let proposal: { network: ZNetwork; key: { network: ZNetwork; wallet: string; account: number }; p: Proposal; view: Uint8Array } | null = null;
   let hide = false;
   try { hide = localStorage.getItem(HIDE_KEY) === "1"; } catch { /* shown */ }
+  let lastContact: Date | null = null;
+  let lastSync: { at: Date; text: string } | null = null;
+  const contacted = () => { lastContact = new Date(); };
 
   const net = (): ZNetwork => view.network;
   const say = (id: string, text: string) => { $(id).textContent = text; };
@@ -313,9 +330,12 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     say("zwsyncline", `Connecting to ${status?.server ?? "the server"}…`);
     try {
       const done = await invoke<{ chainTip: number; fullyScanned: number; progress: number }>("zw_sync", { ...k });
+      contacted();
+      lastSync = { at: new Date(), text: `${n}: synced to block ${done.fullyScanned} of ${done.chainTip}` };
       if (sameKey(k, keyNow())) say("zwsyncline", `Synced to block ${done.fullyScanned} of ${done.chainTip}.`);
       deps.log(`zcash: ${n} wallet synced to ${done.fullyScanned}`);
     } catch (e) {
+      lastSync = { at: new Date(), text: `${n}: failed: ${zErrorText(e)}` };
       if (sameKey(k, keyNow())) say("zwsyncline", `Sync failed: ${zErrorText(e)}`);
     } finally {
       syncing = false;
@@ -328,6 +348,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   void listener()?.<SyncEvent>("zw://sync", (e) => {
     const p = e.payload;
     if (p.network !== net()) return;
+    contacted();
     if (p.kind === "started") {
       say("zwsyncline", `Scanning from block ${p.from} to ${p.tip}…`);
     } else {
@@ -577,7 +598,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   $("zwimport").addEventListener("click", () => void importFromBoard().catch((e) => say("zwstatus", zErrorText(e))));
   $("zwtip").addEventListener("click", () => {
     void invoke<{ height: number }>("zw_tip", { network: net() }).then(
-      (t) => { ($("zwbday") as HTMLInputElement).value = String(t.height); },
+      (t) => { contacted(); ($("zwbday") as HTMLInputElement).value = String(t.height); },
       (e) => say("zwstatus", zErrorText(e)),
     );
   });
@@ -643,6 +664,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   const setServer = (server: string | null) => {
     say("zwsetstatus", server ? `Checking ${server}…` : "Back to the default server…");
     void invoke<{ server: string }>("zw_set_server", { network: net(), server }).then((r) => {
+      if (server) contacted(); // a server it set was checked: it answered
       say("zwsetstatus", `Using ${r.server}.`);
       void refresh();
     }, (e) => say("zwsetstatus", zErrorText(e)));
@@ -682,4 +704,8 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   await refresh();
   selectTab("ztab-wallet");
+
+  return {
+    diagnostics: () => ({ status, lastContact, lastSync }),
+  };
 }

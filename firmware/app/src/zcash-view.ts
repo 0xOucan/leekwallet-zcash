@@ -3,8 +3,8 @@
  * account, the address check, the birthday, and signing a PCZT file.
  *
  * Everything that touches the board goes through `deps.call()`, which is
- * main.ts's Client: the same serialised, encrypted session the EVM side
- * uses, so the two can never interleave frames. The protocol itself is
+ * main.ts's Client: the one serialised, encrypted session of the app, so
+ * two requests can never interleave frames. The protocol itself is
  * packages/core/src/zcash.ts; this file is only the DOM around it.
  *
  * Board errors are shown as the board wrote them (zErrorText): a refusal
@@ -107,8 +107,6 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     $("znettest").setAttribute("aria-pressed", String(network === "test"));
     $("znetmain").setAttribute("aria-pressed", String(network === "main"));
     $("zmainbanner").hidden = network !== "main";
-    $("zhdrdesc").textContent = networkLabel(network);
-    $("hdrzcash").dataset["net"] = network === "main" ? "mainnet" : "testnet";
   }
 
   function clearAccount(): void {
@@ -165,7 +163,6 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     $("zfp").textContent = a.seedFingerprint;
     $("zbday").textContent = a.birthday === null ? "not set on the board" : String(a.birthday);
     $("zacct").hidden = false;
-    $("zhdrdesc").textContent = `${networkLabel(network)} · ZFP ${a.seedFingerprint.slice(0, 8)}…`;
     if (before?.seedFingerprint !== a.seedFingerprint || before?.account !== a.account || before?.network !== a.network) {
       announceAccount(a);
     }
@@ -378,7 +375,6 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     reset() {
       clearAccount();
       clearSigned();
-      $("zhdrdesc").textContent = networkLabel(network);
     },
     onAccount(f) { accountListeners.push(f); },
     opened() { autoRead(); },
