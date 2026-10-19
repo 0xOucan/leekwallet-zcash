@@ -57,6 +57,14 @@ export interface ZcashView {
   readonly boardAccount: ZAccount | null;
   /** Read the board's account (the wallet's import uses it too). */
   readAccount(): Promise<ZAccount>;
+  /**
+   * The board's account changed: read, re-read under another seed (a
+   * passphrase), or forgotten (null) on reset, network or account change.
+   * The wallet follows it, because its seed fingerprint names the wallet.
+   */
+  onAccount(f: (a: ZAccount | null) => void): void;
+  /** The home screen opened on an unlocked board: read its account. */
+  opened(): void;
   busy<T>(what: string, f: () => Promise<T>): Promise<T>;
 }
 
@@ -67,6 +75,8 @@ export function initZcash(deps: ZcashDeps): ZcashView {
   let pczt: { name: string; bytes: Uint8Array } | null = null;
   let working = false;
   const listeners: (() => void)[] = [];
+  const accountListeners: ((a: ZAccount | null) => void)[] = [];
+  const announceAccount = (a: ZAccount | null) => { for (const f of accountListeners) f(a); };
 
   const status = (text: string) => { $("zstatus").textContent = text; };
 
@@ -102,7 +112,9 @@ export function initZcash(deps: ZcashDeps): ZcashView {
   }
 
   function clearAccount(): void {
+    const had = current !== null;
     current = null;
+    if (had) announceAccount(null);
     $("zacct").hidden = true;
     $("zqr").hidden = true;
     $("zqr").replaceChildren();
@@ -123,6 +135,15 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     clearAccount();
     clearSigned();
     for (const f of listeners) f();
+    /* Another network or account is another wallet: read it right away
+     * when there is a board to ask, as the home screen does. */
+    autoRead();
+  }
+
+  /** Read the account unless one is already on screen or the board is busy. */
+  function autoRead(): void {
+    if (current !== null || working || deps.call() === null) return;
+    void busy("reading the account", readAccount).catch((e) => status(zErrorText(e)));
   }
 
   function setNetwork(n: ZNetwork): void {
@@ -136,6 +157,7 @@ export function initZcash(deps: ZcashDeps): ZcashView {
   }
 
   function renderAccount(a: ZAccount): void {
+    const before = current;
     current = a;
     $("zua").textContent = a.ua;
     $("ztaddr").textContent = a.tAddress;
@@ -143,6 +165,10 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     $("zfp").textContent = a.seedFingerprint;
     $("zbday").textContent = a.birthday === null ? "not set on the board" : String(a.birthday);
     $("zacct").hidden = false;
+    $("zhdrdesc").textContent = `${networkLabel(network)} · ZFP ${a.seedFingerprint.slice(0, 8)}…`;
+    if (before?.seedFingerprint !== a.seedFingerprint || before?.account !== a.account || before?.network !== a.network) {
+      announceAccount(a);
+    }
   }
 
   async function readAccount(): Promise<ZAccount> {
@@ -150,7 +176,19 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     const n = network;
     const i = account;
     status(`Reading account ${i} (${networkLabel(n)}) from the board…`);
-    const a = await zGetAccount(call, i, n);
+    let a: ZAccount;
+    try {
+      a = await zGetAccount(call, i, n);
+    } catch (e) {
+      /* Right after the PIN the board can answer 0x0300 ("no wallet on the
+       * device", "derivation failed") while its vault is still opening; a
+       * read a moment later works (docs/JOURNAL.md, the 0x0300 retry).
+       * The home screen reads exactly then, so retry once. */
+      if ((e as { code?: unknown }).code !== 0x0300) throw e;
+      status("The board is still opening its wallet; asking again…");
+      await new Promise((r) => setTimeout(r, 1500));
+      a = await zGetAccount(call, i, n);
+    }
     /* The user may have switched while the board was deriving. */
     if (n !== network || i !== account) throw new Error("the network or account changed while reading");
     renderAccount(a);
@@ -340,7 +378,10 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     reset() {
       clearAccount();
       clearSigned();
+      $("zhdrdesc").textContent = networkLabel(network);
     },
+    onAccount(f) { accountListeners.push(f); },
+    opened() { autoRead(); },
     get network() { return network; },
     get account() { return account; },
     get boardAccount() { return current; },
