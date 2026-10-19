@@ -1392,7 +1392,21 @@ async function loadAddresses(): Promise<void> {
 
   const derived: string[] = [];
   for (let i = 0; i < 10; i++) {
-    const r = await client.call("getAddress", { path: addressPath(account, i) });
+    let r: Record<string, CborValue>;
+    try {
+      r = await client.call("getAddress", { path: addressPath(account, i) });
+    } catch (e) {
+      /* The Zcash firmware dropped the Ethereum commands (roadmap 1.1) and
+       * answers getAddress with 0x0001. That board is still usable: say so and
+       * let the unlock go on to the Zcash section instead of failing it. */
+      if (i === 0 && e instanceof DeviceError && e.code === 0x0001) {
+        if (generation !== loadGeneration) return;
+        list.textContent = "No Ethereum on this board: it runs the Zcash firmware. Use the Zcash section.";
+        log("this board has no Ethereum commands (Zcash firmware)");
+        return;
+      }
+      throw e;
+    }
     if (generation !== loadGeneration) return;   // superseded
     derived.push(String(r["address"]));
   }
