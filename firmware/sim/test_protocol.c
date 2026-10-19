@@ -1725,6 +1725,46 @@ static void test_zcash_waits_for_the_wallet(void)
     CHECK(f.present && f.type == T_ENC_RESPONSE, "a ready wallet was not answered");
 }
 
+/* The other half of the same race, seen over Bluetooth right after
+ * connecting: "no wallet on the device: create or import one" from a board
+ * that has one. wallet_unlock() sets `unlocked` before it decrypts the
+ * active seed, and wallet_select_wallet() drops the seed before loading the
+ * next, so for a moment the vault reads unlocked, with a wallet selected,
+ * and no seed. wait_for_wallet() took that for ready, and the derivation
+ * behind it found no seed. It now waits for the seed itself. */
+static void test_zcash_waits_for_the_seed(void)
+{
+    printf("== Zcash requests wait for the seed, not only for `unlocked`\n");
+    fresh_device();
+    confirmed_session(27);
+    pin_set("123456");
+    pin_verify("123456");
+    fake_wallet_preload(TEST_MNEMONIC);
+    wallet_unlock("123456", 6);
+
+    uint8_t payload[96];
+    size_t len = zget_account_request(payload, sizeof payload, 0, "test");
+    fake_wallet_seed_loading(5);   /* the seed lands a few polls later */
+    send_encrypted(payload, len);
+    Frame f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "a seed still loading was refused, not waited for");
+
+    /* A seed that never arrives: not "create or import one" on a board
+     * that holds a wallet, but still 0x0300, which a companion retries. */
+    fake_wallet_seed_loading(0xFFFFFFFFu);
+    send_encrypted(payload, len);
+    f = next_reply();
+    uint32_t code = 0;
+    CborItem it;
+    char msg[96] = "";
+    CHECK(f.present && f.type == T_ENC_ERROR && error_code(&f, &code) && code == E_NO_WALLET,
+          "a seed that never loads: error 0x%04X", (unsigned)code);
+    CHECK(f.present && cbor_map_find(f.payload, f.len, "message", &it) && cbor_text_copy(&it, msg, sizeof msg) &&
+          strstr(msg, "create or import") == NULL,
+          "a board with a wallet was told to create one: \"%s\"", msg);
+    fake_wallet_seed_loading(0);
+}
+
 static void test_zget_features(void)
 {
     printf("== zGetFeatures: before a session, what the signer accepts\n");
@@ -3425,6 +3465,7 @@ static int run_all_tests(void)
     test_zset_account_meta();
     test_large_frames_cross_the_usb_driver();
     test_zcash_waits_for_the_wallet();
+    test_zcash_waits_for_the_seed();
     test_zget_features();
     test_zshow_address();
     test_board_network();
