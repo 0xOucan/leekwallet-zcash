@@ -1302,7 +1302,7 @@ controls what it presents as   controls what an app can technically do
 
 The cloak is presentation. It does not restrain anything; it only declines to
 announce. The sandbox is capability, and it is what `app-proposal.ts` and the
-tests in `docs/MINI-APPS.md` enforce. A calculator UI is not a security control,
+tests in `docs/MINI-APPS.md` (removed with the mini apps; git history) enforced. A calculator UI is not a security control,
 and describing it as one would be the conceptual mistake this note exists to
 prevent.
 

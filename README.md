@@ -7,7 +7,8 @@ lunch. It holds the seed, checks every transaction against its own keys, shows
 you what you are signing, and signs it. Your phone or computer builds and proves
 the transaction; the keys never leave the device.
 
-Built on [LeekWallet](firmware/README.md), an open-source ESP32 hardware wallet,
+Built on [LeekWallet](firmware/README.md), an open-source ESP32 hardware wallet
+for Ethereum, turned into a Zcash-only one (firmware and every app here),
 for Zcash's shielded pools: **Ironwood** (NU6.3), **Orchard**, and transparent
 outputs.
 
@@ -44,7 +45,7 @@ outputs.
 |---|---|
 | **Board + firmware** | Done and tested on real hardware: signs shielded and transparent spends (shielding) over USB, Bluetooth, QR and SD; compact PCZT; verifies any of its addresses |
 | **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; sends and shielding signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen; a mainnet app and a testnet app side by side |
-| **LeekWallet Companion** (`firmware/app/`) | LeekWallet's own app (Tauri: desktop and Android) gains Zcash: one app for mainnet and testnet, board tools (account, verify, sign a `.pczt` file) and a full wallet with Zodl-like screens, signed on the board. Tested against the simulated board; the real board and phone are next |
+| **LeekWallet Zcash Companion** (`firmware/app/`) | LeekWallet's own app (Tauri: desktop and Android), now Zcash only (its EVM side was removed): one app for mainnet and testnet, board tools (account, verify, sign a `.pczt` file) and a full wallet with Zodl-like screens, signed on the board. Tested against the simulated board; the real board and phone are next |
 | **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
 | **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
 | **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, sync, balances, receive. Pairs with the board over Web Serial and Web Bluetooth, imports its account, verifies addresses on it, sends and shields signed on it. On the real board (Brave): sends signed over USB on testnet and mainnet, Bluetooth paired with addresses confirmed; the board's wallet is hidden unless that board is connected. Software wallets next ([chrome/README.md](chrome/README.md)) |
@@ -61,7 +62,7 @@ outputs.
 | Links | USB serial and Bluetooth LE for everyday signing; animated QR (UR fountain codes, the board's camera) and the SD card when the board must stay off every link |
 | Screen | 128×128 SH1107 OLED, EC11 rotary encoder + buttons; receive address as text and QR |
 | Address check | The app sends the address it displays, even a rotated diversified one; the board proves it is its own (Orchard `pk_d = [ivk]·g_d`, index recovered by FF1 decryption, transparent receiver checked at that index) and only then shows it to confirm. Foreign or mixed addresses are refused |
-| Companions | `zecz` CLI (PC), LeekWallet Zcash for Android (a [Zodl](https://github.com/zodl-inc/zodl-android) fork: one mainnet app, one testnet app), the desktop app, the Chrome extension, and the LeekWallet Companion (desktop and Android, both networks in one app) |
+| Companions | `zecz` CLI (PC), LeekWallet Zcash for Android (a [Zodl](https://github.com/zodl-inc/zodl-android) fork: one mainnet app, one testnet app), the desktop app, the Chrome extension, and the LeekWallet Zcash Companion (desktop and Android, both networks in one app) |
 
 Testnet transactions signed on the board include
 `1daaff6366fccbd6ea50f137a975a5013b2632083446b5220205ad16057b1ef0` (the first,
@@ -175,6 +176,7 @@ The full plan, with a "done when" check for each step, is in
 - [x] NEAR Intents swaps in the desktop app (8.6)
 - [x] The board refuses requests for the other network (10.3)
 - [x] Zcash in the LeekWallet Companion, desktop and Android build (6.14), on the real board next
+- [x] The Companion is Zcash only: its EVM code, WalletConnect and the EVM extension removed
 - [ ] A first real swap; NEAR Intents on Android and Chrome
 - [ ] A proper account type in the Android app and an offer to Zodl upstream
 - [ ] Releases and the hackathon submission
