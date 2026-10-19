@@ -7,9 +7,9 @@ commit (Ironwood, NU6.3, is newer than any release).
 
 | Crate | What it is | Used by |
 |---|---|---|
-| [`zecz-core`](zecz-core) (lib `zecz`) | The wallet engine: profiles per network, watch-only and device accounts, lightwalletd sync (refuses a server of the other chain), balances, rotating addresses, history, `propose_send` / `propose_shield` (full or compact signer view), applying a `.zsig`, proving, extraction, broadcast; `.zkv` SD seed cards; a DEV-only soft signer | `zecz-cli`, the desktop app, tests |
+| [`zecz-core`](zecz-core) (lib `zecz`) | The wallet engine: profiles per network, watch-only and device accounts, lightwalletd sync (refuses a server of the other chain; after the scan, fetches the full transactions librustzcash asks for and checks the wallet's transparent coins against the UTXO set, so a coin spent elsewhere leaves the balance), balances, rotating addresses, history, `propose_send` / `propose_shield` (full or compact signer view), applying a `.zsig`, proving, extraction, broadcast; `.zkv` SD seed cards; a DEV-only soft signer | `zecz-cli`, the desktop app, tests |
 | [`zecz-cli`](zecz-cli) (bin `zecz`) | The command line over `zecz-core` | you, scripts |
-| [`leek-device`](leek-device) | The board's client: v2 pairing (X25519, passkey), encrypted session, the `z*` calls (`zGetAccount`, `zShowAddress`, `zSign*` …) over any `FramePort` (USB serial, Bluetooth), and the `.zsig` format (v1 shielded, v2 with transparent entries) | `zecz-core`, `leek-android`, desktop |
+| [`leek-device`](leek-device) | The board's client: v2 pairing (X25519, passkey), encrypted session, the `z*` calls (`zGetAccount`, retried once on 0x0300 right after connecting; `zShowAddress`, `zSign*` …) over any `FramePort` (USB serial, Bluetooth), and the `.zsig` format (v1 shielded, v2 with transparent entries) | `zecz-core`, `leek-android`, desktop |
 | [`leek-android`](leek-android) | JNI library for the Android app: the device client over a Kotlin-owned link, the compact signer view, applying signatures to the full PCZT | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android) |
 
 The Chrome extension cannot use `zecz-core` directly (tonic, files, tokio);
@@ -40,6 +40,8 @@ $Z sign-device --port /dev/ttyACM0 --in tx.pczt --out tx.zsig     # review and A
 $Z finish --pczt tx.pczt --sigs tx.zsig       # apply, prove, broadcast
 ```
 
+`zecz history` lists the account's transactions (a send to your own
+address reads "Sent to yourself" with its fee as the amount);
 `zecz shield --compact --out s.pczt` moves transparent coins into the
 shielded pool; `zecz device-show-address` verifies the address on the
 board; `zecz --help` lists the rest. Mainnet checklist:

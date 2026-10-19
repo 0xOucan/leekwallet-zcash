@@ -80,7 +80,10 @@ and `finish`:
    PROTOCOL.md §3) and shows a six-digit passkey: compare it with the
    device and press ALLOW there. If the device is locked it asks for its
    PIN on its own screen. The session stays open until Disconnect, a
-   broken link, or the device locking.
+   broken link, or the device locking. The first zGetAccount of a session
+   is asked again once, 1.5 s later, if the device answers 0x0300 ("no
+   wallet" / "derivation failed"): right after connecting, a board still
+   opening its vault said so (see the journal, 2026-10-18).
 2. **Import.** The device exports its account (zGetAccount). The birthday
    comes from the device when a companion recorded it there, or from the
    field; a birthday typed by the user is recorded on the device
@@ -125,9 +128,16 @@ reason code), with the device's own message after them.
 - **History.** The account's transactions from the wallet database
   (zcash_client_sqlite's `v_transactions` and `v_tx_outputs`), newest
   first with unmined ones on top: date and height, received, sent,
-  shielded or moved between pools, amount, the fee when this wallet paid
-  it, recipients (by contact name when known), readable memos, and the
-  txid with Copy. Read again after a sync, a send and a shielding.
+  sent to yourself, shielded or moved between pools, amount, the fee when
+  this wallet paid it, recipients (by contact name when known), readable
+  memos, and the txid with Copy. A send to the wallet's own address shows
+  "Sent to yourself" with what it cost (−fee) rather than "−0" and a fee.
+  Read again after a sync, a send and a shielding.
+- **Sync.** After the scan, the app fetches the full transactions the
+  scan cannot see into (zecz-core's `fetch_transaction_data`): so a
+  transparent coin spent by another wallet with the same keys (zecz, the
+  Companion, the Chrome wallet) leaves the balance, and the shield offer
+  with it.
 - **Contacts.** Name and address, kept on this computer only in
   `<app data dir>/contacts-<test|main>.json` (`{"version": 1,
   "contacts": [{"name", "address"}]}`), written to a temporary file and
