@@ -25,6 +25,15 @@
 //      and hides it again on Disconnect; a board with another wallet (zdev
 //      with a passphrase) sees none of it and is offered its own import;
 //      "Forget this board" deletes the account.
+//   9. the board's wallet hidden in every view, on testnet and mainnet
+//      (zdev set to that network): a device account just imported, its
+//      balance not in yet ("No balance yet: sync first") and a sync
+//      running; the tab connected over Bluetooth whose stack never answers
+//      stopNotifications (as seen on Linux). Disconnect hides it at once;
+//      a popup opened meanwhile, or reopened after, shows nothing of it;
+//      the offscreen document holds no USB session; Forget hides it at
+//      once while the sync runs, then deletes it.
+//      SKIP_TO=9 runs only this step (with the engine started).
 // Opt-in, needs funds on the abandon-art testnet account (public keys, so
 // anyone may have spent them): BROADCAST=1 also proposes a send to self,
 // signs it with the dev soft signer, proves, extracts and broadcasts it;
@@ -137,7 +146,7 @@ async function reloadExtension(ctx, id, page) {
  * (chunks at MTU 23 both ways, as the board's ble.c). The popup's own
  * code, BleLink included, runs unchanged.
  */
-async function popupWithBluetooth(ctx, id, ptyPath) {
+async function popupWithBluetooth(ctx, id, ptyPath, { hangStopNotifications = false } = {}) {
   const popup = await ctx.newPage();
   popup.on('pageerror', (e) => console.log(`  [popup error] ${e.message}`));
   const pty = new PtyLink(ptyPath);
@@ -146,18 +155,20 @@ async function popupWithBluetooth(ctx, id, ptyPath) {
     const f = reasm.push(Uint8Array.from(chunk));
     if (f) await pty.send(f.type, f.payload);
   });
-  await popup.addInitScript(() => {
+  await popup.addInitScript((hang) => {
     const listeners = [];
-    const rx = { addEventListener: (ev, f) => listeners.push(f), startNotifications: async () => rx, stopNotifications: async () => rx };
+    // hang: a Bluetooth stack that never answers stopNotifications.
+    const rx = { addEventListener: (ev, f) => listeners.push(f), startNotifications: async () => rx, stopNotifications: () => (hang ? new Promise(() => {}) : Promise.resolve(rx)) };
     const tx = { writeValueWithResponse: (c) => window.bleWrite(Array.from(c)) };
     window.bleNotify = (bytes) => {
       const value = new DataView(Uint8Array.from(bytes).buffer);
       for (const f of listeners) f({ target: { value } });
     };
     const service = { getCharacteristic: async (uuid) => (uuid.endsWith('2') ? tx : rx) };
-    const device = { name: 'zdev', addEventListener() {}, gatt: { connect: async () => ({ getPrimaryService: async () => service }), disconnect() {} } };
+    window.gattDisconnects = 0;
+    const device = { name: 'zdev', addEventListener() {}, gatt: { connect: async () => ({ getPrimaryService: async () => service }), disconnect: () => (window.gattDisconnects += 1) } };
     Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice: async () => device }, configurable: true });
-  });
+  }, hangStopNotifications);
   let open = true;
   (async () => {
     while (open) {
@@ -179,6 +190,101 @@ async function popupWithBluetooth(ctx, id, ptyPath) {
   return popup;
 }
 
+/** Resolves with the ms it took for `f` (in the page) to hold, or null after `ms`. */
+async function within(p, f, ms, arg) {
+  const t0 = Date.now();
+  const ok = await p.waitForFunction(f, arg, { timeout: ms, polling: 50 }).then(() => true, () => false);
+  return ok ? Date.now() - t0 : null;
+}
+
+const WALLET_SHOWN = () => ['#account', '#total', '#ua', '#send', '#history', '#sync', '#balances'].some((s) => document.querySelector(s));
+
+/**
+ * 9. The board's wallet, in every view, while a sync runs: per network, a
+ * device account just imported (a deep birthday, so the sync lasts), the
+ * tab connected over Bluetooth whose stack never answers
+ * stopNotifications.
+ */
+async function boardViews(ctx, id, page) {
+  for (const network of ['test', 'main']) {
+    const tag = network === 'main' ? 'mainnet' : 'testnet';
+    const v = keys.find((k) => k.name === `${network}/abandon-art/pp0/acct0`);
+    const z = await startZdev({ yes: true, network });
+    if (!z) {
+      check(`${tag}: zdev`, false, 'zdev could not be built');
+      return;
+    }
+    let tab = null;
+    const pages = [];
+    try {
+      await call(page, 'cancelSync');
+      await call(page, 'wipe', { network });
+      await call(page, 'open', { network, server: network === 'test' ? LWD : '' });
+      const tip = await call(page, 'tip', {});
+      const back = network === 'main' ? 100_000 : 200_000;
+      const imp = await call(page, 'importAccount', { ufvk: v.ufvk, name: 'board', birthday: tip.height - back, origin: { seedFingerprint: v.seed_fingerprint, accountIndex: 0 } });
+      const uuid = imp.account.uuid;
+      await page.evaluate((n) => chrome.storage.local.set({ prefs: { network: n, servers: {}, account: {} } }), network);
+      // A sync running, as right after an import.
+      await page.evaluate(() => void window.t.call('sync', {}).catch(() => {}));
+
+      tab = await popupWithBluetooth(ctx, id, z.link, { hangStopNotifications: true });
+      await tab.waitForSelector('#ble-press', { timeout: 60e3 });
+      await tab.click('#connect-ble');
+      await tab.waitForSelector('#account', { timeout: 180e3 }).catch(async (e) => {
+        console.log(`  tab shows: ${await text(tab)}`);
+        throw e;
+      });
+      const shown = await tab.evaluate(() => ({ sync: document.getElementById('sync-line')?.textContent, balance: document.getElementById('balances')?.textContent }));
+      check(`${tag}: the tab shows its board's new account while it syncs`, /^Syncing/.test(shown.sync ?? '') && /No balance yet: sync first/.test(shown.balance ?? ''), `"${shown.sync}", "${shown.balance}"`);
+
+      // Another view, opened while the tab holds the board over Bluetooth.
+      const other = await ctx.newPage();
+      pages.push(other);
+      await other.goto(`chrome-extension://${id}/popup.html`);
+      await other.waitForSelector('#connect-to-see', { timeout: 60e3 });
+      check(`${tag}: a popup opened meanwhile shows nothing of it (its board is in the tab)`, !(await other.evaluate(WALLET_SHOWN)));
+
+      await tab.click('#disconnect');
+      const hidMs = await within(tab, () => !!document.querySelector('#connect-to-see') && !['#account', '#total', '#ua', '#send', '#history', '#sync', '#balances'].some((s) => document.querySelector(s)), 2000);
+      check(`${tag}: Disconnect hides the wallet at once, though the Bluetooth stack hangs`, hidMs !== null, hidMs === null ? `still shown: ${(await text(tab)).slice(0, 200)}` : `${hidMs} ms`);
+      const dropped = await within(tab, () => window.gattDisconnects > 0, 3000);
+      check(`${tag}: ... and the GATT connection is dropped`, dropped !== null);
+      const hsNow = await call(page, 'hostState');
+      check(`${tag}: the offscreen document holds no USB session`, hsNow.board?.phase === 'disconnected', hsNow.board?.phase);
+      check(`${tag}: the popup opened meanwhile still shows nothing`, !(await other.evaluate(WALLET_SHOWN)));
+      await other.close();
+      const again = await ctx.newPage();
+      pages.push(again);
+      await again.goto(`chrome-extension://${id}/popup.html`);
+      await again.waitForSelector('#connect-to-see', { timeout: 60e3 });
+      check(`${tag}: the popup reopened shows nothing until its board connects`, !(await again.evaluate(WALLET_SHOWN)));
+
+      // Forget, with the sync still running.
+      await tab.click('#connect-ble');
+      await tab.waitForSelector('#forget', { timeout: 180e3 });
+      const syncing = (await call(page, 'hostState')).busy === 'sync';
+      await tab.click('#forget');
+      await tab.waitForSelector('#forget-confirm', { timeout: 10e3 });
+      await tab.click('#forget-yes');
+      const goneMs = await within(tab, () => !['#account', '#total', '#ua', '#send', '#history', '#sync', '#balances', '#forget'].some((s) => document.querySelector(s)), 2000);
+      check(`${tag}: Forget hides the wallet at once${syncing ? ' while the sync runs' : ''}`, goneMs !== null, goneMs === null ? `still shown: ${(await text(tab)).slice(0, 200)}` : `${goneMs} ms${syncing ? '' : ' (the sync had already ended)'}`);
+      const t0 = Date.now();
+      await tab.waitForSelector('#import-board:not([disabled])', { timeout: 600e3 });
+      const st = await call(page, 'status');
+      check(`${tag}: ... and deletes it once the sync has stopped`, !st.accounts.some((a) => a.uuid === uuid) && !(await tab.evaluate(WALLET_SHOWN)), ms(t0));
+    } catch (e) {
+      check(`${tag}: board views, no exception`, false, String(e?.stack ?? e));
+    } finally {
+      for (const p of pages) await p.close().catch(() => {});
+      await tab?.closeBridge();
+      z.stop();
+    }
+  }
+  await call(page, 'cancelSync');
+  await page.evaluate(() => chrome.storage.local.set({ prefs: { network: 'test', servers: {}, account: {} } }));
+}
+
 const text = (popup) => popup.evaluate(() => document.body.innerText);
 const has = (popup, sel) => popup.evaluate((s) => !!document.querySelector(s), sel);
 
@@ -193,284 +299,289 @@ try {
   const isolated = await page.evaluate(() => self.crossOriginIsolated);
   check('extension pages are cross-origin isolated', isolated === true);
 
-  await call(page, 'wipe', { network: 'test' });
-  let st = await call(page, 'open', { network: 'test', server: LWD });
-  check('opens an empty testnet wallet', st.open && st.network === 'test' && st.accounts.length === 0, `server ${st.server}`);
-  const tip = await call(page, 'tip', {});
-  check('gRPC-web tip', tip.height > BIRTHDAY, `${tip.chainName} ${tip.height} via ${tip.server} (${tip.vendor} ${tip.version})`);
+  if (process.env.SKIP_TO !== '9') {
+    await call(page, 'wipe', { network: 'test' });
+    let st = await call(page, 'open', { network: 'test', server: LWD });
+    check('opens an empty testnet wallet', st.open && st.network === 'test' && st.accounts.length === 0, `server ${st.server}`);
+    const tip = await call(page, 'tip', {});
+    check('gRPC-web tip', tip.height > BIRTHDAY, `${tip.chainName} ${tip.height} via ${tip.server} (${tip.vendor} ${tip.version})`);
 
-  // 2. Import the viewing key as a device account.
-  t0 = Date.now();
-  const imp = await call(page, 'importAccount', {
-    ufvk: vector.ufvk,
-    name: 'abandon-art 0',
-    birthday: BIRTHDAY,
-    origin: { seedFingerprint: vector.seed_fingerprint, accountIndex: 0 },
-  });
-  check('imports the UFVK as a device account', imp.imported && imp.account.kind === 'device' && imp.account.birthday === BIRTHDAY, `${imp.account.uuid}, ZFP ${imp.account.shortFingerprint}, ${ms(t0)}`);
-  const again = await call(page, 'importAccount', { ufvk: vector.ufvk, birthday: BIRTHDAY });
-  check('importing the same UFVK again changes nothing', again.imported === false && again.account.uuid === imp.account.uuid);
-  const uuid = imp.account.uuid;
-  const ua0 = imp.addresses.unified;
-
-  // 3. Stop a sync after its first batch, then resume.
-  t0 = Date.now();
-  const stopped = await page.evaluate(async () => {
-    window.events = [];
-    const p = window.t.call('sync', { batch: 1000 });
-    while (!window.events.some((e) => e.phase === 'scanned')) await new Promise((r) => setTimeout(r, 100));
-    await window.t.call('cancelSync');
-    return p;
-  });
-  check('a sync stops on cancelSync', stopped.cancelled === true, `${stopped.scannedBlocks} blocks scanned before it stopped, ${ms(t0)}`);
-  st = await call(page, 'status');
-  check('the scan state of a stopped sync is kept', st.sync && st.sync.progressNum > 0, `progress ${st.sync?.progressNum}/${st.sync?.progressDen}`);
-
-  // 4. Reload the extension in the middle of a sync.
-  await page.evaluate(async () => {
-    window.events = [];
-    window.t.call('sync', { batch: 1000 }).catch(() => {});
-    while (!window.events.some((e) => e.phase === 'scanned')) await new Promise((r) => setTimeout(r, 100));
-  });
-  const midScanned = await page.evaluate(() => window.events.filter((e) => e.phase === 'scanned').at(-1).scannedBlocks);
-  page = await reloadExtension(ctx, id, page);
-  st = await call(page, 'open', { network: 'test', server: LWD });
-  check('the wallet survives a reload in the middle of a sync', st.existed && st.accounts.length === 1 && st.accounts[0].uuid === uuid, `${midScanned} blocks into that sync`);
-
-  // Finish the sync.
-  t0 = Date.now();
-  const synced = await call(page, 'sync', { batch: 1000 });
-  const syncMs = Date.now() - t0;
-  const events = await page.evaluate(() => window.events.filter((e) => e.event === 'sync'));
-  check('sync finishes', !synced.cancelled && synced.status?.fullyScanned >= synced.tip - 1, `${synced.scannedBlocks} blocks in ${(syncMs / 1000).toFixed(1)} s (${Math.round(synced.scannedBlocks / (syncMs / 1000))} blocks/s), tip ${synced.tip}, ${events.length} progress events`);
-  check('sync reports progress', events.some((e) => e.phase === 'started') && events.some((e) => e.phase === 'scanned'));
-
-  // 5. Balances, addresses, history.
-  const bal = await call(page, 'balances', { account: uuid });
-  const b = bal.balances;
-  check('balances per pool', b && ['orchard', 'ironwood', 'transparent'].every((p) => typeof b[p].total === 'number'), `total ${b?.total} zat (orchard ${b?.orchard.total}, ironwood ${b?.ironwood.total}, transparent ${b?.transparent.total}), spendable ${b?.spendable}`);
-  if (b && b.total === 0) console.log('  note: the public abandon-art account holds nothing at the moment (anyone can spend it)');
-  const addrs = await call(page, 'addresses', { account: uuid });
-  check('default address matches the import', addrs.unified === ua0 && addrs.unified.startsWith('utest1'), addrs.unified.slice(0, 24) + '…');
-  const next = await call(page, 'nextAddress', { account: uuid });
-  check('address rotation gives a new address', next.unified !== ua0 && next.diversifierIndex !== '0', `index ${next.diversifierIndex}`);
-  const history = await call(page, 'history', { account: uuid, limit: 20 });
-  check('history', Array.isArray(history), `${history.length} transactions`);
-  const lines = history.map(historyEntry);
-  check('history lines: no send shows as -0', lines.every((l) => l.amount !== '-0.00000000 ZEC'), `${lines.filter((l) => l.label.startsWith('sent to yourself')).length} sent to yourself`);
-  const kind = await call(page, 'checkAddress', { address: next.unified });
-  check('checkAddress', kind.kind === 'unified');
-  st = await call(page, 'status');
-  const before = { status: st.sync, balances: b, db: st.dbBytes };
-  console.log(`  wallet database ${(st.dbBytes / 1e6).toFixed(2)} MB, extension database ${(st.leekDbBytes / 1e3).toFixed(1)} kB`);
-  const mem = await page.evaluate(() => window.t.call('workerState').catch(() => null));
-
-  // Spending: a proposal needs more than the fee. Shown, not required.
-  if (b && b.spendable > 20_000) {
-    const prop = await call(page, 'proposeSend', { account: uuid, to: ua0, amountZat: 1000, compact: true });
-    check('proposes a send (compact signer view kept apart from the full PCZT)', prop.signerView.length > 0 && prop.sha256.length === 64, `fee ${prop.feeZat}, view ${prop.signerView.length / 2} B`);
-  } else {
-    const err = await call(page, 'proposeSend', { account: uuid, to: ua0, amountZat: 1000 }).then(() => null, (e) => String(e.message));
-    check('propose without enough funds fails cleanly', err !== null, err?.slice(0, 100));
-  }
-
-  // 5b. The board (9.3), as zdev: the extension's own board code, in this
-  // extension page, with WebCrypto and the vendored ChaCha20-Poly1305,
-  // talking to the firmware's protocol over a bridge to zdev's PTY.
-  const z = await startZdev({ yes: true });
-  if (!z) {
-    check('board: zdev', false, 'zdev could not be built (make -C firmware/sim build/zdev)');
-  } else {
-    try {
-      const pty = new PtyLink(z.link);
-      await page.exposeFunction('zdevSend', (type, payload) => pty.send(type, Uint8Array.from(payload)));
-      await page.exposeFunction('zdevRecv', async (ms) => {
-        const f = await pty.recv(ms);
-        return { type: f.type, payload: Array.from(f.payload) };
-      });
-      await page.exposeFunction('zdevDrain', () => pty.drain());
-      t0 = Date.now();
-      const board = await page.evaluate(
-        async ([birthday, rotated, foreign]) => {
-          const { BoardHost } = await import('./src/board/host.js');
-          const link = {
-            kind: 'usb',
-            label: 'zdev',
-            send: (type, payload) => window.zdevSend(type, Array.from(payload)),
-            recv: async (ms) => {
-              const f = await window.zdevRecv(ms);
-              return { type: f.type, payload: new Uint8Array(f.payload) };
-            },
-            drain: () => window.zdevDrain(),
-            close: async () => {},
-          };
-          const states = [];
-          window.board = new BoardHost({ engine: (m, p) => window.t.call(m, p), openLink: async () => link, onState: (s) => states.push(s) });
-          const out = {};
-          await window.board.run('connect', { kind: 'usb' });
-          out.passkey = states.find((s) => s.phase === 'pairing')?.passkey;
-          out.phase = window.board.state.phase;
-          out.needs = await window.board.run('importAccount', { network: 'test' }).then(() => null, (e) => e.need ?? e.message);
-          out.imp = await window.board.run('importAccount', { network: 'test', birthday });
-          out.again = await window.board.run('importAccount', { network: 'test' });
-          out.shown = await window.board.run('showAddress', { network: 'test', ua: rotated });
-          out.foreign = await window.board.run('showAddress', { network: 'test', ua: foreign }).then(() => null, (e) => e.message);
-          return out;
-        },
-        [BIRTHDAY, next.unified, keys.find((k) => k.name === 'test/abandon-art/pp0/acct1').ua],
-      );
-      check('board: pairs with zdev from an extension page (WebCrypto X25519, vendored ChaCha20-Poly1305)', board.phase === 'ready' && board.passkey === z.passkeys.at(-1), `passkey ${board.passkey}, ${ms(t0)}`);
-      check('board: no birthday on the board yet, so it asks', board.needs === 'birthday');
-      check('board: zGetAccount imports as the same device account (same UFVK and origin)', board.imp.account.uuid === uuid && board.imp.imported === false && board.imp.board.seedFingerprint === vector.seed_fingerprint && board.imp.storedOnBoard === true, `ZFP ${board.imp.account.shortFingerprint}`);
-      check("board: the next import takes the board's birthday", board.again.birthdayFromBoard && board.again.birthday === BIRTHDAY);
-      check("board: the engine's default address is the board's", board.imp.addresses.unified === board.imp.board.ua);
-      check('board: zShowAddress confirms a rotated address', board.shown.ua === next.unified, `diversifier index ${next.diversifierIndex}`);
-      check('board: zShowAddress refuses an address not its own', !!board.foreign, board.foreign?.slice(0, 80));
-      if (process.env.BROADCAST === 'board' && b && b.spendable > 20_000) {
-        t0 = Date.now();
-        const sent = await page.evaluate(async (to) => {
-          const prop = await window.t.call('proposeSend', { to, amountZat: 1000, memo: 'leekwallet chrome 9.3 (zdev)', compact: true });
-          return window.board.run('signAndFinish', { network: 'test', accountIndex: 0, signerView: prop.signerView, broadcast: true });
-        }, ua0);
-        check('board: a send signed by zdev, proven, extracted and broadcast', sent.broadcast && sent.txid?.length === 64, `txid ${sent.txid}, ${ms(t0)}`);
-      }
-      await pty.close();
-    } catch (e) {
-      check('board: no exception', false, String(e?.stack ?? e));
-    } finally {
-      z.stop();
-    }
-  }
-
-  // 6. Reload the extension: the wallet comes back from OPFS.
-  page = await reloadExtension(ctx, id, page);
-  st = await call(page, 'open', { network: 'test', server: LWD });
-  const bal2 = await call(page, 'balances', { account: uuid });
-  check('after a reload: same account', st.existed && st.accounts.length === 1 && st.accounts[0].uuid === uuid);
-  check('after a reload: same scan height', st.sync?.fullyScanned === before.status.fullyScanned, `${st.sync?.fullyScanned}`);
-  check('after a reload: same balances', JSON.stringify(bal2.balances) === JSON.stringify(before.balances));
-  const rotated = await call(page, 'nextAddress', { account: uuid });
-  check('after a reload: address rotation continues', rotated.diversifierIndex !== next.diversifierIndex && rotated.unified !== next.unified, `index ${rotated.diversifierIndex}`);
-  t0 = Date.now();
-  const resync = await call(page, 'sync', {});
-  check('after a reload: sync scans only new blocks', !resync.cancelled && resync.scannedBlocks < 200, `${resync.scannedBlocks} blocks, ${ms(t0)}`);
-
-  // 7. Restart the browser with the same profile.
-  await ctx.close();
-  ({ ctx, id } = await launch());
-  page = await openPage(ctx, id);
-  st = await call(page, 'open', { network: 'test', server: LWD });
-  const bal3 = await call(page, 'balances', { account: uuid });
-  check('after a browser restart: wallet, scan height and balances persisted', st.existed && st.accounts[0]?.uuid === uuid && st.sync?.fullyScanned >= before.status.fullyScanned && bal3.balances?.total === before.balances?.total, `scanned to ${st.sync?.fullyScanned}, total ${bal3.balances?.total}`);
-  const pend = await call(page, 'pending');
-  check('pending sends persisted', Array.isArray(pend), `${pend.length} pending`);
-
-  // Mainnet opens beside it, in its own files.
-  const main = await call(page, 'open', { network: 'main' });
-  check('mainnet opens in its own database', main.network === 'main' && main.accounts.length === 0, main.server);
-  await call(page, 'open', { network: 'test', server: LWD });
-
-  // 8. The popup. No board connected: the board section only, nothing of
-  // the board's wallet.
-  const popup = await ctx.newPage();
-  popup.on('pageerror', (e) => console.log(`  [popup error] ${e.message}`));
-  await popup.goto(`chrome-extension://${id}/popup.html?tab`);
-  await popup.waitForSelector('#connect-to-see', { timeout: 120e3 }).catch(async (e) => {
-    console.log(`  popup shows: ${await text(popup)}`);
-    throw e;
-  });
-  let shownText = await text(popup);
-  const leaks = await popup.evaluate(() => ['#total', '#ua', '#history', '#send', '#txid', '#sync', '#import'].filter((s) => document.querySelector(s)));
-  check('without its board the popup shows nothing of the wallet', leaks.length === 0 && !shownText.includes(ua0) && !shownText.includes('ZEC'), leaks.join(' ') || 'board section only');
-  const bt = await popup.evaluate(() => ({ native: !!navigator.bluetooth, disabled: document.getElementById('connect-ble')?.disabled, help: document.getElementById('ble-help')?.textContent ?? null }));
-  check('the Bluetooth button stays usable; without Web Bluetooth the tab says how to enable it', bt.disabled === false && (bt.native || /flags/.test(bt.help ?? '')), bt.native ? 'this Chromium has navigator.bluetooth' : bt.help);
-  // "Connect over USB" with no port granted (headless: none exists) asks
-  // for the browser's chooser, which a tab can open.
-  await popup.click('#connect-usb');
-  const granted = await popup.waitForSelector('#grant-usb', { timeout: 30e3 }).then(() => true, () => false);
-  check('USB with no port granted: the offscreen document asks for the chooser', granted);
-  await popup.close();
-
-  // Its board (zdev, abandon-art) over Bluetooth: the wallet appears.
-  let zb = await startZdev({ yes: true });
-  if (!zb) {
-    check('popup with the board: zdev', false, 'zdev could not be built');
-  } else {
-    try {
-      t0 = Date.now();
-      let bp = await popupWithBluetooth(ctx, id, zb.link);
-      await bp.waitForSelector('#ble-press', { timeout: 60e3 });
-      await bp.click('#connect-ble');
-      await bp.waitForSelector('#total', { timeout: 180e3 }).catch(async (e) => {
-        console.log(`  popup shows: ${await text(bp)}`);
-        throw e;
-      });
-      const ui = await bp.evaluate(() => ({ ua: document.getElementById('ua')?.textContent, board: document.getElementById('board-ready')?.textContent, send: !!document.getElementById('send'), verify: !!document.getElementById('verify'), forget: !!document.getElementById('forget') }));
-      check('its board connected (Bluetooth): the popup shows the balance, address, send and verify', ui.ua === ua0 && ui.send && ui.verify && /Bluetooth/.test(ui.board), `${ui.board}, ${ms(t0)}`);
-      check('"Forget this board" is offered to that board', ui.forget);
-      await bp.click('#disconnect');
-      await bp.waitForSelector('#connect-to-see', { timeout: 30e3 });
-      shownText = await text(bp);
-      check('Disconnect hides the wallet again', !(await has(bp, '#total')) && !shownText.includes(ua0) && !shownText.includes('ZEC'));
-      await bp.closeBridge();
-
-      // A board with another wallet: none of this one, and its own import.
-      const zo = await startZdev({ yes: true, passphrase: 'leekwallet-e2e-other-board' });
-      try {
-        const op = await popupWithBluetooth(ctx, id, zo.link);
-        await op.waitForSelector('#ble-press', { timeout: 60e3 });
-        await op.click('#connect-ble');
-        await op.waitForSelector('#import-board', { timeout: 120e3 });
-        shownText = await text(op);
-        const other = await op.evaluate(() => ['#total', '#ua', '#history', '#send', '#forget', '#connect-to-see'].filter((s) => document.querySelector(s)));
-        check('a board with another wallet sees none of it and is offered its own import', other.length === 0 && !shownText.includes(ua0) && !shownText.includes('ZEC'), other.join(' ') || 'import only');
-        await op.closeBridge();
-      } finally {
-        zo.stop();
-      }
-    } catch (e) {
-      check('popup with the board: no exception', false, String(e?.stack ?? e));
-    }
-  }
-
-  // Opt-in: a real send, broadcast.
-  if (process.env.BROADCAST && process.env.BROADCAST !== 'board') {
+    // 2. Import the viewing key as a device account.
     t0 = Date.now();
-    const out = await page.evaluate(async ([to, mnemonic]) => {
-      const t = window.t;
-      const prop = await t.call('proposeSend', { to, amountZat: 1000, memo: 'leekwallet chrome 9.2', compact: true });
-      const { zsig } = await t.call('signSoft', { signerView: prop.signerView, mnemonic });
+    const imp = await call(page, 'importAccount', {
+      ufvk: vector.ufvk,
+      name: 'abandon-art 0',
+      birthday: BIRTHDAY,
+      origin: { seedFingerprint: vector.seed_fingerprint, accountIndex: 0 },
+    });
+    check('imports the UFVK as a device account', imp.imported && imp.account.kind === 'device' && imp.account.birthday === BIRTHDAY, `${imp.account.uuid}, ZFP ${imp.account.shortFingerprint}, ${ms(t0)}`);
+    const again = await call(page, 'importAccount', { ufvk: vector.ufvk, birthday: BIRTHDAY });
+    check('importing the same UFVK again changes nothing', again.imported === false && again.account.uuid === imp.account.uuid);
+    const uuid = imp.account.uuid;
+    const ua0 = imp.addresses.unified;
+
+    // 3. Stop a sync after its first batch, then resume.
+    t0 = Date.now();
+    const stopped = await page.evaluate(async () => {
       window.events = [];
-      const fin = await t.call('finish', { signerView: prop.signerView, zsig, broadcast: true });
-      return { prop, fin, events: window.events };
-    }, [ua0, vector.mnemonic]);
-    check('broadcast: propose, sign (soft), prove, extract, send', out.fin.broadcast && out.fin.txid.length === 64, `txid ${out.fin.txid}, ${out.fin.size} B, prove ${Math.round(out.fin.proveMs)} ms, ${ms(t0)}`);
-  } else {
-    console.log('skip broadcast (opt-in: BROADCAST=1, needs funds on the abandon-art testnet account)');
+      const p = window.t.call('sync', { batch: 1000 });
+      while (!window.events.some((e) => e.phase === 'scanned')) await new Promise((r) => setTimeout(r, 100));
+      await window.t.call('cancelSync');
+      return p;
+    });
+    check('a sync stops on cancelSync', stopped.cancelled === true, `${stopped.scannedBlocks} blocks scanned before it stopped, ${ms(t0)}`);
+    st = await call(page, 'status');
+    check('the scan state of a stopped sync is kept', st.sync && st.sync.progressNum > 0, `progress ${st.sync?.progressNum}/${st.sync?.progressDen}`);
+
+    // 4. Reload the extension in the middle of a sync.
+    await page.evaluate(async () => {
+      window.events = [];
+      window.t.call('sync', { batch: 1000 }).catch(() => {});
+      while (!window.events.some((e) => e.phase === 'scanned')) await new Promise((r) => setTimeout(r, 100));
+    });
+    const midScanned = await page.evaluate(() => window.events.filter((e) => e.phase === 'scanned').at(-1).scannedBlocks);
+    page = await reloadExtension(ctx, id, page);
+    st = await call(page, 'open', { network: 'test', server: LWD });
+    check('the wallet survives a reload in the middle of a sync', st.existed && st.accounts.length === 1 && st.accounts[0].uuid === uuid, `${midScanned} blocks into that sync`);
+
+    // Finish the sync.
+    t0 = Date.now();
+    const synced = await call(page, 'sync', { batch: 1000 });
+    const syncMs = Date.now() - t0;
+    const events = await page.evaluate(() => window.events.filter((e) => e.event === 'sync'));
+    check('sync finishes', !synced.cancelled && synced.status?.fullyScanned >= synced.tip - 1, `${synced.scannedBlocks} blocks in ${(syncMs / 1000).toFixed(1)} s (${Math.round(synced.scannedBlocks / (syncMs / 1000))} blocks/s), tip ${synced.tip}, ${events.length} progress events`);
+    check('sync reports progress', events.some((e) => e.phase === 'started') && events.some((e) => e.phase === 'scanned'));
+
+    // 5. Balances, addresses, history.
+    const bal = await call(page, 'balances', { account: uuid });
+    const b = bal.balances;
+    check('balances per pool', b && ['orchard', 'ironwood', 'transparent'].every((p) => typeof b[p].total === 'number'), `total ${b?.total} zat (orchard ${b?.orchard.total}, ironwood ${b?.ironwood.total}, transparent ${b?.transparent.total}), spendable ${b?.spendable}`);
+    if (b && b.total === 0) console.log('  note: the public abandon-art account holds nothing at the moment (anyone can spend it)');
+    const addrs = await call(page, 'addresses', { account: uuid });
+    check('default address matches the import', addrs.unified === ua0 && addrs.unified.startsWith('utest1'), addrs.unified.slice(0, 24) + '…');
+    const next = await call(page, 'nextAddress', { account: uuid });
+    check('address rotation gives a new address', next.unified !== ua0 && next.diversifierIndex !== '0', `index ${next.diversifierIndex}`);
+    const history = await call(page, 'history', { account: uuid, limit: 20 });
+    check('history', Array.isArray(history), `${history.length} transactions`);
+    const lines = history.map(historyEntry);
+    check('history lines: no send shows as -0', lines.every((l) => l.amount !== '-0.00000000 ZEC'), `${lines.filter((l) => l.label.startsWith('sent to yourself')).length} sent to yourself`);
+    const kind = await call(page, 'checkAddress', { address: next.unified });
+    check('checkAddress', kind.kind === 'unified');
+    st = await call(page, 'status');
+    const before = { status: st.sync, balances: b, db: st.dbBytes };
+    console.log(`  wallet database ${(st.dbBytes / 1e6).toFixed(2)} MB, extension database ${(st.leekDbBytes / 1e3).toFixed(1)} kB`);
+    const mem = await page.evaluate(() => window.t.call('workerState').catch(() => null));
+
+    // Spending: a proposal needs more than the fee. Shown, not required.
+    if (b && b.spendable > 20_000) {
+      const prop = await call(page, 'proposeSend', { account: uuid, to: ua0, amountZat: 1000, compact: true });
+      check('proposes a send (compact signer view kept apart from the full PCZT)', prop.signerView.length > 0 && prop.sha256.length === 64, `fee ${prop.feeZat}, view ${prop.signerView.length / 2} B`);
+    } else {
+      const err = await call(page, 'proposeSend', { account: uuid, to: ua0, amountZat: 1000 }).then(() => null, (e) => String(e.message));
+      check('propose without enough funds fails cleanly', err !== null, err?.slice(0, 100));
+    }
+
+    // 5b. The board (9.3), as zdev: the extension's own board code, in this
+    // extension page, with WebCrypto and the vendored ChaCha20-Poly1305,
+    // talking to the firmware's protocol over a bridge to zdev's PTY.
+    const z = await startZdev({ yes: true });
+    if (!z) {
+      check('board: zdev', false, 'zdev could not be built (make -C firmware/sim build/zdev)');
+    } else {
+      try {
+        const pty = new PtyLink(z.link);
+        await page.exposeFunction('zdevSend', (type, payload) => pty.send(type, Uint8Array.from(payload)));
+        await page.exposeFunction('zdevRecv', async (ms) => {
+          const f = await pty.recv(ms);
+          return { type: f.type, payload: Array.from(f.payload) };
+        });
+        await page.exposeFunction('zdevDrain', () => pty.drain());
+        t0 = Date.now();
+        const board = await page.evaluate(
+          async ([birthday, rotated, foreign]) => {
+            const { BoardHost } = await import('./src/board/host.js');
+            const link = {
+              kind: 'usb',
+              label: 'zdev',
+              send: (type, payload) => window.zdevSend(type, Array.from(payload)),
+              recv: async (ms) => {
+                const f = await window.zdevRecv(ms);
+                return { type: f.type, payload: new Uint8Array(f.payload) };
+              },
+              drain: () => window.zdevDrain(),
+              close: async () => {},
+            };
+            const states = [];
+            window.board = new BoardHost({ engine: (m, p) => window.t.call(m, p), openLink: async () => link, onState: (s) => states.push(s) });
+            const out = {};
+            await window.board.run('connect', { kind: 'usb' });
+            out.passkey = states.find((s) => s.phase === 'pairing')?.passkey;
+            out.phase = window.board.state.phase;
+            out.needs = await window.board.run('importAccount', { network: 'test' }).then(() => null, (e) => e.need ?? e.message);
+            out.imp = await window.board.run('importAccount', { network: 'test', birthday });
+            out.again = await window.board.run('importAccount', { network: 'test' });
+            out.shown = await window.board.run('showAddress', { network: 'test', ua: rotated });
+            out.foreign = await window.board.run('showAddress', { network: 'test', ua: foreign }).then(() => null, (e) => e.message);
+            return out;
+          },
+          [BIRTHDAY, next.unified, keys.find((k) => k.name === 'test/abandon-art/pp0/acct1').ua],
+        );
+        check('board: pairs with zdev from an extension page (WebCrypto X25519, vendored ChaCha20-Poly1305)', board.phase === 'ready' && board.passkey === z.passkeys.at(-1), `passkey ${board.passkey}, ${ms(t0)}`);
+        check('board: no birthday on the board yet, so it asks', board.needs === 'birthday');
+        check('board: zGetAccount imports as the same device account (same UFVK and origin)', board.imp.account.uuid === uuid && board.imp.imported === false && board.imp.board.seedFingerprint === vector.seed_fingerprint && board.imp.storedOnBoard === true, `ZFP ${board.imp.account.shortFingerprint}`);
+        check("board: the next import takes the board's birthday", board.again.birthdayFromBoard && board.again.birthday === BIRTHDAY);
+        check("board: the engine's default address is the board's", board.imp.addresses.unified === board.imp.board.ua);
+        check('board: zShowAddress confirms a rotated address', board.shown.ua === next.unified, `diversifier index ${next.diversifierIndex}`);
+        check('board: zShowAddress refuses an address not its own', !!board.foreign, board.foreign?.slice(0, 80));
+        if (process.env.BROADCAST === 'board' && b && b.spendable > 20_000) {
+          t0 = Date.now();
+          const sent = await page.evaluate(async (to) => {
+            const prop = await window.t.call('proposeSend', { to, amountZat: 1000, memo: 'leekwallet chrome 9.3 (zdev)', compact: true });
+            return window.board.run('signAndFinish', { network: 'test', accountIndex: 0, signerView: prop.signerView, broadcast: true });
+          }, ua0);
+          check('board: a send signed by zdev, proven, extracted and broadcast', sent.broadcast && sent.txid?.length === 64, `txid ${sent.txid}, ${ms(t0)}`);
+        }
+        await pty.close();
+      } catch (e) {
+        check('board: no exception', false, String(e?.stack ?? e));
+      } finally {
+        z.stop();
+      }
+    }
+
+    // 6. Reload the extension: the wallet comes back from OPFS.
+    page = await reloadExtension(ctx, id, page);
+    st = await call(page, 'open', { network: 'test', server: LWD });
+    const bal2 = await call(page, 'balances', { account: uuid });
+    check('after a reload: same account', st.existed && st.accounts.length === 1 && st.accounts[0].uuid === uuid);
+    check('after a reload: same scan height', st.sync?.fullyScanned === before.status.fullyScanned, `${st.sync?.fullyScanned}`);
+    check('after a reload: same balances', JSON.stringify(bal2.balances) === JSON.stringify(before.balances));
+    const rotated = await call(page, 'nextAddress', { account: uuid });
+    check('after a reload: address rotation continues', rotated.diversifierIndex !== next.diversifierIndex && rotated.unified !== next.unified, `index ${rotated.diversifierIndex}`);
+    t0 = Date.now();
+    const resync = await call(page, 'sync', {});
+    check('after a reload: sync scans only new blocks', !resync.cancelled && resync.scannedBlocks < 200, `${resync.scannedBlocks} blocks, ${ms(t0)}`);
+
+    // 7. Restart the browser with the same profile.
+    await ctx.close();
+    ({ ctx, id } = await launch());
+    page = await openPage(ctx, id);
+    st = await call(page, 'open', { network: 'test', server: LWD });
+    const bal3 = await call(page, 'balances', { account: uuid });
+    check('after a browser restart: wallet, scan height and balances persisted', st.existed && st.accounts[0]?.uuid === uuid && st.sync?.fullyScanned >= before.status.fullyScanned && bal3.balances?.total === before.balances?.total, `scanned to ${st.sync?.fullyScanned}, total ${bal3.balances?.total}`);
+    const pend = await call(page, 'pending');
+    check('pending sends persisted', Array.isArray(pend), `${pend.length} pending`);
+
+    // Mainnet opens beside it, in its own files.
+    const main = await call(page, 'open', { network: 'main' });
+    check('mainnet opens in its own database', main.network === 'main' && main.accounts.length === 0, main.server);
+    await call(page, 'open', { network: 'test', server: LWD });
+
+    // 8. The popup. No board connected: the board section only, nothing of
+    // the board's wallet.
+    const popup = await ctx.newPage();
+    popup.on('pageerror', (e) => console.log(`  [popup error] ${e.message}`));
+    await popup.goto(`chrome-extension://${id}/popup.html?tab`);
+    await popup.waitForSelector('#connect-to-see', { timeout: 120e3 }).catch(async (e) => {
+      console.log(`  popup shows: ${await text(popup)}`);
+      throw e;
+    });
+    let shownText = await text(popup);
+    const leaks = await popup.evaluate(() => ['#total', '#ua', '#history', '#send', '#txid', '#sync', '#import'].filter((s) => document.querySelector(s)));
+    check('without its board the popup shows nothing of the wallet', leaks.length === 0 && !shownText.includes(ua0) && !shownText.includes('ZEC'), leaks.join(' ') || 'board section only');
+    const bt = await popup.evaluate(() => ({ native: !!navigator.bluetooth, disabled: document.getElementById('connect-ble')?.disabled, help: document.getElementById('ble-help')?.textContent ?? null }));
+    check('the Bluetooth button stays usable; without Web Bluetooth the tab says how to enable it', bt.disabled === false && (bt.native || /flags/.test(bt.help ?? '')), bt.native ? 'this Chromium has navigator.bluetooth' : bt.help);
+    // "Connect over USB" with no port granted (headless: none exists) asks
+    // for the browser's chooser, which a tab can open.
+    await popup.click('#connect-usb');
+    const granted = await popup.waitForSelector('#grant-usb', { timeout: 30e3 }).then(() => true, () => false);
+    check('USB with no port granted: the offscreen document asks for the chooser', granted);
+    await popup.close();
+
+    // Its board (zdev, abandon-art) over Bluetooth: the wallet appears.
+    let zb = await startZdev({ yes: true });
+    if (!zb) {
+      check('popup with the board: zdev', false, 'zdev could not be built');
+    } else {
+      try {
+        t0 = Date.now();
+        let bp = await popupWithBluetooth(ctx, id, zb.link);
+        await bp.waitForSelector('#ble-press', { timeout: 60e3 });
+        await bp.click('#connect-ble');
+        await bp.waitForSelector('#total', { timeout: 180e3 }).catch(async (e) => {
+          console.log(`  popup shows: ${await text(bp)}`);
+          throw e;
+        });
+        const ui = await bp.evaluate(() => ({ ua: document.getElementById('ua')?.textContent, board: document.getElementById('board-ready')?.textContent, send: !!document.getElementById('send'), verify: !!document.getElementById('verify'), forget: !!document.getElementById('forget') }));
+        check('its board connected (Bluetooth): the popup shows the balance, address, send and verify', ui.ua === ua0 && ui.send && ui.verify && /Bluetooth/.test(ui.board), `${ui.board}, ${ms(t0)}`);
+        check('"Forget this board" is offered to that board', ui.forget);
+        await bp.click('#disconnect');
+        await bp.waitForSelector('#connect-to-see', { timeout: 30e3 });
+        shownText = await text(bp);
+        check('Disconnect hides the wallet again', !(await has(bp, '#total')) && !shownText.includes(ua0) && !shownText.includes('ZEC'));
+        await bp.closeBridge();
+
+        // A board with another wallet: none of this one, and its own import.
+        const zo = await startZdev({ yes: true, passphrase: 'leekwallet-e2e-other-board' });
+        try {
+          const op = await popupWithBluetooth(ctx, id, zo.link);
+          await op.waitForSelector('#ble-press', { timeout: 60e3 });
+          await op.click('#connect-ble');
+          await op.waitForSelector('#import-board', { timeout: 120e3 });
+          shownText = await text(op);
+          const other = await op.evaluate(() => ['#total', '#ua', '#history', '#send', '#forget', '#connect-to-see'].filter((s) => document.querySelector(s)));
+          check('a board with another wallet sees none of it and is offered its own import', other.length === 0 && !shownText.includes(ua0) && !shownText.includes('ZEC'), other.join(' ') || 'import only');
+          await op.closeBridge();
+        } finally {
+          zo.stop();
+        }
+      } catch (e) {
+        check('popup with the board: no exception', false, String(e?.stack ?? e));
+      }
+    }
+
+    // Opt-in: a real send, broadcast.
+    if (process.env.BROADCAST && process.env.BROADCAST !== 'board') {
+      t0 = Date.now();
+      const out = await page.evaluate(async ([to, mnemonic]) => {
+        const t = window.t;
+        const prop = await t.call('proposeSend', { to, amountZat: 1000, memo: 'leekwallet chrome 9.2', compact: true });
+        const { zsig } = await t.call('signSoft', { signerView: prop.signerView, mnemonic });
+        window.events = [];
+        const fin = await t.call('finish', { signerView: prop.signerView, zsig, broadcast: true });
+        return { prop, fin, events: window.events };
+      }, [ua0, vector.mnemonic]);
+      check('broadcast: propose, sign (soft), prove, extract, send', out.fin.broadcast && out.fin.txid.length === 64, `txid ${out.fin.txid}, ${out.fin.size} B, prove ${Math.round(out.fin.proveMs)} ms, ${ms(t0)}`);
+    } else {
+      console.log('skip broadcast (opt-in: BROADCAST=1, needs funds on the abandon-art testnet account)');
+    }
+
+    // "Forget this board": its account and synced data go; the board stays.
+    if (zb) {
+      try {
+        const bp = await popupWithBluetooth(ctx, id, zb.link);
+        await bp.waitForSelector('#ble-press', { timeout: 60e3 });
+        await bp.click('#connect-ble');
+        await bp.waitForSelector('#forget', { timeout: 180e3 });
+        await bp.click('#forget');
+        await bp.waitForSelector('#forget-confirm', { timeout: 10e3 });
+        await bp.click('#forget-yes');
+        await bp.waitForSelector('#import-board', { timeout: 180e3 });
+        st = await call(page, 'status');
+        const gone = await call(page, 'balances', { account: uuid }).then(() => false, () => true);
+        check('"Forget this board" (confirmed) deletes the account and its data', st.accounts.length === 0 && gone && !(await has(bp, '#total')), `${(st.dbBytes / 1e6).toFixed(2)} MB left (chain data)`);
+        await bp.closeBridge();
+      } catch (e) {
+        check('forget: no exception', false, String(e?.stack ?? e));
+      } finally {
+        zb.stop();
+      }
+    }
+    if (mem?.memoryMb) console.log(`  WASM memory ${mem.memoryMb.toFixed(0)} MB`);
   }
 
-  // "Forget this board": its account and synced data go; the board stays.
-  if (zb) {
-    try {
-      const bp = await popupWithBluetooth(ctx, id, zb.link);
-      await bp.waitForSelector('#ble-press', { timeout: 60e3 });
-      await bp.click('#connect-ble');
-      await bp.waitForSelector('#forget', { timeout: 180e3 });
-      await bp.click('#forget');
-      await bp.waitForSelector('#forget-confirm', { timeout: 10e3 });
-      await bp.click('#forget-yes');
-      await bp.waitForSelector('#import-board', { timeout: 180e3 });
-      st = await call(page, 'status');
-      const gone = await call(page, 'balances', { account: uuid }).then(() => false, () => true);
-      check('"Forget this board" (confirmed) deletes the account and its data', st.accounts.length === 0 && gone && !(await has(bp, '#total')), `${(st.dbBytes / 1e6).toFixed(2)} MB left (chain data)`);
-      await bp.closeBridge();
-    } catch (e) {
-      check('forget: no exception', false, String(e?.stack ?? e));
-    } finally {
-      zb.stop();
-    }
-  }
-  if (mem?.memoryMb) console.log(`  WASM memory ${mem.memoryMb.toFixed(0)} MB`);
+  // 9. The board's wallet in every view, while a sync runs.
+  await boardViews(ctx, id, page);
 } catch (e) {
   check('no exception', false, String(e?.stack ?? e));
 } finally {

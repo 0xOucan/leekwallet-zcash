@@ -55,6 +55,7 @@ const ui = {
   confirmForget: false,
   quietCancel: false, // a sync stopped by the popup itself, not the user
   switching: null, // 'ble' after "Switch to Bluetooth" ended the USB session
+  forgotten: new Set(), // accounts "Forget this board" is deleting: hidden at once
 };
 
 // ------------------------------------------------------------- helpers
@@ -89,7 +90,7 @@ const server = () => ui.prefs.servers[net()] || DEFAULT_SERVERS[net()];
 /** The fingerprint of the seed on the connected board, or null. */
 const boardFingerprint = () => (ui.boardState?.phase === 'ready' ? ui.boardState.seedFingerprint ?? null : null);
 /** A device account only while its board is connected; a view-only one always. */
-const visible = (a) => a.kind !== 'device' || (!!boardFingerprint() && a.origin?.seedFingerprint === boardFingerprint());
+const visible = (a) => !ui.forgotten.has(a.uuid) && (a.kind !== 'device' || (!!boardFingerprint() && a.origin?.seedFingerprint === boardFingerprint()));
 const visibleAccounts = () => (ui.status?.accounts ?? []).filter(visible);
 const hiddenAccounts = () => (ui.status?.accounts ?? []).filter((a) => !visible(a));
 const account = () => {
@@ -225,6 +226,9 @@ async function importKey(form) {
 
 async function switchNetwork(n) {
   if (n === net()) return;
+  // The board answers for one network (its Settings → Network): the
+  // session ends, and the USB port with it; connect again on the new one.
+  await disconnectBoard();
   if (ui.syncing) await ui.engine.call('cancelSync');
   ui.prefs.network = n;
   ui.proposal = null;
@@ -266,6 +270,18 @@ async function saveServer(value) {
 // ------------------------------------------------------------- board
 
 const boardReady = () => ui.boardState?.phase === 'ready';
+
+/**
+ * Ends the board's session, whichever link: the board's wallet is hidden
+ * at once (the host publishes "disconnected" before it closes the link).
+ * The offscreen document is told too, so no USB port stays open there.
+ */
+async function disconnectBoard() {
+  const b = ui.board;
+  const usb = b?.kind === 'usb' ? b.run('disconnect') : ui.engine.call('board.disconnect');
+  const local = b && b.kind !== 'usb' ? b.run('disconnect') : null;
+  await Promise.all([usb, local].map((p) => p?.catch(() => {})));
+}
 const acctInfo = () => (ui.status?.accounts ?? []).find((a) => a.uuid === account());
 
 function useBoard(b) {
@@ -347,8 +363,9 @@ async function connectBluetooth() {
     render();
     return;
   }
-  // The USB session, if any, ends: the board serves one link at a time.
-  if (ui.board?.kind === 'usb' && ui.boardState?.phase !== 'disconnected') await ui.board.run('disconnect').catch(() => {});
+  // The USB session, if any, ends and its port is released: the board
+  // serves one link at a time. So does an earlier Bluetooth one here.
+  await disconnectBoard();
   ui.error = null;
   ui.switching = null;
   useBoard(local);
@@ -357,7 +374,7 @@ async function connectBluetooth() {
 
 /** From a USB connection: end it, and say what to do next. */
 async function switchToBluetooth() {
-  await guarded(null, () => ui.board.run('disconnect'));
+  await guarded(null, disconnectBoard);
   ui.switching = 'ble';
   render();
 }
@@ -367,7 +384,14 @@ async function forgetBoard() {
   const fp = boardFingerprint();
   const mine = (ui.status?.accounts ?? []).filter((a) => a.kind === 'device' && fp && a.origin?.seedFingerprint === fp);
   ui.confirmForget = false;
+  // Hidden now: the deletion waits for the engine, which a sync holds
+  // until it reaches the end of its batch.
+  for (const a of mine) ui.forgotten.add(a.uuid);
+  showAccount(account());
   await guarded('Forgetting this board…', async () => {
+    await chrome.storage.local.remove(`cache-${net()}`);
+    delete ui.prefs.account[net()];
+    await savePrefs();
     // A sync holds the engine until it ends: stop it first.
     if (ui.syncing) {
       ui.quietCancel = true;
@@ -375,14 +399,13 @@ async function forgetBoard() {
     }
     try {
       for (const a of mine) await ui.engine.call('deleteAccount', { account: a.uuid });
+      showAccount(null);
+      await refresh();
     } finally {
       ui.quietCancel = false;
+      // Gone from the engine's status by now (or, on an error, shown again).
+      for (const a of mine) ui.forgotten.delete(a.uuid);
     }
-    await chrome.storage.local.remove(`cache-${net()}`);
-    delete ui.prefs.account[net()];
-    await savePrefs();
-    showAccount(null);
-    await refresh();
   });
 }
 
@@ -506,14 +529,14 @@ function boardSection() {
     lines.push(h('p', { id: 'board-pin' }, line), h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'));
   } else if (s.phase === 'ready') {
     const fp = boardFingerprint();
-    const known = fp && (ui.status?.accounts ?? []).some((a) => a.kind === 'device' && a.origin?.seedFingerprint === fp);
+    const known = fp && (ui.status?.accounts ?? []).some((a) => a.kind === 'device' && !ui.forgotten.has(a.uuid) && a.origin?.seedFingerprint === fp);
     lines.push(
       h(
         'div',
         { class: 'row' },
         h('span', { class: 'grow', id: 'board-ready' }, `Connected: ${s.label ?? s.kind}${s.kind === 'ble' ? ' (keep this tab open)' : ''}`),
         s.kind === 'usb' ? h('button', { class: 'link', id: 'switch-ble', onclick: () => void switchToBluetooth(), disabled: busy }, 'Switch to Bluetooth') : null,
-        h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, () => ui.board.run('disconnect')), disabled: busy }, 'Disconnect'),
+        h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, disconnectBoard), disabled: busy }, 'Disconnect'),
       ),
       fp ? null : h('p', { class: 'notice bad', id: 'board-account-error' }, s.accountError ?? 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),
     );
@@ -919,6 +942,12 @@ async function main() {
     // The engine may already have this network open (and be syncing it).
     if (hs.network === net() && ui.syncing) {
       await loadCache();
+      // No cache (an account imported from another page, say): the
+      // offscreen document's last status still lists the accounts.
+      if (!ui.status && hs.status?.network === net()) {
+        ui.status = hs.status;
+        showAccount(account());
+      }
     } else if (hs.network === net()) {
       await refresh();
     } else {
