@@ -11,14 +11,8 @@
 #   ./scripts/check.sh app        just the TypeScript
 #   ./scripts/check.sh firmware   just the ESP-IDF builds, both boards
 #   ./scripts/check.sh repro      byte-for-byte reproducibility, firmware + app (slow, opt-in)
-#   ./scripts/check.sh rpc        are the registry's RPC endpoints alive (needs network)
 #
 # Exits non-zero on the first failure, and says which stage.
-#
-# `rpc` is opt-in for a different reason than `repro`: it needs the network, and
-# a suite that goes red because somebody's wifi is down is a suite people learn
-# to ignore. It is the only check that can catch a chain being shut down out
-# from under the registry - see the header of check-rpc-liveness.mjs.
 #
 # `repro` is deliberately NOT part of `all`: it builds the firmware twice, and
 # this script has to stay something worth running before every commit. CI runs
@@ -62,15 +56,6 @@ if [[ "$WHAT" == "all" || "$WHAT" == "app" ]]; then
     # mistake as the divergences this catches. Cheap - it is one already-built
     # binary replaying 48 requests.
     run "conformance vectors" make -C sim conformance
-    # Same reasoning, for the calldata decoders (T50): re-record what
-    # src/eth-decode.c actually accepts and refuses before eth-decode.test.ts
-    # replays it against the TS mirror. See docs/MIRROR-GAP.md.
-    run "eth-decode conformance vectors" make -C sim eth-decode-conformance
-    # And the QR wire format (BC-UR): what src/ur.c encodes, recorded for the
-    # TypeScript mirror. Same reason as the two above - the device and three
-    # companions must agree byte for byte, and a corpus from an older ur.c
-    # would let them agree with an encoder nobody runs.
-    run "ur and eip-4527 conformance vectors" make -C sim ur-conformance
 
     if command -v pnpm >/dev/null 2>&1; then
         run "app tests" pnpm --dir app test
@@ -102,10 +87,6 @@ if [[ "$WHAT" == "all" || "$WHAT" == "firmware" ]]; then
     else
         printf '\n\033[33m== firmware: skipped, pio not installed\033[0m\n'
     fi
-fi
-
-if [[ "$WHAT" == "rpc" ]]; then
-    run "rpc liveness" node ./scripts/check-rpc-liveness.mjs
 fi
 
 if [[ "$WHAT" == "repro" ]]; then

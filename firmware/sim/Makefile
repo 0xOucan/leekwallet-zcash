@@ -588,22 +588,11 @@ VECTORS := ../app/packages/core/test/conformance-vectors.json
 conformance: $(BUILD)/test_protocol
 	./$(BUILD)/test_protocol --emit-vectors $(VECTORS)
 
-# The mock leg for the QR wire format. Same reasoning as the two above, and
-# the same reason it is regenerated rather than trusted: the device and three
-# companions have to agree byte for byte about what a UR contains, and a corpus
-# recorded from an older ur.c would let them agree with an encoder nobody runs.
-UR_VECTORS := ../app/packages/core/test/ur-vectors.json
-
-UR_FOUNTAIN_VECTORS := ../app/packages/core/test/ur-fountain-vectors.json
-
-UR_ASSEMBLY_VECTORS := ../app/packages/core/test/ur-assembly-vectors.json
-
-ur-conformance: $(BUILD)/test_ur $(BUILD)/test_ur_fountain $(BUILD)/test_ur_decoder
-	./$(BUILD)/test_ur --emit-vectors $(UR_VECTORS)
-	./$(BUILD)/test_ur_fountain --emit-vectors $(UR_FOUNTAIN_VECTORS)
-	./$(BUILD)/test_ur_decoder --emit-vectors $(UR_ASSEMBLY_VECTORS)
+# (The QR wire format had a mock leg too, ur-conformance, recording what
+# ur.c encodes for the Companion's TypeScript UR mirror. That mirror served
+# the EVM air gap and went with it; the C suites above still test ur.c.)
 
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test asan fuzz conformance ur-conformance clean
+.PHONY: all test asan fuzz conformance clean zdev
