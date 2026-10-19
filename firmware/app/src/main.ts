@@ -1124,7 +1124,7 @@ function initPassphrase(): void {
     button.disabled = true;
     hint.textContent = "Waiting for the device…";
     deviceAttention(
-      "check the seed fingerprint the device shows, then confirm the passphrase on the device",
+      "check the fingerprint (XFP) the device shows, then confirm the passphrase on the device",
     );
     try {
       /* The value goes straight from the field into the call. No local, no
@@ -1132,16 +1132,17 @@ function initPassphrase(): void {
        * finally below whichever way this ends. */
       const reply = await client.call("setPassphrase", { passphrase: input.value }, 150000);
 
-      /* The device answers with the fingerprint of the seed it derived, the
-       * number it drew on its screen (protocol.c, setPassphrase), because
-       * that is what the user compares. Not a secret. */
+      /* The device answers with the BIP32 master fingerprint (XFP) of the
+       * seed it derived, the number it drew on its screen as "XFP"
+       * (protocol.c, setPassphrase), because that is what the user compares.
+       * Not a secret. */
       const fp = reply["fingerprint"];
       const shown = typeof fp === "number"
         ? fp.toString(16).toUpperCase().padStart(8, "0")
         : "";
       hint.textContent = shown
-        ? `Applied. The device derived the seed ${shown} — if that is not the wallet you expected, the passphrase was mistyped: lock the device to drop it.`
-        : "Applied. Check the fingerprint against the one the device showed.";
+        ? `Applied. The device shows XFP ${shown} — if that is not the wallet you expected, the passphrase was mistyped: lock the device to drop it.`
+        : "Applied. Check the XFP against the one the device showed.";
       log("passphrase applied from the host and confirmed on the device");
 
       /* Invalidate by hand rather than waiting for the poll. Replacing one
