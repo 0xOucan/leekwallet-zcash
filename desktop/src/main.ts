@@ -110,7 +110,8 @@ interface Tx {
   blockTime: number | null;
   expiryHeight: number | null;
   expired: boolean;
-  kind: "received" | "sent" | "shielded" | "internal";
+  /** "self": sent to the wallet's own address; amountZat is the fee. */
+  kind: "received" | "sent" | "self" | "shielded" | "internal";
   amountZat: number;
   deltaZat: number;
   /** Only when this wallet paid it. */
@@ -952,6 +953,7 @@ $("copy-txid").addEventListener("click", async () => {
 const KIND_LABEL: Record<Tx["kind"], string> = {
   received: "Received",
   sent: "Sent",
+  self: "Sent to yourself",
   shielded: "Shielded",
   internal: "Moved between pools",
 };
@@ -993,11 +995,16 @@ async function renderHistory(): Promise<void> {
       const head = el("div", "tx__head");
       head.append(el("span", "tx__kind", KIND_LABEL[t.kind]), el("span", "tx__when", txWhen(t)));
       const incoming = t.kind === "received";
-      const amount = el("span", "tx__amount", `${incoming ? "+" : t.kind === "sent" ? "−" : ""}${formatZec(t.amountZat, ticker)}`);
+      // A send to yourself moved nothing out: its amount is the balance
+      // change, which is the fee, so it is not repeated as a fee line.
+      const toSelf = t.kind === "self";
+      const sign = incoming ? "+" : t.kind === "sent" || toSelf ? "−" : "";
+      const amount = el("span", "tx__amount", `${sign}${formatZec(t.amountZat, ticker)}`);
       amount.dataset["sign"] = incoming ? "in" : "out";
       head.append(amount);
       li.append(head);
-      if (t.feeZat !== null && !incoming) li.append(el("div", "tx__fee", `Fee ${formatZec(t.feeZat, ticker)}`));
+      if (toSelf) li.append(el("div", "tx__fee", "The fee: nothing left the wallet"));
+      else if (t.feeZat !== null && !incoming) li.append(el("div", "tx__fee", `Fee ${formatZec(t.feeZat, ticker)}`));
       for (const r of t.recipients) {
         const who = names.get(r.address);
         li.append(el("div", "tx__to", `To ${who ? `${who} · ` : ""}${chunk(r.address)}`));

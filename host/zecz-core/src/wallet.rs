@@ -184,8 +184,12 @@ pub struct DiversifiedAddress {
 pub enum TxKind {
     /// Value came in from elsewhere.
     Received,
-    /// Value left the account (to others, or to itself for a fee).
+    /// Value left the account to others.
     Sent,
+    /// The account paid itself (e.g. to its own t-address): no one else
+    /// was paid, and the balance only lost the fee. `amount_zat` is that
+    /// loss, which is `-delta_zat`.
+    SentToSelf,
     /// The account's transparent coins moved into its shielded pool.
     Shielded,
     /// The account's shielded funds moved between its own pools.
@@ -214,7 +218,8 @@ pub struct TxRecord {
     pub kind: TxKind,
     /// The change in the account's balance; negative when value left.
     pub delta_zat: i64,
-    /// What moved: received, paid to others, shielded, or crossed pools.
+    /// What moved: received, paid to others, shielded, or crossed pools;
+    /// for a send to itself, the fee it cost.
     pub amount_zat: u64,
     /// Known when the wallet knows every input's value (always for a fully
     /// shielded transaction). Paid by the sender, which for a received
@@ -402,6 +407,43 @@ pub fn short_fingerprint(fp: &[u8; 32]) -> String {
 /// Formats zatoshis as "1.23456789 ZEC (123456789 zat)".
 pub fn format_zec(zat: u64) -> String {
     format!("{}.{:08} ZEC ({} zat)", zat / 100_000_000, zat % 100_000_000, zat)
+}
+
+impl TxKind {
+    /// How a history line names it.
+    pub fn label(self) -> &'static str {
+        match self {
+            TxKind::Received => "Received",
+            TxKind::Sent => "Sent",
+            TxKind::SentToSelf => "Sent to yourself",
+            TxKind::Shielded => "Shielded",
+            TxKind::Internal => "Moved between pools",
+        }
+    }
+}
+
+impl TxRecord {
+    /// One line of `zecz history`: kind, signed amount, fee, where in the
+    /// chain, txid. A send to yourself shows the balance change (minus the
+    /// fee) and no separate fee: the fee is all it cost.
+    pub fn summary_line(&self) -> String {
+        let sign = match self.kind {
+            TxKind::Received => "+",
+            TxKind::Sent | TxKind::SentToSelf => "-",
+            TxKind::Shielded | TxKind::Internal => "",
+        };
+        let mut line = format!("{:<20} {sign}{}", self.kind.label(), format_zec(self.amount_zat));
+        if let (Some(fee), TxKind::Sent | TxKind::Shielded | TxKind::Internal) = (self.fee_zat, self.kind) {
+            line.push_str(&format!("  fee {}", format_zec(fee)));
+        }
+        match (self.mined_height, self.expired_unmined) {
+            (Some(h), _) => line.push_str(&format!("  block {h}")),
+            (None, true) => line.push_str("  expired unmined"),
+            (None, false) => line.push_str("  unmined"),
+        }
+        line.push_str(&format!("  {}", self.txid));
+        line
+    }
 }
 
 /// Parses a ZEC amount with up to 8 decimals into zatoshis.
@@ -808,7 +850,14 @@ impl Wallet {
                 (TxKind::Internal, c.max(0) as u64)
             } else if delta < 0 {
                 let amount = if paid_out > 0 { paid_out } else { (delta.unsigned_abs()).saturating_sub(fee_zat.unwrap_or(0)) };
-                (TxKind::Sent, amount)
+                if amount == 0 {
+                    // Nothing went to anyone else: every output was the
+                    // account's own, and what it lost was the fee. Showing
+                    // "sent 0" next to that fee reads as a bug.
+                    (TxKind::SentToSelf, delta.unsigned_abs())
+                } else {
+                    (TxKind::Sent, amount)
+                }
             } else {
                 (TxKind::Received, delta as u64)
             };

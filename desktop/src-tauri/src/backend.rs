@@ -270,7 +270,8 @@ pub struct TxDto {
     pub block_time: Option<i64>,
     pub expiry_height: Option<u32>,
     pub expired: bool,
-    /// "received", "sent", "shielded" or "internal".
+    /// "received", "sent", "self" (sent to the account itself: the amount
+    /// is the fee it cost), "shielded" or "internal".
     pub kind: &'static str,
     pub amount_zat: u64,
     /// Change of the balance, negative when value left.
@@ -299,6 +300,7 @@ fn tx_dto(t: wallet::TxRecord) -> TxDto {
     let kind = match t.kind {
         TxKind::Received => "received",
         TxKind::Sent => "sent",
+        TxKind::SentToSelf => "self",
         TxKind::Shielded => "shielded",
         TxKind::Internal => "internal",
     };

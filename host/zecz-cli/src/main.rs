@@ -116,6 +116,12 @@ enum Cmd {
     Balance,
     /// Show the default unified address and its transparent address.
     Address,
+    /// Show the account's transactions, newest first.
+    History {
+        /// At most this many.
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
     /// Build an unsigned PCZT for the device.
     Send {
         /// Recipient (unified, Orchard-only unified, or transparent address).
@@ -320,6 +326,23 @@ fn cmd_balance(profile: Profile) -> Result<()> {
     println!("Spendable: {}", format_zec(b.spendable));
     if b.transparent.total > 0 {
         println!("Transparent funds are public on the chain: `zecz shield` moves them into the shielded pool.");
+    }
+    Ok(())
+}
+
+fn cmd_history(profile: Profile, limit: u32) -> Result<()> {
+    let txs = Wallet::open(profile)?.history(limit)?;
+    if txs.is_empty() {
+        println!("No transactions yet (run `zecz sync`).");
+    }
+    for t in &txs {
+        println!("{}", t.summary_line());
+        for r in &t.recipients {
+            println!("    to {} {}", r.address, format_zec(r.value_zat));
+        }
+        for m in &t.memos {
+            println!("    memo: {m}");
+        }
     }
     Ok(())
 }
@@ -545,6 +568,7 @@ async fn main() -> Result<()> {
         Cmd::Tip => cmd_tip(&profile).await,
         Cmd::Balance => cmd_balance(profile),
         Cmd::Address => cmd_address(profile),
+        Cmd::History { limit } => cmd_history(profile, limit),
         Cmd::Send { to, amount, zec, memo, out, compact } => cmd_send(profile, &to, &amount, zec, memo.as_deref(), &out, compact),
         Cmd::Shield { out, compact } => cmd_shield(profile, &out, compact),
         Cmd::DeviceInit { port, account, birthday, name } => cmd_device_init(profile, &port, account, birthday, &name).await,
