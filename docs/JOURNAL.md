@@ -1174,3 +1174,44 @@ checked on Xtensa).
   mainnet one; the `.pczt` file picker and proving time on the phone; the
   wallet is only on screen while a board is connected and unlocked (the
   accordion's rule), unlike Zodl.
+
+### 9.3 USB port released, board data hidden at once (2026-10-18)
+- From the user's run in Brave 152 (Linux), two findings.
+- The USB port held during Bluetooth: `fuser /dev/ttyACM0` showed Brave
+  holding the port while the tab was connected over Bluetooth, and the
+  board answered that connect with `0x0300 derivation failed`; after an
+  extension reload Bluetooth worked. Causes found: `SerialLink.close()`
+  awaited `writer.close()`, which never resolves while a write the board
+  does not take is pending (its Link set to Bluetooth; `send()` had no
+  timeout either), so `port.close()` was never reached; `BoardHost`
+  published "disconnected" only after the link had closed, so the
+  offscreen document still said "ready" too; and the popup ended the USB
+  session before Bluetooth only when its own view said it was connected.
+  Fixes: the writer is aborted, every close step bounded, a half-open
+  port closed, a registry with `closeAll()`; a write that does not leave
+  within 10 s fails with the USB timeout hint; `board.disconnect` (sent
+  on Disconnect, Switch to Bluetooth, the network switch and before every
+  Bluetooth connect) also closes any link left; an idle USB session ends
+  60 s after the last extension page closed.
+- Also found: `SerialLink`'s settle raced `reader.read()` against a timer
+  and left the read pending, so on a quiet line the board's first reply
+  went to a read nobody used (the pairing then timed out). On the board
+  the boot log likely hid it. The pump now takes that read.
+- Disconnect and Forget did not hide the wallet (mainnet, Bluetooth, tab).
+  Reproduced in e2e step 9 with a Bluetooth stand-in whose
+  `stopNotifications` never answers (assumed to be what Brave on Linux
+  did; the old close awaited it before the state changed): on both
+  networks the wallet stayed after Disconnect. Now `BoardHost` publishes
+  "disconnected" first and gives the link 5 s, `BleLink` gives
+  `stopNotifications` 1 s and then calls `gatt.disconnect()`. Forget hides
+  the accounts at once and deletes them after the sync stops (it waited
+  for the sync before). The same run found that a page opened mid-sync
+  with no cache drew nothing; the offscreen document now keeps the last
+  status for it.
+- Tests: `board.test.mjs` + `format.test.mjs` 38/38 (new: a Web Serial
+  stand-in on zdev that counts opens and closes: closed after Disconnect,
+  a hung write, its timeout, Disconnect while opening, `closeAll`; the
+  hanging Bluetooth stack). `e2e.mjs` 59/59 (step 9 alone: 20/20, and
+  12/18 with the old `host.js` and `ble-link.js`).
+- Left: try it on the board in Brave (USB, Switch to Bluetooth, `fuser`
+  empty during Bluetooth; Disconnect and Forget on mainnet).
