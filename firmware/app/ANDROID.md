@@ -275,8 +275,12 @@ export NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
 cd app
 pnpm install
 pnpm tauri android init          # only once per checkout, see "Generated project"
+bash ../scripts/android-usb-host.sh   # after EVERY init: USB host feature + Espressif filter
+# ...and the two camera lines, see "Hand edits in the generated manifest"
+bash ../scripts/check-android-manifest.sh   # says what is still missing
 pnpm android:build               # debug APK, all installed targets
 pnpm android:build:arm64         # just arm64, much faster
+pnpm android:release:arm64       # release APK, arm64, signed with a local key
 ```
 
 Only the last of those needs the SDK and the NDK. To check that the Rust half
@@ -293,8 +297,44 @@ The APK lands at:
 app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 ```
 
-A debug build is large (~250 MB) because the Rust library is unoptimised and
-carries debug info. A release build is a fraction of that.
+A debug build is large (227 MB) because the Rust library carries debug
+info and is uncompressed in the APK. A release build is a fraction of that,
+see "Release APK".
+
+## Release APK
+
+```bash
+pnpm android:release:arm64
+# -> src-tauri/gen/android/app/build/outputs/apk/universal/release/leekwallet-companion-arm64-release.apk
+```
+
+`scripts/android-release.sh` checks the hand edits (`check-android-manifest.sh`),
+runs `tauri android build --apk --target aarch64` (Cargo's release profile in
+src-tauri/Cargo.toml: `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`,
+`strip = true`), then zipaligns and signs the unsigned APK Tauri leaves with
+`apksigner`, because signing config would otherwise have to live in the
+generated, uncommitted `gen/android`. The key is local:
+
+| Variable | Default |
+| --- | --- |
+| `LEEK_KEYSTORE` | `~/.android/debug.keystore` (the SDK's debug key; created if missing) |
+| `LEEK_KEY_ALIAS` | `androiddebugkey` |
+| `LEEK_KEYSTORE_PASS` | `android` |
+
+A debug key is right for your own phone. A build for other people needs a
+real key kept outside this tree (see "Release signing"), passed through the
+same three variables. Nothing is committed.
+
+`panic` stays `unwind` in the release profile: a panic in a Tauri command or
+in a zecz worker thread must fail that call, not abort the whole app (the
+webview shows "the wallet worker stopped unexpectedly").
+
+An APK signed with a different key than the one installed will not install
+over it: uninstall the debug build first (which deletes the app's data,
+including synced Zcash wallets; they rescan from the birthday).
+
+Measured (2026-10-18, arm64, wallet included): debug APK 227 MB,
+release APK 28.5 MB (library 25.8 MB uncompressed).
 
 ## Install
 
@@ -307,6 +347,51 @@ Or `pnpm android:dev` with a device attached, which live-reloads the frontend
 from the Vite dev server.
 
 ## Testing USB on the phone
+
+### Findings, 2026-10-18 (Bluetooth works, USB does not)
+
+The board was tested with a debug APK: Bluetooth connected, USB did not. No
+phone was attached to the machine that looked into it, so what follows is
+from reading the code, not from a trace.
+
+- **The board serves one link at a time.** With its Settings → Link on
+  Bluetooth (which it had to be for the Bluetooth test), its USB is
+  enumerated (USB-Serial-JTAG is silicon) but answers nothing; the
+  handshake times out. This is the likeliest single cause: switch the
+  board's Link to USB before testing USB, and back for Bluetooth.
+- **The error was invisible.** The Companion put the reason a USB attempt
+  failed only in the device log (a collapsed disclosure at the bottom), and
+  on a handshake failure it dropped the transport's own error and printed
+  only the Link advice. Both now show on the Device panel (`#connproblem`),
+  the transport's words first: a permission refusal, "device not found", a
+  busy interface or a read error read differently from a timeout.
+- **Manifest.** The plugin's library manifest already brings
+  `uses-feature android.hardware.usb.host` and a device filter, merged by
+  Gradle (checked in the tested APK with `aapt2 dump xmltree`), so the
+  missing `android-usb-host.sh` step was not the cause; it is still run now
+  (`android:release:arm64` refuses to build without it) because its filter
+  names Espressif (VID 0x303a = 12346) instead of the plugin's catch-all.
+- **Driver.** `android-usb-serial` 0.1.1 binds 303a:1001 as CDC-ACM through
+  its interface fallback (comm class 2/2 + data class 10, the IAD pair; the
+  JTAG interface, class 0xff, is left alone). Baud is ignored by
+  USB-Serial-JTAG. The plugin sets DTR then RTS (0,0 → 1,0 → 1,1), which
+  never passes through DTR=0/RTS=1, the chip's reset state, so opening does
+  not reset the board.
+- **Fixed in our transport** (transport-serial/src/android.rs): the session
+  path the plugin returns from `open` is used for every later call (it is
+  `device#N` on a multi-port device); the plugin's RX hub, which keeps up to
+  64 KiB of unrequested bytes, is drained after opening and before each
+  request (`clear_buffer` only empties the driver's ring), so a stale frame
+  cannot be read as the answer; open errors name the device and keep the
+  plugin's words.
+
+What to report back if it still fails: the red box on the Device panel
+(whole text), whether Android showed the "Allow LeekWallet to access the USB
+device?" dialog, and `adb logcat -s RustStdoutStderr SerialPlugin UsbFdBridge`
+around the attempt (the plugin logs `[SerialOpen]`, `[SerialEnumerate]` and
+the interfaces it saw).
+
+### Procedure
 
 Nothing here has been run. This is the procedure, not a report.
 
@@ -540,8 +625,15 @@ lines below), and `pnpm android:build:arm64`. What changed underneath:
   in the dev profile, as on the desktop app, because scanning and proving are
   unusable unoptimized and the debug APK carries the library uncompressed.
 - **Data** lives in the app's data directory under `zcash/`: one wallet
-  directory per network (`wallets/test`, `wallets/main`), `settings.json` with
-  a server per network, and an address book per network. Viewing keys only.
+  directory per network, seed fingerprint and account
+  (`wallets/<test|main>-<zfp16>-<account>`, so a passphrase wallet is its own),
+  an address book per network and seed (`contacts-<net>-<zfp16>.json`), and
+  `settings.json` with a server per network. Viewing keys only. Wallets of the
+  first builds (`wallets/test`, `wallets/main`) move to their keyed place the
+  first time their board account is read.
+- **The default build is the Zcash wallet** (README, "App mode"): nothing EVM
+  is shown. `VITE_LEEK_APP_MODE=full pnpm android:build:arm64` builds the
+  full Companion.
 - **A `.zsig`** from "Sign a file" goes to the app's own Download folder
   (`Android/data/com.leekwallet.companion/files/Download`), which needs no
   storage permission; on Android 11 and later only a USB file transfer or a
