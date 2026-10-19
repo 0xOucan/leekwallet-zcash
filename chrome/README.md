@@ -119,7 +119,15 @@ board with another seed (another board, or a passphrase) sees none of it
 and is offered the import of its own account. View-only accounts (a
 UFVK pasted without a board) are always shown. Note the popup and a tab
 each see their own Bluetooth board: a wallet shown in the tab that holds
-the Bluetooth connection stays hidden in the toolbar popup.
+the Bluetooth connection stays hidden in the toolbar popup, and a popup
+opened or reopened shows nothing of it until a matching board connects
+there.
+
+Disconnect hides the wallet at once in every view: `BoardHost` publishes
+"disconnected" before it closes the link, and gives the link 5 s at most
+to close (a Bluetooth stack that never answers `stopNotifications` must
+not keep the wallet on screen, nor the board connected: `gatt.disconnect()`
+follows after 1 s whatever happens).
 
 "Forget this board", with a confirmation, deletes that board's account
 on the selected network and everything synced for it (the engine's
@@ -127,7 +135,26 @@ on the selected network and everything synced for it (the engine's
 proposals and extracted transactions in `leek.sqlite`); other accounts
 and the chain data stay. It is offered while the board is connected. For
 a lost board, Settings → "Delete the … wallet" removes the whole network
-wallet.
+wallet. The account is hidden the moment Forget is confirmed; a running
+sync is stopped first (it ends after its batch, which on mainnet can take
+a while) and the account deleted after it. A page opened while a sync
+holds the engine takes the accounts from the offscreen document's last
+status (`hostState().status`, kept up to date with imports and
+deletions), so it draws the board section even with no cache.
+
+**The USB port is held only during a session.** The offscreen document
+closes it (`SerialLink.close()`: the reader cancelled and released, the
+writer aborted, not closed, since a write the board never takes would
+keep `close()` waiting, then `SerialPort.close()`, each step a few
+seconds at most) whenever the session ends: Disconnect, Switch to
+Bluetooth, a timeout or link error, the popup's network switch, before
+any Bluetooth connect (the tab calls `board.disconnect` first, whatever
+it shows), and 60 s after the last extension page closed with nothing
+running on the board. `board.disconnect` also closes any `SerialLink`
+the document still has open. A write that does not leave within 10 s
+fails the link with the USB timeout message. Found in Brave 152: the
+port was still open (`fuser /dev/ttyACM0`) during a Bluetooth session,
+and the board then answered Bluetooth with "derivation failed".
 
 **Switching links.** The board serves one link at a time (Settings →
 Link). To switch: Disconnect (or "Switch to Bluetooth" from a USB
@@ -211,7 +238,23 @@ passphrase (another wallet), only its own import offered; then "Forget
 this board" deletes the account. `board.test.mjs` also checks the board's
 fingerprint on connect, and that after a USB timeout (a port that never
 answers) the message names the Link setting, the port is released and
-Bluetooth connects next.
+Bluetooth connects next. With a Web Serial stand-in on zdev's PTY
+(`fakeSerialPort` in `test/zdev.mjs`, which counts opens and closes and,
+like Chrome, refuses to close a port with a locked stream) it checks the
+port is closed after Disconnect, after a write the board never takes
+(Disconnect during it, and its timeout), after Disconnect while the port
+is still opening, and by `closeAll`; and that Disconnect over Bluetooth
+whose `stopNotifications` never answers is immediate.
+
+Step 9 of `e2e.mjs`, on testnet then mainnet (zdev set to that network):
+a device account just imported with a deep birthday, a sync running (the
+tab shows "No balance yet: sync first" and "Syncing: …"), the tab
+connected over Bluetooth whose `stopNotifications` hangs. Disconnect must
+hide the wallet within 2 s and drop the GATT connection; a popup opened
+meanwhile and one reopened after show nothing; the offscreen document
+holds no USB session; Forget, while the sync runs, hides it within 2 s
+and deletes it once the sync stops. `SKIP_TO=9 node test/e2e.mjs` runs
+only that step.
 
 `e2e.mjs` loads `dist/`, imports the abandon-art testnet account 0 UFVK
 from `vectors/keys.json` as a device account (birthday `BIRTHDAY`, default

@@ -18,15 +18,21 @@
 // and the last sync progress, so a popup opened mid-sync can show it.
 // `board.<op>` calls go to the USB board (BoardHost.run), answered with
 // `{ id, result }` or `{ id, error, errorData }`, and its state goes to every
-// page as `{ board }`.
+// page as `{ board }`. `board.disconnect` also closes any serial port this
+// document still holds; a page calls it before a Bluetooth connect and on
+// a network switch. With no extension page left and nothing running on the
+// board, the USB session ends after IDLE_MS: the port is not held idle.
 
 import { BoardHost, BoardNeeds } from './board/host.js';
 import { SerialLink, isBoardPort } from './board/serial-link.js';
 
 const ports = new Set();
+/** No page open and the board idle this long: the USB session ends. */
+const IDLE_MS = 60e3;
+let idleTimer = null;
 let worker = null;
 let seq = 0;
-const inflight = new Map(); // worker id -> { port, id, method }
+const inflight = new Map(); // worker id -> { port, id, method, params }
 const host = {
   ready: false,
   info: null,
@@ -37,6 +43,11 @@ const host = {
   server: null,
   lastSync: null, // the last sync event
   lastSyncResult: null,
+  // The engine's last `status` (accounts included), kept up to date with
+  // imports and deletions: a page opened while a sync holds the engine
+  // (its own `status` call waits behind it) still knows which accounts
+  // there are, and so whether its board's wallet is among them.
+  status: null,
 };
 
 function broadcast(msg) {
@@ -120,10 +131,22 @@ function onWorkerMessage(data) {
       host.server = data.result.server;
     }
     if (req.method === 'setServer') host.server = data.result.server;
+    trackStatus(req.method, req.params, data.result);
     if (req.method === 'sync') host.lastSyncResult = { network: host.network, ...data.result };
     reply(req, { result: data.result, ms: data.ms });
   }
-  if (req.method === 'open' || req.method === 'sync' || req.method === 'wipe') hostChanged();
+  if (['open', 'sync', 'wipe', 'status', 'importAccount', 'deleteAccount'].includes(req.method)) hostChanged();
+}
+
+function trackStatus(method, params, result) {
+  if (method === 'open' || method === 'status') host.status = result;
+  else if (method === 'wipe') host.status = null;
+  else if (!host.status) return;
+  else if (method === 'importAccount' && result.account && !host.status.accounts?.some((a) => a.uuid === result.account.uuid)) {
+    host.status = { ...host.status, accounts: [...(host.status.accounts ?? []), result.account] };
+  } else if (method === 'deleteAccount') {
+    host.status = { ...host.status, accounts: (host.status.accounts ?? []).filter((a) => a.uuid !== params?.account) };
+  }
 }
 
 /** Sends a call to the engine; `port` (may be null) gets the answer. */
@@ -133,7 +156,7 @@ function send(port, id, method, params) {
     return;
   }
   const wid = ++seq;
-  inflight.set(wid, { port, id, method });
+  inflight.set(wid, { port, id, method, params });
   if (method === 'sync') {
     host.busy = 'sync';
     host.lastSync = null;
@@ -160,6 +183,8 @@ const board = new BoardHost({
   async openLink(kind, onClose) {
     if (kind !== 'usb') throw new Error('Bluetooth runs in an extension tab, not here');
     if (!navigator.serial) throw new Error('This browser has no Web Serial: use desktop Chrome, Edge or Brave.');
+    // A link left open (it should not be) would make the port look taken.
+    await SerialLink.closeAll();
     // Ports the user granted from a tab (requestPort needs a gesture).
     const ports = (await navigator.serial.getPorts()).filter(isBoardPort);
     if (!ports.length) throw new BoardNeeds('usbPermission', 'Choose the board once in the browser\'s USB chooser.');
@@ -175,8 +200,28 @@ const board = new BoardHost({
   },
 });
 
+async function runBoard(op, params) {
+  if (op !== 'disconnect') return board.run(op, params);
+  const r = await board.run('disconnect');
+  await SerialLink.closeAll();
+  return { ...r, portsOpen: SerialLink.openCount };
+}
+
+/** The last page closed: end an idle USB session after IDLE_MS; a page coming back keeps it. */
+function watchIdle() {
+  clearTimeout(idleTimer);
+  idleTimer = null;
+  if (ports.size) return;
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (ports.size) return;
+    if (board.busy) return watchIdle(); // a signature outlives the popup
+    if (board.state.phase !== 'disconnected' || SerialLink.openCount) void runBoard('disconnect').catch(() => {});
+  }, IDLE_MS);
+}
+
 function boardCall(port, id, op, params) {
-  board.run(op, params ?? {}).then(
+  runBoard(op, params ?? {}).then(
     (result) => reply({ port, id }, { result }),
     (e) => {
       const errorData = e instanceof BoardNeeds ? { need: e.need, tip: e.tip ?? null, account: e.account ?? null } : undefined;
@@ -188,8 +233,10 @@ function boardCall(port, id, op, params) {
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'engine') return;
   ports.add(port);
+  watchIdle();
   port.onDisconnect.addListener(() => {
     ports.delete(port);
+    watchIdle();
     // The answer to a closed popup has nowhere to go; the call still runs.
     for (const req of inflight.values()) if (req.port === port) req.port = null;
   });

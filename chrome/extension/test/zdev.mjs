@@ -122,12 +122,71 @@ export class PtyLink {
 }
 
 /**
+ * A stand-in for a Web Serial SerialPort whose board is zdev at `path`:
+ * bytes go to and come from its PTY as they would over the USB cable. It
+ * behaves as Chrome's does where the extension's code depends on it:
+ * `open()` refuses a port already open, `close()` refuses while the
+ * readable or writable stream is locked. `opens`/`closes` count calls and
+ * `isOpen` says whether the port is held. `takeWrites: false` is a board
+ * serving the other link that never takes the bytes: every write waits
+ * forever (until the writer is aborted).
+ */
+export function fakeSerialPort(path, { takeWrites = true } = {}) {
+  let fd = null;
+  let stream = null;
+  const port = {
+    opens: 0,
+    closes: 0,
+    isOpen: false,
+    readable: null,
+    writable: null,
+    getInfo: () => ({ usbVendorId: 0x303a, usbProductId: 0x1001 }),
+    async open() {
+      if (port.isOpen) throw Object.assign(new Error('The port is already open.'), { name: 'InvalidStateError' });
+      fd = openSync(path, constants.O_RDWR | constants.O_NOCTTY);
+      stream = new tty.ReadStream(fd);
+      stream.pause();
+      port.readable = new ReadableStream({
+        start(c) {
+          stream.on('data', (b) => c.enqueue(new Uint8Array(b)));
+          stream.on('error', () => {});
+        },
+        pull() {
+          stream.resume();
+        },
+        cancel() {
+          stream.pause();
+        },
+      });
+      port.writable = new WritableStream({
+        // Chrome's serial sink drops a pending write when the writer is aborted.
+        write: (chunk, controller) =>
+          takeWrites ? void writeSync(fd, chunk) : new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason))),
+      });
+      port.opens += 1;
+      port.isOpen = true;
+    },
+    async setSignals() {},
+    async close() {
+      if (port.readable?.locked || port.writable?.locked) throw Object.assign(new Error('Cannot close a port with a locked stream.'), { name: 'InvalidStateError' });
+      stream?.destroy();
+      try {
+        closeSync(fd);
+      } catch {}
+      port.closes += 1;
+      port.isOpen = false;
+    },
+  };
+  return port;
+}
+
+/**
  * A stand-in for a Web Bluetooth BluetoothDevice whose GATT server is zdev:
  * it reassembles the host's chunks into frames, sends them to the PTY in
  * "LK" frames (what zdev speaks), and chunks zdev's replies back as
  * notifications at MTU 23, exactly as the board's ble.c does.
  */
-export function fakeBluetoothDevice(path, { mtu = 23 } = {}) {
+export function fakeBluetoothDevice(path, { mtu = 23, hangStopNotifications = false } = {}) {
   const pty = new PtyLink(path);
   const reasm = new BleReassembler();
   const listeners = { gattserverdisconnected: [] };
@@ -151,9 +210,10 @@ export function fakeBluetoothDevice(path, { mtu = 23 } = {}) {
       })();
       return rx;
     },
-    stopNotifications: async () => rx,
+    // A stack that never answers (seen as a hang on Linux): it never resolves.
+    stopNotifications: () => (hangStopNotifications ? new Promise(() => {}) : Promise.resolve(rx)),
   };
-  const stats = { writes: 0, maxWrite: 0 };
+  const stats = { writes: 0, maxWrite: 0, disconnected: false };
   const tx = {
     writeValueWithResponse: async (chunk) => {
       stats.writes++;
@@ -171,6 +231,7 @@ export function fakeBluetoothDevice(path, { mtu = 23 } = {}) {
     gatt: {
       connect: async () => ({ getPrimaryService: async () => service }),
       disconnect: () => {
+        stats.disconnected = true;
         void pty.close();
         for (const f of listeners.gattserverdisconnected) f();
       },

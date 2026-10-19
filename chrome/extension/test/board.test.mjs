@@ -26,7 +26,7 @@ const { LinkTimeout, linkTimeoutHint } = await import('../src/board/link.js');
 const { bluetoothHelp } = await import('../src/board-client.js');
 const { encodeZsig, parseZsig, POOL } = await import('../src/board/zsig.js');
 const { Session, deriveKeys, generateKeyPair, sharedSecret } = await import('../src/board/session.js');
-const { repo, startZdev, PtyLink, fakeBluetoothDevice, zdevBinary } = await import('./zdev.mjs');
+const { repo, startZdev, PtyLink, fakeBluetoothDevice, fakeSerialPort, zdevBinary } = await import('./zdev.mjs');
 
 const keys = JSON.parse(readFileSync(join(repo, 'vectors/keys.json'), 'utf8'));
 const key = (name) => keys.find((k) => k.name === name);
@@ -422,6 +422,138 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
       assert.equal(host.state.accountError, null);
     } finally {
       await host.run('disconnect');
+      z.stop();
+    }
+  });
+});
+
+describe('the USB port is held only while a session is (Web Serial stand-in on zdev)', { skip: !zdevOk && 'zdev could not be built' }, () => {
+  // connect asks the engine nothing; the other operations are not used here.
+  const engine = async (m) => {
+    throw new Error(`unexpected engine call ${m}`);
+  };
+  const until = async (f, ms = 5000) => {
+    const t0 = Date.now();
+    while (!f()) {
+      if (Date.now() - t0 > ms) throw new Error('timed out waiting');
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+
+  test('Disconnect closes the serial port, its reader and writer released; a new connect opens it again', async () => {
+    const z = await startZdev({ yes: true });
+    const port = fakeSerialPort(z.link);
+    const host = new BoardHost({ engine, openLink: (kind, onClose) => SerialLink.open(port, onClose) });
+    try {
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      assert.equal(host.state.phase, 'ready');
+      assert.equal(host.state.seedFingerprint, key('test/abandon-art/pp0/acct0').seed_fingerprint);
+      assert.ok(port.isOpen);
+      assert.equal(SerialLink.openCount, 1);
+      await host.run('disconnect');
+      assert.equal(host.state.phase, 'disconnected');
+      assert.equal(port.isOpen, false, 'the port is closed');
+      assert.equal(port.closes, 1);
+      assert.equal(SerialLink.openCount, 0);
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      assert.equal(port.opens, 2);
+      assert.equal(host.state.phase, 'ready');
+    } finally {
+      await host.run('disconnect');
+      assert.equal(port.isOpen, false);
+      z.stop();
+    }
+  });
+
+  test('a board that never takes the bytes: Disconnect hides the board at once and still releases the port', async () => {
+    const z = await startZdev({ yes: true });
+    const port = fakeSerialPort(z.link, { takeWrites: false });
+    const states = [];
+    const host = new BoardHost({ engine, openLink: (kind, onClose) => SerialLink.open(port, onClose, { writeMs: 60e3 }), onState: (s) => states.push(s) });
+    try {
+      const connecting = host.run('connect', { kind: 'usb', network: 'test' });
+      connecting.catch(() => {});
+      await until(() => states.some((s) => s.label)); // the link opened; the first write hangs
+      await new Promise((r) => setTimeout(r, 200));
+      const t0 = Date.now();
+      const done = host.run('disconnect');
+      // Published before the link is closed: the pages hide the wallet now.
+      assert.equal(host.state.phase, 'disconnected');
+      await done;
+      assert.ok(Date.now() - t0 < 4000, `disconnect took ${Date.now() - t0} ms`);
+      assert.equal(port.isOpen, false, 'the port is released (the hung write was aborted, not waited for)');
+      assert.equal(SerialLink.openCount, 0);
+      await assert.rejects(connecting);
+      assert.equal(host.state.phase, 'disconnected');
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('a write the board never takes times out, says what to check, and closes the port', async () => {
+    const z = await startZdev({ yes: true });
+    const port = fakeSerialPort(z.link, { takeWrites: false });
+    const host = new BoardHost({ engine, openLink: (kind, onClose) => SerialLink.open(port, onClose, { writeMs: 300 }) });
+    try {
+      await assert.rejects(host.run('connect', { kind: 'usb', network: 'test' }), /did not answer over USB .* Link set to USB/);
+      assert.equal(host.state.phase, 'disconnected');
+      assert.equal(port.isOpen, false);
+      assert.equal(SerialLink.openCount, 0);
+    } finally {
+      z.stop();
+    }
+  });
+
+  test('Disconnect while the port is still opening: the link that opens is closed, not kept', async () => {
+    const z = await startZdev({ yes: true });
+    const port = fakeSerialPort(z.link);
+    const host = new BoardHost({ engine, openLink: (kind, onClose) => SerialLink.open(port, onClose) });
+    try {
+      const connecting = host.run('connect', { kind: 'usb', network: 'test' });
+      connecting.catch(() => {});
+      await until(() => port.isOpen); // settling: the boot noise is being drained
+      await host.run('disconnect');
+      await assert.rejects(connecting);
+      assert.equal(host.state.phase, 'disconnected');
+      assert.equal(port.isOpen, false);
+      assert.equal(SerialLink.openCount, 0);
+    } finally {
+      z.stop();
+    }
+  });
+
+  test('closeAll closes a link nobody closed (what the offscreen document does on Disconnect)', async () => {
+    const z = await startZdev({ yes: true });
+    const port = fakeSerialPort(z.link);
+    try {
+      const link = await SerialLink.open(port);
+      assert.ok(port.isOpen);
+      await SerialLink.closeAll();
+      assert.equal(port.isOpen, false);
+      assert.equal(SerialLink.openCount, 0);
+      await link.close(); // twice is fine
+      assert.equal(port.closes, 1);
+    } finally {
+      z.stop();
+    }
+  });
+
+  test('Bluetooth whose stack never answers stopNotifications: Disconnect hides the board at once and drops the GATT connection', async () => {
+    const z = await startZdev({ yes: true });
+    const gatt = fakeBluetoothDevice(z.link, { hangStopNotifications: true });
+    const host = new BoardHost({ engine, openLink: (kind, onClose) => BleLink.open(gatt, onClose) });
+    try {
+      await host.run('connect', { kind: 'ble', network: 'test' });
+      assert.equal(host.state.phase, 'ready');
+      const t0 = Date.now();
+      const done = host.run('disconnect');
+      assert.equal(host.state.phase, 'disconnected');
+      assert.equal(host.state.seedFingerprint, null);
+      await done;
+      assert.ok(Date.now() - t0 < 3000, `disconnect took ${Date.now() - t0} ms`);
+      assert.ok(gatt.stats.disconnected, 'gatt.disconnect() was called');
+    } finally {
       z.stop();
     }
   });
