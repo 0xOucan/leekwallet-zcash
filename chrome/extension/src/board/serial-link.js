@@ -13,9 +13,19 @@
 // ESP32-S3's USB-Serial-JTAG they reset the chip), and the boot log the
 // reset pours out is drained until the line goes quiet before the first
 // request; `reader.cancel()` before `port.close()`, or the close hangs.
+//
+// The port is held only while a session is: every way a session ends
+// (Disconnect, Switch to Bluetooth, a timeout, an error, a network switch,
+// a Bluetooth connect, the last extension page gone) comes to `close()`,
+// and `closeAll()` closes whatever this document still has open. A port
+// left open here kept the board's USB busy while it served Bluetooth (seen
+// in Brave 152: Bluetooth then got "derivation failed" from the board).
+// No step of `close()` may hang it: a write the board never takes (its
+// Link set to Bluetooth) would keep `writer.close()` waiting forever, so
+// the writer is aborted, and each step is given a few seconds at most.
 
 import { UsbFrameDecoder, encodeUsbFrame } from './framing.js';
-import { FrameQueue, linkTimeoutHint } from './link.js';
+import { FrameQueue, LinkTimeout, linkTimeoutHint } from './link.js';
 
 /** Espressif's VID; the ESP32-S3 USB-Serial-JTAG PID. A chooser filter, not identity: the passkey is. */
 export const USB_FILTERS = [{ usbVendorId: 0x303a, usbProductId: 0x1001 }, { usbVendorId: 0x303a }];
@@ -23,6 +33,19 @@ export const USB_FILTERS = [{ usbVendorId: 0x303a, usbProductId: 0x1001 }, { usb
 const SETTLE_QUIET_MS = 300;
 const SETTLE_MIN_MS = 400;
 const SETTLE_MAX_MS = 3000;
+/** The longest one frame may take to leave (a whole PCZT chunk is a few kB). */
+const WRITE_MS = 10000;
+/** The longest any one step of `close()` may take. */
+const CLOSE_STEP_MS = 2000;
+
+/** Every SerialLink of this document whose port is open, or opening. */
+const openLinks = new Set();
+
+/** Resolves when `p` settles or after `ms`, whichever is first; never rejects. */
+function bounded(p, ms = CLOSE_STEP_MS) {
+  let timer;
+  return Promise.race([Promise.resolve(p).catch(() => {}), new Promise((r) => (timer = setTimeout(r, ms)))]).finally(() => clearTimeout(timer));
+}
 
 export function isBoardPort(port) {
   return port.getInfo().usbVendorId === 0x303a;
@@ -42,21 +65,41 @@ export class SerialLink {
   #queue = new FrameQueue();
   #decoder = new UsbFrameDecoder();
   #onClose;
+  #closing = null;
+  #writeMs;
 
-  constructor(port, onClose) {
+  constructor(port, onClose, { writeMs = WRITE_MS } = {}) {
     this.#port = port;
+    this.#writeMs = writeMs;
     this.label = portLabel(port);
     this.#onClose = onClose;
   }
 
-  static async open(port, onClose) {
-    const l = new SerialLink(port, onClose);
-    await l.#open();
+  static async open(port, onClose, opts) {
+    const l = new SerialLink(port, onClose, opts);
+    try {
+      await l.#open();
+    } catch (e) {
+      // Whatever was opened goes: a half-open link must not hold the port.
+      await l.close();
+      throw e;
+    }
     return l;
+  }
+
+  /** How many links this document holds open (0 when no session is). */
+  static get openCount() {
+    return openLinks.size;
+  }
+
+  /** Closes every link this document still has open. */
+  static async closeAll() {
+    await Promise.all([...openLinks].map((l) => l.close()));
   }
 
   async #open() {
     await this.#port.open({ baudRate: 115200 }); // CDC ignores the rate
+    openLinks.add(this);
     this.#writer = this.#port.writable.getWriter();
     this.#reader = this.#port.readable.getReader();
     try {
@@ -64,35 +107,45 @@ export class SerialLink {
     } catch {
       // Not every backend has it; nothing more to do.
     }
-    await this.#settle(this.#reader);
-    void this.#pump(this.#reader);
+    const { pending } = await this.#settle(this.#reader);
+    void this.#pump(this.#reader, pending);
   }
 
-  /** Discards boot noise until the line has been quiet a moment. */
+  /**
+   * Discards boot noise until the line has been quiet a moment. Returns
+   * `{ pending }`, the read still waiting when it stops (a read cannot be
+   * taken back): what it brings is the board's first answer, so the pump
+   * takes it. Wrapped: an async function returning the promise itself
+   * would wait for it.
+   */
   async #settle(reader) {
     const start = Date.now();
     let last = start;
     let heard = false;
+    let read = null;
     for (;;) {
       const now = Date.now();
-      if (now - start >= SETTLE_MAX_MS) return;
-      if (now - start >= SETTLE_MIN_MS && (!heard || now - last >= SETTLE_QUIET_MS)) return;
+      if (now - start >= SETTLE_MAX_MS) return { pending: read };
+      if (now - start >= SETTLE_MIN_MS && (!heard || now - last >= SETTLE_QUIET_MS)) return { pending: read };
       const wait = Math.max(10, Math.min(SETTLE_MAX_MS - (now - start), heard ? SETTLE_QUIET_MS - (now - last) : SETTLE_MIN_MS - (now - start)));
       const timedOut = Symbol('t');
       let timer;
-      const r = await Promise.race([reader.read(), new Promise((res) => (timer = setTimeout(() => res(timedOut), wait)))]).catch(() => null);
+      read ??= reader.read();
+      const r = await Promise.race([read, new Promise((res) => (timer = setTimeout(() => res(timedOut), wait)))]).catch(() => null);
       clearTimeout(timer);
       if (r === timedOut) continue;
-      if (!r || r.done) return;
+      read = null;
+      if (!r || r.done) return { pending: null };
       heard = true;
       last = Date.now();
     }
   }
 
-  async #pump(reader) {
+  async #pump(reader, pending) {
     try {
       for (;;) {
-        const { value, done } = await reader.read();
+        const { value, done } = await (pending ?? reader.read());
+        pending = null;
         if (done) break;
         if (value?.length) for (const f of this.#decoder.push(value)) this.#queue.push(f);
       }
@@ -110,7 +163,20 @@ export class SerialLink {
 
   async send(type, payload) {
     if (this.#queue.closed) throw new Error(`the serial port is closed: ${this.#queue.closed}`);
-    await this.#writer.write(encodeUsbFrame(type, payload));
+    // A board serving Bluetooth may never take the bytes: the write would
+    // wait forever, and the session with it. Past WRITE_MS the link fails.
+    let timer;
+    const stuck = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(linkTimeoutHint(new LinkTimeout(this.#writeMs), 'USB')), this.#writeMs);
+    });
+    try {
+      await Promise.race([this.#writer.write(encodeUsbFrame(type, payload)), stuck]);
+    } catch (e) {
+      if (e instanceof LinkTimeout) this.#fail('the board did not take what was sent over USB');
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   recv(timeoutMs) {
@@ -123,22 +189,24 @@ export class SerialLink {
     this.#queue.drain();
   }
 
-  async close() {
+  /** Releases the reader and writer and closes the port. Safe to call twice. */
+  close() {
+    this.#closing ??= this.#close();
+    return this.#closing;
+  }
+
+  async #close() {
     this.#queue.close('closed');
-    try {
-      await this.#reader?.cancel();
-    } catch {}
+    await bounded(this.#reader?.cancel());
     try {
       this.#reader?.releaseLock();
     } catch {}
-    try {
-      await this.#writer?.close();
-    } catch {}
+    // abort, not close: close() waits for queued bytes the board may never take.
+    await bounded(this.#writer?.abort());
     try {
       this.#writer?.releaseLock();
     } catch {}
-    try {
-      await this.#port.close();
-    } catch {}
+    if (openLinks.has(this)) await bounded(this.#port.close());
+    openLinks.delete(this);
   }
 }

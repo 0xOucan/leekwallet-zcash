@@ -107,9 +107,16 @@ export class BleLink {
 
   async close() {
     this.#queue.close('closed');
-    try {
-      await this.#rx?.stopNotifications();
-    } catch {}
+    // Given a moment only: a stack that never answers (a write still in
+    // flight, say) must not keep the GATT connection, and the board, held.
+    let timer;
+    await Promise.race([
+      Promise.resolve()
+        .then(() => this.#rx?.stopNotifications())
+        .catch(() => {}),
+      new Promise((r) => (timer = setTimeout(r, 1000))),
+    ]);
+    clearTimeout(timer);
     // Disconnect explicitly: the board serves one peer at a time.
     try {
       this.#device.gatt.disconnect();

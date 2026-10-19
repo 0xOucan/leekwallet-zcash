@@ -26,6 +26,19 @@ export class BoardNeeds extends Error {
   }
 }
 
+/** The longest a link may take to close before the host goes on without it. */
+export const LINK_CLOSE_MS = 5000;
+
+function closeLink(link) {
+  let timer;
+  return Promise.race([
+    Promise.resolve()
+      .then(() => link.close())
+      .catch(() => {}),
+    new Promise((r) => (timer = setTimeout(r, LINK_CLOSE_MS))),
+  ]).finally(() => clearTimeout(timer));
+}
+
 const OPS = new Set(['connect', 'disconnect', 'cancel', 'state', 'account', 'importAccount', 'showAddress', 'signAndFinish']);
 
 export class BoardHost {
@@ -35,6 +48,7 @@ export class BoardHost {
   #device = null;
   #busy = null;
   #abort = null;
+  #linkClosing = null;
   /**
    * What the popup draws. Plain JSON: it crosses runtime ports.
    * `seedFingerprint` is the ZIP 32 fingerprint of the seed the board has
@@ -47,6 +61,11 @@ export class BoardHost {
     this.#openLink = openLink;
     this.#engine = engine;
     this.#onState = onState ?? (() => {});
+  }
+
+  /** The operation running now, or null. */
+  get busy() {
+    return this.#busy;
   }
 
   #set(patch) {
@@ -86,11 +105,20 @@ export class BoardHost {
     }
   }
 
+  /**
+   * Ends the session. The state goes first, so every page hides the
+   * board's wallet at once, whatever the link does next; then the link is
+   * closed (the serial port released, the GATT connection dropped), given
+   * LINK_CLOSE_MS at most: a Bluetooth stack that never answers must not
+   * keep the wallet on screen nor the next connect waiting.
+   */
   async #close(why) {
     const d = this.#device;
     this.#device = null;
-    await d?.link.close().catch(() => {});
     this.#set({ phase: 'disconnected', passkey: null, waiting: null, task: null, seedFingerprint: null, accountError: null, error: why === 'disconnected' ? null : why });
+    // A close already under way (the link failed by itself) is waited for too.
+    if (d) this.#linkClosing = closeLink(d.link);
+    await this.#linkClosing;
   }
 
   #ready() {
@@ -115,6 +143,12 @@ export class BoardHost {
     } catch (e) {
       this.#set({ phase: 'disconnected' });
       throw e;
+    }
+    // Disconnected (or cancelled) while the link opened: it is not kept.
+    if (signal.aborted) {
+      await closeLink(link);
+      this.#set({ phase: 'disconnected' });
+      throw new Error('cancelled');
     }
     const device = new Device(link);
     this.#device = device;
