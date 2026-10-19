@@ -1374,3 +1374,45 @@ the phone. Branch `companion-zcash-focus`.
   text if not); a passphrase on the board switching to its own wallet;
   the release APK installed over nothing (a different key than the debug
   one: uninstall first).
+
+### 6.15 The Companion is Zcash only: EVM removed, renamed Zcash LeekWallet (2026-10-19)
+
+- **Decision.** The firmware and everything around it are Zcash only, so
+  the Companion's EVM side is removed, not hidden: chains, the RPC proxy,
+  balances, tokens, EVM signing, Activity, mini apps, WalletConnect (with
+  its bundled project id and relay), dapp connections, `ur:eth-*` QR
+  air-gap, the blind-signing setting, the app-mode flag and their tests.
+  Kept: USB and BLE transports, pairing and the encrypted session,
+  unlock/lock, passphrase, wallet selection, `getStatus`/`getFeatures`
+  and all of Zcash. The old MV3 browser extension (EVM) is gone; its icons
+  moved to `chrome/extension/icons`.
+- **Dependencies.** npm: `viem`, `@walletconnect/sign-client`,
+  `zxing-wasm` dropped (the runtime is now `@noble/*` and
+  `qrcode-generator`). Cargo: `reqwest`, `rustls`, `webpki-roots`, `url`,
+  `webkit2gtk`, `libc`, dev `tokio` and the `rpc-proxy` feature dropped,
+  with `rpc.rs` and `camera.rs` (no QR scanner, no camera permission). The
+  CSP keeps only `self`, IPC and the GitHub hosts the flasher uses.
+- **Diagnostics** now report only Zcash things: connection (transport,
+  session, lock state), board (`getFeatures` firmware/model, then
+  `zGetFeatures` over the session: backend, branch IDs, limits; the
+  network setting is shown as not reported by the firmware), the
+  passphrase XFP (fingerprint shown as hex, renamed "XFP" in the UI),
+  Zcash network, lightwalletd server and last contact, synced height
+  against the tip, last sync, and the device log. Never the passkey,
+  passphrase, UFVK, addresses or data directory.
+- **Name and id.** Shown as "Zcash LeekWallet" (productName, window title,
+  Android launcher label). The identifier moves from
+  `com.leekwallet.companion` to `io.leekwallet.zcash.companion`: it
+  installs next to the old app, which can be uninstalled; the Zcash wallet
+  syncs again from its birthday in the new one (nothing carries over).
+  Desktop data directories move with the identifier too.
+- **Firmware.** The "Blind sign" entry left the board's Settings (the
+  setting, its warning screen and the `blindSigning` feature field stay,
+  unreachable). `test_ui` checks the entry is absent. The EVM stages left
+  `scripts/check.sh` and the sim Makefile.
+- Tests: `pnpm typecheck` clean; `pnpm test` passes (core: cbor,
+  device-state, framing, mock conformance with 26 regenerated vectors,
+  mock device, session, zcash; flasher); `pnpm test:zdev` passes;
+  `cargo test --lib` 16 passed, 1 ignored (the 11 RPC tests left with
+  `rpc.rs`); `make -C firmware/sim test` and `pio run -e esp32s3cam` pass.
+- Release arm64 APK: 24.6 MB (was 28.5 MB; library 21.9 MB).

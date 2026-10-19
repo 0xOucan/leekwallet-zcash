@@ -62,16 +62,16 @@ async function main() {
     await call(dev, "helloReveal");
 
     await call(dev, "setPassphrase", { passphrase: "hunter2" });
-    const withPass = await call(dev, "getAddress", { path: "m/44'/60'/0'/0/0" });
+    const withPass = await call(dev, "getStatus");
+    check(withPass["passphrase"] === 1, "the passphrase should be applied");
 
     await call(dev, "lock");
     const afterLock = await call(dev, "getStatus");
     check(afterLock["passphrase"] === 0, "passphrase should be gone after lock");
 
     await call(dev, "unlock");
-    const base = await call(dev, "getAddress", { path: "m/44'/60'/0'/0/0" });
-    check(withPass["address"] !== base["address"],
-      "the same path must derive differently once the passphrase is gone");
+    const base = await call(dev, "getStatus");
+    check(base["passphrase"] === 0, "unlocking again must not bring the passphrase back");
   }
 
   group("an auto-lock the app did not initiate is caught the same way");

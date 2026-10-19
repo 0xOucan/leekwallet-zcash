@@ -10,7 +10,7 @@
 // capped at MTU - 3, so each frame is cut into chunks with a 1-byte header:
 // bit 7 "more follows", bits 0-6 a sequence number wrapping at 128.
 //
-// Ported from LeekWallet's extension (firmware/app/extension/src/usb-framing.ts)
+// Ported from LeekWallet's EVM extension (firmware/app/extension/src/usb-framing.ts, now in git history only)
 // and core (firmware/app/packages/core/src/framing.ts), which the firmware's
 // own tests match.
 

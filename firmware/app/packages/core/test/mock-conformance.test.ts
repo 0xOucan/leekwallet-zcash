@@ -17,12 +17,9 @@
  * version of this that stays true.
  *
  * What is deliberately NOT compared, and why. The mock is a protocol mock, not
- * a wallet: it has no BIP32 and no secp256k1, so an address, an `r`, an `s` and
- * a `yParity` cannot match and pretending otherwise would mean weakening the
- * comparison everywhere to accommodate four fields. Those are checked for shape
- * — a real 20-byte address, 32-byte scalars, a parity bit that is 0 or 1 —
- * while their presence, their names and every other field beside them are
- * compared exactly. Error `message` strings are human text on both sides and
+ * a wallet: it has no BIP32, so the seed fingerprint a passphrase answers
+ * with cannot match. It is checked for shape (a uint32) while its presence,
+ * its name and every other field beside it are compared exactly. Error `message` strings are human text on both sides and
  * are checked only for being present and non-empty; the `code` beside them is
  * what a client branches on and is compared exactly.
  *
@@ -73,26 +70,15 @@ const bytes = (hex: string) =>
  */
 type Excuse = (firmware: CborValue, mock: CborValue) => string | null;
 
-const isBytes32 = (v: CborValue) => v instanceof Uint8Array && v.length === 32;
-const isAddress = (v: CborValue) => typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v);
+const isUint32 = (v: CborValue) =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 0xffffffff;
 
 const UNCOMPARABLE: Record<string, Excuse> = {
-  /* No BIP32 in the mock. The address must still be a real one in shape: host
-   * code slices and checksums these, and a placeholder of the wrong length
-   * would pass every mock test and break on the first device. */
-  address: (f, m) =>
-    isAddress(f) && isAddress(m) ? null : `not both 20-byte hex addresses (${f} / ${m})`,
-  /* No secp256k1 either. Length is the part that matters: a client reassembles
-   * r‖s‖v by offset, so a short scalar is a corrupt signature, not a small one. */
-  r: (f, m) => (isBytes32(f) && isBytes32(m) ? null : "r is not 32 bytes on both sides"),
-  s: (f, m) => (isBytes32(f) && isBytes32(m) ? null : "s is not 32 bytes on both sides"),
-  /* Follows from the signature, so it cannot match — but it must be the
-   * EIP-1559 parity bit and never the legacy 27/28, which is the divergence
-   * that makes a signature recover to an address nobody owns. */
-  yParity: (f, m) =>
-    (f === 0 || f === 1) && (m === 0 || m === 1)
-      ? null
-      : `yParity is not a 0/1 parity bit (${f} / ${m})`,
+  /* No BIP32 in the mock, so the seed fingerprint setPassphrase answers
+   * with cannot match. It must still be what the device sends: a uint32,
+   * never a string or an address. */
+  fingerprint: (f, m) =>
+    isUint32(f) && isUint32(m) ? null : `fingerprint is not a uint32 on both sides (${f} / ${m})`,
   /* Build identity. A mock claiming to be LeekWallet-S3 0.1.0 would be worse
    * than one that says it is a mock. */
   model: (f, m) =>

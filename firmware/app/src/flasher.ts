@@ -166,7 +166,9 @@ export interface Release {
   assets: ReleaseAsset[];
 }
 
-const RELEASES_API = "https://api.github.com/repos/0xOucan/LeekWallet/releases";
+/* This project's releases: the Zcash firmware. Not upstream LeekWallet's,
+ * which ship the EVM firmware this Companion no longer speaks to. */
+const RELEASES_API = "https://api.github.com/repos/0xOucan/leekwallet-zcash/releases";
 
 /** Board and image kind out of a filename — the two things a release build
  * actually names. Everything else (chip id, digest) is checked from bytes. */
@@ -529,7 +531,7 @@ export function initFlasher(bridge: FlashBridge | null): void {
       releasesStatus.textContent = "No releases published yet.";
       return;
     }
-    releasesStatus.textContent = `${releases.length} release${releases.length === 1 ? "" : "s"} from github.com/0xOucan/LeekWallet.`;
+    releasesStatus.textContent = `${releases.length} release${releases.length === 1 ? "" : "s"} from github.com/0xOucan/leekwallet-zcash.`;
     for (const rel of releases) {
       const box = document.createElement("div");
       box.className = "field";
@@ -590,7 +592,7 @@ export function initFlasher(bridge: FlashBridge | null): void {
     }
   };
 
-  releasesStatus.textContent = "Checking github.com/0xOucan/LeekWallet for releases…";
+  releasesStatus.textContent = "Checking github.com/0xOucan/leekwallet-zcash for releases…";
   void fetchReleases()
     .then(renderReleases)
     .catch((e: unknown) => {

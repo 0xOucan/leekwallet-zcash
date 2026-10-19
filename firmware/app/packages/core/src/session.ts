@@ -26,7 +26,7 @@
  * offline search straight back, because an uncommitted device nonce is a value
  * a relay may choose after seeing everything else.
  *
- * Uses @noble/*, which viem already depends on — no new supply-chain surface
+ * Uses @noble/* (audited, dependency-free), the smallest supply-chain surface
  * for the one part of this codebase where that would matter most.
  */
 

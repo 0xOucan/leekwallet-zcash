@@ -40,8 +40,8 @@ export const ErrorCode = {
   WrongPermission: 0x0101,
   UserRejected: 0x0200,
   UserTimeout: 0x0201,
-  /* Outside the decodable set — the device will not ask for approval of a
-   * call it cannot describe. See eth-decode.ts. */
+  /* The device will not ask for approval of something it cannot describe
+   * (PROTOCOL.md section 4). */
   Undecodable: 0x0202,
   NoWallet: 0x0300,
   SessionRequired: 0x0400,

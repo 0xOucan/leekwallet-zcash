@@ -1,5 +1,14 @@
 # LeekWallet
 
+> **In this repository LeekWallet is a Zcash-only wallet.** This file is the
+> README of upstream LeekWallet, the Ethereum (EVM) hardware wallet this
+> firmware was forked from, kept for its hardware, build and security notes.
+> Its EVM parts do not describe this tree: the firmware here signs Zcash only
+> (no Ethereum signing, ERC-7730, dapps or EIP-712), and the Companion in
+> `app/` is the LeekWallet Zcash Companion, with no chains, WalletConnect,
+> browser extension or QR air gap for Ethereum. Start at the
+> [top-level README](../README.md).
+
 > *lek* — a container made from a dried jícara gourd
 
 <p align="center">

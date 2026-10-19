@@ -8,7 +8,7 @@
 // and the grant, kept against the extension's origin, lets the offscreen
 // document's `getPorts()` find the board from then on.
 //
-// From LeekWallet's extension (firmware/app/extension/src/serial-transport.ts),
+// From LeekWallet's EVM extension (firmware/app/extension/src/serial-transport.ts, in git history),
 // which learned on hardware: DTR/RTS are deasserted right after open (on the
 // ESP32-S3's USB-Serial-JTAG they reset the chip), and the boot log the
 // reset pours out is drained until the line goes quiet before the first

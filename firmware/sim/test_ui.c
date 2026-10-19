@@ -1629,7 +1629,7 @@ static void test_change_pin_catches_a_mismatch(void)
     CHECK(pin_verify("1234"), "the PIN changed despite the mismatch");
 }
 
-/* ------------------------------------------------- blind signing (T16) */
+/* ------------------------------------------------------ settings (T16) */
 
 /* Walk the settings list until `label` is the selected row. The list scrolls
  * three at a time, so "press DOWN n times" would encode the position of every
@@ -1649,67 +1649,16 @@ static bool settings_select(const char *label)
     return false;
 }
 
-/* Enabling the hatch has to cost something. One press must not do it, and the
- * screen has to say what is being given up before it asks. */
-static void test_blind_signing_takes_a_deliberate_act(void)
+/* The Zcash firmware signs no Ethereum, so the setting that governed
+ * undecodable Ethereum calls is not offered: no "Blind" row in Settings. */
+static void test_no_blind_signing_entry(void)
 {
-    printf("== turning blind signing on warns, and needs more than one press\n");
+    printf("== settings offer no blind-signing entry\n");
     boot_unlocked_with_seed();
 
     CHECK(!blind_signing_enabled(), "blind signing is not off on a fresh device");
-    CHECK(settings_select("Blind"), "no blind-signing entry in settings");
-    CHECK_SCREEN(fake_oled_contains("[OFF]"),
-                 "the settings row does not show the setting is off");
-
-    press(BUTTON_ACCEPT);
-    CHECK(ui_get_screen() == SCREEN_BLIND_WARN,
-          "selecting it did not open the warning (screen %d)", ui_get_screen());
-
-    /* What it costs, in words. Not "advanced mode" or "expert settings". */
-    CHECK_SCREEN(fake_oled_contains("cannot read"),
-                 "the warning does not say the device cannot read the calls");
-    CHECK_SCREEN(fake_oled_contains("drain"),
-                 "the warning does not say what can go wrong");
-
-    /* Four presses is not five. */
-    for (int i = 0; i < 4; i++) {
-        press(BUTTON_ACCEPT);
-        CHECK(!blind_signing_enabled(),
-              "blind signing turned on after only %d presses", i + 1);
-        CHECK(ui_get_screen() == SCREEN_BLIND_WARN,
-              "the warning left the screen after %d presses", i + 1);
-    }
-    press(BUTTON_ACCEPT);
-    CHECK(blind_signing_enabled(), "five presses did not enable blind signing");
-    CHECK(ui_get_screen() == SCREEN_SETTINGS, "did not return to settings");
-    CHECK(settings_select("Blind"), "the entry vanished once enabled");
-    CHECK_SCREEN(fake_oled_contains("[ON]"),
-                 "a weakened device does not say so on the settings row");
-
-    /* Turning it back off is one press: nothing is lost by doing it early. */
-    press(BUTTON_ACCEPT);
-    CHECK(!blind_signing_enabled(), "one press did not turn the protection back on");
-
-    /* And abandoning the warning part-way leaves it off, with no partial
-     * credit carried into the next visit. */
-    CHECK(settings_select("Blind"), "the entry vanished");
-    press(BUTTON_ACCEPT);
-    press(BUTTON_ACCEPT);
-    press(BUTTON_ACCEPT);
-    press(BUTTON_CANCEL);
-    CHECK(ui_get_screen() == SCREEN_SETTINGS, "CANCEL did not leave the warning");
-    CHECK(!blind_signing_enabled(), "an abandoned warning enabled it anyway");
-
-    /* Leaving reset the settings cursor, so find the row again rather than
-     * assuming where it is. */
-    CHECK(settings_select("Blind"), "the entry vanished after a cancel");
-    press(BUTTON_ACCEPT);          /* re-enter the warning */
-    CHECK(ui_get_screen() == SCREEN_BLIND_WARN, "could not re-enter the warning");
-    press(BUTTON_ACCEPT);
-    press(BUTTON_ACCEPT);
-    CHECK(!blind_signing_enabled(),
-          "the earlier presses were still counted on a second visit");
-    press(BUTTON_CANCEL);
+    CHECK(!settings_select("Blind"), "settings still offer a blind-signing entry");
+    CHECK(settings_select("Wipe"), "settings lost the Wipe entry");
 }
 
 /* Locking takes the channel with it.
@@ -2855,7 +2804,7 @@ int main(void)
     test_qr_airgap_signing();
     test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
-    test_blind_signing_takes_a_deliberate_act();
+    test_no_blind_signing_entry();
     test_locking_closes_the_channel();
     test_an_expired_approval_leaves_the_screen();
     test_host_passphrase_confirmation();

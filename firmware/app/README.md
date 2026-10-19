@@ -1,18 +1,32 @@
-# LeekWallet Companion
+# LeekWallet Zcash Companion
 
-One [Tauri v2](https://tauri.app) codebase for Linux, macOS, Windows and
-Android, talking to the device over BLE on Android and USB CDC on desktop.
+Shown as **Zcash LeekWallet** (launcher, window title), application id
+`io.leekwallet.zcash.companion`. The companion app of the LeekWallet Zcash
+board, **Zcash only**: one
+[Tauri v2](https://tauri.app) codebase for Linux, macOS, Windows and Android,
+talking to the board over USB or Bluetooth on every platform. It pairs with
+the board, unlocks it, applies a passphrase, and is a full Zcash wallet
+(sync, receive, send and shield signed on the board, history, contacts) for
+mainnet and testnet in one app.
+
+It began as LeekWallet's EVM companion. Everything EVM (chains and RPC,
+balances and tokens, EVM send and signing, mini apps, WalletConnect, the
+`ur:eth-*` QR air gap, blind-signing settings, the EVM browser extension) was
+removed in October 2026: the board's firmware signs Zcash only. Git history
+keeps the old code; a future app for BTC, Zcash and EVM would be a separate
+project.
 
 ```
 app/
-├── packages/core/     @leekwallet/core — protocol codec, transport-agnostic
+├── packages/core/     @leekwallet/core: framing, CBOR, session, the z* calls
 ├── src/               UI (shared by every platform)
-└── src-tauri/         Rust shell: transports, capability allowlist
+└── src-tauri/         Rust shell: transports, the Zcash wallet (zecz), capability allowlist
 ```
 
 ## Building the Tauri desktop shell
 
-The web shell runs in any browser against the mock with no extra tooling. The
+The web shell runs in any browser against the mock with no extra tooling
+(pairing, PIN and passphrase only: the Zcash screens need a board or zdev). The
 **Tauri** build additionally needs GTK and WebKit development packages, which
 are not installed by default on Ubuntu:
 
@@ -33,8 +47,9 @@ what Ubuntu's packaged `rustc` provides. `rustup default stable` is enough; a
 distro Rust will fail with `rustc 1.85.1 is not supported by the following
 packages`.
 
-Without any of this, `pnpm dev` and the mock still cover everything except the
-native window and the real transports.
+Without any of this, `pnpm dev` and the mock still cover the pairing, unlock
+and passphrase screens, not the native window, the real transports or the
+wallet.
 
 ### Running the native shell
 
@@ -104,10 +119,12 @@ index checks alone caught four real unguarded accesses in the framing layer.
 
 ## Dependencies and supply chain
 
-The tree is **35 packages**: viem, plus TypeScript, Vite and Node types. That
-number is the strongest control available here, and it is worth defending —
-every addition is a party who can push code into a process that talks to a
-signing device.
+The app itself ships **four** npm packages: `@noble/ciphers`, `@noble/curves`
+and `@noble/hashes` (the session) and `qrcode-generator` (receive QR codes).
+Everything else in the lockfile is build tooling: TypeScript, Vite and its
+platform binaries, the Tauri CLI and Node types. That number is the strongest
+control available here, and it is worth defending — every addition is a party
+who can push code into a process that talks to a signing device.
 
 `.npmrc` sets three things:
 
@@ -156,15 +173,11 @@ transitive dependency changing hands.
 ### Why that is survivable here
 
 The architecture, not the package manager, is what contains this. The seed never
-leaves the device, the device re-serialises and re-hashes every transaction
-itself, and it renders what it will sign on its own screen before a physical
-button press. A compromised npm package can show you a false preview — which is
-exactly why [PROTOCOL.md](../docs/PROTOCOL.md) says the app's preview is
-advisory — but it cannot extract a key or sign anything you did not approve on
-the device.
-
-That is the whole reason the trust boundary sits where it does. If the host had
-to be trustworthy, 35 dependencies would be 35 too many.
+leaves the device; the board parses every PCZT itself, recomputes the sighash,
+and shows every output, the memo and the fee on its own screen before a
+physical button press. A compromised npm package can show you a false preview,
+which is why the app's review is advisory, but it cannot extract a key or sign
+anything you did not approve on the board.
 
 ## Layering
 
@@ -177,10 +190,9 @@ codec and state machine, testable under plain Node:
 cd app/packages/core && npm test
 ```
 
-The Rust side owns exactly one thing: moving bytes. `Transport` is a trait with
-a serial implementation for desktop and a `btleplug` implementation for
-Android, and the protocol above it is identical on both. Adding the second
-transport to either platform later is configuration, not rework.
+The Rust side moves bytes (USB and BLE, the same commands on desktop and
+Android, see ANDROID.md) and, with the `zcash-wallet` feature, runs the
+wallet engine; the protocol above the transports is identical on both.
 
 ## Running it
 
@@ -191,9 +203,10 @@ pnpm install
 pnpm dev          # http://localhost:1420
 ```
 
-The shell runs in a plain browser against the mock device, so the whole
-interface can be exercised with no hardware and no Rust toolchain. `pnpm build`
-produces the static bundle Tauri wraps.
+The shell runs in a plain browser against the mock device, so the pairing,
+unlock and passphrase screens can be exercised with no hardware and no Rust
+toolchain; the Zcash screens need the native app and a board (or zdev).
+`pnpm build` produces the static bundle Tauri wraps.
 
 The mock is configured with 250 ms of latency on purpose. A mock that answers
 instantly hides every place the UI forgot to show that it is waiting, and a
@@ -205,128 +218,18 @@ Light, dark, and system, cycled from the status bar and remembered. System is a
 distinct state rather than an initial guess — a user who toggles once must be
 able to get back to following their OS.
 
-## Connecting to dapps (WalletConnect v2)
-
-The dapp stays in your own browser. Pairing over WalletConnect means only
-structured JSON-RPC crosses the relay — `eth_sendTransaction`, `personal_sign`
-and friends — and this app renders none of the dapp's HTML or JavaScript. There
-is deliberately **no built-in dapp browser**, and there will not be one: a
-webview full of untrusted web content inside the process that talks to a signing
-device is the largest security liability mobile wallets carry. See
-[PROTOCOL.md section 6b](../docs/PROTOCOL.md).
-
-### You need a project ID first
-
-WalletConnect's relay refuses connections without one, and this tree does not
-ship a default — see `src/wc/project-id.ts` for why. A project ID committed here
-would either be a fake that fails at the relay with a cryptic error, or a real
-one belonging to somebody whose rate limit every user of this app would spend.
-
-To get your own:
-
-1. Sign in at <https://cloud.reown.com> (formerly WalletConnect Cloud).
-2. Create a project, choosing the WalletKit / wallet product type.
-3. Copy the **Project ID** — 32 hex characters.
-4. Paste it into *Dapps (WalletConnect) → Project ID → Save* in the app. It is
-   stored in `localStorage` and survives restarts.
-
-The ID is a public client identifier, not a secret. It appears in the relay URL
-of every WalletConnect wallet and grants nothing except relay quota. Whoever
-ships a build for other people can instead set `BUNDLED_PROJECT_ID` in
-`src/wc/project-id.ts`; the settings field then overrides it per user.
-
-This build ships with a bundled project ID, so pairing works without any setup;
-the settings field above overrides it. Set your own if you are running a fork,
-shipping to other people, or would simply rather not share relay quota with
-every other user of this build.
-
-A build with no ID configured at all — a fork that cleared the constant — leaves
-the pairing controls disabled with the panel saying why, rather than failing at
-connect time with a relay error.
-
-### Pairing
-
-Paste the `wc:` link from the dapp's "Connect wallet" dialog, or press **Scan
-QR** where the webview supports it (Android, and Chromium-based desktop builds;
-WebKitGTK has no `BarcodeDetector`, and the panel says so and falls back to
-paste). Unlock the device first — a locked device offers no addresses, and a
-session approved without them is useless.
-
-Connected dapps are listed with a per-session **End session** button.
-
-### What a dapp can and cannot ask for
-
-| Method | Behaviour |
-|---|---|
-| `eth_accounts`, `eth_chainId` | Answered from app state, no prompt |
-| `eth_sendTransaction` | Confirmed on the device, then broadcast by this app |
-| `eth_signTransaction` | Confirmed on the device, raw transaction returned |
-| `personal_sign` | Confirmed on the device; ASCII, ≤120 bytes |
-| `wallet_switchEthereumChain` | Asks the user; unknown chains are refused (4902) |
-| `eth_signTypedData*` | Refused, 4200 — the device has no `signTypedData` yet |
-| `eth_sign` | Refused, 4200 — it is blind signing by construction |
-| `wallet_addEthereumChain` | Refused, 4200 — chains come from the reviewed registry |
-
-Anything the device would refuse at its own confirmation screen — calldata
-outside the decodable set, contract creation, a message the screen cannot
-render — is refused **before** you walk to the device, with a JSON-RPC error the
-dapp can act on. The pending-request card shows the same advisory preview the
-app draws for its own send form, carrying the same disclaimer: it is produced by
-this app, and only what the device displays is what gets signed.
-
-The relay (`wss://relay.walletconnect.org`, in the CSP allowlist by exact name)
-is a third party. It sees that a wallet and a dapp are talking and when; the
-payloads are encrypted end to end, and no key ever leaves the device.
-
-## App mode: the Zcash wallet, or the full Companion
-
-The LeekWallet Zcash firmware is Zcash-only: it dropped `getAddress`,
-`signTransaction`, `signMessage` and `signTypedData` (docs/zcash/ROADMAP.md
-1.1). So the default build is **the Zcash wallet** and shows nothing of the
-EVM side. Removed from the screen (the code stays in the tree):
-
-- the EVM sections of the home screen: Balances, Network (chain selector,
-  RPC, custom networks), Receive (addresses, watched tokens and the token
-  contract field), Send, Apps (mini apps), Connect a site (WalletConnect)
-  and Activity;
-- **Pair by QR** and its "Dark camera" option: the EVM air gap, scanning the
-  device's `ur:crypto-hdkey` and signing through `ur:eth-sign-request` /
-  `ur:eth-signature` (src/qr-airgap.ts). It is not how the board pairs: the
-  board pairs over USB or Bluetooth by comparing the six-digit passkey;
-- the "Testnets only" banner (EVM wording), replaced by a Zcash one.
-
-How: `src/app-mode.ts` reads `VITE_LEEK_APP_MODE` at build time; anything but
-`full` is the Zcash wallet. index.html ships `<html data-mode="zcash">` and
-every EVM element carries `class="evm-only"`, which styles.css hides with
-`!important` before any script runs, so nothing EVM paints even for a frame;
-`nav.ts` keeps the EVM sections out of the accordion (`sectionsFor`, pinned
-by test/nav.test.ts); main.ts skips `getAddress`, balances, mini apps and the
-QR pairing. The Zcash wallet is the home screen after unlocking (its
-accordion header is hidden and it does not collapse), and the Device panel
-shrinks to the link and Disconnect.
-
-The full Companion (for the future "master" firmware with EVM) is the same
-tree built with the variable set:
-
-```bash
-pnpm dev:full                                  # VITE_LEEK_APP_MODE=full vite
-pnpm build:full                                # VITE_LEEK_APP_MODE=full vite build
-VITE_LEEK_APP_MODE=full pnpm tauri build       # beforeBuildCommand inherits it
-VITE_LEEK_APP_MODE=full pnpm android:release:arm64
-```
-
 ## Zcash
 
-The first section after unlocking is **Zcash** (in the default build, the
-only one), for the LeekWallet Zcash
-firmware (docs/zcash/ROADMAP.md 6.14). It runs over the same encrypted session
-as everything else here: the `z*` methods of firmware/docs/PROTOCOL.md are
-`packages/core/src/zcash.ts`, called through main.ts's Client, so the board is
-paired once per connection and Zcash and EVM calls never interleave.
+After unlocking, the Zcash wallet is the home screen, for the LeekWallet
+Zcash firmware (docs/zcash/ROADMAP.md 6.14), and the Device panel shrinks to
+the link and Disconnect. It runs over the encrypted session: the `z*` methods
+of firmware/docs/PROTOCOL.md are `packages/core/src/zcash.ts`, called through
+main.ts's Client, so the board is paired once per connection and requests
+never interleave. A locked or disconnected board hides the whole wallet
+screen and the account read from the board (`setShellVisible` in main.ts).
 
 **Network.** Testnet unless switched; Mainnet asks first ("Mainnet moves real
-ZEC") and keeps a danger banner up while it is on. The choice is the
-Companion's, per Zcash, independent of the EVM chain. Each network has its own
+ZEC") and keeps a danger banner up while it is on. Each network has its own
 wallet, server and address book; nothing is shared between them. A board that
 refuses a request for the other network (its network guard) is shown in the
 board's own words: every board error is displayed verbatim, with its code.
@@ -341,7 +244,7 @@ board's own words: every board error is displayed verbatim, with its code.
 **Sign a file**: open an unsigned `.pczt` made by zecz, the desktop app or
 Zodl; the board checks it, shows every output and the fee, and signs on ACCEPT.
 The `.zsig` is saved to the downloads folder (the app's own `Download` folder
-on Android, under `Android/data/com.leekwallet.companion/files/`). The file is
+on Android, under `Android/data/io.leekwallet.zcash.companion/files/`). The file is
 sent as it is: its `.zsig` names the hash of exactly those bytes, which is what
 the wallet that kept the PCZT checks. A compact view is the builder's choice
 (`zecz send --compact`); the wallet below always builds one.
@@ -380,7 +283,11 @@ and switches wallet. The passphrase panel says this, and that the hidden
 wallet's synced data stays on this device under its fingerprint (forget it
 in Settings).
 
-Data lives in the app data directory under `zcash/`:
+Data lives in the app data directory under `zcash/` (on Linux
+`~/.local/share/io.leekwallet.zcash.companion/zcash/`, on macOS
+`~/Library/Application Support/io.leekwallet.zcash.companion/zcash/`, on
+Windows `%APPDATA%\io.leekwallet.zcash.companion\zcash\`, on Android the
+app's private storage):
 `wallets/<test|main>-<zfp16>-<account>` (zfp16: the first 8 bytes of the
 seed fingerprint, in hex), `contacts-<test|main>-<zfp16>.json`, and
 `settings.json` (the server per network, shared): viewing keys and what they
@@ -398,22 +305,58 @@ and `cargo test --lib -- --ignored online` imports and syncs the public test
 account against testnet lightwalletd. To drive the desktop app against zdev,
 start zdev with `--link /tmp/zdev` and the app with `LEEK_SERIAL_PORT=/tmp/zdev`.
 
+## The new application id (October 2026)
+
+The identifier was `com.leekwallet.companion` ("LeekWallet") and is now
+`io.leekwallet.zcash.companion` ("Zcash LeekWallet"), so that a future EVM
+LeekWallet app can sit beside it. The app data directory follows the
+identifier, so nothing carries over by itself:
+
+- **Android**: the new APK installs beside the old app, not over it.
+  Uninstall `com.leekwallet.companion` when you like; in the new app, read
+  the board's account and set the wallet up again: it syncs again from its
+  birthday.
+- **Desktop**: the old data is in `~/.local/share/com.leekwallet.companion/`
+  (Linux), `~/Library/Application Support/com.leekwallet.companion/`
+  (macOS) or `%APPDATA%\com.leekwallet.companion\` (Windows). Delete it, or
+  move its `zcash/` folder into the new directory before the first start to
+  keep the synced wallets, server and contacts (viewing keys only).
+
+## Diagnostics
+
+*Diagnostics → Copy diagnostics* puts a plain-text report on the clipboard
+for a bug report:
+
+- **Connection**: state, backend badge, selected link, the transports this
+  build has, whether the session is encrypted, and the device status
+  (locked or not, wallet or temporary seed, passphrase on or off).
+- **Board**: firmware, model and chain from `getFeatures` (read once per
+  connection); from `zGetFeatures` over the paired session, asked when the
+  report is made: the signer backend, branch IDs, PCZT and chunk limits and
+  address display; the board's network setting is not reported by the
+  firmware (it refuses requests for the other network), and the report says
+  so; the board account read (account, network, seed fingerprint, birthday).
+- **Zcash**: the Companion's network and account; the wallet's lightwalletd
+  server (and the default), when it last answered, the wallet's account and
+  ZFP, birthday, sync height against the tip, and how the last sync ended.
+- **Device log**, newest first.
+
+Never in it: the passkey, the passphrase, viewing keys, addresses, the
+wallet's data directory (it carries the user name on a desktop), or anything
+typed into a form.
+
 ## Status
 
-Implemented:
+Implemented and tested: framing (length-prefixed frames, BLE chunking,
+hostile lengths rejected before allocating), the CBOR subset (RFC 8949
+appendix A), the session (X25519 commit-then-reveal, passkey, ChaCha20-
+Poly1305), the mock device (session, PIN, wallets, passphrase; its replies
+compared with the firmware's own by `mock-conformance.test.ts`, regenerated
+by `make -C firmware/sim conformance`), the z* calls against zdev, USB and
+BLE on desktop and Android, and the Zcash wallet.
 
-- **Framing** — length-prefixed frames, incremental decoding, BLE chunking and
-  reassembly, hostile lengths rejected before allocating.
-- **CBOR** — the protocol subset only, verified against RFC 8949 appendix A.
-  Tags, floats, indefinite lengths and 64-bit arguments are refused rather than
-  tolerated.
-- **Mock device** — session handshake, permission tiers, on-device
-  confirmations, user rejection, modelled latency.
-- **Shell** — connection state, passkey comparison, ten derived addresses,
-  a signing preview, and a device log. Driven entirely by the mock.
-
-Next: the Rust transports (T22) so the same shell talks to real hardware over
-USB, then the viem adapter (T24) and WalletConnect (T32).
+Tests: `pnpm typecheck`; `pnpm test` (packages/core and the flasher);
+`pnpm test:zdev` (against zdev); `cargo test --lib` in src-tauri.
 
 See [../docs/PROTOCOL.md](../docs/PROTOCOL.md) for the wire format and
 [../docs/DESIGN.md](../docs/DESIGN.md) for the visual language.
