@@ -3,23 +3,13 @@ name = "leekwallet-companion"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "LeekWallet companion app"
+description = "LeekWallet Zcash Companion"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [features]
-# The RPC proxy's HTTP client. On by default: without it the app cannot reach a
-# user-added custom chain at all, since a URL typed at runtime can never be in a
-# build-time CSP allowlist (docs/RPC-ACCESS.md).
-#
-# It was briefly off because `cargo check --target aarch64-linux-android` failed
-# to build reqwest's TLS. That was not an Android limitation: cc-rs looks for
-# `aarch64-linux-android-clang` and the NDK ships the name with the API level in
-# it, so CC_/AR_ have to point at the real files. The android scripts in
-# package.json set them; with that done the target builds.
-default = ["rpc-proxy", "zcash-wallet"]
-rpc-proxy = ["dep:reqwest", "dep:rustls", "dep:webpki-roots"]
+default = ["zcash-wallet"]
 
 # The Zcash wallet (src/zwallet.rs): sync, balances, history, send and
 # shield, over zecz (host/zecz-core), the engine of the zecz CLI and the
@@ -47,11 +37,6 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# URL parsing for the RPC proxy's policy, which is compiled unconditionally.
-# Already in the tree via tauri; named here because src/rpc.rs uses it
-# directly and a dependency you rely on should be one you declared.
-url = "2"
-
 # The image digest shown before flashing and re-checked before writing
 # (src/flash.rs).
 #
@@ -66,37 +51,6 @@ url = "2"
 sha2 = "0.10"
 hex = "0.4"
 
-# The proxy's HTTP client. Default features are off to keep http2 (and its own
-# C-ish dependency tail) out of a client that only ever makes one POST at a
-# time.
-#
-# This comment used to claim that picking `rustls` over native-tls kept the
-# wallet clear of "whatever a phone's certificate store has had added to it".
-# That was not true: reqwest's `rustls` feature verifies through
-# `rustls-platform-verifier`, which IS the OS store. The intent was right and
-# the mechanism was absent; the entry below is what actually delivers it.
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset"], optional = true }
-
-# TLS trust anchors, bundled rather than taken from the OS.
-#
-# reqwest's `rustls` feature always routes verification through
-# `rustls-platform-verifier`, which on Android PANICS ("Expect
-# rustls-platform-verifier to be initialized") unless it is handed a JNI
-# context at startup. Inside a Tauri command that panic aborts the task
-# without sending a reply, so `invoke` never settles: every RPC on Android hung
-# with no error to show. Proven with a standalone binary on the device.
-#
-# Rather than wire up JNI to reach a trust store we did not want anyway, the
-# root store is built here from webpki-roots and handed to reqwest via
-# `use_preconfigured_tls`, so the platform verifier is never constructed on any
-# platform. This is also what the comment above always claimed: a wallet is not
-# at the mercy of whatever CA a phone has had added to it.
-#
-# The cost is real and worth stating: revocations and new roots arrive only
-# when this dependency is bumped and a release is cut.
-rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"], optional = true }
-webpki-roots = { version = "1", optional = true }
-
 # The wallet engine. `default-features = false` drops its serial port: the
 # board is reached through the webview's session, never from here, and the
 # `serialport` crate cannot build for Android at all.
@@ -105,11 +59,6 @@ anyhow = { version = "1", optional = true }
 # The desktop app's backend module, compiled in (src/lib.rs), draws its own
 # receive QR; unused here (the webview draws one) but part of that module.
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"], optional = true }
-
-# `#[tokio::test]` for the policy tests. Not a runtime dependency: the command
-# itself runs on the async runtime Tauri already provides.
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
 
 # Desktop speaks both USB CDC and BLE; the device serves one at a time
 # (PROTOCOL.md 3b), so which one is live is a runtime question, not a build-time
@@ -129,19 +78,6 @@ serialport = { version = "4", optional = true }
 leek-transport-serial = { path = "../transport-serial" }
 leek-transport-ble = { path = "../transport-ble" }
 tokio = { version = "1", features = ["sync", "rt"] }
-
-# The Linux webview, reached directly to turn the camera on.
-#
-# WebKitGTK ships with `enable-media-stream` OFF and denies every permission
-# request it is not explicitly told to grant, so `getUserMedia` fails with
-# NotAllowedError and QR scanning is dead on Linux desktop. Neither is
-# reachable through Tauri's own API, so this drops to the underlying webview.
-# Version tracks the one Tauri already resolves (see Cargo.lock); a second,
-# different webkit2gtk in the tree would be two bindings to one library.
-[target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = "2.0"
-# V4L2 ioctls for the webcam exposure the webview cannot set (src/camera.rs).
-libc = "0.2"
 
 # Android gets the same BLE transport crate with its other backend selected:
 # `blec` swaps btleplug for `tauri-plugin-blec`, which is a Tauri mobile plugin

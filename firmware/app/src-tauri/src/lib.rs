@@ -1,10 +1,10 @@
-//! LeekWallet companion — Tauri backend.
+//! LeekWallet Zcash Companion — Tauri backend.
 //!
-//! Owns exactly one thing: moving bytes between the frontend and the device.
-//! No protocol parsing, no key handling, no policy. The codec lives in
-//! `packages/core` where it can be tested under plain Node, and the device
-//! decides everything that matters. Keeping this layer dumb is what makes the
-//! shell replaceable and keeps the audit surface small.
+//! Moves bytes between the frontend and the device (no protocol parsing, no
+//! key handling: the codec lives in `packages/core` where it can be tested
+//! under plain Node, and the device decides everything that matters), and,
+//! with the `zcash-wallet` feature, runs the Zcash wallet (zecz) the
+//! webview drives. Zcash only.
 //!
 //! This lives in a library rather than in `main.rs` because Android has no
 //! `main()`: the APK loads a shared object and the JVM calls the entry point
@@ -21,7 +21,6 @@
 // and so are the commands they export. See each crate's `android.rs` for why
 // the phone needs a different way in rather than a different transport.
 mod ble;
-mod camera;
 mod serial;
 
 // The Zcash wallet (feature `zcash-wallet`): the desktop app's own modules,
@@ -55,25 +54,9 @@ mod zwallet;
 // written where the user can pick it up (the webviews cannot save a file).
 mod files;
 
-// The one thing in this backend that is not "move bytes to the device": an
-// outbound JSON-RPC call, made here rather than in the webview because the CSP
-// governs the webview and not this process. It is what a user-supplied RPC
-// endpoint needs to be reachable at all — no build-time allowlist can contain
-// an origin the user types in tomorrow. The module is the gatekeeper the
-// allowlist used to be; see its header and docs/RPC-ACCESS.md.
-//
-// Part of that policy — the redirect rule, the response checks, the origin the
-// UI displays — is reached only from the HTTP client, which is behind the
-// `rpc-proxy` feature (see the module header for why it has to be). It is
-// still compiled and still tested without the feature, so the allow only
-// silences "you have not called this yet", not a real absence.
-#[cfg_attr(not(feature = "rpc-proxy"), allow(dead_code))]
-mod rpc;
-
 /* Firmware flashing (T65). Compiled unconditionally so the capability query and
  * the image checks -- the reviewable part, and the part with tests -- always
- * exist; only the espflash-backed half is behind the `flasher` feature. Same
- * shape as rpc.rs and for the same reason.
+ * exist; only the espflash-backed half is behind the `flasher` feature.
  *
  * The allow follows from that split: without the feature, the digest and chip
  * checks are reached only from the tests, so the compiler is right that nothing
@@ -111,58 +94,6 @@ fn transports() -> Vec<&'static str> {
     vec!["usb", "ble"]
 }
 
-/// Let the Linux webview reach a camera.
-///
-/// WebKitGTK is not Chromium: `enable-media-stream` defaults to OFF, and every
-/// permission request is denied unless the embedder answers it. With neither
-/// done, `getUserMedia` rejects with NotAllowedError and the QR scanner is
-/// simply dead on Linux — which is what it did, five times in a row, in a user's
-/// device log before this existed.
-///
-/// Only camera requests are granted, and only because of what this webview is:
-/// it loads this app's own bundled UI and no remote page (the CSP has no
-/// frame-src and there is no address bar — see PROTOCOL.md 6b). Granting the
-/// camera here is therefore the app answering for itself, not a page answering
-/// for a stranger. Everything else — microphone, geolocation, notifications —
-/// is refused, so this cannot become a general-purpose yes.
-#[cfg(target_os = "linux")]
-fn allow_camera(window: &tauri::WebviewWindow) {
-    use webkit2gtk::{
-        PermissionRequestExt, SettingsExt, UserMediaPermissionRequestExt, WebViewExt,
-    };
-
-    if let Err(e) = window.with_webview(|webview| {
-        let view = webview.inner();
-        if let Some(settings) = WebViewExt::settings(&view) {
-            settings.set_enable_media_stream(true);
-        }
-        view.connect_permission_request(|_, request| {
-            use webkit2gtk::glib::object::Cast;
-            let media = request
-                .clone()
-                .downcast::<webkit2gtk::UserMediaPermissionRequest>()
-                .ok();
-            match media {
-                // `is_for_video_device` is the camera; audio is not asked for by
-                // this app and is not granted just because it came bundled in
-                // the same request type.
-                Some(m) if m.is_for_video_device() => {
-                    request.allow();
-                    true
-                }
-                _ => {
-                    request.deny();
-                    true
-                }
-            }
-        });
-    }) {
-        // Not fatal: the app works, scanning does not. Saying so beats a
-        // silent NotAllowedError the user has to guess at.
-        eprintln!("could not enable the camera in this webview: {e}");
-    }
-}
-
 /// Start the app.
 ///
 /// `mobile_entry_point` is what the generated Android project calls; on desktop
@@ -195,8 +126,8 @@ pub fn run() {
         .plugin(tauri_plugin_serialplugin::init());
 
     // Registered on every target, unlike the two above: this one IS called from
-    // the webview, and the link it opens is built by the app from the chain
-    // record, never from dapp- or app-authored text.
+    // the webview, for the block-explorer link of a Zcash transaction, which
+    // the app builds itself (explorerTx in packages/core/src/zcash.ts).
     let builder = builder.plugin(tauri_plugin_opener::init());
 
     builder
@@ -205,13 +136,6 @@ pub fn run() {
             {
                 use tauri::Manager;
                 _app.manage(zwallet::ZState::new(_app.handle())?);
-            }
-            #[cfg(target_os = "linux")]
-            {
-                use tauri::Manager;
-                if let Some(window) = _app.get_webview_window("main") {
-                    allow_camera(&window);
-                }
             }
             Ok(())
         })
@@ -225,13 +149,10 @@ pub fn run() {
             ble::ble_connect,
             ble::ble_disconnect,
             ble::ble_request,
-            rpc::rpc_proxy_available,
-            rpc::rpc_call,
             flash::flash_capability,
             flash::flash_ports,
             flash::flash_detect,
             flash::flash_write,
-            camera::camera_exposure,
             files::save_download,
             #[cfg(feature = "zcash-wallet")]
             zwallet::zw_available,
@@ -271,5 +192,5 @@ pub fn run() {
             zwallet::zw_contact_remove
         ])
         .run(tauri::generate_context!())
-        .expect("failed to start the LeekWallet companion");
+        .expect("failed to start the LeekWallet Zcash Companion");
 }
