@@ -27,6 +27,17 @@ export type Section =
 export const SECTIONS: readonly Section[] =
   ["zcash", "balances", "chain", "receive", "send", "apps", "connect", "activity"];
 
+/**
+ * The sections a Zcash-only build has (src/app-mode.ts): the Zcash wallet and
+ * nothing else. The EVM sections are never shown there, shell open or not.
+ */
+export const ZCASH_SECTIONS: readonly Section[] = ["zcash"];
+
+/** The sections of a build: every one in "full", the Zcash one otherwise. */
+export function sectionsFor(mode: "zcash" | "full"): readonly Section[] {
+  return mode === "full" ? SECTIONS : ZCASH_SECTIONS;
+}
+
 /** The body each header expands: the panel that holds the section's content. */
 export const SECTION_PANEL_IDS: Record<Section, string> = {
   zcash: "zcashpanel",
@@ -79,12 +90,19 @@ export const SECTION_HEADER_IDS: Record<Section, string> = {
  * described — open Send, click Send again and it collapses so Receive or
  * Connect a site is one click away rather than a scroll away.
  */
-export function sectionHidden(shellOpen: boolean, open: Section | null): Record<string, boolean> {
+export function sectionHidden(
+  shellOpen: boolean,
+  open: Section | null,
+  enabled: readonly Section[] = SECTIONS,
+): Record<string, boolean> {
   const out: Record<string, boolean> = {};
   for (const s of SECTIONS) {
-    out[SECTION_WRAPPER_IDS[s]] = !shellOpen;
-    out[SECTION_HEADER_IDS[s]] = !shellOpen;
-    out[SECTION_PANEL_IDS[s]] = !shellOpen || open !== s;
+    /* A section this build does not have is hidden whatever else is true:
+     * the Zcash wallet never shows an EVM section, not even collapsed. */
+    const off = !shellOpen || !enabled.includes(s);
+    out[SECTION_WRAPPER_IDS[s]] = off;
+    out[SECTION_HEADER_IDS[s]] = off;
+    out[SECTION_PANEL_IDS[s]] = off || open !== s;
   }
   return out;
 }

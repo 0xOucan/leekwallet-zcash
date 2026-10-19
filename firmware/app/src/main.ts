@@ -39,8 +39,9 @@ import { initFlasher, tauriFlashBridge } from "./flasher.ts";
 import { parsePaymentUri } from "../packages/core/src/payment-uri.ts";
 import { mountApps } from "./apps/mount.ts";
 import {
-  type Section, SECTIONS, SECTION_HEADER_IDS, sectionHidden, toggleSection,
+  type Section, SECTIONS, SECTION_HEADER_IDS, sectionHidden, sectionsFor, toggleSection,
 } from "./nav.ts";
+import { APP_MODE, EVM_ENABLED } from "./app-mode.ts";
 import { appProposer } from "./apps/propose.ts";
 import type { ChainChannel, QrScanOutcome } from "../packages/core/src/mini-app.ts";
 import { fetchTokenBalancesBatched } from "../packages/core/src/multicall.ts";
@@ -94,6 +95,11 @@ const $ = <T extends HTMLElement>(id: string): T => {
   if (!el) throw new Error(`missing element #${id}`);
   return el as T;
 };
+
+/* Which app this is (src/app-mode.ts). index.html ships data-mode="zcash", so
+ * the EVM controls (class evm-only, hidden by styles.css) never paint even
+ * before this line runs; a "full" build switches them on here. */
+document.documentElement.dataset["mode"] = APP_MODE;
 
 /**
  * A line in the device log, newest first, optionally carrying one link.
@@ -827,7 +833,27 @@ async function poll(): Promise<void> {
 const setConnection = (state: string, label: string): void => {
   $("dot").dataset["state"] = state;
   $("conn").textContent = label;
+  if (state !== "error") $("connproblem").hidden = true;
 };
+
+/**
+ * Why the last connection attempt failed, on the Device screen itself.
+ *
+ * The device log is a closed disclosure at the bottom, and on a phone the
+ * reason a USB attempt failed (a permission dialog dismissed, a charge-only
+ * cable, a board on the Bluetooth link) is exactly what the user needs in
+ * front of them. Every line is also logged, for diagnostics.
+ */
+function connectProblem(lines: string[]): void {
+  for (const line of lines) log(line);
+  const box = $("connproblem");
+  box.replaceChildren(...lines.map((line) => {
+    const p = document.createElement("p");
+    p.textContent = line;
+    return p;
+  }));
+  box.hidden = lines.length === 0;
+}
 
 /**
  * Put the controls back to their disconnected state.
@@ -887,7 +913,7 @@ let shellOpen = false;
 
 /** Write the accordion's visibility and its ARIA state. */
 function applySectionVisibility(): void {
-  const hidden = sectionHidden(shellOpen, openSection);
+  const hidden = sectionHidden(shellOpen, openSection, sectionsFor(APP_MODE));
   for (const [id, isHidden] of Object.entries(hidden)) {
     const el = document.getElementById(id);
     if (el) el.hidden = isHidden;
@@ -909,7 +935,9 @@ function openHomeSection(section: Section): void {
 }
 
 function toggleHomeSection(section: Section): void {
-  if (!shellOpen) return;
+  /* The Zcash build has one section and it is the home screen: its header is
+   * not shown and it does not collapse. */
+  if (!shellOpen || !EVM_ENABLED) return;
   openSection = toggleSection(openSection, section);
   applySectionVisibility();
   if (openSection === "balances") {
@@ -937,9 +965,14 @@ function setShellVisible(visible: boolean): void {
   shellOpen = visible;
   /* Always a fixed starting point, never whatever the last session left
      expanded: Balances when the home opens, nothing at all when it closes. */
-  openSection = visible ? "balances" : null;
+  openSection = visible ? (EVM_ENABLED ? "balances" : "zcash") : null;
   applySectionVisibility();
-  if (visible) {
+  document.documentElement.dataset["shell"] = visible ? "open" : "closed";
+  /* The Zcash wallet reads the board's account as soon as the home screen
+   * is up: its seed fingerprint picks which wallet on this device is shown
+   * (another one under a passphrase). */
+  if (visible) zcashView?.opened();
+  if (visible && EVM_ENABLED) {
     renderWalletMenu();
     // refreshAllChainBalances itself no-ops with no address yet, so this is
     // safe to call even before the first derivation has finished.
@@ -1081,13 +1114,13 @@ async function findDevice(kind: LinkKind): Promise<Transport | null> {
       ports = await listPorts();
     } catch (e) {
       setConnection("error", "No device over USB");
-      log(String((e as Error).message ?? e));
+      connectProblem([`USB: ${String((e as Error).message ?? e)}`]);
       return null;
     }
     const port = ports.find((p) => p.likely_device) ?? ports[0];
     if (!port) {
       setConnection("error", "No device over USB");
-      log("no USB serial ports; check the cable, and that you are in the dialout group");
+      connectProblem(["No USB serial port found. Check the cable carries data (not charge-only), and on Linux that you are in the dialout group."]);
       return null;
     }
     /* More than one candidate is unusual and worth saying out loud rather than
@@ -1131,13 +1164,13 @@ async function findDevice(kind: LinkKind): Promise<Transport | null> {
       found = await scanBle();
     } catch (e) {
       setConnection("error", "Bluetooth unavailable");
-      log(String((e as Error).message ?? e));
+      connectProblem([`Bluetooth: ${String((e as Error).message ?? e)}`]);
       return null;
     }
     const device = found[0];
     if (!device) {
       setConnection("error", "No device over Bluetooth");
-      log(BLE_NOT_FOUND);
+      connectProblem([BLE_NOT_FOUND]);
       return null;
     }
     // More than one is unusual and worth saying out loud rather than silently
@@ -1210,7 +1243,7 @@ async function connectOnce(): Promise<void> {
     await transport.open();
   } catch (e) {
     setConnection("error", "Connection failed");
-    log(String((e as Error).message ?? e));
+    connectProblem([`Opening ${found.label} failed: ${String((e as Error).message ?? e)}`]);
     transport = null;
     client = null;
     setMode(null);
@@ -1236,22 +1269,27 @@ async function connectOnce(): Promise<void> {
       /* On USB this is nearly always a device whose Link is set to Bluetooth:
        * the port opened, the bytes went out, and nothing was listening. */
       setConnection("error", "Device did not answer");
+      /* The transport's own words first: on Android a USB read error, a
+       * detached device or a refused claim reads very differently from the
+       * plain timeout the advice below is about, and swallowing it left a
+       * phone user with only the advice. */
+      const why = `Handshake over ${found.label}: ${String((e as Error).message ?? e)}`;
       if (kind === "usb" && !usbPortWasNative) {
         /* The likelier of the two causes, and the one the user cannot guess:
          * a bridge port has no protocol endpoint behind it at all. Say this
          * INSTEAD of the Bluetooth advice, not after it — two explanations for
          * one silence is how an hour goes missing. */
-        log("the port opened but the device never answered.");
-        log("That port is a USB-UART bridge. The protocol runs on the board's");
-        log("native USB only, so nothing is listening there whatever the");
-        log("device's Link setting says. Move the cable to the other USB-C");
-        log("socket on the board and connect again.");
+        connectProblem([
+          why,
+          "The port opened but the device never answered. That port is a USB-UART bridge: the protocol runs on the board's native USB only, so nothing is listening there whatever the device's Link setting says. Move the cable to the other USB-C socket on the board and connect again.",
+        ]);
       } else if (kind === "usb") {
-        log("the port opened but the device never answered.");
-        log("if the device's Link setting is Bluetooth, USB is silent by design —");
-        log("check Settings → Link on the device, or switch this app to Bluetooth.");
+        connectProblem([
+          why,
+          "The port opened but the device never answered. The board serves one link at a time: if its Settings → Link is Bluetooth, USB is silent by design. Set Link to USB on the board (or switch this app to Bluetooth) and connect again.",
+        ]);
       } else {
-        log(`handshake failed: ${String((e as Error).message ?? e)}`);
+        connectProblem([why]);
       }
       await transport.close().catch(() => {});
       transport = null;
@@ -1372,7 +1410,9 @@ async function unlock(): Promise<void> {
 }
 
 async function loadAddresses(): Promise<void> {
-  if (!client) return;
+  /* The Zcash firmware has no getAddress; the Zcash wallet reads its own
+   * account (src/zcash-view.ts). */
+  if (!client || !EVM_ENABLED) return;
 
   /* Each run claims a generation. If another starts while this one is waiting
    * on the device, this one abandons its results rather than appending them to
@@ -1752,6 +1792,7 @@ function applyChain(info: ChainInfo): void {
  * as though the wallet held no accounts at all.
  */
 function remountApps(info: ChainInfo): void {
+  if (!EVM_ENABLED) return;   // no mini-apps in the Zcash wallet
   const address = addresses[selectedIndex] ?? "";
   /* Built here rather than passed in: this runs on address changes too, and a
      request bound at chain-select time would outlive the chain it was for. */
@@ -2301,7 +2342,7 @@ function renderWalletMenu(): void {
  */
 async function refreshAllChainBalances(reason: string): Promise<void> {
   const address = addresses[selectedIndex];
-  if (!address || fetchingAllChainBalances || document.hidden) return;
+  if (!EVM_ENABLED || !address || fetchingAllChainBalances || document.hidden) return;
   fetchingAllChainBalances = true;
   ($("wmrefresh") as HTMLButtonElement).disabled = true;
   allChainRows = new Map();
@@ -2334,7 +2375,7 @@ async function refreshAllChainBalances(reason: string): Promise<void> {
  */
 async function refreshBalances(reason: string): Promise<void> {
   const address = addresses[selectedIndex];
-  if (!address || fetchingBalances) return;
+  if (!EVM_ENABLED || !address || fetchingBalances) return;
   const info = activeChain();
   const chain = info.id;
   fetchingBalances = true;
@@ -4218,6 +4259,7 @@ function applyQrControls(): void {
  * reveal is every address in the account, which the note says out loud.
  */
 async function pairByQr(): Promise<void> {
+  if (!EVM_ENABLED) return;
   if (transport) {
     log("disconnect the USB or Bluetooth link before pairing by QR");
     return;
@@ -4507,7 +4549,9 @@ void initZcashWallet({
 $("connect").addEventListener("click", () => void connect());
 $("unlock").addEventListener("click", () => void unlock());
 $("disconnect").addEventListener("click", () => void disconnect());
-$("qrpair").addEventListener("click", () => void pairByQr());
+/* The EVM QR air gap (ur:crypto-hdkey / ur:eth-sign-request); its button is
+ * evm-only and the Zcash build never wires it. */
+if (EVM_ENABLED) $("qrpair").addEventListener("click", () => void pairByQr());
 {
   // Read at each scan's start, so a change applies to the next scan.
   const box = $("darkcam") as HTMLInputElement;

@@ -13,13 +13,16 @@
     "test": "pnpm -r test && node --experimental-strip-types --disable-warning=ExperimentalWarning test/wc-uri.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/wc-requests.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/rpc-proxy.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/qr.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/qr-decode.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/flasher.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/nav.test.ts",
     "test:zdev": "node --experimental-strip-types --disable-warning=ExperimentalWarning test/zcash-zdev.test.ts",
     "dev": "vite --port 1420 --strictPort",
+    "dev:full": "VITE_LEEK_APP_MODE=full vite --port 1420 --strictPort",
     "build": "vite build",
+    "build:full": "VITE_LEEK_APP_MODE=full vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "tauri": "tauri",
     "android:dev": "tauri android dev",
     "android:build": "CC_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang AR_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar tauri android build --debug",
     "android:build:arm64": "CC_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang AR_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar tauri android build --debug --target aarch64",
+    "android:release:arm64": "bash scripts/android-release.sh",
     "android:check": "cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android"
   },
   "devDependencies": {
