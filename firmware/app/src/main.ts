@@ -1453,7 +1453,7 @@ const when = (d: Date | null): string =>
 async function diagnosticsReport(): Promise<string> {
   const L: string[] = [];
 
-  L.push("LeekWallet Zcash Companion — diagnostics");
+  L.push("Zcash LeekWallet (the LeekWallet Zcash Companion) — diagnostics");
   L.push(new Date().toISOString());
   L.push(`User agent: ${navigator.userAgent}`);
   L.push("");

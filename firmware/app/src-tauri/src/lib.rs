@@ -192,5 +192,5 @@ pub fn run() {
             zwallet::zw_contact_remove
         ])
         .run(tauri::generate_context!())
-        .expect("failed to start the LeekWallet Zcash Companion");
+        .expect("failed to start Zcash LeekWallet");
 }

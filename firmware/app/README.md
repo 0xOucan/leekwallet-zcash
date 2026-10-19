@@ -1,6 +1,8 @@
 # LeekWallet Zcash Companion
 
-The companion app of the LeekWallet Zcash board, **Zcash only**: one
+Shown as **Zcash LeekWallet** (launcher, window title), application id
+`io.leekwallet.zcash.companion`. The companion app of the LeekWallet Zcash
+board, **Zcash only**: one
 [Tauri v2](https://tauri.app) codebase for Linux, macOS, Windows and Android,
 talking to the board over USB or Bluetooth on every platform. It pairs with
 the board, unlocks it, applies a passphrase, and is a full Zcash wallet
@@ -242,7 +244,7 @@ board's own words: every board error is displayed verbatim, with its code.
 **Sign a file**: open an unsigned `.pczt` made by zecz, the desktop app or
 Zodl; the board checks it, shows every output and the fee, and signs on ACCEPT.
 The `.zsig` is saved to the downloads folder (the app's own `Download` folder
-on Android, under `Android/data/com.leekwallet.companion/files/`). The file is
+on Android, under `Android/data/io.leekwallet.zcash.companion/files/`). The file is
 sent as it is: its `.zsig` names the hash of exactly those bytes, which is what
 the wallet that kept the PCZT checks. A compact view is the builder's choice
 (`zecz send --compact`); the wallet below always builds one.
@@ -281,7 +283,11 @@ and switches wallet. The passphrase panel says this, and that the hidden
 wallet's synced data stays on this device under its fingerprint (forget it
 in Settings).
 
-Data lives in the app data directory under `zcash/`:
+Data lives in the app data directory under `zcash/` (on Linux
+`~/.local/share/io.leekwallet.zcash.companion/zcash/`, on macOS
+`~/Library/Application Support/io.leekwallet.zcash.companion/zcash/`, on
+Windows `%APPDATA%\io.leekwallet.zcash.companion\zcash\`, on Android the
+app's private storage):
 `wallets/<test|main>-<zfp16>-<account>` (zfp16: the first 8 bytes of the
 seed fingerprint, in hex), `contacts-<test|main>-<zfp16>.json`, and
 `settings.json` (the server per network, shared): viewing keys and what they
@@ -298,6 +304,23 @@ Companion's framing and session, and signs the PCZT vectors on both networks;
 and `cargo test --lib -- --ignored online` imports and syncs the public test
 account against testnet lightwalletd. To drive the desktop app against zdev,
 start zdev with `--link /tmp/zdev` and the app with `LEEK_SERIAL_PORT=/tmp/zdev`.
+
+## The new application id (October 2026)
+
+The identifier was `com.leekwallet.companion` ("LeekWallet") and is now
+`io.leekwallet.zcash.companion` ("Zcash LeekWallet"), so that a future EVM
+LeekWallet app can sit beside it. The app data directory follows the
+identifier, so nothing carries over by itself:
+
+- **Android**: the new APK installs beside the old app, not over it.
+  Uninstall `com.leekwallet.companion` when you like; in the new app, read
+  the board's account and set the wallet up again: it syncs again from its
+  birthday.
+- **Desktop**: the old data is in `~/.local/share/com.leekwallet.companion/`
+  (Linux), `~/Library/Application Support/com.leekwallet.companion/`
+  (macOS) or `%APPDATA%\com.leekwallet.companion\` (Windows). Delete it, or
+  move its `zcash/` folder into the new directory before the first start to
+  keep the synced wallets, server and contacts (viewing keys only).
 
 ## Diagnostics
 

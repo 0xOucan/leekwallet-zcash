@@ -1,7 +1,8 @@
 # Android build (T29, T30, T59)
 
-The LeekWallet Zcash Companion (Zcash only; package id
-`com.leekwallet.companion`, unchanged so it upgrades in place) runs on Android through the same Tauri shell as the desktop
+The LeekWallet Zcash Companion (Zcash only; shown on the phone as **Zcash
+LeekWallet**, application id `io.leekwallet.zcash.companion`, see "Application
+id" below) runs on Android through the same Tauri shell as the desktop
 build, and since T59 it has **both transports** there: the `transports` command
 answers `["usb", "ble"]` on Android, and the Link selector offers both. Either
 one talks to a device using the same frames and the same four commands as on
@@ -135,7 +136,7 @@ never on launch.
 
 What you see on the first attempt:
 
-- **First Connect on a given device** → Android shows *"Allow LeekWallet to
+- **First Connect on a given device** → Android shows *"Allow Zcash LeekWallet to
   access the USB device?"* with a **"Use by default for this USB device"**
   checkbox. The plugin's Kotlin **blocks** on the answer for up to 30 seconds,
   so a grant lands inside the same attempt: **one tap on Connect is one
@@ -164,11 +165,11 @@ decision, not ours.** The plugin's build script injects it into the generated
 resource that ends in a catch-all `<usb-device />`. Consequences, stated plainly
 because they are visible to the user:
 
-- **Good:** plugging the wallet in offers to open LeekWallet, and a launch
+- **Good:** plugging the wallet in offers to open Zcash LeekWallet, and a launch
   triggered that way grants USB permission *implicitly* — no dialog at all. For
   a fixed-VID device this is the nicest possible path, and it is the reason to
   keep the filter rather than fight it.
-- **Bad:** the catch-all means *any* USB device attached may offer LeekWallet in
+- **Bad:** the catch-all means *any* USB device attached may offer Zcash LeekWallet in
   the chooser, not just an Espressif one. Narrowing it would mean shipping our
   own `res/xml/device_filter.xml` in the app module, which lives under `gen/` and
   would be erased on regeneration — the one thing this repo refuses to do. It is
@@ -197,7 +198,7 @@ before the user has expressed any interest in a device, is the pattern that
 trains people to tap Deny. What happens:
 
 - **Not yet asked** → the plugin calls `requestPermissions`, Android shows its
-  own "Allow LeekWallet to find nearby devices?" dialog. The call returns
+  own "Allow Zcash LeekWallet to find nearby devices?" dialog. The call returns
   *false* immediately — the grant is asynchronous — so this scan fails with the
   `PermissionDenied` message and the next one succeeds. **Tap the scan button
   again after granting.**
@@ -386,7 +387,7 @@ from reading the code, not from a trace.
   plugin's words.
 
 What to report back if it still fails: the red box on the Device panel
-(whole text), whether Android showed the "Allow LeekWallet to access the USB
+(whole text), whether Android showed the "Allow Zcash LeekWallet to access the USB
 device?" dialog, and `adb logcat -s RustStdoutStderr SerialPlugin UsbFdBridge`
 around the attempt (the plugin logs `[SerialOpen]`, `[SerialEnumerate]` and
 the interfaces it saw).
@@ -410,7 +411,7 @@ Nothing here has been run. This is the procedure, not a report.
    **Bluetooth**, and the badge should read `no link`, not `mock`. `mock` means
    the backend answered `transports: []` — check the APK is the new one.
 4. Pick **USB cable** and tap Connect. The first attempt raises *"Allow
-   LeekWallet to access the USB device?"*. Tick **use by default** and tap OK;
+   Zcash LeekWallet to access the USB device?"*. Tick **use by default** and tap OK;
    the connection continues in the same attempt. There is **no** second tap, in
    contrast to BLE.
 5. Compare the passkey against the OLED, press ALLOW, and run one signing
@@ -635,7 +636,7 @@ it is built: the same environment, `pnpm tauri android init` (then
   removed (README); so was the camera: nothing in the app scans a QR code,
   so the APK asks for no camera permission.
 - **A `.zsig`** from "Sign a file" goes to the app's own Download folder
-  (`Android/data/com.leekwallet.companion/files/Download`), which needs no
+  (`Android/data/io.leekwallet.zcash.companion/files/Download`), which needs no
   storage permission; on Android 11 and later only a USB file transfer or a
   file manager with access to `Android/data` reaches it.
 - A build without the wallet: `cargo build --no-default-features` in
@@ -646,6 +647,22 @@ Known state (2026-10-17): the arm64 debug APK builds with the wallet in it;
 nothing of it has run on a phone yet. Unverified there: the file picker for a
 `.pczt` (Tauri's webview chrome client), lightwalletd over the phone's network,
 proving time and memory on the phone, and the whole board path.
+
+## Application id
+
+The app is **Zcash LeekWallet** on the launcher, and its application id is
+`io.leekwallet.zcash.companion` (`identifier` in `tauri.conf.json`), in the
+`io.leekwallet.zcash.*` family of the Zodl fork. Until October 2026 it was
+"LeekWallet", `com.leekwallet.companion`; it changed so that a future EVM
+LeekWallet app can be installed next to it and told apart.
+
+A different application id is a different app to Android: the new APK
+installs **beside** an old `com.leekwallet.companion`, not over it, and
+nothing carries over between them. Uninstall the old one when you like (it
+holds viewing keys and synced data only, never a spending key). In the new
+app, read the board's account and set the wallet up again: it syncs again
+from the wallet's birthday (on the board, or typed). The server setting and
+the address book start fresh too.
 
 ## Hand edits in the generated manifest
 
