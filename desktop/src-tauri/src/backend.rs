@@ -209,6 +209,9 @@ pub fn sync(profile: &Profile, on_progress: impl Fn(SyncProgress) + Send + Sync)
             let fraction = (st.0 as f64 / span as f64).min(1.0);
             on_progress(SyncProgress::Scanned { start: r.start, end: r.end, tip, fraction });
         }
+        // Full transactions fetched after the scan: nothing to show beyond
+        // the balances and history they correct.
+        SyncEvent::Transactions(_) => {}
     }))??;
     let s = status.context("the wallet has no summary after sync")?;
     let progress = if s.progress.1 == 0 { 1.0 } else { s.progress.0 as f64 / s.progress.1 as f64 };

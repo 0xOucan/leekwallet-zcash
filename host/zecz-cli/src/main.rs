@@ -267,6 +267,17 @@ async fn cmd_sync(profile: Profile, batch: u32) -> Result<()> {
                 Some(t) => eprintln!("  scanned {}..{} ({} blocks behind tip {t})", r.start, r.end, t.saturating_sub(r.end.saturating_sub(1))),
                 None => eprintln!("  scanned {}..{}", r.start, r.end),
             },
+            SyncEvent::Transactions(t) => {
+                if t.stored + t.statuses + t.vanished_coins > 0 {
+                    eprintln!(
+                        "  fetched {} full transaction(s), {} status(es); {} transparent coin(s) found spent on chain",
+                        t.stored, t.statuses, t.vanished_coins
+                    );
+                }
+                if t.failed > 0 {
+                    eprintln!("  {} transaction data request(s) failed; the next sync retries them", t.failed);
+                }
+            }
         })
         .await?;
     match status {
