@@ -1215,9 +1215,9 @@ typedef enum {
     SET_TRANSPORT,
     SET_BLE_NAME,
     SET_USB,
-    /* Next to Wipe, and for the same reason: both are things you should have
-     * to scroll past everything else to reach. */
-    SET_BLIND,
+    /* No "Blind sign" entry: it governed Ethereum calls the device could not
+     * decode, and the Zcash firmware signs no Ethereum at all (ROADMAP 1.1).
+     * The setting and its warning screen stay in the code, unreachable. */
     SET_WIPE,
     SET_BACK,
     SETTINGS_ITEMS
@@ -1240,7 +1240,6 @@ static const char *settings_items[SETTINGS_ITEMS] = {
     "Link",
     "BLE Name",
     "USB HID Test",
-    "Blind sign",
     "Wipe Device",
     "Back"
 };
@@ -3039,12 +3038,6 @@ static void screen_settings_render(void)
             snprintf(line, sizeof(line), "%s Entry %s",
                      item_idx == settings_selection ? ">" : " ",
                      mnemonic_entry_blocks_enabled() ? "Blocks" : "Simple");
-        } else if (item_idx == SET_BLIND) {
-            /* The state is on the menu line, not hidden behind the item. A
-             * weakened device must be visible without going looking. */
-            snprintf(line, sizeof(line), "%s Blind %s",
-                     item_idx == settings_selection ? ">" : " ",
-                     blind_signing_enabled() ? "[ON]" : "[OFF]");
         } else if (item_idx == SET_AUTOLOCK) {
             snprintf(line, sizeof(line), "%s Lock %s",
                      item_idx == settings_selection ? ">" : " ",
@@ -3179,17 +3172,6 @@ static void screen_settings_on_button(button_id_t btn)
                     ui_set_screen(SCREEN_BLE_NAME);
                     break;
                 case SET_USB:  usb_hid_test();     break;
-                case SET_BLIND:
-                    /* Asymmetric on purpose. Turning the protection back on
-                     * is one press, because nothing is lost by doing it by
-                     * accident; turning it off goes through a screen that
-                     * says what it costs and asks repeatedly. */
-                    if (blind_signing_enabled()) {
-                        blind_signing_set(false);
-                    } else {
-                        ui_set_screen(SCREEN_BLIND_WARN);
-                    }
-                    break;
                 case SET_WIPE:
                     ui_set_screen(SCREEN_WIPE_CONFIRM);
                     break;
