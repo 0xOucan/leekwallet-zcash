@@ -133,7 +133,12 @@ impl<R: Runtime> UsbTransport<R> {
     pub fn open(serial: SerialPort<R>, path: &str) -> Result<Self, TransportError> {
         let description = describe(&serial, path);
 
-        serial
+        /* The plugin answers with the session path it registered the port
+         * under, which is the device path for a one-port device like the
+         * ESP32-S3's USB-Serial-JTAG but `device#N` for a multi-port one.
+         * Every later call must use that path: the requested one would be
+         * "port not open" on the first write. */
+        let session = serial
             .open(
                 path.to_string(),
                 BAUD,
@@ -147,6 +152,7 @@ impl<R: Runtime> UsbTransport<R> {
                 Some(READ_SLICE_MS),
             )
             .map_err(|e| classify_open(e, description))?;
+        let path = session.as_str();
 
         /* Drop whatever the device had queued before this app arrived.
          *
@@ -162,6 +168,9 @@ impl<R: Runtime> UsbTransport<R> {
             path.to_string(),
             tauri_plugin_serialplugin::state::ClearBuffer::Input,
         );
+        // clear_buffer empties the driver's ring, not the plugin's RX hub,
+        // which has been reading since the port opened: drain that too.
+        drain(&serial, path, 50, 20);
 
         Ok(Self { serial, path: path.to_string(), decoder: FrameDecoder::new() })
     }
@@ -176,6 +185,7 @@ impl<R: Runtime> UsbTransport<R> {
             self.path.clone(),
             tauri_plugin_serialplugin::state::ClearBuffer::Input,
         );
+        drain(&self.serial, &self.path, 1, 8);
         self.decoder.reset();
 
         self.serial
@@ -230,6 +240,23 @@ impl<R: Runtime> Drop for UsbTransport<R> {
     }
 }
 
+/// Read and drop whatever the plugin's RX hub holds, `rounds` reads of up to
+/// `ms` each, stopping at the first empty one.
+///
+/// The hub reads the device continuously and keeps what nobody asked for
+/// (up to 64 KiB) for the next read, so bytes from before a request (console
+/// text, or a reply that arrived after an earlier timeout) would otherwise
+/// be the first thing the next `recv` sees. The decoder resyncs on the `LK`
+/// marker, but a stale *frame* is indistinguishable from the answer.
+fn drain<R: Runtime>(serial: &SerialPort<R>, path: &str, ms: u64, rounds: usize) {
+    for _ in 0..rounds {
+        match serial.read_binary(path.to_string(), Some(ms), Some(4096)) {
+            Ok(bytes) if !bytes.is_empty() => {}
+            _ => break,
+        }
+    }
+}
+
 /// Best-effort human name for a device we may not have permission to read.
 fn describe<R: Runtime>(serial: &SerialPort<R>, path: &str) -> String {
     list_ports(serial)
@@ -253,9 +280,19 @@ fn classify_open(e: impl std::fmt::Display, product: String) -> TransportError {
     let lower = text.to_ascii_lowercase();
     if lower.contains("permission") {
         TransportError::PermissionDenied { product }
-    } else if lower.contains("no driver") || lower.contains("unsupported") {
+    } else if lower.contains("no driver") || lower.contains("unsupported") || lower.contains("no cdc") {
         TransportError::NotCdcAcm { product }
+    } else if lower.contains("device not found") {
+        TransportError::NoDevice
+    } else if lower.contains("busy") {
+        TransportError::Serial(format!(
+            "{product}: the USB interface is busy ({text}). Another app (a USB \
+             terminal, or a previous connection that was not released) holds it. \
+             Close that app or unplug and replug the board, then Connect again."
+        ))
     } else {
-        TransportError::Serial(text)
+        // The plugin's own words, with the device named: a phone user reading
+        // "serial: io error" cannot tell which of several devices it was.
+        TransportError::Serial(format!("opening {product}: {text}"))
     }
 }
