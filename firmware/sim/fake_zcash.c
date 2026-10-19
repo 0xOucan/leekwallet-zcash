@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "fake_wallet.h"
 #include "zcash-account.h"
 #include "../../vectors/keys_vectors.h"
 
@@ -19,6 +20,10 @@ WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount
 {
     fake_zcash_derive_calls++;
     memset(out, 0, sizeof *out);
+    /* The vault's gate, as wallet_with_seed() applies it to the real one. */
+    if (!fake_wallet_seed_ready()) {
+        return WALLET_ERROR_NO_MNEMONIC;
+    }
     for (size_t i = 0; i < ZV_KEYS_COUNT; i++) {
         const zv_key_vector *v = &ZV_KEYS[i];
         if (v->account == account && v->network == network && !v->passphrase[0]) {

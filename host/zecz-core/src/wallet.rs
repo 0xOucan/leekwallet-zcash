@@ -184,8 +184,12 @@ pub struct DiversifiedAddress {
 pub enum TxKind {
     /// Value came in from elsewhere.
     Received,
-    /// Value left the account (to others, or to itself for a fee).
+    /// Value left the account to others.
     Sent,
+    /// The account paid itself (e.g. to its own t-address): no one else
+    /// was paid, and the balance only lost the fee. `amount_zat` is that
+    /// loss, which is `-delta_zat`.
+    SentToSelf,
     /// The account's transparent coins moved into its shielded pool.
     Shielded,
     /// The account's shielded funds moved between its own pools.
@@ -214,7 +218,8 @@ pub struct TxRecord {
     pub kind: TxKind,
     /// The change in the account's balance; negative when value left.
     pub delta_zat: i64,
-    /// What moved: received, paid to others, shielded, or crossed pools.
+    /// What moved: received, paid to others, shielded, or crossed pools;
+    /// for a send to itself, the fee it cost.
     pub amount_zat: u64,
     /// Known when the wallet knows every input's value (always for a fully
     /// shielded transaction). Paid by the sender, which for a received
@@ -259,6 +264,23 @@ pub enum SyncEvent {
     Started { server: String, tip: u64 },
     /// A range of blocks has been scanned.
     Scanned(ScannedRange),
+    /// After the scan, full transactions were fetched (see
+    /// [`Wallet::fetch_transaction_data`]).
+    Transactions(TxDataSummary),
+}
+
+/// What [`Wallet::fetch_transaction_data`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TxDataSummary {
+    /// Full transactions stored (new or again).
+    pub stored: usize,
+    /// Transactions whose chain status was recorded.
+    pub statuses: usize,
+    /// Wallet coins the chain no longer lists as unspent, whose
+    /// t-addresses were searched for the spend.
+    pub vanished_coins: usize,
+    /// Requests that failed; they are asked again on the next sync.
+    pub failed: usize,
 }
 
 /// Where the wallet stands after a sync.
@@ -385,6 +407,43 @@ pub fn short_fingerprint(fp: &[u8; 32]) -> String {
 /// Formats zatoshis as "1.23456789 ZEC (123456789 zat)".
 pub fn format_zec(zat: u64) -> String {
     format!("{}.{:08} ZEC ({} zat)", zat / 100_000_000, zat % 100_000_000, zat)
+}
+
+impl TxKind {
+    /// How a history line names it.
+    pub fn label(self) -> &'static str {
+        match self {
+            TxKind::Received => "Received",
+            TxKind::Sent => "Sent",
+            TxKind::SentToSelf => "Sent to yourself",
+            TxKind::Shielded => "Shielded",
+            TxKind::Internal => "Moved between pools",
+        }
+    }
+}
+
+impl TxRecord {
+    /// One line of `zecz history`: kind, signed amount, fee, where in the
+    /// chain, txid. A send to yourself shows the balance change (minus the
+    /// fee) and no separate fee: the fee is all it cost.
+    pub fn summary_line(&self) -> String {
+        let sign = match self.kind {
+            TxKind::Received => "+",
+            TxKind::Sent | TxKind::SentToSelf => "-",
+            TxKind::Shielded | TxKind::Internal => "",
+        };
+        let mut line = format!("{:<20} {sign}{}", self.kind.label(), format_zec(self.amount_zat));
+        if let (Some(fee), TxKind::Sent | TxKind::Shielded | TxKind::Internal) = (self.fee_zat, self.kind) {
+            line.push_str(&format!("  fee {}", format_zec(fee)));
+        }
+        match (self.mined_height, self.expired_unmined) {
+            (Some(h), _) => line.push_str(&format!("  block {h}")),
+            (None, true) => line.push_str("  expired unmined"),
+            (None, false) => line.push_str("  unmined"),
+        }
+        line.push_str(&format!("  {}", self.txid));
+        line
+    }
 }
 
 /// Parses a ZEC amount with up to 8 decimals into zatoshis.
@@ -791,7 +850,14 @@ impl Wallet {
                 (TxKind::Internal, c.max(0) as u64)
             } else if delta < 0 {
                 let amount = if paid_out > 0 { paid_out } else { (delta.unsigned_abs()).saturating_sub(fee_zat.unwrap_or(0)) };
-                (TxKind::Sent, amount)
+                if amount == 0 {
+                    // Nothing went to anyone else: every output was the
+                    // account's own, and what it lost was the fee. Showing
+                    // "sent 0" next to that fee reads as a bug.
+                    (TxKind::SentToSelf, delta.unsigned_abs())
+                } else {
+                    (TxKind::Sent, amount)
+                }
             } else {
                 (TxKind::Received, delta as u64)
             };
@@ -845,7 +911,226 @@ impl Wallet {
         zcash_client_backend::sync::run(&mut client, &self.profile.network, &cache, &mut self.db, batch)
             .await
             .map_err(|e| anyhow!("sync failed: {e}"))?;
+        let summary = self.fetch_transaction_data(&mut client).await?;
+        on_event(SyncEvent::Transactions(summary));
         self.sync_status()
+    }
+
+    /// The second half of a sync: compact blocks carry no transparent
+    /// inputs, so scanning alone never sees a transparent coin of the
+    /// wallet being spent, e.g. by a shield made by another wallet with the
+    /// same keys (zecz on another machine, the Companion, the Chrome
+    /// wallet). Without this the coin stays in the balance for good.
+    ///
+    /// First it answers the wallet database's transaction data requests
+    /// (`WalletRead::transaction_data_requests`): full transactions to
+    /// enhance (the scan found them by a note; storing one in full marks
+    /// the transparent coins it spends), the chain status of unmined ones,
+    /// and the transactions of t-addresses whose coins need a spend search.
+    /// Then it asks lightwalletd for the UTXO set of every t-address that
+    /// holds an unspent coin in the wallet: a coin missing from it was
+    /// spent, so the t-address's transactions since the coin was mined are
+    /// stored, which records the spend.
+    ///
+    /// A request that fails is counted and left for the next sync.
+    pub async fn fetch_transaction_data(&mut self, chain: &mut impl lwd::ChainData) -> Result<TxDataSummary> {
+        use std::collections::HashSet;
+        use zcash_client_backend::data_api::{
+            OutputStatusFilter, TransactionDataRequest as Req, TransactionStatus, TransactionStatusFilter,
+        };
+
+        let mut summary = TxDataSummary::default();
+        let Some(tip) = self.db.chain_height()? else {
+            return Ok(summary);
+        };
+        let tip = u32::from(tip);
+        let mut asked: HashSet<Req> = HashSet::new();
+        // Storing a transaction can raise new requests (a coin it pays the
+        // wallet needs a spend search), so ask again a few times.
+        for _round in 0..4 {
+            let requests: Vec<Req> =
+                self.db.transaction_data_requests()?.into_iter().filter(|r| !asked.contains(r)).collect();
+            if requests.is_empty() {
+                break;
+            }
+            // Requests for transactions with outputs unspent now (librustzcash
+            // checks the ZIP 320 ephemeral addresses this way, from height 0,
+            // on every sync) are answered together by the UTXO set: one cheap
+            // call rather than each address's whole history.
+            let (unspent, requests): (Vec<Req>, Vec<Req>) = requests.into_iter().partition(|r| {
+                matches!(r, Req::TransactionsInvolvingAddress(q) if *q.output_status_filter() == OutputStatusFilter::Unspent)
+            });
+            if !unspent.is_empty() {
+                asked.extend(unspent.iter().cloned());
+                let addrs: Vec<String> = unspent
+                    .iter()
+                    .filter_map(|r| match r {
+                        Req::TransactionsInvolvingAddress(q) => {
+                            Some(Address::Transparent(q.address()).encode(&self.profile.network))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let done: Result<()> = async {
+                    let mut txids: Vec<[u8; 32]> =
+                        chain.unspent_outpoints(&addrs).await?.into_iter().map(|(t, _)| t).collect();
+                    txids.sort();
+                    txids.dedup();
+                    for txid in txids {
+                        if let Some(t) = chain.transaction(txid).await? {
+                            self.store_chain_tx(&t, tip)?;
+                            summary.stored += 1;
+                        }
+                    }
+                    for r in &unspent {
+                        if let Req::TransactionsInvolvingAddress(q) = r {
+                            let as_of = q.block_range_end().map(|e| e - 1).unwrap_or(BlockHeight::from_u32(tip));
+                            self.db.notify_address_checked(q.clone(), as_of)?;
+                        }
+                    }
+                    Ok(())
+                }
+                .await;
+                if done.is_err() {
+                    summary.failed += 1;
+                }
+            }
+            for req in requests {
+                asked.insert(req.clone());
+                let done: Result<()> = async {
+                    match &req {
+                        Req::GetStatus(txid) => {
+                            let status = match chain.transaction(*txid.as_ref()).await? {
+                                None => TransactionStatus::TxidNotRecognized,
+                                Some(t) => match t.mined_height {
+                                    Some(h) => TransactionStatus::Mined(BlockHeight::from_u32(h)),
+                                    None => TransactionStatus::NotInMainChain,
+                                },
+                            };
+                            self.db.set_transaction_status(*txid, status)?;
+                            summary.statuses += 1;
+                        }
+                        Req::Enhancement(txid) => match chain.transaction(*txid.as_ref()).await? {
+                            None => {
+                                self.db.set_transaction_status(*txid, TransactionStatus::TxidNotRecognized)?;
+                                summary.statuses += 1;
+                            }
+                            Some(t) => {
+                                self.store_chain_tx(&t, tip)?;
+                                summary.stored += 1;
+                            }
+                        },
+                        Req::TransactionsInvolvingAddress(q) => {
+                            // Mempool-only requests (for ZIP 320 ephemeral
+                            // addresses) need a mempool stream; the next
+                            // sync finds such transactions mined.
+                            if *q.tx_status_filter() == TransactionStatusFilter::Mempool {
+                                return Ok(());
+                            }
+                            // The end is exclusive, and lightwalletd refuses
+                            // one past the tip.
+                            let end = q.block_range_end().map(u32::from).unwrap_or(tip + 1).min(tip + 1);
+                            let start = u32::from(q.block_range_start());
+                            let addr = Address::Transparent(q.address()).encode(&self.profile.network);
+                            if start < end {
+                                for t in chain.address_transactions(&addr, start, end - 1).await? {
+                                    self.store_chain_tx(&t, tip)?;
+                                    summary.stored += 1;
+                                }
+                            }
+                            let as_of = q.block_range_end().map(|e| e - 1).unwrap_or(BlockHeight::from_u32(tip));
+                            self.db.notify_address_checked(q.clone(), as_of)?;
+                        }
+                        // Only with librustzcash's `spend-index` feature,
+                        // which this wallet does not enable.
+                        #[allow(unreachable_patterns)]
+                        _ => {}
+                    }
+                    Ok(())
+                }
+                .await;
+                if done.is_err() {
+                    summary.failed += 1;
+                }
+            }
+        }
+
+        // Coins the wallet holds as unspent, against the chain's UTXO set.
+        let coins = self.unspent_transparent_coins()?;
+        if !coins.is_empty() {
+            let mut addresses: Vec<String> = coins.iter().map(|c| c.2.clone()).collect();
+            addresses.sort();
+            addresses.dedup();
+            match chain.unspent_outpoints(&addresses).await {
+                Err(_) => summary.failed += 1,
+                Ok(live) => {
+                    let live: HashSet<([u8; 32], u32)> = live.into_iter().collect();
+                    // Per t-address, the lowest height a vanished coin was mined at.
+                    let mut search: std::collections::BTreeMap<String, u32> = Default::default();
+                    for (txid, index, addr, height) in &coins {
+                        if !live.contains(&(*txid, *index)) && *height <= tip {
+                            summary.vanished_coins += 1;
+                            let h = search.entry(addr.clone()).or_insert(*height);
+                            *h = (*h).min(*height);
+                        }
+                    }
+                    for (addr, start) in search {
+                        match chain.address_transactions(&addr, start, tip).await {
+                            Err(_) => summary.failed += 1,
+                            Ok(txs) => {
+                                for t in txs {
+                                    match self.store_chain_tx(&t, tip) {
+                                        Ok(()) => summary.stored += 1,
+                                        Err(_) => summary.failed += 1,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(summary)
+    }
+
+    /// Decrypts and stores a full transaction from the chain.
+    fn store_chain_tx(&mut self, t: &lwd::ChainTx, tip: u32) -> Result<()> {
+        use zcash_client_backend::data_api::wallet::decrypt_and_store_transaction;
+        use zcash_primitives::transaction::Transaction;
+        use zcash_protocol::consensus::BranchId;
+        let params = self.profile.network;
+        let height = BlockHeight::from_u32(t.mined_height.unwrap_or(tip + 1));
+        let tx = Transaction::read(&t.raw[..], BranchId::for_height(&params, height)).context("not a transaction")?;
+        decrypt_and_store_transaction(&params, &mut self.db, &tx, t.mined_height.map(BlockHeight::from_u32))
+            .map_err(|e| anyhow!("storing transaction {}: {e}", tx.txid()))
+    }
+
+    /// The account's mined transparent coins with no recorded spend: (txid
+    /// in internal byte order, output index, t-address, mined height).
+    fn unspent_transparent_coins(&self) -> Result<Vec<([u8; 32], u32, String, u32)>> {
+        use rusqlite::{Connection, OpenFlags};
+        let conn = Connection::open_with_flags(self.profile.db_path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .context("opening the wallet database")?;
+        let mut stmt = conn.prepare(
+            "SELECT t.txid, tro.output_index, tro.address, t.mined_height
+             FROM transparent_received_outputs tro
+             JOIN transactions t ON t.id_tx = tro.transaction_id
+             WHERE t.mined_height IS NOT NULL
+             AND NOT EXISTS (
+                SELECT 1 FROM transparent_received_output_spends s
+                WHERE s.transparent_received_output_id = tro.id
+             )",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, u32>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?))
+        })?;
+        let mut coins = Vec::new();
+        for row in rows {
+            let (txid, index, addr, height) = row?;
+            let txid: [u8; 32] = txid[..].try_into().map_err(|_| anyhow!("bad txid in the wallet database"))?;
+            coins.push((txid, index, addr, height));
+        }
+        Ok(coins)
     }
 
     /// Where the wallet stands, from its database; None before any sync.

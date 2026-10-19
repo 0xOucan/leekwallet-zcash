@@ -1215,3 +1215,85 @@ checked on Xtensa).
   12/18 with the old `host.js` and `ble-link.js`).
 - Left: try it on the board in Brave (USB, Switch to Bluetooth, `fuser`
   empty during Bluetooth; Disconnect and Forget on mainnet).
+
+### Desktop wallet: stale transparent balance, sends to yourself, 0x0300 after connecting (2026-10-18)
+Three things seen running the desktop app on testnet (account imported
+from the board, ZFP 551A1FD4), on branch `desktop-wallet-fixes`.
+- **Stale transparent balance.** The app showed Transparent 0.0102 TAZ
+  and "Shield transparent funds" for a coin already spent: faf76b13…
+  paid 0.0102 TAZ to the wallet's own t-address, and a shield made by
+  another wallet with the same keys (d18f6614…, 0.00995 shielded) spent
+  it. Cause: compact blocks carry no transparent inputs, so a scan never
+  sees a transparent spend; `zcash_client_backend::sync::run` only adds
+  UTXOs (`put_received_transparent_utxo` is an upsert and its own doc
+  says spent ones are left in place), and nothing answered the wallet
+  database's `transaction_data_requests`, so the full transactions that
+  mark spends were never fetched. The Chrome engine runs the same
+  `sync::run` and has the same gap; it showed 0 only because its account
+  was imported after the shield, so it never saw the coin unspent.
+  Fix: `Wallet::sync` ends with `fetch_transaction_data`: it answers the
+  requests (GetTransaction → `decrypt_and_store_transaction`, status of
+  unmined ones, GetTaddressTxids spend searches with
+  `notify_address_checked`; the ZIP 320 ephemeral-address checks, asked
+  from height 0 on every sync, go to one GetAddressUtxos call), then
+  checks every unspent transparent coin of the wallet against the UTXO
+  set and, for a vanished one, stores its t-address's transactions since
+  it was mined. Errors are counted (`SyncEvent::Transactions`), not
+  fatal. Offline tests with a chain in memory (`tests/transparent_spend.rs`:
+  a shield made by a second wallet removes the coin and the prompt), an
+  ignored one against testnet lightwalletd (passes). Follow-up: the
+  Chrome engine (`chrome/engine/src/wallet.rs`) needs the same step; not
+  touched here.
+- **Sends to yourself.** A mined send to the wallet's own address read
+  "−0.00000000 TAZ, Fee 0.00020000 TAZ": the history took the amount as
+  the balance change minus the fee. New `TxKind::SentToSelf` with the
+  balance change as amount; the desktop shows "Sent to yourself −fee"
+  (as the Chrome popup does), and a new `zecz history` prints the same.
+  Tested on a real t→own-t transaction built in the test, unmined and
+  mined.
+- **0x0300 right after connecting.** Over Bluetooth the desktop got "no
+  wallet on the device: create or import one" (a retry worked); Android
+  and Chrome got "derivation failed" right after pairing over BLE.
+  Analysis of protocol.c, leek-wallet.c and the UI:
+  - A real race, fixed: `wait_for_wallet()` took `unlocked` and a
+    selected wallet for ready. But `wallet_unlock()` sets `unlocked`
+    before it loads the wallet metadata, migrates an old vault and
+    decrypts the active seed, and `wallet_select_wallet()` (called by the
+    home screen after an unlock when no wallet is active, and by
+    selectWallet) clears `has_mnemonic` before loading the next seed. A
+    zGetAccount in that window passed the wait; `wallet_with_seed()`
+    then returned NO_MNEMONIC, which `send_wallet_error()` words as "no
+    wallet on the device". The wait now requires `has_mnemonic`, and a
+    NO_MNEMONIC on a board that has a wallet reads "the wallet is still
+    opening on the device; try again" (still 0x0300). Sim test
+    `test_zcash_waits_for_the_seed` (the fake vault now models the
+    window) fails on the old wait.
+  - Plausible, not changed: "derivation failed" is what
+    `send_wallet_error()` says for any other error, including
+    STORAGE_FAILED when `derive_lock_take()` waits 5 s in vain. Right
+    after an unlock the home screen derives the fingerprint and pays for
+    the BIP 39 seed (PBKDF2, 2048 rounds) under that lock, and the
+    receive/wallet screens derive too; a zGetAccount arriving then waits
+    on the lock, usually long enough, but the 5 s bound plus the
+    Sinsemilla derivation on the worker can lose. A failed
+    `zcash_worker_run()` reads the same, but it only fails without a
+    worker task or after 120 s, so it is an unlikely source. With USB
+    and BLE both up (Brave holding the
+    USB port while Chrome paired over BLE), two hosts can drive the
+    vault and the worker at once.
+  - The 10 s deadline of `wait_for_wallet()` ends in NO_MNEMONIC when
+    the vault is unlocked but no wallet gets selected (the home screen
+    selects wallet 1 only when shown); rare, now worded as "still
+    opening".
+  - Host side, for all of these and for boards on older firmware:
+    leek-device retries the first zGetAccount of a session once after
+    1.5 s on 0x0300 (zecz, desktop, Android JNI). Not retried: other
+    errors, later requests. The Chrome extension's own client is the
+    other agent's.
+- Tests: `cd host && cargo test` 80 passed, 6 ignored;
+  `desktop/src-tauri` 31 passed, 3 ignored;
+  `make -C firmware/sim test` 36 suites passed; desktop `tsc` clean.
+- Left: on the board, a desktop sync of the account above should drop
+  the 0.0102 TAZ and the shield prompt; the history should read "Sent to
+  yourself" for faf76b13…; connect over Bluetooth right after unlocking
+  a few times.

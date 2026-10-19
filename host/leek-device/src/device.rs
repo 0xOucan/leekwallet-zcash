@@ -38,6 +38,9 @@ const LABEL_TRANSCRIPT: &[u8] = b"leek-session-transcript-v2";
 
 /// Error codes the device sends (protocol.c).
 pub const ERR_NOT_UNLOCKED: u64 = 0x0100;
+/// No seed to derive from: "no wallet on the device", "derivation failed",
+/// or (newer firmware) "the wallet is still opening".
+pub const ERR_NO_WALLET: u64 = 0x0300;
 pub const ERR_USER_REJECTED: u64 = 0x0200;
 pub const ERR_USER_TIMEOUT: u64 = 0x0201;
 pub const ERR_SESSION: u64 = 0x0400;
@@ -224,6 +227,11 @@ impl FramePort for leek_transport_serial::SerialTransport {
 pub struct Device {
     port: Box<dyn FramePort>,
     session: Option<Session>,
+    /// Whether a zGetAccount has been answered in this session; until then
+    /// a 0x0300 is retried once (see [`Device::z_get_account`]).
+    account_answered: bool,
+    /// The pause before that retry.
+    no_wallet_retry: Duration,
 }
 
 /// Replies can take as long as a person reading the review screens.
@@ -234,6 +242,9 @@ const SHORT: Duration = Duration::from_secs(10);
 /// first wait up to 10 s for its vault after the PIN; 10 s was not enough on
 /// the first board.
 const DERIVE: Duration = Duration::from_secs(90);
+/// The pause before the one retry of a first zGetAccount refused with
+/// 0x0300: about the vault's own unlock (one PBKDF2 on the S3).
+pub const NO_WALLET_RETRY: Duration = Duration::from_millis(1500);
 
 impl Device {
     /// The device on a serial port (a board, or zdev's PTY).
@@ -245,7 +256,7 @@ impl Device {
 
     /// The device over any framed transport.
     pub fn with_port(port: Box<dyn FramePort>) -> Self {
-        Self { port, session: None }
+        Self { port, session: None, account_answered: false, no_wallet_retry: NO_WALLET_RETRY }
     }
 
     fn roundtrip(&mut self, frame_type: u8, payload: &[u8], timeout: Duration) -> Result<(u8, Vec<u8>)> {
@@ -312,6 +323,7 @@ impl Device {
         }
         let keys = derive(shared.as_bytes(), &host_pub, &device_pub, &host_nonce, &device_nonce);
         show(&keys.passkey);
+        self.account_answered = false;
         self.session = Some(Session {
             send: ChaCha20Poly1305::new(Key::from_slice(&keys.h2d)),
             recv: ChaCha20Poly1305::new(Key::from_slice(&keys.d2h)),
@@ -396,11 +408,33 @@ impl Device {
     }
 
     /// `zGetAccount`: UFVK, UA, t-address and ZIP 32 seed fingerprint.
+    ///
+    /// The first one of a session is asked again once, after
+    /// [`NO_WALLET_RETRY`], if the device answers 0x0300. Right after
+    /// connecting (over Bluetooth especially, and right after the PIN) a
+    /// board that holds a wallet could answer "no wallet on the device" or
+    /// "derivation failed": its seed was not in RAM yet, or another task
+    /// held it. Firmware before the fix of wait_for_wallet() let a request
+    /// through while the vault was still decrypting the seed; a retry a
+    /// moment later worked. A device that truly holds no wallet costs one
+    /// extra pause before the same error.
     pub fn z_get_account(&mut self, account: u32, network: &str) -> Result<Value> {
-        self.call("zGetAccount", vec![
+        let fields = || vec![
             ("account", Value::Integer(account.into())),
             ("network", Value::Text(network.into())),
-        ], DERIVE)
+        ];
+        let r = match self.call("zGetAccount", fields(), DERIVE) {
+            Err(e) if !self.account_answered && is_code(&e, ERR_NO_WALLET) => {
+                if std::env::var_os("ZECZ_DEBUG").is_some() {
+                    eprintln!("[zecz] zGetAccount: {e:#}; asking again in {} ms", self.no_wallet_retry.as_millis());
+                }
+                std::thread::sleep(self.no_wallet_retry);
+                self.call("zGetAccount", fields(), DERIVE)
+            }
+            r => r,
+        }?;
+        self.account_answered = true;
+        Ok(r)
     }
 
     /// `zShowAddress`: the device shows its own unified address for the user
@@ -531,6 +565,108 @@ mod tests {
         assert!(t.contains("or use the Mainnet app."), "{t}");
         let e = DeviceError { code: ERR_BOARD_NETWORK, message: "x".into() };
         assert_eq!(e.to_string(), "device error 0x0528: x");
+    }
+
+    /// The device end of a session, answering from a script.
+    struct ScriptedDevice {
+        h2d: ChaCha20Poly1305,
+        d2h: ChaCha20Poly1305,
+        counter: u64,
+        /// Per request: Ok(result) or Err((code, message)).
+        replies: std::collections::VecDeque<Result<Value, (u64, &'static str)>>,
+        pending: Option<(u8, Vec<u8>)>,
+        asked: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl FramePort for ScriptedDevice {
+        fn send(&mut self, frame_type: u8, payload: &[u8]) -> Result<(), TransportError> {
+            assert_eq!(frame_type, FRAME_ENC_REQUEST);
+            let plain = self.h2d.decrypt(Nonce::from_slice(&nonce_for(self.counter)), payload).unwrap();
+            let req: Value = ciborium::de::from_reader(&plain[..]).unwrap();
+            self.asked.lock().unwrap().push(get_text(&req, "method").unwrap());
+            let (t, body) = match self.replies.pop_front().expect("an unscripted request") {
+                Ok(v) => (FRAME_ENC_RESPONSE, Value::Map(vec![(Value::Text("result".into()), v)])),
+                Err((code, msg)) => (
+                    FRAME_ENC_ERROR,
+                    Value::Map(vec![
+                        (Value::Text("code".into()), Value::Integer(code.into())),
+                        (Value::Text("message".into()), Value::Text(msg.into())),
+                    ]),
+                ),
+            };
+            let sealed = self.d2h.encrypt(Nonce::from_slice(&nonce_for(self.counter)), &cbor(&body).unwrap()[..]).unwrap();
+            self.counter += 1;
+            self.pending = Some((t, sealed));
+            Ok(())
+        }
+        fn recv(&mut self, _: Duration) -> Result<(u8, Vec<u8>), TransportError> {
+            self.pending.take().ok_or(TransportError::Timeout)
+        }
+    }
+
+    fn scripted(
+        replies: Vec<Result<Value, (u64, &'static str)>>,
+    ) -> (Device, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let (h2d, d2h) = ([1u8; 32], [2u8; 32]);
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let port = ScriptedDevice {
+            h2d: ChaCha20Poly1305::new(Key::from_slice(&h2d)),
+            d2h: ChaCha20Poly1305::new(Key::from_slice(&d2h)),
+            counter: 0,
+            replies: replies.into(),
+            pending: None,
+            asked: asked.clone(),
+        };
+        let mut dev = Device::with_port(Box::new(port));
+        dev.no_wallet_retry = Duration::from_millis(20);
+        dev.session = Some(Session {
+            send: ChaCha20Poly1305::new(Key::from_slice(&h2d)),
+            recv: ChaCha20Poly1305::new(Key::from_slice(&d2h)),
+            tx: 0,
+            rx: 0,
+        });
+        (dev, asked)
+    }
+
+    fn account_reply() -> Value {
+        Value::Map(vec![(Value::Text("ufvk".into()), Value::Text("uviewtest1...".into()))])
+    }
+
+    #[test]
+    fn a_first_no_wallet_is_asked_again_once() {
+        let (mut dev, asked) = scripted(vec![
+            Err((ERR_NO_WALLET, "no wallet on the device: create or import one")),
+            Ok(account_reply()),
+        ]);
+        let r = dev.z_get_account(0, "test").unwrap();
+        assert_eq!(get_text(&r, "ufvk").unwrap(), "uviewtest1...");
+        assert_eq!(asked.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_device_without_a_wallet_still_says_so() {
+        let (mut dev, asked) = scripted(vec![
+            Err((ERR_NO_WALLET, "no wallet on the device: create or import one")),
+            Err((ERR_NO_WALLET, "no wallet on the device: create or import one")),
+        ]);
+        let e = dev.z_get_account(0, "test").unwrap_err();
+        assert!(is_code(&e, ERR_NO_WALLET), "{e:#}");
+        assert!(e.to_string().contains("no wallet on the device"), "{e:#}");
+        assert_eq!(asked.lock().unwrap().len(), 2, "retried more than once");
+    }
+
+    #[test]
+    fn only_the_first_account_request_retries_and_only_on_0x0300() {
+        // Another error is not retried.
+        let (mut dev, asked) = scripted(vec![Err((ERR_NOT_UNLOCKED, "locked"))]);
+        assert!(is_code(&dev.z_get_account(0, "test").unwrap_err(), ERR_NOT_UNLOCKED));
+        assert_eq!(asked.lock().unwrap().len(), 1);
+
+        // After one answer, a 0x0300 is the device's word: not retried.
+        let (mut dev, asked) = scripted(vec![Ok(account_reply()), Err((ERR_NO_WALLET, "derivation failed"))]);
+        dev.z_get_account(0, "test").unwrap();
+        assert!(is_code(&dev.z_get_account(0, "test").unwrap_err(), ERR_NO_WALLET));
+        assert_eq!(asked.lock().unwrap().len(), 2);
     }
 
     #[test]

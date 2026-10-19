@@ -5,6 +5,10 @@
 //! deletes it again, so the cache only ever holds the batch in flight. An
 //! in-memory map is enough; nothing needs to survive a restart, because the
 //! wallet database records what has been scanned.
+//!
+//! [`ChainData`] is what the wallet asks lightwalletd after a scan: full
+//! transactions, the transactions of a t-address, and the current UTXO
+//! set. It is a trait so tests can answer from memory.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -17,6 +21,9 @@ use zcash_client_backend::data_api::chain::{error::Error as ChainError, BlockCac
 use zcash_client_backend::data_api::scanning::ScanRange;
 use zcash_client_backend::proto::compact_formats::CompactBlock;
 use zcash_client_backend::proto::service::compact_tx_streamer_client::CompactTxStreamerClient;
+use zcash_client_backend::proto::service::{
+    BlockId, BlockRange, GetAddressUtxosArg, RawTransaction, TransparentAddressBlockFilter, TxFilter,
+};
 use zcash_protocol::consensus::BlockHeight;
 
 pub type Client = CompactTxStreamerClient<Channel>;
@@ -148,4 +155,92 @@ impl BlockCache for MemBlockCache<'_> {
         }
         Ok(())
     }
+}
+
+/// A full transaction as the chain sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChainTx {
+    pub raw: Vec<u8>,
+    /// The main-chain block it is in; None in the mempool, or when it was
+    /// mined only on a fork the chain left.
+    pub mined_height: Option<u32>,
+}
+
+impl ChainTx {
+    /// From lightwalletd's `RawTransaction`, whose height is 0 for the
+    /// mempool and u64::MAX for a fork.
+    pub fn from_raw(t: RawTransaction) -> Self {
+        let mined_height = match t.height {
+            0 => None,
+            h => u32::try_from(h).ok(),
+        };
+        ChainTx { raw: t.data, mined_height }
+    }
+}
+
+/// The chain data a sync needs beyond compact blocks: what
+/// `zcash_client_backend` calls transaction data requests, plus the UTXO
+/// set to notice a transparent coin spent by a transaction the wallet
+/// never saw. Transaction IDs and outpoint hashes are in internal byte
+/// order (as in `TxId::as_ref`).
+#[async_trait]
+pub trait ChainData: Send {
+    /// The transaction with this ID; None if the server does not know it.
+    async fn transaction(&mut self, txid: [u8; 32]) -> Result<Option<ChainTx>>;
+    /// The mined transactions that pay or spend from `address` in blocks
+    /// `start..=end`.
+    async fn address_transactions(&mut self, address: &str, start: u32, end: u32) -> Result<Vec<ChainTx>>;
+    /// The outpoints (txid, output index) unspent on the chain for these
+    /// addresses.
+    async fn unspent_outpoints(&mut self, addresses: &[String]) -> Result<Vec<([u8; 32], u32)>>;
+}
+
+#[async_trait]
+impl ChainData for Client {
+    async fn transaction(&mut self, txid: [u8; 32]) -> Result<Option<ChainTx>> {
+        match self.get_transaction(TxFilter { block: None, index: 0, hash: txid.to_vec() }).await {
+            Ok(r) => Ok(Some(ChainTx::from_raw(r.into_inner()))),
+            // lightwalletd and zaino word "unknown transaction" differently,
+            // and not always with NotFound.
+            Err(s) if s.code() == tonic::Code::NotFound || is_unknown_tx(s.message()) => Ok(None),
+            Err(s) => Err(anyhow::Error::new(s).context("GetTransaction")),
+        }
+    }
+
+    async fn address_transactions(&mut self, address: &str, start: u32, end: u32) -> Result<Vec<ChainTx>> {
+        let filter = TransparentAddressBlockFilter {
+            address: address.to_string(),
+            range: Some(BlockRange {
+                start: Some(BlockId { height: u64::from(start), hash: vec![] }),
+                end: Some(BlockId { height: u64::from(end), hash: vec![] }),
+                pool_types: vec![],
+            }),
+        };
+        // GetTaddressTxids (despite its name, full transactions) is the
+        // call every lightwalletd and zaino serve.
+        #[allow(deprecated)]
+        let mut stream = self.get_taddress_txids(filter).await.context("GetTaddressTxids")?.into_inner();
+        let mut txs = Vec::new();
+        while let Some(t) = stream.message().await.context("GetTaddressTxids")? {
+            txs.push(ChainTx::from_raw(t));
+        }
+        Ok(txs)
+    }
+
+    async fn unspent_outpoints(&mut self, addresses: &[String]) -> Result<Vec<([u8; 32], u32)>> {
+        let arg = GetAddressUtxosArg { addresses: addresses.to_vec(), start_height: 0, max_entries: 0 };
+        let list = self.get_address_utxos(arg).await.context("GetAddressUtxos")?.into_inner();
+        list.address_utxos
+            .into_iter()
+            .map(|u| {
+                let txid: [u8; 32] = u.txid[..].try_into().context("GetAddressUtxos: bad txid")?;
+                Ok((txid, u32::try_from(u.index).context("GetAddressUtxos: bad index")?))
+            })
+            .collect()
+    }
+}
+
+fn is_unknown_tx(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("no such") || m.contains("not found") || m.contains("unknown transaction")
 }

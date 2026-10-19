@@ -59,6 +59,24 @@ static bool have_seed(void)
     return w.temp || w.active != 0;
 }
 
+/* Status polls left before the seed is in RAM; see fake_wallet_seed_loading. */
+static uint32_t seed_loading_polls;
+
+static bool seed_loaded(void)
+{
+    return seed_loading_polls == 0;
+}
+
+void fake_wallet_seed_loading(uint32_t polls)
+{
+    seed_loading_polls = polls;
+}
+
+bool fake_wallet_seed_ready(void)
+{
+    return w.unlocked && have_seed() && seed_loaded();
+}
+
 /* Recorded so the PIN-change path has a real "wrong current PIN" to hit. */
 static char fake_password[16] = {0};
 
@@ -75,6 +93,7 @@ void fake_wallet_reset(void)
     memzero(fake_password, sizeof(fake_password));
     fake_wallet_fail_derivation(false);
     fake_wallet_fail_fingerprint(false);
+    seed_loading_polls = 0;
 }
 
 uint8_t fake_wallet_preload(const char *mnemonic)
@@ -107,10 +126,13 @@ WalletStatus wallet_get_status(void)
         .initialized = w.initialized,
         .password_set = w.password_set,
         .unlocked = w.unlocked,
-        .has_mnemonic = w.count > 0 || w.temp,
+        .has_mnemonic = (w.count > 0 || w.temp) && seed_loaded(),
         .active_wallet_index = w.active,
         .wallet_count = w.count,
     };
+    if (seed_loading_polls != 0 && seed_loading_polls != 0xFFFFFFFFu) {
+        seed_loading_polls--;
+    }
     return s;
 }
 
@@ -198,7 +220,7 @@ bool wallet_has_passphrase(void) { return w.has_passphrase; }
 WalletError wallet_with_seed(WalletSeedFn fn, void *ctx)
 {
     if (!w.unlocked) return WALLET_ERROR_LOCKED;
-    if (!have_seed()) return WALLET_ERROR_NO_MNEMONIC;
+    if (!have_seed() || !seed_loaded()) return WALLET_ERROR_NO_MNEMONIC;
     uint8_t seed[64];
     mnemonic_to_seed(active_mnemonic(), w.has_passphrase ? w.passphrase : "", seed, NULL);
     WalletError err = fn(seed, ctx);

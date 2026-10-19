@@ -117,3 +117,33 @@ fn history_of_both_sides_of_a_send() {
     assert!(payee.history(0).unwrap().is_empty());
     assert!(payee.store_transaction(b"junk", Some(MINED)).is_err());
 }
+
+mod common;
+
+/// A send to the account's own t-address: nothing went to anyone else, so
+/// the line is "Sent to yourself" for the fee it cost, not "sent 0".
+#[test]
+fn a_send_to_yourself_shows_what_it_cost() {
+    let d = common::TempDir::new("history-self");
+    let w = common::wallet_with_coin(&d.0.join("w"), 1_000_000);
+    let (mut w, raw) = common::send_coin_to_self(w, 300_000);
+
+    let check = |w: &Wallet, mined: Option<u32>| {
+        let h = w.history(10).unwrap();
+        let r = h.iter().find(|r| r.kind != TxKind::Received).unwrap_or_else(|| panic!("{h:?}"));
+        assert_eq!(r.kind, TxKind::SentToSelf, "{r:?}");
+        assert_eq!(r.mined_height, mined);
+        let fee = r.fee_zat.expect("the wallet knows its own fee");
+        assert!(fee > 0);
+        assert_eq!((r.delta_zat, r.amount_zat), (-(fee as i64), fee), "{r:?}");
+        assert!(r.recipients.is_empty(), "{r:?}");
+        let line = r.summary_line();
+        assert!(line.starts_with("Sent to yourself"), "{line}");
+        assert!(line.contains(&format!("-{}", zecz::wallet::format_zec(fee))), "{line}");
+        assert!(!line.contains("-0.00000000"), "{line}");
+    };
+    check(&w, None);
+    // And once mined, which is where "-0.00000000 TAZ, Fee 0.0002" was seen.
+    w.store_transaction(&raw, Some(common::TIP - 5)).unwrap();
+    check(&w, Some(common::TIP - 5));
+}

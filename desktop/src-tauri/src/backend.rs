@@ -209,6 +209,9 @@ pub fn sync(profile: &Profile, on_progress: impl Fn(SyncProgress) + Send + Sync)
             let fraction = (st.0 as f64 / span as f64).min(1.0);
             on_progress(SyncProgress::Scanned { start: r.start, end: r.end, tip, fraction });
         }
+        // Full transactions fetched after the scan: nothing to show beyond
+        // the balances and history they correct.
+        SyncEvent::Transactions(_) => {}
     }))??;
     let s = status.context("the wallet has no summary after sync")?;
     let progress = if s.progress.1 == 0 { 1.0 } else { s.progress.0 as f64 / s.progress.1 as f64 };
@@ -267,7 +270,8 @@ pub struct TxDto {
     pub block_time: Option<i64>,
     pub expiry_height: Option<u32>,
     pub expired: bool,
-    /// "received", "sent", "shielded" or "internal".
+    /// "received", "sent", "self" (sent to the account itself: the amount
+    /// is the fee it cost), "shielded" or "internal".
     pub kind: &'static str,
     pub amount_zat: u64,
     /// Change of the balance, negative when value left.
@@ -296,6 +300,7 @@ fn tx_dto(t: wallet::TxRecord) -> TxDto {
     let kind = match t.kind {
         TxKind::Received => "received",
         TxKind::Sent => "sent",
+        TxKind::SentToSelf => "self",
         TxKind::Shielded => "shielded",
         TxKind::Internal => "internal",
     };

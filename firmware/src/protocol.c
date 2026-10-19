@@ -585,13 +585,23 @@ static SignOutcome wait_for_user(void)
  * first board. So a Zcash request waits for the wallet, briefly, and says
  * which of the two it is when it gives up.
  */
+/*
+ * Ready means a seed in RAM, not `unlocked` with a wallet selected: the
+ * vault publishes `unlocked` before it decrypts the active seed
+ * (wallet_unlock), and drops the seed before loading the next one
+ * (wallet_select_wallet, which the home screen calls after an unlock when
+ * no wallet is active). A request that landed in that window passed this
+ * wait and was then told by the derivation "no wallet on the device: create
+ * or import one" - seen over Bluetooth right after connecting, where a
+ * retry a moment later worked.
+ */
 static WalletError wait_for_wallet(void)
 {
     const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
     for (;;) {
         WalletStatus st = wallet_get_status();
         const bool temp = wallet_has_temporary_mnemonic();
-        if (st.unlocked && (temp || st.active_wallet_index > 0)) {
+        if (st.unlocked && st.has_mnemonic && (temp || st.active_wallet_index > 0)) {
             return WALLET_OK;
         }
         if (!pin_is_unlocked()) {
@@ -613,7 +623,14 @@ static void send_wallet_error(WalletError err)
 {
     switch (err) {
         case WALLET_ERROR_NO_MNEMONIC:
-            send_error(ERR_NO_WALLET, "no wallet on the device: create or import one");
+            /* A board that holds a wallet is not told to create one: its
+             * seed was not in RAM yet (still opening, or being switched).
+             * Same code, so a companion's retry covers both. */
+            if (wallet_get_status().wallet_count > 0 || wallet_has_temporary_mnemonic()) {
+                send_error(ERR_NO_WALLET, "the wallet is still opening on the device; try again");
+            } else {
+                send_error(ERR_NO_WALLET, "no wallet on the device: create or import one");
+            }
             break;
         case WALLET_ERROR_LOCKED:
             send_error(ERR_NOT_UNLOCKED, "the wallet is not open yet; unlock the device");
