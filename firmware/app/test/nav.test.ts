@@ -16,8 +16,9 @@
 
 import {
   SECTIONS, SECTION_HEADER_IDS, SECTION_PANEL_IDS, SECTION_WRAPPER_IDS,
-  sectionHidden, toggleSection, type Section,
+  ZCASH_SECTIONS, sectionHidden, sectionsFor, toggleSection, type Section,
 } from "../src/nav.ts";
+import { APP_MODE, EVM_ENABLED, parseAppMode } from "../src/app-mode.ts";
 
 let failures = 0;
 const check = (cond: boolean, msg: string) => {
@@ -113,6 +114,29 @@ group("the id maps agree with each other");
     check(typeof SECTION_WRAPPER_IDS[s] === "string", `${s} has no wrapper id`);
   }
   check(new Set(allIds).size === allIds.length, "two sections share an element id");
+}
+
+group("the Zcash build shows the Zcash section and no EVM section, ever");
+{
+  check(APP_MODE === "zcash" && !EVM_ENABLED, "the default build is not the Zcash wallet");
+  check(parseAppMode("full") === "full" && parseAppMode(" FULL ") === "full", "full mode not parsed");
+  for (const v of [undefined, "", "zcash", "evm", "ful", 1]) {
+    check(parseAppMode(v) === "zcash", `${String(v)} did not fall back to the Zcash wallet`);
+  }
+  check(sectionsFor("full") === SECTIONS && sectionsFor("zcash") === ZCASH_SECTIONS, "sectionsFor");
+  for (const open of everyOpenState) {
+    const hidden = sectionHidden(true, open, ZCASH_SECTIONS);
+    for (const s of SECTIONS) {
+      if (s === "zcash") continue;
+      check(hidden[SECTION_WRAPPER_IDS[s]] === true, `zcash build, open=${open}: ${s} wrapper visible`);
+      check(hidden[SECTION_HEADER_IDS[s]] === true, `zcash build, open=${open}: ${s} header visible`);
+      check(hidden[SECTION_PANEL_IDS[s]] === true, `zcash build, open=${open}: ${s} body visible`);
+    }
+  }
+  const home = sectionHidden(true, "zcash", ZCASH_SECTIONS);
+  check(home[SECTION_PANEL_IDS.zcash] === false, "the Zcash wallet is not on screen in the Zcash build");
+  const locked = sectionHidden(false, "zcash", ZCASH_SECTIONS);
+  check(locked[SECTION_PANEL_IDS.zcash] === true, "the Zcash wallet survived a lock");
 }
 
 console.log(failures === 0 ? "all ok" : `${failures} failure(s)`);

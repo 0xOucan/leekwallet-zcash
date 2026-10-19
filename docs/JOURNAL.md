@@ -1297,3 +1297,80 @@ from the board, ZFP 551A1FD4), on branch `desktop-wallet-fixes`.
   the 0.0102 TAZ and the shield prompt; the history should read "Sent to
   yourself" for faf76b13…; connect over Bluetooth right after unlocking
   a few times.
+
+### 6.14 The Companion as a Zcash wallet; Android USB and release APK (2026-10-18)
+
+The Android APK was tried on the board: Bluetooth worked, USB did not, the
+screen still offered the EVM side, and the desktop window looked better than
+the phone. Branch `companion-zcash-focus`.
+
+- **Zcash-only by default.** `src/app-mode.ts`: `VITE_LEEK_APP_MODE` at
+  build time, anything but `full` is the Zcash wallet. index.html ships
+  `data-mode="zcash"` and marks the EVM elements `evm-only` (hidden by
+  styles.css with `!important`, before any script runs): the Balances,
+  Network (chain selector), Receive (with the token contract field), Send,
+  Apps (mini apps), Connect a site (WalletConnect) and Activity sections,
+  "Pair by QR" and its camera option, and the EVM "Testnets only" banner.
+  `nav.ts` `sectionsFor()` keeps the EVM sections out of the accordion
+  (test/nav.test.ts pins it); main.ts skips `getAddress`, balances, mini
+  apps and the QR pairing. "Pair by QR" was the EVM air gap (scan the
+  device's `ur:crypto-hdkey`, sign through `ur:eth-sign-request` /
+  `ur:eth-signature`, src/qr-airgap.ts), not the board's pairing, which is
+  the six-digit passkey over USB or BLE. The EVM code stays: `pnpm
+  dev:full`, `pnpm build:full`, `VITE_LEEK_APP_MODE=full pnpm tauri ...`.
+- **Home screen.** After unlocking, the Zcash wallet is the screen (its
+  accordion header hidden, full width on a large window); the Device panel
+  shrinks to the link and Disconnect; the passphrase panel moved below.
+- **Phone layout** like the desktop's: buttons share a line instead of a
+  stack of full-width ones, the Zcash tabs are one line scrolling inside
+  itself, the network buttons and account on one line, pools as label and
+  value, a one-line status bar, `viewport-fit=cover` with the existing
+  safe-area padding, 16 px inputs (no zoom on focus). Checked with headless
+  Chromium at 400×860 (2×, touch) and 1280×900, the wallet screens filled
+  with stand-in data: no horizontal scroll at either width.
+- **Passphrase = another wallet.** The board's account (`zGetAccount`) is
+  read as soon as the home screen opens, and again after a passphrase,
+  lock, network or account change, retrying once on 0x0300 (the vault
+  still opening). Its seed fingerprint and account, with the network, key
+  every wallet command (`WalletKey` in zwallet.rs):
+  `wallets/<net>-<zfp16>-<account>`, `contacts-<net>-<zfp16>.json`; the
+  server stays per network. A wallet of the first builds (`wallets/<net>`)
+  moves to its keyed place when its own board account is read, and stays
+  put for another seed. The passphrase panel says a passphrase opens a
+  different, hidden Zcash wallet, kept apart by fingerprint, whose synced
+  data stays on the device until forgotten.
+- **USB on Android.** Not reproduced (no phone here). Likeliest cause: the
+  board's Link was Bluetooth, and the board serves one link at a time, so
+  USB enumerates but never answers. The UI hid that: failures went only to
+  the collapsed log, and a handshake failure dropped the transport's own
+  error. Now the Device panel shows the transport's words, then the advice.
+  Checked and ruled out: the tested APK's merged manifest already had
+  `usb.host` and a device filter (from the plugin's library manifest);
+  `android-usb-serial` binds 303a:1001 as CDC-ACM through its interface
+  fallback; DTR/RTS go 0,0 → 1,0 → 1,1, never through the chip's reset
+  state. Fixed in transport-serial/src/android.rs: use the session path
+  `open` returns, drain the plugin's RX hub (up to 64 KiB of unrequested
+  bytes that `clear_buffer` does not touch) after opening and before each
+  request, and keep the plugin's words in open errors.
+  `scripts/android-usb-host.sh` is run after init (Espressif-only filter)
+  and the release script refuses to build without it.
+- **Release APK.** `pnpm android:release:arm64` (scripts/android-release.sh):
+  release profile `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`,
+  `strip = true`; `panic` stays `unwind` (a panic in a command or a zecz
+  worker must fail the call, not kill the app). Tauri leaves the APK
+  unsigned; the script zipaligns and signs it with a local key
+  (`~/.android/debug.keystore` by default, `LEEK_KEYSTORE*` to override),
+  nothing committed. Sizes: debug arm64 APK 227 MB (library 220 MB);
+  release arm64 APK 28.5 MB.
+- Build note: a target directory copied from another checkout left
+  tauri's build script unrun for the new `gen/`, so `TauriActivity.kt` was
+  missing and Gradle failed in `compileUniversalDebugKotlin`;
+  `cargo clean -p tauri --target aarch64-linux-android` fixed it.
+- Tests: `pnpm typecheck` clean; `pnpm test` passes; `pnpm test:zdev`
+  passes against zdev; `cargo test --lib` in src-tauri 27 passed, 1
+  ignored (3 new: wallet keys, legacy adoption); `cargo check --target
+  aarch64-linux-android` clean.
+- Left, on the phone: USB with the board's Link on USB (and the red box's
+  text if not); a passphrase on the board switching to its own wallet;
+  the release APK installed over nothing (a different key than the debug
+  one: uninstall first).

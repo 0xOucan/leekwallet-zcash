@@ -1,8 +1,11 @@
 <!doctype html>
-<html lang="en">
+<!-- data-mode: which app this build is (src/app-mode.ts). "zcash", the
+     default, hides every evm-only element in styles.css before any script
+     runs; a VITE_LEEK_APP_MODE=full build switches it in main.ts. -->
+<html lang="en" data-mode="zcash">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>LeekWallet</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
@@ -43,9 +46,13 @@
 
       <main id="main">
         <h1 class="visually-hidden">LeekWallet companion</h1>
-        <div class="notice notice--danger" role="note">
+        <div class="notice notice--danger evm-only" role="note">
           Testnets only. This is a proof of concept and has not been audited
           independently — see AUDIT.md before using real funds.
+        </div>
+        <div class="notice notice--danger zcash-only" role="note">
+          Proof of concept, not audited independently: use testnet, or small
+          amounts on mainnet. See AUDIT.md.
         </div>
 
         <!--
@@ -89,11 +96,15 @@
             <button id="disconnect" disabled>Disconnect</button>
             <!-- Not a Link option: QR is a second entrance with no session,
                  so it is its own action rather than a transport to select. -->
-            <button id="qrpair" type="button" class="secondary">Pair by QR</button>
-            <label class="muted" title="Darker camera exposure, so the device's bright screen does not glow. On for desktop webcams; try it on a tablet.">
+            <button id="qrpair" type="button" class="secondary evm-only">Pair by QR</button>
+            <label class="muted evm-only" title="Darker camera exposure, so the device's bright screen does not glow. On for desktop webcams; try it on a tablet.">
               <input type="checkbox" id="darkcam"> Dark camera
             </label>
           </div>
+          <!-- Why the last attempt failed, here rather than only in the
+               collapsed device log: a dismissed USB permission dialog or a
+               board on the other link has to be read where Connect is. -->
+          <div class="notice notice--danger connproblem" id="connproblem" role="alert" hidden></div>
           <div id="pairing" hidden style="margin-top: var(--space-4)"
                role="group" aria-label="Passkey to compare with the device">
             <dl class="kv">
@@ -104,65 +115,6 @@
           </div>
         </section>
 
-        <!--
-          Passphrase (T40). Two entry paths, and they are not equivalent.
-
-          On-device entry is first, is described in plain words, and needs no
-          control here because the device is where it happens. Host entry is
-          behind a closed <details>, because a passphrase typed into this
-          window is read by anything that has this computer — before any
-          encryption applies — and a path with that property should cost a
-          deliberate action rather than being the field that happens to be
-          under the cursor. The warning sits inside the disclosure, at the
-          point of use: a caveat the user has already scrolled past is a
-          caveat that was not read.
-        -->
-        <section class="panel" id="passpanel" aria-labelledby="passhead" hidden>
-          <h2 id="passhead">Passphrase</h2>
-          <p>
-            A passphrase opens a separate wallet from the same seed. The device
-            forgets it on lock, on a wallet switch and on disconnect.
-          </p>
-          <p>
-            <strong>Enter it on the device.</strong> Its own keyboard is slower
-            — a long passphrase is a few hundred button presses — and it is the
-            only way the passphrase never leaves the device at all.
-          </p>
-          <details id="passdisclose">
-            <summary>Type it here instead (less safe)</summary>
-            <div class="notice notice--danger" role="note">
-              <p>
-                Typing a passphrase here is weaker than typing it on the device,
-                and the encrypted link does not change that. This app sees every
-                character before anything is encrypted, so anything that has
-                this computer — malware, a screen recorder, a keyboard app that
-                syncs what you type — sees it too. On a phone, your keyboard is
-                part of that risk.
-              </p>
-              <p>
-                A wrong passphrase does not fail. It opens a different, empty
-                wallet. The device shows the first address of whichever wallet
-                it derived: check that address before you use it, and confirm on
-                the device.
-              </p>
-            </div>
-            <label class="field">
-              <span>Passphrase</span>
-              <!-- Never persisted, never logged, never in diagnostics, and
-                   cleared out of the field the moment the call returns
-                   (PROTOCOL.md 5). autocomplete off keeps it out of the
-                   browser's own password store, which is host storage by
-                   another name. -->
-              <input id="passinput" type="password" autocomplete="off"
-                     autocapitalize="off" autocorrect="off" spellcheck="false"
-                     placeholder="printable ASCII, up to 63 characters" />
-            </label>
-            <div class="row">
-              <button id="passapply" class="secondary">Send to the device</button>
-            </div>
-            <p class="muted" id="passhint" aria-live="polite"></p>
-          </details>
-        </section>
 
         <!--
           The home accordion (L6, docs/UI-L6-SPEC.md). Post-unlock there are
@@ -442,7 +394,7 @@
           </section>
         </section>
 
-        <section class="acc" id="secbalances" hidden>
+        <section class="acc evm-only" id="secbalances" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdrbalances"
                     aria-expanded="false" aria-controls="walletmenu">
@@ -518,7 +470,7 @@
 
         </section>
 
-        <section class="acc" id="secchain" hidden>
+        <section class="acc evm-only" id="secchain" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdrchain"
                     aria-expanded="false" aria-controls="chainpanel">
@@ -586,7 +538,7 @@
 
         </section>
 
-        <section class="acc" id="secreceive" hidden>
+        <section class="acc evm-only" id="secreceive" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdrreceive"
                     aria-expanded="false" aria-controls="addrpanel">
@@ -697,7 +649,7 @@
 
         </section>
 
-        <section class="acc" id="secsend" hidden>
+        <section class="acc evm-only" id="secsend" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdrsend"
                     aria-expanded="false" aria-controls="signpanel">
@@ -808,7 +760,7 @@
 
         </section>
 
-        <section class="acc" id="secapps" hidden>
+        <section class="acc evm-only" id="secapps" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdrapps"
                     aria-expanded="false" aria-controls="appsdest">
@@ -836,7 +788,7 @@
 
         </section>
 
-        <section class="acc" id="secconnect" hidden>
+        <section class="acc evm-only" id="secconnect" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdrconnect"
                     aria-expanded="false" aria-controls="wcpanel">
@@ -978,7 +930,7 @@
 
         </section>
 
-        <section class="acc" id="secactivity" hidden>
+        <section class="acc evm-only" id="secactivity" hidden>
           <h2 class="acc__hd">
             <button type="button" class="acc__toggle" id="hdractivity"
                     aria-expanded="false" aria-controls="activitypanel">
@@ -1005,6 +957,78 @@
 
         </section>
 
+
+        <!--
+          Passphrase (T40). Below the wallet sections, so the Zcash wallet is
+          the first thing on screen after unlocking. Two entry paths, and they are not equivalent.
+
+          On-device entry is first, is described in plain words, and needs no
+          control here because the device is where it happens. Host entry is
+          behind a closed <details>, because a passphrase typed into this
+          window is read by anything that has this computer — before any
+          encryption applies — and a path with that property should cost a
+          deliberate action rather than being the field that happens to be
+          under the cursor. The warning sits inside the disclosure, at the
+          point of use: a caveat the user has already scrolled past is a
+          caveat that was not read.
+        -->
+        <section class="panel" id="passpanel" aria-labelledby="passhead" hidden>
+          <h2 id="passhead">Passphrase (hidden wallet)</h2>
+          <p>
+            A passphrase opens a separate wallet from the same seed. The device
+            forgets it on lock, on a wallet switch and on disconnect.
+          </p>
+          <p>
+            <strong>For Zcash it is a different wallet altogether:</strong> the
+            BIP39 passphrase changes the seed, so the board shows another seed
+            fingerprint (ZFP), other addresses and another balance. This app
+            keeps each wallet apart by its fingerprint, so a passphrase wallet
+            never mixes with the one without. Its synced data (what its viewing
+            key has seen, never a key that spends) is kept on this device under
+            that fingerprint: anyone with this device's app data can tell a
+            second wallet was opened here. Forget it in Zcash → Settings when
+            you are done if that matters to you.
+          </p>
+          <p>
+            <strong>Enter it on the device.</strong> Its own keyboard is slower
+            — a long passphrase is a few hundred button presses — and it is the
+            only way the passphrase never leaves the device at all.
+          </p>
+          <details id="passdisclose">
+            <summary>Type it here instead (less safe)</summary>
+            <div class="notice notice--danger" role="note">
+              <p>
+                Typing a passphrase here is weaker than typing it on the device,
+                and the encrypted link does not change that. This app sees every
+                character before anything is encrypted, so anything that has
+                this computer — malware, a screen recorder, a keyboard app that
+                syncs what you type — sees it too. On a phone, your keyboard is
+                part of that risk.
+              </p>
+              <p>
+                A wrong passphrase does not fail. It opens a different, empty
+                wallet. The device shows the first address of whichever wallet
+                it derived: check that address before you use it, and confirm on
+                the device.
+              </p>
+            </div>
+            <label class="field">
+              <span>Passphrase</span>
+              <!-- Never persisted, never logged, never in diagnostics, and
+                   cleared out of the field the moment the call returns
+                   (PROTOCOL.md 5). autocomplete off keeps it out of the
+                   browser's own password store, which is host storage by
+                   another name. -->
+              <input id="passinput" type="password" autocomplete="off"
+                     autocapitalize="off" autocorrect="off" spellcheck="false"
+                     placeholder="printable ASCII, up to 63 characters" />
+            </label>
+            <div class="row">
+              <button id="passapply" class="secondary">Send to the device</button>
+            </div>
+            <p class="muted" id="passhint" aria-live="polite"></p>
+          </details>
+        </section>
 
         <!-- Firmware flashing (T65). Present but inert in shipped builds: the
              backend is compiled without the `flasher` feature, so
@@ -1107,7 +1131,7 @@
         <!-- The QR air gap: pairing (scan the device's account key) and
              signing (show the request, scan the signature). One panel for
              both, because both are "look at the device, then at this". -->
-        <section class="panel" id="qrpanel" hidden aria-labelledby="qrhead">
+        <section class="panel evm-only" id="qrpanel" hidden aria-labelledby="qrhead">
           <h2 id="qrhead">QR</h2>
           <p id="qrinstr"></p>
           <p class="muted" id="qrauthority" hidden>
@@ -1142,7 +1166,7 @@
         <!-- One camera surface for every mini-app, owned by the shell.
              An app never gets a MediaStream; it calls AppContext.scanQr and
              receives whatever its own accept() matched. -->
-        <video id="appvideo" class="wc-video" hidden muted playsinline
+        <video id="appvideo" class="wc-video evm-only" hidden muted playsinline
                aria-label="Camera, scanning for a QR code"></video>
 
         <!-- Collapsed by default (M2, UI-REDESIGN-PLAN.md §2b): one click

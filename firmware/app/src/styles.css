@@ -753,9 +753,11 @@ main {
   .kv { grid-template-columns: 1fr; gap: var(--space-1); }
   .kv dd { margin-bottom: var(--space-2); }
 
-  /* Full-width buttons: a wrapped row of half-width buttons reads as a grid of
-   * equally weighted choices, and one of these is "sign". */
-  .row > button { flex: 1 1 100%; }
+  /* Buttons share a line and grow to fill it, as on the desktop, instead of
+   * stacking one per line: a stack of six full-width buttons pushed the
+   * Zcash wallet a screen down on a phone. A button on a line of its own
+   * still takes the width. */
+  .row > button { flex: 1 1 auto; }
 }
 
 /* ---------------------------------------------------------- walletconnect */
@@ -918,3 +920,68 @@ main {
 .zhist__head { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-sm); }
 .zhist__amt { font-family: var(--font-mono); }
 .zhist__amt[data-dir="in"] { color: var(--accent); }
+
+/* ------------------------------------------------------------ app mode */
+
+/* src/app-mode.ts. The Zcash wallet (the default) shows nothing of the EVM
+ * side; `!important` because script sets `.hidden` on some of these and a
+ * Zcash build must not show them whatever the script believes. */
+html[data-mode="zcash"] .evm-only { display: none !important; }
+html[data-mode="full"] .zcash-only { display: none !important; }
+
+/* The Zcash wallet is the home screen, not one section of an accordion: no
+ * header to collapse it, and the full width on a large screen. */
+html[data-mode="zcash"] #hdrzcash { display: none !important; }
+html[data-mode="zcash"] #seczcash { border-bottom: 0; }
+html[data-mode="zcash"] #seczcash > .panel { margin-top: 0; }
+@media (min-width: 900px) and (min-height: 600px) {
+  html[data-mode="zcash"] #seczcash { grid-column: 1 / -1; }
+}
+
+/* Once the board is unlocked and the wallet is up, the Device panel shrinks
+ * to what is still useful there (the link and Disconnect): the passkey was
+ * compared, and the wallet is what the screen is for. */
+html[data-mode="zcash"][data-shell="open"] #devicepanel :is(#connectback, #devicehint, #pairing, #connect, #unlock) {
+  display: none !important;
+}
+html[data-mode="zcash"][data-shell="open"] #devicepanel > h2 { display: none; }
+html[data-mode="zcash"][data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bottom: var(--space-3); }
+
+.connproblem p { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
+.connproblem p:last-child { margin-bottom: 0; }
+
+/* ----------------------------------------------------------- phone width */
+
+/* The Zcash screens on a ~400px phone, matching the desktop's look rather
+ * than a stack: one line of tabs that scrolls sideways inside itself (never
+ * the page), the two network buttons and the account on one line, the pools
+ * as label and value, and long strings broken anywhere instead of widening
+ * the page. */
+.zcash .addr, .zhist, .zcash .kv dd { overflow-wrap: anywhere; word-break: break-word; }
+.zcash { min-width: 0; }
+@media (max-width: 480px) {
+  .ztabs {
+    flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    margin-left: calc(-1 * var(--space-3)); margin-right: calc(-1 * var(--space-3));
+    padding: 0 var(--space-3);
+  }
+  .ztabs::-webkit-scrollbar { display: none; }
+  .ztabs [role="tab"] { flex: none; padding-left: var(--space-3); padding-right: var(--space-3); }
+  .znet > button { flex: 1 1 0; }
+  .znet__acct { flex: 1 1 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+  #zwpools { grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); }
+  #zwpools dd { margin-bottom: 0; }
+  .zbal__amount { font-size: 28px; }
+  .zbal { justify-content: space-between; }
+  .acc > .panel { padding-left: var(--space-3); padding-right: var(--space-3); }
+  .zhist__head { gap: var(--space-2); }
+  /* Inputs at 16px: a smaller font makes Android's webview zoom on focus. */
+  input, select, textarea { font-size: 16px; }
+}
+@media (max-width: 480px) {
+  /* One line: the wallet label ellipsises (#conn, #wallet above) rather than
+   * pushing the theme button onto a line of its own. */
+  .statusbar { flex-wrap: nowrap; }
+  .statusbar > .badge, .statusbar > button { flex: none; }
+}

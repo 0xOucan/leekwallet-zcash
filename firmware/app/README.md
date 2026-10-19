@@ -278,9 +278,47 @@ The relay (`wss://relay.walletconnect.org`, in the CSP allowlist by exact name)
 is a third party. It sees that a wallet and a dapp are talking and when; the
 payloads are encrypted end to end, and no key ever leaves the device.
 
+## App mode: the Zcash wallet, or the full Companion
+
+The LeekWallet Zcash firmware is Zcash-only: it dropped `getAddress`,
+`signTransaction`, `signMessage` and `signTypedData` (docs/zcash/ROADMAP.md
+1.1). So the default build is **the Zcash wallet** and shows nothing of the
+EVM side. Removed from the screen (the code stays in the tree):
+
+- the EVM sections of the home screen: Balances, Network (chain selector,
+  RPC, custom networks), Receive (addresses, watched tokens and the token
+  contract field), Send, Apps (mini apps), Connect a site (WalletConnect)
+  and Activity;
+- **Pair by QR** and its "Dark camera" option: the EVM air gap, scanning the
+  device's `ur:crypto-hdkey` and signing through `ur:eth-sign-request` /
+  `ur:eth-signature` (src/qr-airgap.ts). It is not how the board pairs: the
+  board pairs over USB or Bluetooth by comparing the six-digit passkey;
+- the "Testnets only" banner (EVM wording), replaced by a Zcash one.
+
+How: `src/app-mode.ts` reads `VITE_LEEK_APP_MODE` at build time; anything but
+`full` is the Zcash wallet. index.html ships `<html data-mode="zcash">` and
+every EVM element carries `class="evm-only"`, which styles.css hides with
+`!important` before any script runs, so nothing EVM paints even for a frame;
+`nav.ts` keeps the EVM sections out of the accordion (`sectionsFor`, pinned
+by test/nav.test.ts); main.ts skips `getAddress`, balances, mini apps and the
+QR pairing. The Zcash wallet is the home screen after unlocking (its
+accordion header is hidden and it does not collapse), and the Device panel
+shrinks to the link and Disconnect.
+
+The full Companion (for the future "master" firmware with EVM) is the same
+tree built with the variable set:
+
+```bash
+pnpm dev:full                                  # VITE_LEEK_APP_MODE=full vite
+pnpm build:full                                # VITE_LEEK_APP_MODE=full vite build
+VITE_LEEK_APP_MODE=full pnpm tauri build       # beforeBuildCommand inherits it
+VITE_LEEK_APP_MODE=full pnpm android:release:arm64
+```
+
 ## Zcash
 
-The first section after unlocking is **Zcash**, for the LeekWallet Zcash
+The first section after unlocking is **Zcash** (in the default build, the
+only one), for the LeekWallet Zcash
 firmware (docs/zcash/ROADMAP.md 6.14). It runs over the same encrypted session
 as everything else here: the `z*` methods of firmware/docs/PROTOCOL.md are
 `packages/core/src/zcash.ts`, called through main.ts's Client, so the board is
@@ -330,9 +368,26 @@ code is used):
 - *Contacts*, *Settings* (server per network, checked before it is saved;
   wallet info; forget this network's wallet).
 
-Data lives in the app data directory under `zcash/` (`wallets/<test|main>`,
-`settings.json`, `contacts-<net>.json`): viewing keys and what they have seen,
-never a spending key.
+**Which wallet: the seed fingerprint.** When the home screen opens, the
+Companion reads the board's account (`zGetAccount`, retried once on 0x0300
+while the board's vault is still opening). Its ZIP 32 seed fingerprint and
+account, with the network, name the wallet on this device. A BIP39
+passphrase on the board (on the board itself, or "Passphrase (hidden
+wallet)" here) gives another seed, so another fingerprint, so another wallet,
+with its own directory and address book; it never mixes with the wallet
+without a passphrase. Applying or clearing a passphrase re-reads the account
+and switches wallet. The passphrase panel says this, and that the hidden
+wallet's synced data stays on this device under its fingerprint (forget it
+in Settings).
+
+Data lives in the app data directory under `zcash/`:
+`wallets/<test|main>-<zfp16>-<account>` (zfp16: the first 8 bytes of the
+seed fingerprint, in hex), `contacts-<test|main>-<zfp16>.json`, and
+`settings.json` (the server per network, shared): viewing keys and what they
+have seen, never a spending key. A wallet from the first builds
+(`wallets/<net>`, `contacts-<net>.json`) is moved to its keyed place the
+first time the board account it belongs to is read; another seed's leaves it
+alone.
 
 Tests: `pnpm test` includes `packages/core/test/zcash.test.ts` (the golden
 `.zsig`, reply checks, chunking, amounts); `pnpm test:zdev` pairs with zdev

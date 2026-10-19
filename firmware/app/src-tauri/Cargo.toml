@@ -178,6 +178,15 @@ tauri-plugin-serialplugin = "3.0.2"
 # from; `cargo build` without --release is still unstripped and still symbolic.
 [profile.release]
 strip = true
+# Size and speed for the shipped APK (`pnpm android:release:arm64`) and the
+# desktop bundle: whole-program LTO with one codegen unit is a few percent
+# faster at scanning and proving and noticeably smaller, at the cost of a
+# slow, memory-hungry link. `panic` stays `unwind` on purpose: a panic
+# inside a command or a zecz worker thread must fail that call (the webview
+# shows "the wallet worker stopped unexpectedly"), not abort the app.
+opt-level = 3
+lto = "fat"
+codegen-units = 1
 
 # Scanning (trial decryption) and Halo 2 proving are unbearably slow
 # unoptimized (the desktop app's rule, desktop/src-tauri/Cargo.toml), and a

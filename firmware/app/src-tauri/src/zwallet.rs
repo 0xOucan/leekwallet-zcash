@@ -17,10 +17,21 @@
 //! here with the `.zsig` it returns. The view the board signed is the one
 //! `finish` checks the `.zsig` against, by hash.
 //!
-//! Both networks live side by side, each with its own wallet directory,
-//! server and address book under `<app data>/zcash/`, and every command
-//! names the network it acts on. Nothing here holds a spending key: the
-//! wallets are the board's viewing keys.
+//! Wallets are keyed by network, seed fingerprint and account: a BIP39
+//! passphrase on the board gives another seed, so another ZIP 32 seed
+//! fingerprint, and that is another wallet with its own directory and
+//! address book (`wallets/<net>-<zfp16>-<account>`,
+//! `contacts-<net>-<zfp16>.json` under `<app data>/zcash/`). A passphrase
+//! wallet therefore never mixes with the plain one, and every command names
+//! the network, the fingerprint and the account it acts on (the webview
+//! learns them from the board's `zGetAccount`). The server setting is per
+//! network and shared. Nothing here holds a spending key: the wallets are
+//! the board's viewing keys.
+//!
+//! The first Companion builds kept one wallet per network
+//! (`wallets/<net>`, `contacts-<net>.json`); such a wallet is moved to its
+//! keyed place the first time its own board account asks for it
+//! ([`ZState::profile`]).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,10 +58,55 @@ const BUSY: &str = "this network's wallet is busy (a sync, an import or a send i
 const DEVICE_NAME: &str = zhardware::DEVICE_NAME;
 
 pub struct ZState {
-    /// `<app data>/zcash`: settings.json, wallets/<net>, contacts-<net>.json.
+    /// `<app data>/zcash`: settings.json, wallets/<net>-<zfp16>-<account>,
+    /// contacts-<net>-<zfp16>.json.
     root: PathBuf,
     /// One flag per network: a sync on testnet does not hold up mainnet.
     busy: [Arc<AtomicBool>; 2],
+}
+
+/// Which wallet a command is about: the board's seed fingerprint (ZIP 32,
+/// 32 bytes) and account, on a network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletKey {
+    net: Network,
+    fingerprint: [u8; 32],
+    account: u32,
+}
+
+impl WalletKey {
+    pub fn parse(net: Network, wallet: &str, account: u32) -> Result<Self> {
+        let fingerprint: [u8; 32] = hex::decode(wallet.trim())
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .context("the wallet's seed fingerprint is not 32 bytes of hex; read the board's account first")?;
+        if account >= 0x8000_0000 {
+            bail!("account {account} is out of range");
+        }
+        Ok(WalletKey { net, fingerprint, account })
+    }
+
+    /// The first 8 bytes of the fingerprint, in hex: enough to keep wallets
+    /// apart on one device, and the wallet itself records the whole origin
+    /// (an import of another seed into a directory is refused).
+    fn short(&self) -> String {
+        hex::encode(&self.fingerprint[..8])
+    }
+
+    fn net_name(&self) -> &'static str {
+        zecz::wallet::network_name(self.net)
+    }
+
+    /// `wallets/<test|main>-<zfp16>-<account>`.
+    pub fn wallet_dir(&self, root: &std::path::Path) -> PathBuf {
+        root.join("wallets").join(format!("{}-{}-{}", self.net_name(), self.short(), self.account))
+    }
+
+    /// `contacts-<test|main>-<zfp16>.json`: one book per seed, shared by its
+    /// accounts, never by another seed.
+    pub fn contacts_path(&self, root: &std::path::Path) -> PathBuf {
+        root.join(format!("contacts-{}-{}.json", self.net_name(), self.short()))
+    }
 }
 
 impl ZState {
@@ -59,14 +115,56 @@ impl ZState {
         Ok(ZState { root, busy: [Arc::default(), Arc::default()] })
     }
 
-    fn profile(&self, net: Network) -> Profile {
+    fn server(&self, net: Network) -> String {
         let saved = zsettings::load(&zsettings::path_in(&self.root)).unwrap_or_default();
-        Profile::new(net, zsettings::wallet_dir(&self.root, net), Some(saved.server_for(net)))
+        saved.server_for(net)
+    }
+
+    /// The profile of `key`'s wallet, adopting a wallet from the first
+    /// Companion builds (one per network) when it is this key's: same seed
+    /// fingerprint and account. Another seed's legacy wallet stays where it
+    /// is, untouched, until its own board asks for it.
+    fn profile(&self, key: &WalletKey) -> Profile {
+        let server = self.server(key.net);
+        let dir = key.wallet_dir(&self.root);
+        if !dir.exists() {
+            adopt_legacy(&self.root, key, &server);
+        }
+        Profile::new(key.net, dir, Some(server))
     }
 
     fn flag(&self, net: Network) -> &Arc<AtomicBool> {
         &self.busy[usize::from(net == Network::MainNetwork)]
     }
+}
+
+/// Moves `wallets/<net>` (and `contacts-<net>.json`) to `key`'s places when
+/// the wallet there is `key`'s account. Best effort: a failure leaves the
+/// legacy wallet where it was, and the user can import again.
+fn adopt_legacy(root: &std::path::Path, key: &WalletKey, server: &str) -> bool {
+    let legacy = zsettings::wallet_dir(root, key.net);
+    if !legacy.is_dir() {
+        return false;
+    }
+    let lp = Profile::new(key.net, legacy.clone(), Some(server.to_string()));
+    let ours = matches!(zhardware::wallet_origin(&lp), Ok(Some(o))
+        if o.seed_fingerprint == key.fingerprint && o.account_index == key.account);
+    if !ours {
+        return false;
+    }
+    let dir = key.wallet_dir(root);
+    if let Some(parent) = dir.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::rename(&legacy, &dir).is_err() {
+        return false;
+    }
+    let old_book = zcontacts::path_in(root, key.net);
+    let book = key.contacts_path(root);
+    if old_book.exists() && !book.exists() {
+        let _ = std::fs::rename(old_book, book);
+    }
+    true
 }
 
 fn parse_net(network: &str) -> Result<Network, String> {
@@ -146,10 +244,24 @@ pub fn zw_available() -> bool {
     true
 }
 
+/// The network, seed fingerprint and account every wallet command names.
+fn key_of(network: &str, wallet: &str, account: u32) -> Result<WalletKey, String> {
+    WalletKey::parse(parse_net(network)?, wallet, account).map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
-pub async fn zw_status(state: State<'_, ZState>, network: String) -> Result<StatusDto, String> {
-    let p = state.profile(parse_net(&network)?);
-    off_thread(move || status(&p)).await
+pub async fn zw_status(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<StatusDto, String> {
+    let key = key_of(&network, &wallet, account)?;
+    let root = state.root.clone();
+    let server = state.server(key.net);
+    off_thread(move || {
+        let dir = key.wallet_dir(&root);
+        if !dir.exists() {
+            adopt_legacy(&root, &key, &server);
+        }
+        status(&Profile::new(key.net, dir, Some(server)))
+    })
+    .await
 }
 
 // ------------------------------------------------------------------ import
@@ -189,6 +301,8 @@ pub fn import(p: &Profile, ufvk: &str, seed_fingerprint: &str, account: u32, ua:
     })
 }
 
+/// The wallet is the one of the account's own seed fingerprint and
+/// account: the board's answer decides which wallet is imported into.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn zw_import(
@@ -200,9 +314,10 @@ pub async fn zw_import(
     ua: String,
     birthday: u32,
 ) -> Result<backend::Imported, String> {
-    let net = parse_net(&network)?;
+    let key = key_of(&network, &seed_fingerprint, account)?;
+    let net = key.net;
     let guard = Busy::take(state.flag(net))?;
-    let p = state.profile(net);
+    let p = state.profile(&key);
     off_thread(move || {
         let _guard = guard;
         import(&p, &ufvk, &seed_fingerprint, account, &ua, birthday)
@@ -214,10 +329,10 @@ pub async fn zw_import(
 /// viewing key has seen, and nothing that could spend. A re-import scans
 /// again from the birthday. Refused while the wallet is busy.
 #[tauri::command]
-pub async fn zw_forget(state: State<'_, ZState>, network: String) -> Result<(), String> {
-    let net = parse_net(&network)?;
-    let guard = Busy::take(state.flag(net))?;
-    let dir = zsettings::wallet_dir(&state.root, net);
+pub async fn zw_forget(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<(), String> {
+    let key = key_of(&network, &wallet, account)?;
+    let guard = Busy::take(state.flag(key.net))?;
+    let dir = key.wallet_dir(&state.root);
     off_thread(move || {
         let _guard = guard;
         match std::fs::remove_dir_all(&dir) {
@@ -239,10 +354,10 @@ struct Tagged<T: Serialize> {
 }
 
 #[tauri::command]
-pub async fn zw_sync(app: AppHandle, state: State<'_, ZState>, network: String) -> Result<backend::SyncDone, String> {
-    let net = parse_net(&network)?;
-    let guard = Busy::take(state.flag(net))?;
-    let p = state.profile(net);
+pub async fn zw_sync(app: AppHandle, state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<backend::SyncDone, String> {
+    let key = key_of(&network, &wallet, account)?;
+    let guard = Busy::take(state.flag(key.net))?;
+    let p = state.profile(&key);
     off_thread(move || {
         let _guard = guard;
         backend::sync(&p, |e| {
@@ -253,22 +368,22 @@ pub async fn zw_sync(app: AppHandle, state: State<'_, ZState>, network: String) 
 }
 
 #[tauri::command]
-pub async fn zw_balances(state: State<'_, ZState>, network: String) -> Result<Option<backend::BalancesDto>, String> {
-    let p = state.profile(parse_net(&network)?);
+pub async fn zw_balances(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<Option<backend::BalancesDto>, String> {
+    let p = state.profile(&key_of(&network, &wallet, account)?);
     off_thread(move || backend::balances(&p)).await
 }
 
 #[tauri::command]
-pub async fn zw_addresses(state: State<'_, ZState>, network: String) -> Result<backend::AddressesDto, String> {
-    let p = state.profile(parse_net(&network)?);
+pub async fn zw_addresses(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<backend::AddressesDto, String> {
+    let p = state.profile(&key_of(&network, &wallet, account)?);
     off_thread(move || backend::addresses(&p)).await
 }
 
 #[tauri::command]
-pub async fn zw_next_address(state: State<'_, ZState>, network: String) -> Result<backend::NewAddressDto, String> {
-    let net = parse_net(&network)?;
-    let guard = Busy::take(state.flag(net))?;
-    let p = state.profile(net);
+pub async fn zw_next_address(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<backend::NewAddressDto, String> {
+    let key = key_of(&network, &wallet, account)?;
+    let guard = Busy::take(state.flag(key.net))?;
+    let p = state.profile(&key);
     off_thread(move || {
         let _guard = guard;
         backend::next_address(&p)
@@ -277,18 +392,19 @@ pub async fn zw_next_address(state: State<'_, ZState>, network: String) -> Resul
 }
 
 #[tauri::command]
-pub async fn zw_history(state: State<'_, ZState>, network: String) -> Result<Vec<backend::TxDto>, String> {
-    let p = state.profile(parse_net(&network)?);
+pub async fn zw_history(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<Vec<backend::TxDto>, String> {
+    let p = state.profile(&key_of(&network, &wallet, account)?);
     off_thread(move || backend::history(&p)).await
 }
 
 /// The server's chain tip: the birthday of a wallet made today.
 #[tauri::command]
 pub async fn zw_tip(state: State<'_, ZState>, network: String) -> Result<backend::TipDto, String> {
-    let p = state.profile(parse_net(&network)?);
+    let net = parse_net(&network)?;
+    let server = state.server(net);
     off_thread(move || {
-        let t = backend::tip(&p.server)?;
-        wallet::check_chain(p.network, &t.chain_name)?;
+        let t = backend::tip(&server)?;
+        wallet::check_chain(net, &t.chain_name)?;
         Ok(t)
     })
     .await
@@ -313,16 +429,19 @@ pub struct Proposed {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn zw_propose_send(
     state: State<'_, ZState>,
     network: String,
+    wallet: String,
+    account: u32,
     to: String,
     amount: String,
     memo: Option<String>,
 ) -> Result<Proposed, String> {
-    let net = parse_net(&network)?;
-    let guard = Busy::take(state.flag(net))?;
-    let p = state.profile(net);
+    let key = key_of(&network, &wallet, account)?;
+    let guard = Busy::take(state.flag(key.net))?;
+    let p = state.profile(&key);
     off_thread(move || {
         let _guard = guard;
         let (proposal, view) = zhardware::propose_send(&p, &to, &amount, memo.as_deref())?;
@@ -332,10 +451,10 @@ pub async fn zw_propose_send(
 }
 
 #[tauri::command]
-pub async fn zw_propose_shield(state: State<'_, ZState>, network: String) -> Result<Proposed, String> {
-    let net = parse_net(&network)?;
-    let guard = Busy::take(state.flag(net))?;
-    let p = state.profile(net);
+pub async fn zw_propose_shield(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<Proposed, String> {
+    let key = key_of(&network, &wallet, account)?;
+    let guard = Busy::take(state.flag(key.net))?;
+    let p = state.profile(&key);
     off_thread(move || {
         let _guard = guard;
         let (proposal, view) = zhardware::propose_shield(&p)?;
@@ -349,17 +468,20 @@ pub async fn zw_propose_shield(state: State<'_, ZState>, network: String) -> Res
 /// transaction needs `mainnet_confirmed`, the confirmation the user ticked
 /// under the review.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn zw_finish(
     app: AppHandle,
     state: State<'_, ZState>,
     network: String,
+    wallet: String,
+    account: u32,
     view: Vec<u8>,
     zsig: Vec<u8>,
     mainnet_confirmed: bool,
 ) -> Result<zhardware::SentDto, String> {
-    let net = parse_net(&network)?;
-    let guard = Busy::take(state.flag(net))?;
-    let p = state.profile(net);
+    let key = key_of(&network, &wallet, account)?;
+    let guard = Busy::take(state.flag(key.net))?;
+    let p = state.profile(&key);
     off_thread(move || {
         let _guard = guard;
         zhardware::check_mainnet_confirmed(&p, mainnet_confirmed)?;
@@ -408,27 +530,32 @@ pub async fn zw_set_server(state: State<'_, ZState>, network: String, server: Op
 // ---------------------------------------------------------------- contacts
 
 #[tauri::command]
-pub async fn zw_contacts(state: State<'_, ZState>, network: String) -> Result<Vec<zcontacts::Contact>, String> {
-    let path = zcontacts::path_in(&state.root, parse_net(&network)?);
+pub async fn zw_contacts(state: State<'_, ZState>, network: String, wallet: String, account: u32) -> Result<Vec<zcontacts::Contact>, String> {
+    let key = key_of(&network, &wallet, account)?;
+    let path = key.contacts_path(&state.root);
     off_thread(move || zcontacts::list(&path)).await
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn zw_contact_save(
     state: State<'_, ZState>,
     network: String,
+    wallet: String,
+    account: u32,
     name: String,
     address: String,
     replacing: Option<String>,
 ) -> Result<Vec<zcontacts::Contact>, String> {
-    let net = parse_net(&network)?;
-    let path = zcontacts::path_in(&state.root, net);
+    let key = key_of(&network, &wallet, account)?;
+    let net = key.net;
+    let path = key.contacts_path(&state.root);
     off_thread(move || zcontacts::save(&path, net, &name, &address, replacing.as_deref())).await
 }
 
 #[tauri::command]
-pub async fn zw_contact_remove(state: State<'_, ZState>, network: String, name: String) -> Result<Vec<zcontacts::Contact>, String> {
-    let path = zcontacts::path_in(&state.root, parse_net(&network)?);
+pub async fn zw_contact_remove(state: State<'_, ZState>, network: String, wallet: String, account: u32, name: String) -> Result<Vec<zcontacts::Contact>, String> {
+    let path = key_of(&network, &wallet, account)?.contacts_path(&state.root);
     off_thread(move || zcontacts::remove(&path, &name)).await
 }
 
@@ -504,6 +631,56 @@ mod tests {
         let other = key("test/abandon-art/pp0/acct1");
         assert!(import(&p, other["ufvk"].as_str().unwrap(), fp, 1, other["ua"].as_str().unwrap(), birthday).is_err());
         let _ = std::fs::remove_dir_all(&p.data_dir);
+    }
+
+    #[test]
+    fn a_passphrase_wallet_has_its_own_directory_and_address_book() {
+        let root = std::path::Path::new("/z");
+        let plain = key("test/abandon-art/pp0/acct0");
+        let fp = plain["seed_fingerprint"].as_str().unwrap();
+        let k0 = WalletKey::parse(Network::TestNetwork, fp, 0).unwrap();
+        // Another seed fingerprint: what a BIP39 passphrase gives.
+        let other_fp = format!("{}{}", if fp.starts_with('0') { "1" } else { "0" }, &fp[1..]);
+        let k1 = WalletKey::parse(Network::TestNetwork, &other_fp, 0).unwrap();
+        assert_ne!(k0.wallet_dir(root), k1.wallet_dir(root));
+        assert_ne!(k0.contacts_path(root), k1.contacts_path(root));
+        let dir = k0.wallet_dir(root);
+        let name = dir.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name, format!("test-{}-0", &fp[..16]));
+        // Another account of one seed: another wallet, the same address book.
+        let a1 = WalletKey::parse(Network::TestNetwork, fp, 1).unwrap();
+        assert_ne!(k0.wallet_dir(root), a1.wallet_dir(root));
+        assert_eq!(k0.contacts_path(root), a1.contacts_path(root));
+        // The other network: never the same place.
+        let m = WalletKey::parse(Network::MainNetwork, fp, 0).unwrap();
+        assert_ne!(k0.wallet_dir(root), m.wallet_dir(root));
+        assert_ne!(k0.contacts_path(root), m.contacts_path(root));
+        // Never the legacy one-per-network places.
+        assert_ne!(k0.wallet_dir(root), zsettings::wallet_dir(root, Network::TestNetwork));
+        assert_ne!(k0.contacts_path(root), zcontacts::path_in(root, Network::TestNetwork));
+    }
+
+    #[test]
+    fn a_wallet_key_needs_the_whole_fingerprint() {
+        assert!(WalletKey::parse(Network::TestNetwork, "", 0).is_err());
+        assert!(WalletKey::parse(Network::TestNetwork, "abcd", 0).is_err());
+        assert!(WalletKey::parse(Network::TestNetwork, &"zz".repeat(32), 0).is_err());
+        assert!(WalletKey::parse(Network::TestNetwork, &"ab".repeat(32), 0x8000_0000).is_err());
+        assert!(WalletKey::parse(Network::TestNetwork, &format!(" {} ", "AB".repeat(32)), 7).is_ok());
+    }
+
+    #[test]
+    fn a_legacy_directory_that_is_not_this_keys_wallet_stays_put() {
+        let root = std::env::temp_dir().join(format!("leek-zw-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let legacy = zsettings::wallet_dir(&root, Network::TestNetwork);
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("marker"), b"x").unwrap();
+        let k = WalletKey::parse(Network::TestNetwork, &"ab".repeat(32), 0).unwrap();
+        assert!(!adopt_legacy(&root, &k, "https://127.0.0.1:9"));
+        assert!(legacy.join("marker").exists(), "the legacy directory was moved");
+        assert!(!k.wallet_dir(&root).exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

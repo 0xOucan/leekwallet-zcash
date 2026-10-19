@@ -10,9 +10,12 @@
  * the way the rest of the Companion reaches it, through the Client, so a
  * send is: propose there, sign here on the board, finish there.
  *
- * One wallet per network, chosen by the Zcash network switch; every
- * command names its network, and an answer for a network the user has
- * since left is dropped rather than drawn.
+ * One wallet per network, seed fingerprint and account. The board's
+ * account (zGetAccount, read when the home screen opens) names it: a BIP39
+ * passphrase on the board is another seed, another fingerprint, and so
+ * another wallet, kept apart on disk (src-tauri/src/zwallet.rs). Every
+ * command names all three, and an answer for a wallet the user has since
+ * left (another network, account or seed) is dropped rather than drawn.
  */
 
 import {
@@ -82,15 +85,28 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   let status: Status | null = null;
   let addresses: Addresses | null = null;
-  let proposal: { network: ZNetwork; p: Proposal; view: Uint8Array } | null = null;
+  let proposal: { network: ZNetwork; key: { network: ZNetwork; wallet: string; account: number }; p: Proposal; view: Uint8Array } | null = null;
   let hide = false;
   try { hide = localStorage.getItem(HIDE_KEY) === "1"; } catch { /* shown */ }
 
   const net = (): ZNetwork => view.network;
   const say = (id: string, text: string) => { $(id).textContent = text; };
   const zec = (zat: number) => (hide ? "•••• ZEC" : `${formatZec(zat)} ZEC`);
-  const call = <T>(cmd: string, args: Record<string, unknown> = {}) =>
-    invoke<T>(cmd, { network: net(), ...args });
+
+  /** Which wallet is on screen: the board account's seed fingerprint and
+   * account on the current network, or none until the board was read. */
+  interface Key { network: ZNetwork; wallet: string; account: number }
+  const keyNow = (): Key | null => {
+    const a = view.boardAccount;
+    return a && a.network === net() ? { network: a.network, wallet: a.seedFingerprint, account: a.account } : null;
+  };
+  const sameKey = (a: Key | null, b: Key | null) =>
+    a !== null && b !== null && a.network === b.network && a.wallet === b.wallet && a.account === b.account;
+  const call = <T>(cmd: string, args: Record<string, unknown> = {}) => {
+    const k = keyNow();
+    if (!k) return Promise.reject(new Error("Reading the board's account first: its seed fingerprint names the wallet."));
+    return invoke<T>(cmd, { ...k, ...args });
+  };
 
   function selectTab(id: string): void {
     ($(id) as HTMLButtonElement).click();
@@ -191,9 +207,9 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   }
 
   async function loadHistory(target: string, limit?: number): Promise<void> {
-    const n = net();
+    const k = keyNow();
     const txs = await call<Tx[]>("zw_history");
-    if (n !== net()) return;
+    if (!sameKey(k, keyNow())) return;
     const list = $(target);
     list.replaceChildren(...(limit ? txs.slice(0, limit) : txs).map(txRow));
     if (txs.length === 0) {
@@ -204,8 +220,30 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     }
   }
 
+  /** Nothing on screen of a wallet: no board account read yet (or it was
+   * forgotten on lock, disconnect, another network or account). */
+  function showNoWallet(): void {
+    status = null;
+    addresses = null;
+    cancelProposal();
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>("#zcashpanel [data-account]"))) el.hidden = true;
+    $("zwsetup").hidden = true;
+    $("zwhome").hidden = true;
+    renderPools(null);
+    $("zwrecent").replaceChildren();
+    $("zwhist").replaceChildren();
+    contacts = [];
+    renderContacts();
+    $("zwinfo").replaceChildren();
+    say("zwstatus", view.boardAccount === null
+      ? "Reading the board's account: its seed fingerprint names the wallet on this device…"
+      : "");
+  }
+
   async function refresh(): Promise<void> {
+    const k = keyNow();
     const n = net();
+    if (!k) { showNoWallet(); return; }
     let s: Status;
     try {
       s = await call<Status>("zw_status");
@@ -213,7 +251,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       say("zwstatus", zErrorText(e));
       return;
     }
-    if (n !== net()) return;
+    if (!sameKey(k, keyNow())) return;
     status = s;
     addresses = null;
     for (const el of Array.from(document.querySelectorAll<HTMLElement>("#zcashpanel [data-account]"))) el.hidden = !s.hasAccount;
@@ -223,14 +261,14 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     say("zwserver", "");
     ($("zwserver") as HTMLInputElement).value = s.server;
     if (!s.hasAccount) {
-      say("zwstatus", `No ${networkLabel(n).toLowerCase()} wallet on this device yet.`);
+      say("zwstatus", `No ${networkLabel(n).toLowerCase()} wallet on this device yet for the board's seed ZFP ${k.wallet.slice(0, 8)}…, account ${k.account}. A passphrase on the board is another seed: it gets its own wallet.`);
       return;
     }
     say("zwstatus", "");
     say("zwsyncline", s.fullyScanned === null ? "Never synced." : `Synced to block ${s.fullyScanned} of ${s.chainTip ?? "?"}.`);
     try {
       const [b, a] = await Promise.all([call<Balances | null>("zw_balances"), call<Addresses>("zw_addresses")]);
-      if (n !== net()) return;
+      if (!sameKey(k, keyNow())) return;
       renderPools(b);
       addresses = a;
       renderReceive(a.unified, a.transparent);
@@ -252,6 +290,8 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       kv.append(dt, dd);
     };
     row("Network", networkLabel(net()));
+    const k = keyNow();
+    if (k) row("Seed fingerprint", k.wallet);
     row("Account", s.hasAccount ? `${s.accountIndex ?? "?"} (board ZFP ${s.zfp ?? "?"})` : "none");
     if (s.birthday !== null) row("Birthday", String(s.birthday));
     row("Data", s.dataDir);
@@ -262,24 +302,26 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   let syncing = false;
   async function sync(): Promise<void> {
     if (syncing) return;
+    const k = keyNow();
+    if (!k) return;
     syncing = true;
-    const n = net();
+    const n = k.network;
     const bar = $<HTMLProgressElement>("zwsyncbar");
     bar.hidden = false;
     bar.value = 0;
     $<HTMLButtonElement>("zwsync").disabled = true;
     say("zwsyncline", `Connecting to ${status?.server ?? "the server"}…`);
     try {
-      const done = await invoke<{ chainTip: number; fullyScanned: number; progress: number }>("zw_sync", { network: n });
-      if (n === net()) say("zwsyncline", `Synced to block ${done.fullyScanned} of ${done.chainTip}.`);
+      const done = await invoke<{ chainTip: number; fullyScanned: number; progress: number }>("zw_sync", { ...k });
+      if (sameKey(k, keyNow())) say("zwsyncline", `Synced to block ${done.fullyScanned} of ${done.chainTip}.`);
       deps.log(`zcash: ${n} wallet synced to ${done.fullyScanned}`);
     } catch (e) {
-      if (n === net()) say("zwsyncline", `Sync failed: ${zErrorText(e)}`);
+      if (sameKey(k, keyNow())) say("zwsyncline", `Sync failed: ${zErrorText(e)}`);
     } finally {
       syncing = false;
       bar.hidden = true;
       $<HTMLButtonElement>("zwsync").disabled = false;
-      if (n === net()) await refresh();
+      if (sameKey(k, keyNow())) await refresh();
     }
   }
 
@@ -302,6 +344,9 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   async function importFromBoard(): Promise<void> {
     const n = net();
     await view.busy("importing the wallet", async () => {
+      /* Read again even when an account is on screen: the board may have
+       * taken a passphrase since, and the fingerprint it gives now is the
+       * wallet this import goes into. */
       say("zwstatus", "Reading the account from the board…");
       const a = await view.readAccount();
       const typed = ($("zwbday") as HTMLInputElement).value.trim();
@@ -387,19 +432,21 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   async function propose(kind: "send" | "shield"): Promise<void> {
     cancelProposal();
-    const n = net();
+    const k = keyNow();
+    if (!k) { say("zwsendstatus", "Read the board's account first."); return; }
+    const n = k.network;
     say("zwsendstatus", kind === "send" ? "Building the transaction…" : "Building the shielding transaction…");
     try {
       const r = kind === "send"
         ? await invoke<{ proposal: Proposal; view: number[] }>("zw_propose_send", {
-          network: n,
+          ...k,
           to: resolveContact(($("zwto") as HTMLInputElement).value),
           amount: ($("zwamount") as HTMLInputElement).value,
           memo: ($("zwmemo") as HTMLTextAreaElement).value || null,
         })
-        : await invoke<{ proposal: Proposal; view: number[] }>("zw_propose_shield", { network: n });
-      if (n !== net()) return;
-      proposal = { network: n, p: r.proposal, view: Uint8Array.from(r.view) };
+        : await invoke<{ proposal: Proposal; view: number[] }>("zw_propose_shield", { ...k });
+      if (!sameKey(k, keyNow())) return;
+      proposal = { network: n, key: k, p: r.proposal, view: Uint8Array.from(r.view) };
       showProposal(r.proposal);
     } catch (e) {
       say("zwsendstatus", zErrorText(e));
@@ -410,7 +457,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const prop = proposal;
     const s = status;
     if (!prop || !s) return;
-    if (prop.network !== net()) { cancelProposal(); return; }
+    if (!sameKey(prop.key, keyNow())) { cancelProposal(); return; }
     const mainOk = ($("zwmainconfirm") as HTMLInputElement).checked;
     if (prop.network === "main" && !mainOk) {
       say("zwsendstatus", "This is mainnet: tick the confirmation above first.");
@@ -438,7 +485,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       });
       say("zwsendstatus", "Signed on the board. Proving (the first time loads the proving key)…");
       const sent = await invoke<{ txid: string; broadcast: boolean }>("zw_finish", {
-        network: prop.network, view: Array.from(prop.view), zsig: Array.from(zsig), mainnetConfirmed: mainOk,
+        ...prop.key, view: Array.from(prop.view), zsig: Array.from(zsig), mainnetConfirmed: mainOk,
       });
       cancelProposal();
       ($("zwamount") as HTMLInputElement).value = "";
@@ -502,9 +549,9 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   }
 
   async function loadContacts(): Promise<void> {
-    const n = net();
+    const k = keyNow();
     const v = await call<Contact[]>("zw_contacts");
-    if (n !== net()) return;
+    if (!sameKey(k, keyNow())) return;
     contacts = v;
     renderContacts();
   }
@@ -515,7 +562,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const memo = $("zwmemo") as HTMLTextAreaElement;
     if (!to) { say("zwtokind", ""); memo.disabled = false; return; }
     try {
-      const kind = await call<string>("zw_check_address", { address: to });
+      const kind = await invoke<string>("zw_check_address", { network: net(), address: to });
       const named = contacts.find((c) => c.address === to)?.name;
       say("zwtokind", `${named ? `${named}: ` : ""}a ${kind} address on ${networkLabel(net())}.`);
       memo.disabled = kind === "transparent";
@@ -529,7 +576,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   $("zwimport").addEventListener("click", () => void importFromBoard().catch((e) => say("zwstatus", zErrorText(e))));
   $("zwtip").addEventListener("click", () => {
-    void call<{ height: number }>("zw_tip").then(
+    void invoke<{ height: number }>("zw_tip", { network: net() }).then(
       (t) => { ($("zwbday") as HTMLInputElement).value = String(t.height); },
       (e) => say("zwstatus", zErrorText(e)),
     );
@@ -595,7 +642,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   const setServer = (server: string | null) => {
     say("zwsetstatus", server ? `Checking ${server}…` : "Back to the default server…");
-    void call<{ server: string }>("zw_set_server", { server }).then((r) => {
+    void invoke<{ server: string }>("zw_set_server", { network: net(), server }).then((r) => {
       say("zwsetstatus", `Using ${r.server}.`);
       void refresh();
     }, (e) => say("zwsetstatus", zErrorText(e)));
@@ -621,6 +668,15 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     say("zwsendstatus", "");
     say("zwrecvstatus", "");
     say("zwtokind", "");
+    void refresh();
+  });
+  /* The board's account names the wallet: a new one (first read, another
+   * seed after a passphrase, another account) is another wallet, and none
+   * (lock, disconnect) is no wallet on screen. */
+  view.onAccount(() => {
+    cancelProposal();
+    say("zwsendstatus", "");
+    say("zwrecvstatus", "");
     void refresh();
   });
 
