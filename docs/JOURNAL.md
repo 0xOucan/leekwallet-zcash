@@ -1433,3 +1433,61 @@ the phone. Branch `companion-zcash-focus`.
   (static RAM 60.6%). The logging stays.
 - On the board: Receive and zGetAccount over Bluetooth work after several
   restarts with Link set to Bluetooth.
+
+### 6.16 The Companion connects, sets up and syncs by itself; QR scanner for paying (2026-10-19)
+
+Zodl's board flow is one guided path (pair, read the account and
+birthday, create the wallet, sync); the Companion asked for four clicks
+in two tabs. Branch `companion-auto-ux`.
+
+- **Automatic.** After pairing the app asks for the PIN, reads the
+  account (once more on 0x0300) and opens the wallet of its network,
+  seed fingerprint and account, or creates it (`src/zcash-auto.ts`) at
+  the board's birthday; a board without one gets the tip minus 100
+  blocks, written back with `zSetAccountMeta`. The manual import shows
+  only when that fails, with the reason and a retry.
+- **Sync** (`src/sync-scheduler.ts`): on open, every 75 s in front,
+  right after a send or a shield. Single flight; a request during a sync
+  runs once after it. Held off between a proposal and its finish (the
+  wallet runs one command per network: a sync starting after the board
+  signed would make the finish fail). Paused when the webview is hidden.
+  Home shows a dot and "Synced at block N", "Syncing X%" or the error
+  with Retry.
+- **Remembered board** (`src/board-memory.ts`): link and Bluetooth id and
+  name only; the launcher's "Reconnect your board" goes to that id. The
+  session is still a fresh handshake with passkey and ALLOW: no pairing
+  key persists, by design, so there was none to reuse.
+- **Home**: total, shielded (Orchard and Ironwood when both hold funds)
+  and transparent, spendable and waiting, Shield whenever transparent
+  funds exist.
+- **Receive** (`src/receive-model.ts`): a fresh diversified address each
+  time it opens, and "Board address (index 0)" to compare with the
+  board's own screen; a new transparent address is the receiver of the
+  next diversified UA, verified on the board through that UA (the board
+  returns the P2PKH receiver at that index; the app compares). Rotation
+  during a sync gets the wallet's busy refusal: the last address stays
+  and a new one follows the sync.
+- **Send**: Scan QR (`src/qr-scan.ts`, zxing-wasm 3.1.3 again, see the
+  README for why not the barcode-scanner plugin), ZIP 321 parsed by
+  `packages/core/src/zip321.ts`; the other network and multi-payment
+  requests are refused before filling. A pasted `zcash:` link fills the
+  form too. "Pay a contact" picker. CSP gains `'wasm-unsafe-eval'`; Linux
+  gets the WebKitGTK camera grant back; `android-usb-host.sh` adds the
+  CAMERA permission and an optional camera feature, and the manifest
+  check requires them. No QR for pairing or signing.
+- Checked end to end in headless Chromium (400×860) against zdev through
+  a bridged fake backend: Connect → pairing → PIN → wallet created at the
+  tip → synced, with no other click; Receive rotation, the board view
+  and both verifications confirmed by zdev; contact pick; a mainnet
+  request refused on testnet; a testnet request filled; Reconnect opens
+  the existing wallet. Not committed (needs a browser from elsewhere).
+- Tests: `pnpm typecheck` clean; `pnpm test` passes (new:
+  `zip321.test.ts`, `companion-flow.test.ts`); `pnpm test:zdev` passes
+  (new: the automatic set-up on Testnet and Mainnet boards and with a
+  passphrase, rotated address and transparent receiver checked on the
+  board); `cargo test --lib` 17 passed, 1 ignored (new: each network
+  refuses the other's addresses).
+- Release arm64 APK: 25.0 MB (was 24.6 MB; the decoder's 1.1 MB of
+  WebAssembly, compressed).
+- Left, on the phone: the camera prompt and a real scan; Reconnect over
+  Bluetooth by id; sync pausing in the background.
