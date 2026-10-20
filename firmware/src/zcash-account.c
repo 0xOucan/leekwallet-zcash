@@ -12,6 +12,16 @@
 #include "zcash-worker.h"
 #include "zsign_c.h"
 
+#if !defined(LEEK_HOST_TEST)
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+int zc_crypto_init(void);   /* zsign-c, private header: 0 ok, -1 table corrupt */
+static const char *TAG = "zaccount";
+#define DERIVE_FAIL(...) ESP_LOGW(TAG, __VA_ARGS__)
+#else
+#define DERIVE_FAIL(...) ((void)0)
+#endif
+
 
 #define H(i) (0x80000000u | (i))
 
@@ -43,6 +53,7 @@ static WalletError derive_with_seed(const uint8_t seed[64], void *p)
         hdnode_private_ckd(&node, H(zcash_coin_type(c->network))) != 1 ||
         hdnode_private_ckd(&node, H(c->account)) != 1 ||
         hdnode_fill_public_key(&node) != 0) {
+        DERIVE_FAIL("derive failed: transparent account key");
         goto done;
     }
     memcpy(out->t_account, node.chain_code, 32);
@@ -50,6 +61,7 @@ static WalletError derive_with_seed(const uint8_t seed[64], void *p)
 
     if (hdnode_private_ckd(&node, 0) != 1 || hdnode_private_ckd(&node, 0) != 1 ||
         hdnode_fill_public_key(&node) != 0) {
+        DERIVE_FAIL("derive failed: transparent receiver key");
         goto done;
     }
     ecdsa_get_pubkeyhash(node.public_key, HASHER_SHA2_RIPEMD, out->t_receiver);
@@ -66,9 +78,17 @@ static WalletError derive_with_seed(const uint8_t seed[64], void *p)
         err = WALLET_OK;
     }
 #else
-    if (zc_account_derive(seed, c->account, c->network, out->t_account, out->t_receiver,
-                          &out->keys) == ZS_OK) {
+    const int32_t rc = zc_account_derive(seed, c->account, c->network, out->t_account,
+                                         out->t_receiver, &out->keys);
+    if (rc == ZS_OK) {
         err = WALLET_OK;
+    } else {
+        /* Which step, and how much internal RAM was left: a failure here
+         * used to reach the user only as "derivation failed". */
+        DERIVE_FAIL("derive failed: zc_account_derive rc=%d, crypto init %d, "
+                    "internal heap %u B (largest %u B)", (int)rc, zc_crypto_init(),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     }
 #endif
 
@@ -100,8 +120,12 @@ WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount
     out->network = network;
 
     DeriveJob job = { { account, network, out }, WALLET_ERROR_DERIVATION_FAILED };
-    WalletError err = zcash_worker_run(derive_job, &job) ? job.err : WALLET_ERROR_DERIVATION_FAILED;
+    const bool ran = zcash_worker_run(derive_job, &job);
+    WalletError err = ran ? job.err : WALLET_ERROR_DERIVATION_FAILED;
     if (err != WALLET_OK) {
+        DERIVE_FAIL("account %u net %u: %s, wallet error %d", (unsigned)account,
+                    (unsigned)network, ran ? "derived" : "the Zcash worker did not run",
+                    (int)err);
         memset(out, 0, sizeof *out);
     }
     return err;
