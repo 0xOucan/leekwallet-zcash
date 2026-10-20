@@ -25,6 +25,7 @@ import { zErrorText, zGetFeatures, type ZFeatures } from "../packages/core/src/z
 import { BleTransport, scanBle, BLE_NOT_FOUND } from "./ble-transport.ts";
 import qrcodegen from "qrcode-generator";
 import { initFlasher, tauriFlashBridge } from "./flasher.ts";
+import { boardLabel, forgetBoard, loadBoard, saveBoard, type RememberedBoard } from "./board-memory.ts";
 import {
   deriveSession, generateKeypair, generateNonce, verifyCommitment,
   NONCE_BYTES, COMMIT_BYTES, PROTOCOL_VERSION, Session,
@@ -692,6 +693,7 @@ let preConnectDest: PreConnectDest = "launcher";
 /** Show exactly the launcher, or exactly the one destination chosen. */
 function applyPreConnectVisibility(): void {
   $("launcher").hidden = preConnectDest !== "launcher";
+  renderRemembered();
   $("devicepanel").hidden = preConnectDest !== "connect";
   $("flashpanel").hidden = preConnectDest !== "flash";
 }
@@ -741,6 +743,28 @@ function connectDestBack(): void {
     goToLauncher();
   }
 }
+/** The launcher's "Reconnect" tile and the Device panel's remembered line. */
+function renderRemembered(): void {
+  const b = loadBoard();
+  const usable = b !== null && (available as string[]).includes(b.link);
+  $("gotoreconnect").hidden = !usable;
+  $("rememberline").hidden = !usable;
+  if (b && usable) {
+    $("reconnectdesc").textContent = boardLabel(b);
+    $("remembername").textContent = boardLabel(b);
+  }
+}
+
+/** One tap: the remembered board, over its link, then the PIN, then the wallet. */
+function reconnect(): void {
+  const b = loadBoard();
+  if (!b) { enterDest("connect"); return; }
+  enterDest("connect");
+  const select = $("transport") as HTMLSelectElement;
+  if (Array.from(select.options).some((o) => o.value === b.link)) select.value = b.link;
+  void connect(b);
+}
+
 /* ----------------------------------------------------------------- actions */
 
 /**
@@ -765,7 +789,13 @@ function connectDestBack(): void {
  */
 let usbPortWasNative = true;
 
-async function findDevice(kind: LinkKind): Promise<Transport | null> {
+async function findDevice(kind: LinkKind, remembered: RememberedBoard | null = null): Promise<Transport | null> {
+  /* The remembered Bluetooth board: straight to it by id (ble_connect scans
+   * for exactly that peer), so a second board in range is never picked. */
+  if (kind === "ble" && remembered?.link === "ble" && remembered.bleId) {
+    log(`reconnecting to ${remembered.bleName ?? remembered.bleId}`);
+    return new BleTransport({ id: remembered.bleId, name: remembered.bleName ?? null });
+  }
   if (kind === "usb") {
     /* Enumeration *rejects* rather than returning empty when the platform has
      * something specific to say - on Android, the cable and USB-host checks
@@ -874,28 +904,33 @@ async function findDevice(kind: LinkKind): Promise<Transport | null> {
  */
 let connecting = false;
 
-async function connect(): Promise<void> {
+async function connect(remembered: RememberedBoard | null = null): Promise<void> {
   if (connecting) {
     log("already connecting — ignoring that");
     return;
   }
   connecting = true;
+  let paired = false;
   try {
-    await connectOnce();
+    paired = await connectOnce(remembered);
   } finally {
     connecting = false;
   }
+  /* The guided flow: paired, so ask the board for its PIN right away (an
+   * unlocked board answers at once). Once unlocked, the wallet opens and
+   * syncs by itself (zcash-wallet.ts). */
+  if (paired) await unlock();
 }
 
-async function connectOnce(): Promise<void> {
+async function connectOnce(remembered: RememberedBoard | null = null): Promise<boolean> {
   /* Real hardware over whichever link the user picked, the mock when there is
    * none. All three are interchangeable by construction — if they were not,
    * everything built against the mock would need revisiting the first time a
    * device was plugged in, and everything proven over USB would prove nothing
    * about BLE. */
   const kind = selectedKind();
-  const found = await findDevice(kind);
-  if (!found) return;
+  const found = await findDevice(kind, remembered);
+  if (!found) return false;
   transport = found;
   client = new Client(transport);
   setMode(transport);
@@ -911,7 +946,7 @@ async function connectOnce(): Promise<void> {
     client = null;
     setMode(null);
     showDisconnected();
-    return;
+    return false;
   }
 
   if (kind !== "mock") {
@@ -959,7 +994,7 @@ async function connectOnce(): Promise<void> {
       client = null;
       setMode(null);
       showDisconnected();
-      return;
+      return false;
     }
     $("passkey").textContent = `${passkey.slice(0, 3)} ${passkey.slice(3)}`;
     $("pairing").hidden = false;
@@ -990,7 +1025,7 @@ async function connectOnce(): Promise<void> {
       client = null;
       setMode(null);
       showDisconnected();
-      return;
+      return false;
     }
     log("approved on device; channel encrypted");
   } else {
@@ -1023,6 +1058,14 @@ async function connectOnce(): Promise<void> {
   ($("transport") as HTMLSelectElement).disabled = true;
   ($("unlock") as HTMLButtonElement).disabled = false;
   ($("disconnect") as HTMLButtonElement).disabled = false;
+
+  /* Remembered for a one-tap reconnect: the link and, over Bluetooth, the
+   * peer's id and name. Nothing of the session (board-memory.ts). */
+  if (kind === "usb") saveBoard({ link: "usb", at: Date.now() });
+  else if (transport instanceof BleTransport) {
+    saveBoard({ link: "ble", bleId: transport.device.id, bleName: transport.device.name, at: Date.now() });
+  }
+  return true;
 }
 async function unlock(): Promise<void> {
   if (!client) return;
@@ -1340,6 +1383,7 @@ async function initEnvironment(): Promise<void> {
 
   setMode(null);
   ($("connect") as HTMLButtonElement).disabled = false;
+  renderRemembered();
 }
 
 /* Held shut until the backend has answered. Clicking through an unpopulated
@@ -1353,6 +1397,12 @@ applyPreConnectVisibility();
 setShellVisible(false);
 
 $("gotoconnect").addEventListener("click", () => enterDest("connect"));
+$("gotoreconnect").addEventListener("click", reconnect);
+$("forgetboard").addEventListener("click", () => {
+  forgetBoard();
+  renderRemembered();
+  log("forgot the remembered board");
+});
 $("gotoflash").addEventListener("click", () => enterDest("flash"));
 $("connectback").addEventListener("click", connectDestBack);
 $("flashback").addEventListener("click", goToLauncher);

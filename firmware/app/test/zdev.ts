@@ -80,7 +80,7 @@ export async function startZdev(bin: string, { yes = true, args = [] as string[]
 const SYNC = [0x4c, 0x4b]; // "LK", wire.rs SYNC
 
 /** The PTY as the board's USB port: LK frames out, LK frames found in console text. */
-class PtyLink {
+export class PtyLink {
   private readonly fd: number;
   private readonly stream: tty.ReadStream;
   private buf = new Uint8Array(0);

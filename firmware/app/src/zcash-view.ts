@@ -13,10 +13,11 @@
  */
 
 import {
-  checkPczt, encodeZsig, sha256, toHex, zErrorText, zGetAccount, zSetBirthday, zShowAddress, zSign,
+  checkPczt, encodeZsig, sha256, toHex, zErrorText, zSetBirthday, zShowAddress, zSign,
   zsigName, MAX_BIRTHDAY, type ZAccount, type ZCall, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import type { Invoke } from "./tauri-transport.ts";
+import { readAccountRetrying } from "./zcash-auto.ts";
 
 export interface ZcashDeps {
   /** The paired client's call, or null when there is no encrypted session. */
@@ -66,6 +67,8 @@ export interface ZcashView {
   /** The home screen opened on an unlocked board: read its account. */
   opened(): void;
   busy<T>(what: string, f: () => Promise<T>): Promise<T>;
+  /** A board operation is running (busy() would refuse another). */
+  readonly working: boolean;
 }
 
 export function initZcash(deps: ZcashDeps): ZcashView {
@@ -173,19 +176,13 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     const n = network;
     const i = account;
     status(`Reading account ${i} (${networkLabel(n)}) from the board…`);
-    let a: ZAccount;
-    try {
-      a = await zGetAccount(call, i, n);
-    } catch (e) {
-      /* Right after the PIN the board can answer 0x0300 ("no wallet on the
-       * device", "derivation failed") while its vault is still opening; a
-       * read a moment later works (docs/JOURNAL.md, the 0x0300 retry).
-       * The home screen reads exactly then, so retry once. */
-      if ((e as { code?: unknown }).code !== 0x0300) throw e;
-      status("The board is still opening its wallet; asking again…");
-      await new Promise((r) => setTimeout(r, 1500));
-      a = await zGetAccount(call, i, n);
-    }
+    /* Right after the PIN the board can answer 0x0300 ("no wallet on the
+     * device", "derivation failed") while its vault is still opening; a
+     * read a moment later works (docs/JOURNAL.md, the 0x0300 retry). The
+     * home screen reads exactly then, so retry once. */
+    const a = await readAccountRetrying(call, i, n, {
+      onRetry: () => status("The board is still opening its wallet; asking again…"),
+    });
     /* The user may have switched while the board was deriving. */
     if (n !== network || i !== account) throw new Error("the network or account changed while reading");
     renderAccount(a);
@@ -381,6 +378,7 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     get network() { return network; },
     get account() { return account; },
     get boardAccount() { return current; },
+    get working() { return working; },
     onChange(f) { listeners.push(f); },
     readAccount,
     busy,

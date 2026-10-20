@@ -582,3 +582,19 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
   .statusbar { flex-wrap: nowrap; }
   .statusbar > .badge, .statusbar > button { flex: none; }
 }
+
+/* Sync state on the home screen: a dot and one line. */
+.zsync { align-items: center; }
+.zsync__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); flex: none; }
+.zsync__dot[data-state="syncing"] { background: var(--accent); animation: zpulse 1.2s ease-in-out infinite; }
+.zsync__dot[data-state="synced"] { background: var(--accent); }
+.zsync__dot[data-state="error"] { background: var(--danger); }
+@keyframes zpulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .zsync__dot[data-state="syncing"] { animation: none; } }
+
+/* The QR scanner in Send: the camera preview, full width, never taller
+ * than half the screen. */
+.zscan { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0; }
+.zscan video { width: 100%; max-height: 50vh; object-fit: cover; border-radius: 8px; background: #000; }
+
+.launcher__tile--primary { border-color: var(--accent); }

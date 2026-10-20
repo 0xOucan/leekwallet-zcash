@@ -37,6 +37,8 @@ export class SyncScheduler {
   private runningNow = false;
   private again = false;
   private lastStart = -Infinity;
+  private holds = 0;
+  private idleWaiters: (() => void)[] = [];
 
   constructor(run: () => Promise<void>, { intervalMs = SYNC_INTERVAL_MS, timers = realTimers }: { intervalMs?: number; timers?: Timers } = {}) {
     this.run = run;
@@ -63,6 +65,31 @@ export class SyncScheduler {
     this.unschedule();
   }
 
+  /**
+   * Hold syncing off while a send is between propose and finish: the
+   * wallet runs one command at a time per network, so a sync starting
+   * after the board signed would make the finish fail. Requests meanwhile
+   * are served by one sync on release. Returns the release.
+   */
+  hold(): () => void {
+    this.holds++;
+    this.unschedule();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.holds--;
+      if (this.holds > 0 || !this.active || this.paused || this.runningNow) return;
+      if (this.again) { this.again = false; void this.trigger(); } else this.schedule(this.intervalMs);
+    };
+  }
+
+  /** Resolves when no sync is running (at once if none is). */
+  whenIdle(): Promise<void> {
+    if (!this.runningNow) return Promise.resolve();
+    return new Promise((r) => this.idleWaiters.push(r));
+  }
+
   /** The app went to the background. */
   pause(): void {
     this.paused = true;
@@ -84,7 +111,7 @@ export class SyncScheduler {
    */
   async trigger(): Promise<void> {
     if (!this.active || this.paused) return;
-    if (this.runningNow) { this.again = true; return; }
+    if (this.runningNow || this.holds > 0) { this.again = true; return; }
     this.unschedule();
     this.runningNow = true;
     this.lastStart = this.timers.now();
@@ -95,8 +122,9 @@ export class SyncScheduler {
        * still runs, so a server that was down is tried again. */
     } finally {
       this.runningNow = false;
+      for (const w of this.idleWaiters.splice(0)) w();
     }
-    if (!this.active || this.paused) return;
+    if (!this.active || this.paused || this.holds > 0) return;
     if (this.again) {
       this.again = false;
       void this.trigger();
@@ -107,6 +135,7 @@ export class SyncScheduler {
 
   private schedule(ms: number): void {
     this.unschedule();
+    if (this.holds > 0) return;
     this.timer = this.timers.set(() => { this.timer = null; void this.trigger(); }, Math.max(0, ms));
   }
 

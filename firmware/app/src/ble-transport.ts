@@ -57,11 +57,14 @@ export class BleTransport implements Transport {
   readonly label: string;
 
   private readonly id: string;
+  /** The peer as scanned (or remembered): what the launcher keeps to reconnect. */
+  readonly device: BleDeviceInfo;
   private opened = false;
   private handler: ((frame: Uint8Array) => void) | null = null;
 
   constructor(device: BleDeviceInfo) {
     this.id = device.id;
+    this.device = { id: device.id, name: device.name };
     // The name is shown because it helps a human pick between two devices, but
     // the id is what was connected to and so it is what the label falls back
     // to. Never the name alone: it is device-supplied and can say anything.

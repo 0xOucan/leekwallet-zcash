@@ -133,6 +133,37 @@ group("sync: on open, on the interval, never twice at once");
   s.stop();
 }
 
+group("sync: held off during a send, then caught up");
+{
+  const timers = fakeTimers();
+  let runs = 0;
+  let release: (() => void) | null = null;
+  const s = new SyncScheduler(async () => { runs++; await new Promise<void>((r) => { release = r; }); }, { intervalMs: 1000, timers });
+  s.start();
+  await tick();
+  let idle = false;
+  void s.whenIdle().then(() => { idle = true; });
+  await tick();
+  check(!idle, "whenIdle waits for the running sync");
+  release!();
+  await tick();
+  check(idle && runs === 1, "...and resolves when it ends");
+  const done = s.hold();
+  check(timers.count() === 0, "no timer while held");
+  await timers.advance(5000);
+  void s.trigger();
+  await tick();
+  check(runs === 1, "no sync while a send holds it (the finish would be refused)");
+  done();
+  await tick();
+  check(runs === 2, "released: the sync asked for meanwhile runs");
+  release!();
+  await tick();
+  done();
+  check(timers.count() === 1, "a second release changes nothing");
+  s.stop();
+}
+
 /* ------------------------------------------------------- board memory */
 
 group("the remembered board");
