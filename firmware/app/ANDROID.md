@@ -277,7 +277,7 @@ export NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
 cd app
 pnpm install
 pnpm tauri android init          # only once per checkout, see "Generated project"
-bash ../scripts/android-usb-host.sh   # after EVERY init: USB host feature + Espressif filter
+bash ../scripts/android-usb-host.sh   # after EVERY init: USB host feature, Espressif filter, camera
 bash ../scripts/check-android-manifest.sh   # says what is still missing
 pnpm android:build               # debug APK, all installed targets
 pnpm android:build:arm64         # just arm64, much faster
@@ -633,8 +633,10 @@ it is built: the same environment, `pnpm tauri android init` (then
   first builds (`wallets/test`, `wallets/main`) move to their keyed place the
   first time their board account is read.
 - **Zcash only.** The EVM screens, WalletConnect and the EVM QR air gap were
-  removed (README); so was the camera: nothing in the app scans a QR code,
-  so the APK asks for no camera permission.
+  removed (README), and with them the EVM QR scanner. Since October 2026 the
+  Send form scans again, for Zcash only: an address or a ZIP 321 `zcash:`
+  request (see "Hand edits", below, for the camera lines). There is no QR
+  flow for pairing or signing: USB and Bluetooth only.
 - **A `.zsig`** from "Sign a file" goes to the app's own Download folder
   (`Android/data/io.leekwallet.zcash.companion/files/Download`), which needs no
   storage permission; on Android 11 and later only a USB file transfer or a
@@ -677,6 +679,32 @@ Re-running `tauri android init`, or a fresh clone, wipes them. That is what
 `./scripts/check.sh` and before every release build, and fails loudly with
 what to run.
 
-The camera lines this section used to list are gone with the QR scanner
-(WalletConnect pairing and the EVM air gap): a Companion built from this tree
-asks for no camera permission.
+### The camera
+
+The Send form's QR scanner (a Zcash address or a ZIP 321 payment request,
+src/qr-scan.ts) needs two more lines, also not expressible in
+`tauri.conf.json` and also applied by `scripts/android-usb-host.sh`:
+
+```xml
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-feature android:name="android.hardware.camera" android:required="false" />
+```
+
+Without them the app builds, installs and runs, and Android denies the camera
+with no dialog: the scanner says "The camera was not allowed". Tauri's own
+`RustWebChromeClient` turns the webview's camera request into the runtime
+permission dialog once the manifest declares it. `required="false"` keeps the
+app installable on a device without a camera (paste the address instead).
+`check-android-manifest.sh` checks both lines.
+
+The decoder is the bundled `zxing-wasm` reader, not Tauri's barcode-scanner
+plugin: one webview code path for the desktop and the phone, no native camera
+activity in the APK, and the decoder this app already used on both (README,
+"QR scanner").
+
+## In the background
+
+The wallet syncs every 75 s while the app is in front, and not at all in the
+background (the webview's `visibilitychange`): no timer runs, the camera is
+released, and coming back syncs at once when the last sync is older than the
+interval. The board's Bluetooth or USB session is not touched by this.
