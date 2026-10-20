@@ -1416,3 +1416,20 @@ the phone. Branch `companion-zcash-focus`.
   `cargo test --lib` 16 passed, 1 ignored (the 11 RPC tests left with
   `rpc.rs`); `make -C firmware/sim test` and `pio run -e esp32s3cam` pass.
 - Release arm64 APK: 24.6 MB (was 28.5 MB; library 21.9 MB).
+
+### 10.6 "derivation failed": the Zcash worker never started (2026-10-19)
+- Symptom since the first Android tests: now and then the board answered
+  every zGetAccount with 0x0300 "derivation failed", over USB and
+  Bluetooth, from every companion, and its own Receive screen said
+  "(derivation failed)"; a restart sometimes cleared it.
+- Logging added to each failure point of an account derivation showed
+  "the Zcash worker did not run" on every request. The worker task's 24 KB
+  stack came from the heap at boot, after Bluetooth and the camera had
+  taken their internal RAM; on some boots (Link on Bluetooth) no block
+  that large was left, xTaskCreate failed, and every derivation failed
+  until the next restart. Shrinking it from 64 KB earlier had only made it
+  rarer.
+- Fix: xTaskCreateStatic with a .bss stack, so the linker reserves it
+  (static RAM 60.6%). The logging stays.
+- On the board: Receive and zGetAccount over Bluetooth work after several
+  restarts with Link set to Bluetooth.

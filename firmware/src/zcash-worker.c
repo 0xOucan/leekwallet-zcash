@@ -56,9 +56,19 @@ bool zcash_worker_start(void)
     if (!gate || !start || !done) return false;
     /* Priority 4, the protocol tasks' level: the UI (5) and the button poller
      * (6) stay responsive while a check runs. Internal RAM: the stack holds
-     * key material during derivation and signing. */
-    if (xTaskCreate(worker, "zcash", ZCASH_WORKER_STACK, NULL, 4, &task) != pdPASS) {
-        task = NULL;
+     * key material during derivation and signing.
+     *
+     * Static, not from the heap. With xTaskCreate the stack had to be found
+     * as one free block of internal RAM at boot, after Bluetooth and the
+     * camera had taken theirs, and some boots it was not there: the worker
+     * never existed and every derivation, on the screen and over every link,
+     * failed as "derivation failed" until the next restart (seen on the
+     * board, 2026-10-19: "the Zcash worker did not run"). In .bss the linker
+     * reserves it, so the task cannot fail to start. */
+    static StackType_t stack[ZCASH_WORKER_STACK / sizeof(StackType_t)];
+    static StaticTask_t tcb;
+    task = xTaskCreateStatic(worker, "zcash", ZCASH_WORKER_STACK, NULL, 4, stack, &tcb);
+    if (!task) {
         ESP_LOGE(TAG, "could not create the Zcash worker (%u B stack)", ZCASH_WORKER_STACK);
         return false;
     }
