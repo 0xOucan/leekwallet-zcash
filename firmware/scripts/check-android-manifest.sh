@@ -12,8 +12,9 @@
 # than "a manifest line is missing". A fresh clone regenerates the manifest and
 # would land straight back in it, which is what this check exists to prevent.
 #
-# (It used to check two camera lines as well, for the EVM QR scanner. The
-# Companion is Zcash only now and scans nothing, so it asks for no camera.)
+# The two camera lines are checked too: the Send form scans Zcash addresses
+# and ZIP 321 requests, and without the permission Android denies the camera
+# with no dialog.
 #
 # Run by scripts/check.sh and by app/scripts/android-release.sh, and a no-op
 # when gen/android has not been generated.
@@ -36,6 +37,9 @@ grep -q 'android.hardware.usb.host' "$MANIFEST" || missing+=("uses-feature andro
 [[ -f "app/src-tauri/gen/android/app/src/main/res/xml/device_filter.xml" ]] \
     || missing+=("res/xml/device_filter.xml (run scripts/android-usb-host.sh)")
 
+grep -q 'android.permission.CAMERA' "$MANIFEST" || missing+=("uses-permission android.permission.CAMERA (run scripts/android-usb-host.sh)")
+grep -q 'android.hardware.camera"' "$MANIFEST" || missing+=("uses-feature android.hardware.camera (run scripts/android-usb-host.sh)")
+
 if (( ${#missing[@]} )); then
     echo "The generated Android project is missing hand-added entries:"
     for m in "${missing[@]}"; do echo "  - $m"; done
@@ -48,4 +52,4 @@ if (( ${#missing[@]} )); then
     exit 1
 fi
 
-echo "   USB host entries present"
+echo "   USB host and camera entries present"

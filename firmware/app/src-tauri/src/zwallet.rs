@@ -683,6 +683,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// What the Send form asks before filling a scanned address in: the
+    /// address must be of the wallet's network, whatever its kind.
+    #[test]
+    fn an_address_of_the_other_network_is_refused() {
+        for (net, other) in [("test", "main"), ("main", "test")] {
+            let k = key(&format!("{net}/abandon-art/pp0/acct0"));
+            for field in ["ua", "transparent_address", "ua_orchard_only"] {
+                let a = k[field].as_str().unwrap().to_string();
+                assert!(zw_check_address(net.into(), a.clone()).is_ok(), "{net} {field}");
+                assert!(zw_check_address(other.into(), a).is_err(), "{net} {field} accepted on {other}");
+            }
+        }
+        assert!(zw_check_address("test".into(), "zcash:nothing".into()).is_err());
+    }
+
     #[test]
     fn networks_are_named_not_guessed() {
         assert!(parse_net("test").is_ok() && parse_net("main").is_ok());

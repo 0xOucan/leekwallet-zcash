@@ -18,6 +18,9 @@ import {
   zSetBirthday, zShowAddress, zSign, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import { repo, startZdev, zdevBinary, ZdevClient } from "./zdev.ts";
+import { fakeWallet } from "./fake-wallet.ts";
+import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying } from "../src/zcash-auto.ts";
+import { ReceiveModel } from "../src/receive-model.ts";
 
 let failures = 0;
 const check = (c: boolean, m: string) => { if (!c) { console.log(`  FAIL: ${m}`); failures++; } };
@@ -164,6 +167,95 @@ group("a board that says no");
     z.answer("y");
     const { v, bytes } = vector("iw_send_shielded_compact");
     check(toHex((await zSign(dev.call, bytes, 0, "test")).sighash) === v.sighash, "signs after a rejection");
+  } finally {
+    dev.close();
+    z.stop();
+  }
+}
+
+/* librustzcash's address of test/abandon-art/pp0/acct0 at diversifier
+ * index 1 and its transparent receiver (firmware/sim/test_zcash_account.c,
+ * host/zecz-core/tests/diversified.rs): what the wallet's rotation hands out. */
+const DIVERSIFIED_1 = {
+  ua: "utest1nggn4c6e0gmlr6fjlt4sel2wnph2r5ytca36uffhetvjpshjm3zy4xzeedhu56sj5qkyaafm6xq5xc75st8nj959mzwvz6qca2gzllzgfuxapwdxmcrafvpj5vm7tmed83mku2umc9g",
+  t: "tmVNYZhAQMp61GkauCYV5R4eVKpxzzMZBJF",
+};
+
+/**
+ * The automatic wallet (src/zcash-auto.ts) on a board: read the account,
+ * create the wallet at the tip minus the margin and record the birthday on
+ * the board, open it on the next connection; a passphrase is another
+ * wallet. The wallet backend is the in-memory one (test/fake-wallet.ts);
+ * the board is zdev.
+ */
+async function autoFlow(network: ZNetwork): Promise<void> {
+  group(`the automatic wallet on a ${network === "main" ? "Mainnet" : "Testnet"} board`);
+  const z = await startZdev(bin!, { yes: true, args: ["--network", network] });
+  const dev = new ZdevClient(z.link);
+  const w = fakeWallet({ tip: network === "main" ? 3_100_000 : 3_700_000 });
+  try {
+    await dev.pair();
+    const k = key(`${network}/abandon-art/pp0/acct0`);
+    const a = await readAccountRetrying(dev.call, 0, network);
+    check(a.seedFingerprint === k.seed_fingerprint && a.birthday === null, "the account, no birthday yet");
+    const r = await ensureWallet(a, { call: dev.call, invoke: w.invoke });
+    const expected = (network === "main" ? 3_100_000 : 3_700_000) - BIRTHDAY_MARGIN;
+    check(r.created && r.birthday === expected && r.birthdaySource === "tip" && r.storedOnBoard, `created at ${expected}`);
+    check((await zGetAccount(dev.call, 0, network)).birthday === expected, "the board now has the birthday");
+    check(w.wallets.has(`${network}-${k.seed_fingerprint}-0`), "the wallet is keyed by network, fingerprint and account");
+    const again = await ensureWallet(await readAccountRetrying(dev.call, 0, network), { call: dev.call, invoke: w.invoke });
+    check(!again.created && again.birthdaySource === "existing" && w.calls.filter((c) => c === "zw_import").length === 1, "the next connection opens it");
+    const other: ZNetwork = network === "main" ? "test" : "main";
+    await rejects(readAccountRetrying(dev.call, 0, other, { retryMs: 1 }),
+      (e) => e instanceof DeviceError && e.code === 0x0528, "the other network is refused by the board");
+  } finally {
+    dev.close();
+    z.stop();
+  }
+
+  /* The same seed with a passphrase: another fingerprint, another wallet. */
+  const zp = await startZdev(bin!, { yes: true, args: ["--network", network, "--passphrase", "hunter2"] });
+  const devp = new ZdevClient(zp.link);
+  try {
+    await devp.pair();
+    const a = await readAccountRetrying(devp.call, 0, network);
+    check(a.seedFingerprint !== key(`${network}/abandon-art/pp0/acct0`).seed_fingerprint, "a passphrase is another seed fingerprint");
+    const r = await ensureWallet(a, { call: devp.call, invoke: w.invoke });
+    check(r.created && w.wallets.size === 2, "...and gets its own wallet");
+  } finally {
+    devp.close();
+    zp.stop();
+  }
+}
+
+await autoFlow("test");
+await autoFlow("main");
+
+group("rotation and the board address, checked on the board");
+{
+  const z = await startZdev(bin, { yes: true });
+  const dev = new ZdevClient(z.link);
+  try {
+    await dev.pair();
+    const a = await readAccountRetrying(dev.call, 0, "test");
+    const m = new ReceiveModel(async () => ({ unified: DIVERSIFIED_1.ua, transparent: DIVERSIFIED_1.t }));
+    m.board = { ua: a.ua, tAddress: a.tAddress };
+    m.defaults = { unified: a.ua, transparent: a.tAddress };
+    await m.rotate();
+    const fresh = m.shielded();
+    check(fresh.ua === DIVERSIFIED_1.ua && fresh.ua !== a.ua, "the fresh address is not the board's index 0");
+    const shown = await zShowAddress(dev.call, 0, "test", fresh.verifyUa!);
+    check(shown.ua === DIVERSIFIED_1.ua, "the board confirms the rotated address is its own");
+    check(shown.tAddress === DIVERSIFIED_1.t, `the board derives the same transparent receiver (${shown.tAddress})`);
+    m.mode = "board";
+    check((await zShowAddress(dev.call, 0, "test", m.shielded().verifyUa!)).ua === a.ua, "the board address (index 0) is confirmed as the board's");
+    m.mode = "fresh";
+    const t = await m.newTransparent();
+    const tv = m.transparent();
+    check(t === DIVERSIFIED_1.t && tv.verifyUa === DIVERSIFIED_1.ua, "a new transparent address and its unified address");
+    check((await zShowAddress(dev.call, 0, "test", tv.verifyUa!)).tAddress === t, "the board checks the transparent receiver through it");
+    await rejects(zShowAddress(dev.call, 0, "test", key("test/abandon-art/pp0/acct1").ua),
+      (e) => e instanceof DeviceError && e.code === ZErr.ForeignAddress, "another account's rotated address is refused");
   } finally {
     dev.close();
     z.stop();

@@ -94,6 +94,44 @@ fn transports() -> Vec<&'static str> {
     vec!["usb", "ble"]
 }
 
+/// Let the Linux webview reach a camera, for the Send form's QR scanner.
+///
+/// WebKitGTK is not Chromium: `enable-media-stream` defaults to off, and every
+/// permission request is denied unless the embedder answers it, so
+/// `getUserMedia` rejects with NotAllowedError and scanning is dead on Linux.
+///
+/// Only camera requests are granted, and only because of what this webview is:
+/// it loads this app's own bundled UI and no remote page (the CSP has no
+/// frame-src and there is no address bar). Microphone, geolocation and the rest
+/// are refused, so this cannot become a general-purpose yes. Android needs no
+/// code: Tauri's webview client asks the user for the CAMERA permission the
+/// manifest declares (ANDROID.md).
+#[cfg(target_os = "linux")]
+fn allow_camera(window: &tauri::WebviewWindow) {
+    use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequestExt, WebViewExt};
+
+    if let Err(e) = window.with_webview(|webview| {
+        let view = webview.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(|_, request| {
+            use webkit2gtk::glib::object::Cast;
+            let media = request.clone().downcast::<webkit2gtk::UserMediaPermissionRequest>().ok();
+            match media {
+                // The camera; audio is never asked for and is not granted just
+                // because it shares the request type.
+                Some(m) if m.is_for_video_device() && !m.is_for_audio_device() => request.allow(),
+                _ => request.deny(),
+            }
+            true
+        });
+    }) {
+        // Not fatal: the app works, scanning does not, and the scanner says so.
+        eprintln!("could not enable the camera in this webview: {e}");
+    }
+}
+
 /// Start the app.
 ///
 /// `mobile_entry_point` is what the generated Android project calls; on desktop
@@ -136,6 +174,13 @@ pub fn run() {
             {
                 use tauri::Manager;
                 _app.manage(zwallet::ZState::new(_app.handle())?);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(window) = _app.get_webview_window("main") {
+                    allow_camera(&window);
+                }
             }
             Ok(())
         })

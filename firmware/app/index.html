@@ -55,6 +55,14 @@
           target and reachable by keyboard, not a styled <div>.
         -->
         <nav class="launcher" id="launcher" aria-label="Choose what to do">
+          <!-- The last board paired (src/board-memory.ts): its link and
+               Bluetooth id, never anything of the session. One tap pairs
+               again (passkey and ALLOW on the board, as always) and the
+               wallet opens by itself after the PIN. -->
+          <button type="button" class="launcher__tile launcher__tile--primary" id="gotoreconnect" hidden>
+            <span class="launcher__title">Reconnect your board</span>
+            <span class="launcher__desc" id="reconnectdesc"></span>
+          </button>
           <button type="button" class="launcher__tile" id="gotoconnect">
             <span class="launcher__title">Connect device</span>
             <span class="launcher__desc">USB or Bluetooth</span>
@@ -87,6 +95,8 @@
                collapsed device log: a dismissed USB permission dialog or a
                board on the other link has to be read where Connect is. -->
           <div class="notice notice--danger connproblem" id="connproblem" role="alert" hidden></div>
+          <p class="muted" id="rememberline" hidden>Remembered board: <span id="remembername"></span>
+            <button type="button" class="ghost" id="forgetboard">Forget it</button></p>
           <div id="pairing" hidden style="margin-top: var(--space-4)"
                role="group" aria-label="Passkey to compare with the device">
             <dl class="kv">
@@ -153,13 +163,18 @@
                  reimplemented here; every spend is reviewed and signed on the
                  board. Hidden in a build without the wallet. -->
             <section id="zpane-wallet" role="tabpanel" aria-labelledby="ztab-wallet" hidden>
+              <!-- Normally never seen: the wallet is created by itself from
+                   the board (src/zcash-auto.ts). Shown when that failed, to
+                   retry or set the birthday by hand. -->
               <div id="zwsetup" hidden>
-                <h4>Set up this network's wallet</h4>
-                <p class="muted">The wallet watches the board's account with its
+                <h4>Set up this network's wallet by hand</h4>
+                <p class="muted">The automatic set-up did not finish (the reason
+                  is below). The wallet watches the board's account with its
                   viewing key; spending is always signed on the board. The
                   birthday is the block to scan from: the board's if it has one,
                   otherwise the height the seed was created at (for a new seed,
                   today's tip).</p>
+                <button type="button" id="zwautoretry" class="secondary">Try the automatic set-up again</button>
                 <div class="row">
                   <label class="field"><span>Birthday (block height)</span>
                     <input id="zwbday" inputmode="numeric" autocomplete="off" /></label>
@@ -174,16 +189,19 @@
                 </div>
                 <p class="muted" id="zwspendable"></p>
                 <dl class="kv" id="zwpools"></dl>
-                <div class="row">
-                  <button type="button" id="zwsync">Sync</button>
+                <div class="row zsync">
+                  <span class="zsync__dot" id="zwsyncdot" data-state="idle" aria-hidden="true"></span>
                   <span class="muted" id="zwsyncline" role="status" aria-live="polite"></span>
+                  <button type="button" id="zwsync" class="secondary">Sync now</button>
                 </div>
                 <progress id="zwsyncbar" value="0" max="1" hidden></progress>
                 <div class="notice" id="zwshield" hidden>
                   <p><strong>Transparent funds.</strong> <span id="zwshieldamt"></span> sits in
-                    your transparent address, where anyone can see it. Shield it
+                    your transparent addresses, where anyone can see it. Shield it
                     into the shielded pool; the board signs it.</p>
-                  <button type="button" id="zwshieldgo">Shield on the board</button>
+                  <p class="muted" id="zwshieldwait" hidden>Waiting for confirmations
+                    before it can be shielded.</p>
+                  <button type="button" id="zwshieldgo">Shield</button>
                 </div>
                 <h4>Recent activity</h4>
                 <ul class="zhist" id="zwrecent"></ul>
@@ -195,17 +213,25 @@
               <p class="muted">A new shielded address for each payer keeps them
                 from linking payments to you; every one of them reaches this
                 wallet. Check it on the board before you hand it out.</p>
-              <p class="addr-path-label muted">Shielded address</p>
+              <div class="row" role="group" aria-label="Which address">
+                <button type="button" id="zwrfresh" class="secondary" aria-pressed="true">Fresh address</button>
+                <button type="button" id="zwrboard" class="secondary" aria-pressed="false">Board address (index 0)</button>
+              </div>
+              <p class="addr-path-label muted" id="zwuatitle">Shielded address</p>
               <div class="addr" id="zwua"></div>
+              <p class="muted" id="zwuanote"></p>
               <div class="row">
                 <button type="button" id="zwuaverify">Verify on the board</button>
                 <button type="button" id="zwuanew" class="secondary">New address</button>
                 <button type="button" id="zwuaqr" class="secondary" aria-expanded="false" aria-controls="zwqr">Show QR code</button>
                 <button type="button" id="zwuacopy" class="secondary">Copy</button>
               </div>
-              <p class="addr-path-label muted">Transparent address (public on the chain; shield what arrives here)</p>
+              <p class="addr-path-label muted" id="zwttitle">Transparent address</p>
               <div class="addr" id="zwtaddr"></div>
+              <p class="muted" id="zwtnote"></p>
               <div class="row">
+                <button type="button" id="zwtverify" class="secondary">Verify on the board</button>
+                <button type="button" id="zwtnew" class="secondary">New transparent address</button>
                 <button type="button" id="zwtqr" class="secondary" aria-expanded="false" aria-controls="zwqr">Show QR code</button>
                 <button type="button" id="zwtcopy" class="secondary">Copy</button>
               </div>
@@ -214,6 +240,20 @@
             </section>
 
             <section id="zpane-send" role="tabpanel" aria-labelledby="ztab-send" hidden>
+              <!-- Scan a Zcash address or a ZIP 321 zcash: request
+                   (src/qr-scan.ts, packages/core/src/zip321.ts); the network
+                   is checked before anything is filled in. -->
+              <div class="row">
+                <button type="button" id="zwscan" class="secondary">Scan QR</button>
+                <select id="zwcontactpick" aria-label="Pay a contact">
+                  <option value="">Pay a contact…</option>
+                </select>
+              </div>
+              <div class="zscan" id="zwscanbox" hidden>
+                <video id="zwscanvideo" playsinline muted></video>
+                <button type="button" id="zwscancancel" class="secondary">Cancel</button>
+              </div>
+              <p class="muted" id="zwscanstatus" role="status" aria-live="polite"></p>
               <label class="field"><span>To</span>
                 <input id="zwto" class="addr" spellcheck="false" autocomplete="off" placeholder="u1…, zs…, t1… or a contact" list="zwcontactlist" /></label>
               <datalist id="zwcontactlist"></datalist>

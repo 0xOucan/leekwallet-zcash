@@ -3221,6 +3221,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-serialplugin",
  "tokio",
+ "webkit2gtk",
  "zecz-core",
 ]
 

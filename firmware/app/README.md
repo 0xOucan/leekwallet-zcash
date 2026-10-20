@@ -119,8 +119,9 @@ index checks alone caught four real unguarded accesses in the framing layer.
 
 ## Dependencies and supply chain
 
-The app itself ships **four** npm packages: `@noble/ciphers`, `@noble/curves`
-and `@noble/hashes` (the session) and `qrcode-generator` (receive QR codes).
+The app itself ships **five** npm packages: `@noble/ciphers`, `@noble/curves`
+and `@noble/hashes` (the session), `qrcode-generator` (receive QR codes) and
+`zxing-wasm` (reading a payment QR code in Send, see "QR scanner").
 Everything else in the lockfile is build tooling: TypeScript, Vite and its
 platform binaries, the Tauri CLI and Node types. That number is the strongest
 control available here, and it is worth defending — every addition is a party
@@ -234,6 +235,29 @@ wallet, server and address book; nothing is shared between them. A board that
 refuses a request for the other network (its network guard) is shown in the
 board's own words: every board error is displayed verbatim, with its code.
 
+**Automatic, as in Zodl.** Connecting is one guided flow with no other
+click: Connect (or, from the launcher, *Reconnect your board*) pairs (compare
+the passkey, ALLOW on the board), asks the board for its PIN, reads the
+account (`zGetAccount`, once more after 1.5 s on 0x0300), and opens the
+wallet of that network, seed fingerprint and account, creating it when this
+device has none (`src/zcash-auto.ts`): born at the board's birthday for that
+network, or, when the board has none, at the chain tip minus 100 blocks,
+which is then written to the board with `zSetAccountMeta` as the desktop
+app does. Then it syncs (`src/sync-scheduler.ts`): on open, every 75 s while
+the app is in front, right after a send or a shield; never two at once, never
+between a proposal and its finish, and not in the background (Android, a
+minimised window). The home screen says *Synced at block N*, *Syncing X%* or
+the error, with *Retry*. The manual buttons stay for troubleshooting: Board →
+*Read the board's account*, and the wallet's *set up by hand* form, shown
+when the automatic set-up fails.
+
+**The remembered board** (`src/board-memory.ts`): the last board's link and,
+over Bluetooth, the peer id and advertised name, kept in the webview's
+storage; never a key, passkey or anything of the session, which is a fresh
+handshake (passkey, ALLOW) on every connection. *Forget it* in the Device
+panel drops it. Reconnecting over Bluetooth goes to that id
+(`ble_connect`), so another board in range is never picked.
+
 **Board** (any build):
 - Read the board's account for the network and account number: unified and
   transparent address (QR, copy), viewing key, seed fingerprint and birthday.
@@ -257,19 +281,47 @@ server settings are the desktop app's own modules, compiled in from
 the commands. The screens follow Zodl's as a feature reference (nothing of its
 code is used):
 
-- *Wallet*: set up from the board (birthday from the board, typed, or today's
-  tip), then the balance (hideable), the pools, sync with progress, the
-  "transparent funds, shield them" prompt, and recent activity.
-- *Receive*: the shielded address, a new one on request (all of them reach the
-  wallet), verify on the board, the transparent address, QR and copy.
-- *Send*: recipient (or a contact's name), amount, memo with its byte count
-  (none to a transparent address), a review with fee and change, and on
-  mainnet a confirmation to tick. Then: the board's seed is checked against
-  the wallet's, the compact signer view is signed on the board, and the
-  wallet proves, broadcasts and shows the txid.
+- *Wallet* (home): the total (hideable), shielded (Orchard + Ironwood, each
+  shown when both hold funds) and transparent, what is spendable now and what
+  is waiting for confirmations, the sync state, a *Shield* button whenever
+  transparent funds exist (enabled once they are spendable), and recent
+  activity.
+- *Receive*: a fresh diversified unified address each time Receive opens or
+  on *New address* (every one reaches the wallet; while a sync holds the
+  wallet, the last one stays and a new one follows the sync), and a toggle to
+  *Board address (index 0)*: the same address the board shows on its own
+  Receive screen, to compare. *Verify on the board* sends the address shown to
+  `zShowAddress`; the board derives its receiver at that diversifier index and
+  refuses one that is not its own. Transparent: the account's default address
+  (index 0), or *New transparent address*: the transparent receiver of the
+  next diversified address, checked on the board through the unified address
+  that carries it (the board compares its key at that index). Both say it is
+  public and to shield what arrives. QR and copy (`src/receive-model.ts`).
+- *Send*: *Scan QR* (a Zcash address or a ZIP 321 `zcash:` request; pasting
+  a `zcash:` link into To does the same), *Pay a contact*, recipient, amount,
+  memo with its byte count (none to a transparent address), a review with fee
+  and change, and on mainnet a confirmation to tick. Then: the board's seed is
+  checked against the wallet's, the compact signer view is signed on the
+  board, and the wallet proves, broadcasts and shows the txid.
 - *Activity*: history with memos, recipients, fee, and an explorer link.
 - *Contacts*, *Settings* (server per network, checked before it is saved;
   wallet info; forget this network's wallet).
+
+**QR scanner.** Send only, Zcash only; no QR flow for pairing or signing.
+`packages/core/src/zip321.ts` parses the code strictly: the address (unified,
+Sapling, transparent, TEX), `amount` (at most 8 decimals, at most 21 million),
+`memo` (base64url, UTF-8 text, at most 512 bytes, never to a transparent
+address), `label` and `message`; a repeated or malformed parameter or an
+unknown `req-` one rejects the request. Nothing is filled in when the code is
+for the other network (said in words: switch the network first) or carries
+more than one payment (this wallet pays one recipient at a time). The camera
+is read in the webview by the bundled `zxing-wasm` reader (`src/qr-scan.ts`):
+`BarcodeDetector` is missing from WebKitGTK and crashed the Android webview
+without Play Services, jsQR could not read dense codes off a screen, and
+Tauri's barcode-scanner plugin is mobile only. It costs about 1 MB of
+WebAssembly and `'wasm-unsafe-eval'` in the CSP. On Linux the backend enables
+WebKitGTK's media stream and grants camera requests only; on Android the
+manifest declares the camera (ANDROID.md).
 
 **Which wallet: the seed fingerprint.** When the home screen opens, the
 Companion reads the board's account (`zGetAccount`, retried once on 0x0300
@@ -297,9 +349,14 @@ first time the board account it belongs to is read; another seed's leaves it
 alone.
 
 Tests: `pnpm test` includes `packages/core/test/zcash.test.ts` (the golden
-`.zsig`, reply checks, chunking, amounts); `pnpm test:zdev` pairs with zdev
+`.zsig`, reply checks, chunking, amounts), `packages/core/test/zip321.test.ts`
+(payment requests, address networks) and `test/companion-flow.test.ts` (the
+sync schedule, the remembered board, Receive's rotation and board view, the
+automatic set-up over a scripted board); `pnpm test:zdev` pairs with zdev
 (`make -C firmware/sim build/zdev`, the firmware's protocol on a PTY) using the
-Companion's framing and session, and signs the PCZT vectors on both networks;
+Companion's framing and session, and signs the PCZT vectors on both networks, runs the automatic set-up against
+zdev on Testnet and Mainnet boards (`--network`) and with a passphrase, and
+checks a rotated address and its transparent receiver on the board;
 `cargo test --lib` in src-tauri covers the save command and the import checks,
 and `cargo test --lib -- --ignored online` imports and syncs the public test
 account against testnet lightwalletd. To drive the desktop app against zdev,

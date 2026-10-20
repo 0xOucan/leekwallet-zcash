@@ -10,7 +10,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "pnpm -r test && node --experimental-strip-types --disable-warning=ExperimentalWarning test/flasher.test.ts",
+    "test": "pnpm -r test && node --experimental-strip-types --disable-warning=ExperimentalWarning test/flasher.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/companion-flow.test.ts",
     "test:zdev": "node --experimental-strip-types --disable-warning=ExperimentalWarning test/zcash-zdev.test.ts",
     "dev": "vite --port 1420 --strictPort",
     "build": "vite build",
@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@leekwallet/core": "workspace:*",
-    "qrcode-generator": "2.0.4"
+    "qrcode-generator": "2.0.4",
+    "zxing-wasm": "3.1.3"
   }
 }
