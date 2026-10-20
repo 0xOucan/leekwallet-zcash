@@ -87,6 +87,14 @@ tokio = { version = "1", features = ["sync", "rt"] }
 #
 # `default-features = false` is what makes the two mutually exclusive: with the
 # default `ble` feature still on, the crate refuses to build.
+# The Linux webview, reached directly to let the Send form's QR scanner use
+# the camera (src/lib.rs, allow_camera): WebKitGTK ships with
+# `enable-media-stream` off and denies every permission request nobody
+# answers, so getUserMedia fails with NotAllowedError. The version is the one
+# Tauri already resolves (Cargo.lock): one binding to one library.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+
 [target.'cfg(target_os = "android")'.dependencies]
 leek-transport-ble = { path = "../transport-ble", default-features = false, features = ["blec"] }
 tauri-plugin-blec = "0.12"
