@@ -1685,3 +1685,16 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
 - Left, on the tablet: USB with logcat, Reconnect after Back and after
   30 s in the background, a unified address QR from the board's screen
   with the brightness lowered. NEAR swaps are not part of this (6.6).
+
+### Bluetooth: slow advertising after the two-minute window (2026-10-20)
+- The tablet's Reconnect failed until the board was restarted or a button
+  pressed: `src/ble.c` advertised for `BLE_ADV_WINDOW_MS` (two minutes)
+  after a disconnect and then went silent.
+- Now the end of that window starts slow advertising, one advert every
+  1.28 s with no end, so a remembered companion can still find the board.
+  Any button press stops the slow advertising and re-opens the fast window
+  (100 ms). A connection stops either; a disconnect starts the fast window.
+- Trade-off: the board is visible as "LeekWallet" in Bluetooth scans for
+  as long as Bluetooth is the selected transport, not only for two minutes
+  after a disconnect. Pairing still needs the passkey and ALLOW on the
+  board, and USB mode does not advertise at all.
