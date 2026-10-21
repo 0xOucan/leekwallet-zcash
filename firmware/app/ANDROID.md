@@ -77,7 +77,8 @@ compiled into the APK — which is exactly the constraint that ruled out
 hand-rolled JNI for BLE.
 
 [`tauri-plugin-serialplugin`](https://github.com/s00d/tauri-plugin-serialplugin)
-3.0.2 (Apache-2.0 OR MIT) is a Tauri mobile plugin, so the chain is the one
+3.0.9 (Apache-2.0 OR MIT; 3.0.2 until 2026-10-20, see "Findings,
+2026-10-20" below) is a Tauri mobile plugin, so the chain is the one
 above, verbatim: `links = "tauri-plugin-serialplugin"`, a build script calling
 `tauri_plugin::Builder::new(..).android_path("android")`, and `tauri-build`
 rewriting `tauri.settings.gradle` and `app/tauri.build.gradle.kts` to include
@@ -348,6 +349,52 @@ Or `pnpm android:dev` with a device attached, which live-reloads the frontend
 from the Vite dev server.
 
 ## Testing USB on the phone
+
+### Findings, 2026-10-20 (USB closed the app; Reconnect needed a board restart)
+
+Release APK on a Samsung Galaxy Tab A7 (SM-T500, Android 16) with the
+board. Bluetooth, sync, send and both networks worked. Two faults, read
+from the code (no logcat was taken):
+
+- **USB: the app closed.** `tauri-plugin-serialplugin` 3.0.2 looked up
+  its Kotlin class `UsbNative` with JNI `FindClass` from the Rust thread
+  that runs our `ports`/`connect` (Tokio's blocking pool, attached to the
+  JVM by the plugin). A natively attached thread has no app frames, so
+  `FindClass` searches the system class loader, which cannot see app
+  classes: `ClassNotFoundException`. The plugin returned the error but
+  left the Java exception pending, and when the thread detached ART
+  handed it to the uncaught-exception handler, which kills the process.
+  Every USB attempt crashed, whatever the board's Link setting. Fixed
+  upstream in 3.0.7 (the class is cached in `nativeInit`, on the main
+  thread; upstream issue #42) and 3.0.8 (a failed JNI call clears its
+  exception before the thread detaches, "prevent app crashes when USB
+  devices disconnect"); `android-usb-serial` 0.1.2 also stops a closed
+  handle panicking after a detach. Both are now pinned in Cargo.lock
+  (3.0.9, 0.1.2; the diff from 3.0.2 was read: JNI fixes, tests, lint).
+- **Every USB failure is a message.** `ports`, `connect` and `request` on
+  Android log the failure (`leek-usb:` in `RustStdoutStderr`) and return
+  it with the logcat line to run for a report; a panic in the USB worker
+  is an error naming it, not a stuck promise; panics anywhere are logged
+  as `leek-panic:` with the thread (`panic` stays `unwind`). The Kotlin
+  side is the plugin's; in 3.0.9 every exception it throws reaches Rust
+  as an error and is cleared there, so no try/catch of ours is needed
+  in it (and none could survive `tauri android init` without forking it).
+- **Reconnect after closing the app.** Two causes, both addressed:
+  the app (Back, or swiped away while Android kept the process) left the
+  Bluetooth link open, and the board does not advertise while a peer is
+  connected; and the board's advertising window closes two minutes after
+  a disconnect (firmware `BLE_ADV_WINDOW_MS`), after which only a button
+  press re-opens it. The app now closes the link after 30 s in the
+  background, on exit, and at start when the process still holds one
+  (`src-tauri/src/link.rs`); Reconnect scans 4 s, tries the remembered id
+  directly, and otherwise says the board is not advertising and what to
+  do.
+
+What to send back if USB still fails: the red box on the Device panel
+(it now ends with the logcat line) and
+`adb logcat -s RustStdoutStderr SerialPlugin UsbFdBridge AndroidRuntime`
+around the attempt; for Bluetooth,
+`adb logcat -s RustStdoutStderr Peripheral AndroidRuntime`.
 
 ### Findings, 2026-10-18 (Bluetooth works, USB does not)
 

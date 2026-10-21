@@ -35,6 +35,7 @@ import { ensureWallet } from "./zcash-auto.ts";
 import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
+import { txHead } from "./tx-labels.ts";
 
 interface Pool { total: number; spendable: number; pending: number }
 export interface Status {
@@ -50,7 +51,8 @@ interface Balances {
 interface Addresses { unified: string; transparent: string | null; orchardOnly: string }
 interface Tx {
   txid: string; minedHeight: number | null; blockTime: number | null; expired: boolean;
-  kind: "received" | "sent" | "shielded" | "internal"; amountZat: number; deltaZat: number;
+  /** zecz's kind (src/tx-labels.ts): received, sent, self, shielded, internal, or a newer one. */
+  kind: string; amountZat: number; deltaZat: number;
   feeZat: number | null; memos: string[]; recipients: { address: string; valueZat: number }[];
 }
 interface Proposal {
@@ -223,15 +225,15 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const li = document.createElement("li");
     const head = document.createElement("div");
     head.className = "zhist__head";
-    const what = { received: "Received", sent: "Sent", shielded: "Shielded", internal: "Moved" }[t.kind];
+    const h = txHead(t, hide);
     const when = t.minedHeight === null
       ? (t.expired ? "expired, never mined" : "pending")
       : t.blockTime ? new Date(t.blockTime * 1000).toLocaleString() : `block ${t.minedHeight}`;
     const amt = document.createElement("span");
     amt.className = "zhist__amt";
-    amt.dataset["dir"] = t.deltaZat < 0 ? "out" : "in";
-    amt.textContent = hide ? "••••" : `${t.deltaZat < 0 ? "−" : "+"}${formatZec(Math.abs(t.deltaZat))} ZEC`;
-    head.append(document.createTextNode(`${what} · ${when}`), amt);
+    amt.dataset["dir"] = h.dir;
+    amt.textContent = h.amount;
+    head.append(document.createTextNode(`${h.label} · ${when}`), amt);
     li.append(head);
     const details = document.createElement("details");
     const sum = document.createElement("summary");
@@ -773,6 +775,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
         (t) => { stopScan(); fillFromRequest(t); },
         (m) => { stopScan(); say("zwscanstatus", m); },
       );
+      renderScanControls();
     } catch (e) {
       stopScan();
       const name = (e as { name?: string }).name;
@@ -782,6 +785,29 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
           ? "No camera found. Paste the address or the zcash: link into To instead."
           : `The camera did not start: ${(e as Error).message ?? String(e)}`);
     }
+  }
+
+  /** The scanner's sliders and switch, as this camera allows. */
+  function renderScanControls(): void {
+    const sc = scan;
+    if (!sc) return;
+    const b = sc.brightness();
+    const exp = $<HTMLInputElement>("zwscanexp");
+    exp.min = String(b.range.min);
+    exp.max = String(b.range.max);
+    exp.step = String(b.range.step);
+    exp.value = String(b.range.value);
+    say("zwscanexplabel", b.hardware ? "Brightness (exposure)" : "Brightness");
+    const z = sc.zoom();
+    $("zwscanzoomrow").hidden = z === null;
+    if (z) {
+      const zoom = $<HTMLInputElement>("zwscanzoom");
+      zoom.min = String(z.min);
+      zoom.max = String(z.max);
+      zoom.step = String(z.step);
+      zoom.value = String(z.value);
+    }
+    $("zwscanswitch").hidden = sc.cameras() < 2;
   }
 
   /* --------------------------------------------------------- contacts */
@@ -955,6 +981,17 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   $("zwscan").addEventListener("click", () => void startScan());
   $("zwscancancel").addEventListener("click", () => { stopScan(); say("zwscanstatus", "Scan cancelled."); });
+  $("zwscanexp").addEventListener("input", (ev) => scan?.setBrightness(Number((ev.target as HTMLInputElement).value)));
+  $("zwscanzoom").addEventListener("input", (ev) => scan?.setZoom(Number((ev.target as HTMLInputElement).value)));
+  $("zwscanswitch").addEventListener("click", () => {
+    const sc = scan;
+    if (!sc) return;
+    $<HTMLButtonElement>("zwscanswitch").disabled = true;
+    void sc.switchCamera().then(
+      () => { if (scan === sc) renderScanControls(); },
+      (e) => say("zwscanstatus", `The other camera did not start: ${(e as Error).message ?? String(e)}`),
+    ).finally(() => { $<HTMLButtonElement>("zwscanswitch").disabled = false; });
+  });
   for (const t of Array.from(document.querySelectorAll<HTMLButtonElement>("#zcashpanel [role=tab]"))) {
     if (t.id !== "ztab-send") t.addEventListener("click", stopScan);
   }

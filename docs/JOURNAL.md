@@ -1618,3 +1618,70 @@ Bluetooth both work), on branch `chrome-test-fixes`.
   passed, 6 ignored; `pnpm typecheck` clean, `pnpm test` (10 suites, 25
   conformance vectors) and `pnpm test:zdev` pass; the extension's
   board.test.mjs 36 passed.
+
+### 6.17 Companion fixes from the tablet test: USB crash, Reconnect, dense QR codes, labels, wrong network (2026-10-20)
+
+The release APK on a Samsung Galaxy Tab A7 (SM-T500, Android 16) with the
+board: automatic connect, wallet and sync over Bluetooth, rotation, board
+address, new transparent address, contacts, a testnet send, mainnet and a
+passphrase all worked. Five things did not. Branch `companion-test-fixes`.
+
+- **USB closed the app.** `tauri-plugin-serialplugin` 3.0.2 ran JNI
+  `FindClass("app/tauri/serialplugin/UsbNative")` on the Rust thread that
+  serves `ports`/`connect`. A thread attached from native code looks in
+  the system class loader, which cannot see app classes, so it got
+  `ClassNotFoundException`; the plugin left that exception pending, and
+  ART turns a pending exception at thread detach into an uncaught one,
+  which kills the process. Every USB attempt did this, whatever the
+  board's Link setting. Upstream fixed both halves (3.0.7 caches the
+  class in `nativeInit`, issue #42; 3.0.8 clears exceptions before
+  detaching) and `android-usb-serial` 0.1.2 stops panics on a closed
+  handle: now 3.0.9 / 0.1.2, diff read. Every USB failure is logged
+  (`leek-usb:`) and returned with the logcat line to run
+  (`adb logcat -s RustStdoutStderr SerialPlugin UsbFdBridge AndroidRuntime`);
+  a worker panic is an error, and panics are logged as `leek-panic:`.
+  Not seen on hardware yet: no logcat was taken, this is from the code.
+- **Reconnect needed a board restart.** Closing the app (Back, or swiped
+  away while Android kept the process) left the Bluetooth link open;
+  the board does not advertise while connected. And the firmware closes
+  its advertising window two minutes after a disconnect
+  (`BLE_ADV_WINDOW_MS`, src/ble.c); then only a button press re-opens it.
+  The app now closes the link (GATT disconnect, USB released) after 30 s
+  in the background, on exit, and at start when the process still holds
+  one (`src-tauri/src/link.rs`, `src/link-events.ts`); a request waiting
+  on the board is never cut. Reconnect releases a stale link, scans 4 s,
+  tries the remembered id directly (8 s), and otherwise says "The board
+  is not advertising: it may still be connected to this or another app.
+  Restart the board or wait ~30 s", and that a button press makes it
+  advertise. Bluetooth commands run on their own task, so a blec panic
+  is an error, and blec's disconnect (no deadline of its own) is bounded.
+  For the firmware, later: keep advertising at a low duty cycle after
+  the window instead of stopping, and ask for a short supervision
+  timeout so a vanished phone frees the board in seconds.
+- **Dense QR codes off a screen** (`src/qr-tuning.ts`, `src/qr-scan.ts`):
+  the middle of the picture at full resolution every frame, then in
+  rotation the whole frame, a contrast-stretched and darkened copy, and
+  the GlobalHistogram binarizer; tryHarder and tryInvert as before.
+  Brightness (exposure compensation, or the software darkening),
+  Zoom when the camera has it, Switch camera, the camera remembered.
+- **"undefined · date"** in Recent activity was the desktop fix's new
+  `self` kind (a send to yourself). `src/tx-labels.ts` names it "Sent to
+  yourself" with its fee, and any kind it does not know reads as its own
+  words or "Transaction".
+- **Wrong network.** 0x0528 now shows a notice on every tab with the
+  board's words and *Switch the app to Mainnet/Testnet*, which switches
+  and reads again (`src/network-guard.ts`). When `getStatus` carries
+  `network` (the firmware agent is adding it) the app follows the board
+  on connect and when it changes; without the field nothing changes.
+- Tests: `pnpm typecheck` clean; `pnpm test` passes (new groups: the
+  activity labels, the wrong-network notice and switch, the link events,
+  the scanner's settings and image work); `pnpm test:zdev` passes (new:
+  the one-tap switch after zdev's 0x0528 on both networks; getStatus
+  `network` checked when present); `cargo test --lib` 21 passed, 1
+  ignored (new: the background-release timing); transport-ble 17 passed
+  (new: the not-advertising message); `cargo check --target
+  aarch64-linux-android` clean.
+- Release arm64 APK: 25.1 MB (25,065,056 bytes).
+- Left, on the tablet: USB with logcat, Reconnect after Back and after
+  30 s in the background, a unified address QR from the board's screen
+  with the brightness lowered. NEAR swaps are not part of this (6.6).

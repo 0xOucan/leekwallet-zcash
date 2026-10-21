@@ -36,7 +36,7 @@ compile_error!(
 );
 
 #[cfg(any(feature = "ble", feature = "blec"))]
-pub use error::{BleDevice, BleError};
+pub use error::{BleDevice, BleError, NOT_ADVERTISING};
 #[cfg(any(feature = "ble", feature = "blec"))]
 pub use ids::{CHAR_NOTIFY_UUID, CHAR_WRITE_UUID, SERVICE_UUID};
 

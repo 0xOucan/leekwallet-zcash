@@ -14,6 +14,15 @@ use uuid::Uuid;
 use crate::ids::SERVICE_UUID;
 use crate::wire::WireError;
 
+/// What a reconnect to a remembered board says when the board was neither
+/// seen advertising nor reachable by its id: the likely cause first, then
+/// what to do about each.
+pub const NOT_ADVERTISING: &str =
+    "The board is not advertising: it may still be connected to this or another app. \
+     Restart the board or wait ~30 s. Pressing any button on the board also makes it \
+     advertise again (it stops two minutes after the last disconnect), and its \
+     Settings → Link must be Bluetooth.";
+
 #[derive(Debug)]
 pub enum BleError {
     /// Whatever the platform Bluetooth stack said, already formatted.
@@ -23,6 +32,14 @@ pub enum BleError {
     /// and for how long, because "no device found" on its own has never once
     /// helped anyone.
     NotFound { scanned_for: Duration },
+    /// One remembered board, looked for by its id, did not advertise, and a
+    /// direct connection to that id did not answer either. Separate from
+    /// `NotFound` because the causes are different: the board is usually on,
+    /// in range and on the Bluetooth link, but still connected to this app
+    /// (a link the previous run never closed), to another app or phone, or
+    /// past its two-minute advertising window (firmware src/ble.c,
+    /// `BLE_ADV_WINDOW_MS`), which only a button press re-opens.
+    NotAdvertising { scanned_for: Duration },
     NoAdapter,
     /// Connected, but the peer is not the thing we are looking for.
     MissingCharacteristic(Uuid),
@@ -51,6 +68,11 @@ impl std::fmt::Display for BleError {
                  check: the device is powered on, BLE (not USB) is the selected\n\
                  transport — see PROTOCOL.md 3b, it advertises on only one — and\n\
                  that `bluetoothctl scan on` sees it at all",
+                scanned_for.as_secs()
+            ),
+            BleError::NotAdvertising { scanned_for } => write!(
+                f,
+                "{NOT_ADVERTISING} (Scanned {}s, then tried the remembered id directly.)",
                 scanned_for.as_secs()
             ),
             BleError::NoAdapter => write!(
@@ -114,4 +136,19 @@ impl From<tauri_plugin_blec::Error> for BleError {
 pub struct BleDevice {
     pub id: String,
     pub name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn not_advertising_says_what_to_do() {
+        let text = BleError::NotAdvertising { scanned_for: Duration::from_secs(4) }.to_string();
+        assert!(text.starts_with("The board is not advertising"));
+        assert!(text.contains("connected to this or another app"));
+        assert!(text.contains("Restart the board or wait ~30 s"));
+        assert!(text.contains("button"));
+        assert!(text.contains("4s"));
+    }
 }

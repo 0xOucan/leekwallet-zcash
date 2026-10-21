@@ -23,6 +23,10 @@
 mod ble;
 mod serial;
 
+// The link across the app's lifecycle: closed after a while in the
+// background, on close, and when a new webview finds one left open.
+mod link;
+
 // The Zcash wallet (feature `zcash-wallet`): the desktop app's own modules,
 // compiled in from desktop/src-tauri/src rather than copied, so importing,
 // syncing, proposing, finishing, the address book and the per-network
@@ -132,6 +136,19 @@ fn allow_camera(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Panics, written where `adb logcat -s RustStdoutStderr` (Android) and the
+/// terminal (desktop) show them, with the thread and the place. `panic`
+/// stays `unwind` (Cargo.toml), so a panicking command fails that call and
+/// the app goes on; this is what makes the failure readable afterwards.
+fn log_panics() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        eprintln!("leek-panic: thread '{}' {info}", thread.name().unwrap_or("?"));
+        previous(info);
+    }));
+}
+
 /// Start the app.
 ///
 /// `mobile_entry_point` is what the generated Android project calls; on desktop
@@ -145,9 +162,11 @@ fn allow_camera(window: &tauri::WebviewWindow) {
 /// include required runtime symbols", one build step and several minutes later.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    log_panics();
     let builder = tauri::Builder::default()
         .manage(ble::Connection::default())
-        .manage(serial::Connection::default());
+        .manage(serial::Connection::default())
+        .manage(link::Lifecycle::default());
 
     // Registering the plugins is what installs the Android plugin handles the
     // backends call through; without them every call panics with "plugin
@@ -186,6 +205,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             transports,
+            link::link_reset,
             serial::ports,
             serial::connect,
             serial::disconnect,
@@ -236,6 +256,22 @@ pub fn run() {
             #[cfg(feature = "zcash-wallet")]
             zwallet::zw_contact_remove
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to start Zcash LeekWallet");
+        .build(tauri::generate_context!())
+        .expect("failed to start Zcash LeekWallet")
+        .run(|app, event| match event {
+            /* Android onPause and onResume: the link is closed after a
+             * while in the background (link.rs), not at once. */
+            #[cfg(mobile)]
+            tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Suspended, .. } => {
+                link::suspended(app)
+            }
+            #[cfg(mobile)]
+            tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } => {
+                link::resumed(app)
+            }
+            /* Closing: a GATT disconnect now, so the board advertises
+             * again instead of keeping a link nobody uses. */
+            tauri::RunEvent::Exit => link::closing(app),
+            _ => {}
+        });
 }

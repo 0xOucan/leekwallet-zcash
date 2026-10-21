@@ -21,6 +21,7 @@ import {
 import { repo, startZdev, zdevBinary, ZdevClient } from "./zdev.ts";
 import { fakeWallet } from "./fake-wallet.ts";
 import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying } from "../src/zcash-auto.ts";
+import { isWrongNetwork, networkFromStatus, wrongNetwork } from "../src/network-guard.ts";
 import { ReceiveModel } from "../src/receive-model.ts";
 
 let failures = 0;
@@ -211,6 +212,19 @@ async function autoFlow(network: ZNetwork): Promise<void> {
     const other: ZNetwork = network === "main" ? "test" : "main";
     await rejects(readAccountRetrying(dev.call, 0, other, { retryMs: 1 }),
       (e) => e instanceof DeviceError && e.code === 0x0528, "the other network is refused by the board");
+    /* The Companion on the other network: the refusal names the board's
+     * network, and the one-tap switch reads the account there. */
+    let note: ReturnType<typeof wrongNetwork> | null = null;
+    try { await zGetAccount(dev.call, 0, other); } catch (e) { if (isWrongNetwork(e)) note = wrongNetwork(other, (e as Error).message); }
+    check(note !== null && note.board === network, `the notice names the board's network (${note?.board})`);
+    const switched = await readAccountRetrying(dev.call, 0, note!.board);
+    check(switched.network === network && switched.seedFingerprint === k.seed_fingerprint, "after the switch the account reads");
+    /* getStatus names the board's network on firmware that reports it;
+     * older firmware has no field, and that is fine too. */
+    const st = await dev.call("getStatus");
+    const reported = networkFromStatus(st["network"]);
+    check(reported === null || reported === network, `getStatus network ${String(st["network"])}`);
+    if (reported !== null) console.log(`  (getStatus reports ${reported})`);
   } finally {
     dev.close();
     z.stop();

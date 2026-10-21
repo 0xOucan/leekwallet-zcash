@@ -596,5 +596,9 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
  * than half the screen. */
 .zscan { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0; }
 .zscan video { width: 100%; max-height: 50vh; object-fit: cover; border-radius: 8px; background: #000; }
+.zscan__controls { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.zscan__ctl { display: flex; align-items: center; gap: var(--space-2); flex: 1 1 12rem; }
+.zscan__ctl input[type="range"] { flex: 1; min-width: 6rem; }
+.zscan__tip { margin: 0; }
 
 .launcher__tile--primary { border-color: var(--accent); }
