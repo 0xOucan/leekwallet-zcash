@@ -37,19 +37,19 @@ mod link;
 // modules (its own Rust pairing, swap helpers) are unused here.
 #[cfg(feature = "zcash-wallet")]
 #[allow(dead_code)]
-#[path = "../../../../desktop/src-tauri/src/backend.rs"]
+#[path = "../../../desktop/src-tauri/src/backend.rs"]
 mod backend;
 #[cfg(feature = "zcash-wallet")]
 #[allow(dead_code)]
-#[path = "../../../../desktop/src-tauri/src/hardware.rs"]
+#[path = "../../../desktop/src-tauri/src/hardware.rs"]
 mod zhardware;
 #[cfg(feature = "zcash-wallet")]
 #[allow(dead_code)]
-#[path = "../../../../desktop/src-tauri/src/contacts.rs"]
+#[path = "../../../desktop/src-tauri/src/contacts.rs"]
 mod zcontacts;
 #[cfg(feature = "zcash-wallet")]
 #[allow(dead_code)]
-#[path = "../../../../desktop/src-tauri/src/settings.rs"]
+#[path = "../../../desktop/src-tauri/src/settings.rs"]
 mod zsettings;
 #[cfg(feature = "zcash-wallet")]
 mod zwallet;

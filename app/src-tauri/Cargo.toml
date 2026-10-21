@@ -54,7 +54,7 @@ hex = "0.4"
 # The wallet engine. `default-features = false` drops its serial port: the
 # board is reached through the webview's session, never from here, and the
 # `serialport` crate cannot build for Android at all.
-zecz-core = { path = "../../../host/zecz-core", default-features = false, optional = true }
+zecz-core = { path = "../../host/zecz-core", default-features = false, optional = true }
 anyhow = { version = "1", optional = true }
 # The desktop app's backend module, compiled in (src/lib.rs), draws its own
 # receive QR; unused here (the webview draws one) but part of that module.

@@ -565,7 +565,7 @@ mod tests {
 
     fn key(name: &str) -> serde_json::Value {
         let v: Vec<serde_json::Value> =
-            serde_json::from_slice(&std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../vectors/keys.json")).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vectors/keys.json")).unwrap()).unwrap();
         v.into_iter().find(|k| k["name"] == name).unwrap()
     }
 

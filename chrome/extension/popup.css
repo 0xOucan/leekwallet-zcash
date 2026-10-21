@@ -1,6 +1,6 @@
 /* The popup's layout, after LeekWallet's EVM extension
  * (firmware/app/extension/src/popup.css): every colour, space and size comes
- * from the app's tokens (tokens.css, copied from firmware/app/src at build),
+ * from the app's tokens (tokens.css, copied from app/src at build),
  * so the light/dark pair stays in contrast without a second palette.
  * One column, roughly 360px, the wallet's state at the top. */
 

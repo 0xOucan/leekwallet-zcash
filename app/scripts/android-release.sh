@@ -39,7 +39,7 @@ fi
 
 # The hand edits gen/ loses on every `tauri android init` (the USB host
 # feature, the Espressif device filter): refuse to build an APK without them.
-bash "$here/../scripts/check-android-manifest.sh"
+bash "$here/scripts/check-android-manifest.sh"
 
 toolchain="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 cd "$here"

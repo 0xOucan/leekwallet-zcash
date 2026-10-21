@@ -14,7 +14,7 @@ let failures = 0;
 const check = (c: boolean, m: string) => { if (!c) { console.log(`  FAIL: ${m}`); failures++; } };
 const group = (n: string) => console.log(`== ${n}`);
 
-const repo = join(dirname(fileURLToPath(import.meta.url)), "../../../../..");
+const repo = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
 interface KeyVector { name: string; ua: string; transparent_address: string; ua_orchard_only: string }
 const keys = JSON.parse(readFileSync(join(repo, "vectors/keys.json"), "utf8")) as KeyVector[];
 const key = (n: string) => keys.find((k) => k.name === n)!;

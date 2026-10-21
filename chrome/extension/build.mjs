@@ -7,7 +7,7 @@
 //
 // dist/ mirrors this directory, plus:
 //   engine/      ../engine/pkg (the WASM engine and its JS glue)
-//   tokens.css   firmware/app/src/tokens.css (LeekWallet's design tokens)
+//   tokens.css   app/src/tokens.css (LeekWallet's design tokens)
 //   icons/       icons/ (LeekWallet's icons)
 //   src/vendor/  @noble/ciphers from node_modules (vendor.mjs)
 import { cp, mkdir, readFile, rm, stat } from 'node:fs/promises';
@@ -41,7 +41,7 @@ await cp(pkg, join(dist, 'engine'), {
   // wasm-bindgen's package.json and .d.ts files are not needed at runtime.
   filter: (p) => !/\.d\.ts$|package\.json$|\.gitignore$/.test(p),
 });
-await cp(join(repo, 'firmware/app/src/tokens.css'), join(dist, 'tokens.css'));
+await cp(join(repo, 'app/src/tokens.css'), join(dist, 'tokens.css'));
 await cp(join(here, 'icons'), join(dist, 'icons'), { recursive: true });
 
 // The manifest is copied, never generated: it is the file that declares the

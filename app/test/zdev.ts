@@ -28,7 +28,7 @@ import {
 import { DeviceError } from "../packages/core/src/transport.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-export const repo = join(here, "..", "..", "..");
+export const repo = join(here, "..", "..");
 const sim = join(repo, "firmware/sim");
 
 /** make -C firmware/sim build/zdev (incremental); null if it cannot be built. */

@@ -14,7 +14,7 @@ hkdf = "0.12"
 chacha20poly1305 = "0.10"
 ciborium = "0.2"
 getrandom = "0.3"
-leek-transport-serial = { path = "../../firmware/app/transport-serial", default-features = false }
+leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
 
 [features]
 default = ["serial"]

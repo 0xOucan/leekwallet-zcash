@@ -2,7 +2,7 @@
 // text strings, arrays and maps with text keys. What the board's protocol
 // uses, nothing more.
 //
-// A JavaScript copy of LeekWallet's firmware/app/packages/core/src/cbor.ts
+// A JavaScript copy of LeekWallet's app/packages/core/src/cbor.ts
 // (types stripped, same grammar, same refusals): canonical encoding with
 // shortest-form heads and sorted map keys; tags, floats, indefinite lengths
 // and 64-bit arguments are refused rather than tolerated.

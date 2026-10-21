@@ -29,7 +29,7 @@
 #
 # Run after every `tauri android init`, before building. Idempotent.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 GEN="app/src-tauri/gen/android/app/src/main"
 MANIFEST="${GEN}/AndroidManifest.xml"
@@ -53,7 +53,7 @@ if a not in s:
     sys.exit("android-usb-host: no INTERNET permission to anchor on")
 p.write_text(s.replace(a, a + '''
 
-    <!-- Applied by scripts/android-usb-host.sh, not generated. required=false
+    <!-- Applied by app/scripts/android-usb-host.sh, not generated. required=false
          so the app still installs where there is no OTG support and BLE is the
          only transport. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />''', 1))
@@ -72,7 +72,7 @@ if a not in s:
     sys.exit("android-usb-host: no INTERNET permission to anchor on")
 p.write_text(s.replace(a, a + '''
 
-    <!-- Applied by scripts/android-usb-host.sh: the Send form's QR scanner
+    <!-- Applied by app/scripts/android-usb-host.sh: the Send form's QR scanner
          (Zcash addresses and ZIP 321 requests only). required=false so the
          app installs on a device without a camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -85,7 +85,7 @@ mkdir -p "$(dirname "${FILTER}")"
 cat > "${FILTER}" <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Applied by scripts/android-usb-host.sh. Do not hand-edit; regeneration wipes
+  Applied by app/scripts/android-usb-host.sh. Do not hand-edit; regeneration wipes
   this directory.
 
   Ids are DECIMAL. Android's parser does not accept 0x-prefixed hex and a hex

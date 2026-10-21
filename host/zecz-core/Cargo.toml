@@ -49,7 +49,7 @@ rusqlite = "0.37"
 
 # The device link (leek-device): LeekWallet's own serial framing, and the
 # session primitives session.c uses.
-leek-transport-serial = { path = "../../firmware/app/transport-serial", default-features = false }
+leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
 leek-device = { path = "../leek-device", default-features = false }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 hkdf = "0.12"

@@ -581,7 +581,7 @@ test: all
 # or the mock is being compared against a memory. check.sh runs this before the
 # app tests for exactly that reason, and git will show any change in the
 # firmware's answers as a diff in a reviewed file.
-VECTORS := ../app/packages/core/test/conformance-vectors.json
+VECTORS := ../../app/packages/core/test/conformance-vectors.json
 
 conformance: $(BUILD)/test_protocol
 	./$(BUILD)/test_protocol --emit-vectors $(VECTORS)

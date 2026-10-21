@@ -34,8 +34,8 @@ zecz-core = { path = "../../host/zecz-core" }
 # The device links: LeekWallet's serial transport (port listing; zecz's
 # Device opens the port through it) and its btleplug Bluetooth transport,
 # which src/link.rs adapts to leek-device's FramePort.
-leek-transport-serial = { path = "../../firmware/app/transport-serial" }
-leek-transport-ble = { path = "../../firmware/app/transport-ble" }
+leek-transport-serial = { path = "../../app/transport-serial" }
+leek-transport-ble = { path = "../../app/transport-ble" }
 # The receive QR code, drawn as SVG here so the webview ships no QR code
 # of its own; no image feature (no raster images, no image crate).
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }

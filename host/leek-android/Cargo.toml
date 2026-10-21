@@ -18,7 +18,7 @@ sha2 = "0.10"
 secp256k1 = "0.33"
 jni = { version = "0.21", default-features = false }
 leek-device = { path = "../leek-device", default-features = false }
-leek-transport-serial = { path = "../../firmware/app/transport-serial", default-features = false }
+leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
 anyhow = "1"
 ciborium = "0.2"
 hex = "0.4"
