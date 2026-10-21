@@ -11,6 +11,8 @@
 //   3. starts a sync, stops it after the first scanned batch, and checks
 //      the next sync carries on from there;
 //   4. reloads the extension in the middle of a sync, then finishes it;
+//      4b. forgets the wallet's transparent spends (as if made by another
+//      wallet) and checks the next sync finds them again;
 //   5. reads balances, addresses (and rotates one), history;
 //   6. reloads the extension and checks the wallet came back from OPFS:
 //      same account, same balances, same scan height, and a sync after
@@ -24,6 +26,11 @@
 //      navigator.bluetooth whose GATT server is zdev) it shows the wallet,
 //      and hides it again on Disconnect; a board with another wallet (zdev
 //      with a passphrase) sees none of it and is offered its own import;
+//      a passphrase typed in the popup opens the hidden wallet (XFP on the
+//      board), imported as its own account, gone on Disconnect and not
+//      back on reconnect (the board drops it with the session); "Connect
+//      over USB" in the toolbar popup with no port granted opens a tab
+//      that says why;
 //      "Forget this board" deletes the account.
 //   9. the board's wallet hidden in every view, on testnet and mainnet
 //      (zdev set to that network): a device account just imported, its
@@ -351,6 +358,26 @@ try {
     const events = await page.evaluate(() => window.events.filter((e) => e.event === 'sync'));
     check('sync finishes', !synced.cancelled && synced.status?.fullyScanned >= synced.tip - 1, `${synced.scannedBlocks} blocks in ${(syncMs / 1000).toFixed(1)} s (${Math.round(synced.scannedBlocks / (syncMs / 1000))} blocks/s), tip ${synced.tip}, ${events.length} progress events`);
     check('sync reports progress', events.some((e) => e.phase === 'started') && events.some((e) => e.phase === 'scanned'));
+    const txStep = events.find((e) => e.phase === 'transactions');
+    check('sync ends with the full-transaction step (transparent spends)', !!synced.transactions && !!txStep && synced.transactions.failed === 0, JSON.stringify(synced.transactions));
+
+    // 4b. A transparent coin spent by a transaction this wallet did not see
+    // (a shield made by another wallet with the same keys): compact blocks
+    // carry no transparent inputs, so only the full-transaction step finds
+    // the spend. Simulated by forgetting every recorded spend.
+    {
+      const tBefore = (await call(page, 'balances', { account: uuid })).balances.transparent;
+      const { forgotten } = await call(page, 'devForgetTransparentSpends');
+      if (!forgotten) {
+        console.log('  note: no spent transparent coin in this wallet: the spend search is not exercised');
+      } else {
+        const tStale = (await call(page, 'balances', { account: uuid })).balances.transparent;
+        const r = await call(page, 'sync', {});
+        const tAfter = (await call(page, 'balances', { account: uuid })).balances.transparent;
+        check('a forgotten transparent spend makes the balance stale', tStale.total > tBefore.total, `${forgotten} spend(s) forgotten: transparent ${tBefore.total} -> ${tStale.total} zat`);
+        check('the next sync finds the spends again (UTXO set, t-address transactions)', tAfter.total === tBefore.total && r.transactions?.vanishedCoins > 0, `transparent ${tAfter.total} zat, ${JSON.stringify(r.transactions)}`);
+      }
+    }
 
     // 5. Balances, addresses, history.
     const bal = await call(page, 'balances', { account: uuid });
@@ -497,6 +524,21 @@ try {
     const granted = await popup.waitForSelector('#grant-usb', { timeout: 30e3 }).then(() => true, () => false);
     check('USB with no port granted: the offscreen document asks for the chooser', granted);
     await popup.close();
+    // From the toolbar popup (not a tab): with no port granted, a tab opens
+    // for the chooser and says why; Bluetooth's tab is explained in a line.
+    {
+      const pop = await ctx.newPage();
+      await pop.goto(`chrome-extension://${id}/popup.html`);
+      await pop.waitForSelector('#connect-usb:not([disabled])', { timeout: 120e3 });
+      const bleWhy = await pop.evaluate(() => document.getElementById('ble-why')?.textContent ?? '');
+      const [usbTab] = await Promise.all([ctx.waitForEvent('page', { predicate: (p) => p.url().includes('connect=usb'), timeout: 30e3 }), pop.click('#connect-usb')]);
+      const why = await usbTab.waitForSelector('#usb-why', { timeout: 60e3 }).then((e) => e.textContent(), () => null);
+      const choose = await has(usbTab, '#grant-usb');
+      check('the popup with no USB port granted opens a tab for the chooser, and the tab says why', !!why && /First USB connection/.test(why) && choose, why ?? (await text(usbTab)).slice(0, 200));
+      check('the popup says in one line why Bluetooth needs a tab', /tab/.test(bleWhy), bleWhy);
+      await usbTab.close();
+      await pop.close().catch(() => {});
+    }
 
     // Its board (zdev, abandon-art) over Bluetooth: the wallet appears.
     let zb = await startZdev({ yes: true });
@@ -520,6 +562,55 @@ try {
         shownText = await text(bp);
         check('Disconnect hides the wallet again', !(await has(bp, '#total')) && !shownText.includes(ua0) && !shownText.includes('ZEC'));
         await bp.closeBridge();
+
+        // A passphrase typed in the popup (the weaker path): the board shows
+        // and confirms the XFP; the hidden wallet is another account.
+        const hk = keys.find((k) => k.name === 'test/abandon-art/pp1/acct0');
+        let hiddenUuid = null;
+        try {
+          const pp = await popupWithBluetooth(ctx, id, zb.link);
+          await pp.waitForSelector('#ble-press', { timeout: 60e3 });
+          await pp.click('#connect-ble');
+          await pp.waitForSelector('#total', { timeout: 180e3 });
+          await pp.click('#passpanel > summary');
+          await pp.click('#passdisclose > summary');
+          await pp.fill('#passphrase', hk.passphrase);
+          await pp.click('#passapply');
+          await pp.waitForSelector('#import-board', { timeout: 120e3 });
+          shownText = await text(pp);
+          const hint = await pp.evaluate(() => document.getElementById('passhint')?.textContent ?? '');
+          const field = await pp.evaluate(() => document.getElementById('passphrase')?.value);
+          check(
+            'a passphrase typed here: the board shows the XFP, the wallet without it is hidden, the hidden one is offered as its own import',
+            /XFP [0-9A-F]{8}/.test(hint) && (await has(pp, '#hidden-import')) && !(await has(pp, '#total')) && !shownText.includes(ua0) && field === '' && !shownText.includes(hk.passphrase),
+            hint,
+          );
+          await pp.click('#import-board');
+          await pp.waitForSelector('#birthday-form', { timeout: 60e3 });
+          await pp.click('#birthday-form button[type=submit]');
+          await pp.waitForSelector('#ua', { timeout: 180e3 });
+          const hst = await call(page, 'status');
+          const ha = hst.accounts.find((a) => a.origin?.seedFingerprint === hk.seed_fingerprint);
+          hiddenUuid = ha?.uuid ?? null;
+          const hua = await pp.evaluate(() => document.getElementById('ua')?.textContent);
+          check('the hidden wallet is a separate device account, keyed by its fingerprint', !!ha && ha.ufvk === hk.ufvk && hst.accounts.length === 2 && hua === hk.ua && hua !== ua0, `${ha?.name}, ZFP ${ha?.shortFingerprint}`);
+          const cache = await page.evaluate(() => chrome.storage.local.get('cache-test').then((c) => c['cache-test'] ?? null));
+          check("the hidden wallet's balance and addresses are not cached in storage", cache?.shown !== hiddenUuid && !JSON.stringify(cache ?? {}).includes(hk.ua));
+          await pp.click('#disconnect');
+          await pp.waitForSelector('#connect-to-see', { timeout: 30e3 });
+          shownText = await text(pp);
+          check('Disconnect hides the hidden wallet', !(await has(pp, '#total')) && !shownText.includes(hk.ua));
+          await pp.click('#connect-ble');
+          await pp.waitForSelector('#ua', { timeout: 180e3 });
+          const back = await pp.evaluate(() => ({ ua: document.getElementById('ua')?.textContent, state: document.getElementById('pass-state')?.textContent }));
+          check('connected again, the board dropped the passphrase: the wallet without it, never the hidden one', back.ua === ua0 && /No passphrase/.test(back.state ?? ''), back.state);
+          await pp.closeBridge();
+        } catch (e) {
+          check('passphrase in the popup: no exception', false, String(e?.stack ?? e));
+        } finally {
+          await call(page, 'cancelSync').catch(() => {});
+          if (hiddenUuid) await call(page, 'deleteAccount', { account: hiddenUuid }).catch(() => {});
+        }
 
         // A board with another wallet: none of this one, and its own import.
         const zo = await startZdev({ yes: true, passphrase: 'leekwallet-e2e-other-board' });
@@ -567,7 +658,14 @@ try {
         await bp.waitForSelector('#forget-confirm', { timeout: 10e3 });
         await bp.click('#forget-yes');
         await bp.waitForSelector('#import-board', { timeout: 180e3 });
-        st = await call(page, 'status');
+        // Hidden at once; deleted once a sync running (the popup starts one
+        // on open) has stopped.
+        const tf = Date.now();
+        for (;;) {
+          st = await call(page, 'status');
+          if (!st.accounts.length || Date.now() - tf > 120e3) break;
+          await new Promise((r) => setTimeout(r, 250));
+        }
         const gone = await call(page, 'balances', { account: uuid }).then(() => false, () => true);
         check('"Forget this board" (confirmed) deletes the account and its data', st.accounts.length === 0 && gone && !(await has(bp, '#total')), `${(st.dbBytes / 1e6).toFixed(2)} MB left (chain data)`);
         await bp.closeBridge();

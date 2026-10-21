@@ -8,14 +8,18 @@
 // - LocalBoard: a Bluetooth board held by this tab (a BluetoothDevice
 //   cannot leave the page that chose it). The tab must stay open while it
 //   signs; the engine is still the offscreen one, through EngineClient.
+//   Also a USB port this tab chose that the offscreen document cannot see
+//   (a browser that keeps the grant for the choosing page only).
 //
 // Choosing a device needs a click in a tab (Chrome's chooser closes the
 // toolbar popup): `grantUsb()` and `LocalBoard.chooseBluetooth()` must be
-// called straight from a click handler, before any other await.
+// called straight from a click handler, before any other await. Once a USB
+// port is granted, the offscreen document finds it with `getPorts()` and
+// the popup connects with no tab (`usbPlan`).
 
 import { BleLink } from './board/ble-link.js';
 import { BoardHost } from './board/host.js';
-import { USB_FILTERS } from './board/serial-link.js';
+import { SerialLink, USB_FILTERS } from './board/serial-link.js';
 
 export class RemoteBoard {
   kind = 'usb';
@@ -45,11 +49,18 @@ export class LocalBoard {
   #host;
   #listeners = new Set();
   #chosen = null;
+  #port = null;
 
-  constructor(engine) {
+  /** `serialPort`: a USB port this tab chose, held here (kind 'usb-tab'). */
+  constructor(engine, { serialPort = null } = {}) {
+    if (serialPort) {
+      this.kind = 'usb-tab';
+      this.#port = serialPort;
+    }
     this.#host = new BoardHost({
       engine: (m, p) => engine.call(m, p),
       openLink: async (kind, onClose) => {
+        if (this.#port) return SerialLink.open(this.#port, onClose);
         if (kind !== 'ble' || !this.#chosen) throw new Error('choose the Bluetooth board first');
         return BleLink.open(this.#chosen, onClose);
       },
@@ -76,17 +87,36 @@ export class LocalBoard {
   }
 }
 
-/** From a click in a tab: the browser's USB serial chooser. True if a port was chosen. */
+/** From a click in a tab: the browser's USB serial chooser. The port chosen, or null. */
 export async function grantUsb() {
   if (!navigator.serial) throw new Error('This browser has no Web Serial: use desktop Chrome, Edge or Brave.');
   try {
-    await navigator.serial.requestPort({ filters: USB_FILTERS });
-    return true;
+    return await navigator.serial.requestPort({ filters: USB_FILTERS });
   } catch (e) {
-    if (e?.name === 'NotFoundError') return false; // closed the chooser, or it was empty
+    if (e?.name === 'NotFoundError') return null; // closed the chooser, or it was empty
     throw e;
   }
 }
+
+/**
+ * What "Connect over USB" does, from what the offscreen document's
+ * `board.usbPorts` says: `connect` there when it has a board port granted
+ * (popup or tab alike, no tab opened); otherwise the browser's chooser,
+ * which only a tab can show (`choose` in a tab, `openTab` from the toolbar
+ * popup, which closes when a chooser takes focus); `noSerial` without Web
+ * Serial.
+ */
+export function usbPlan({ serial = true, granted = 0 } = {}, tab = inTab()) {
+  if (!serial) return 'noSerial';
+  if (granted > 0) return 'connect';
+  return tab ? 'choose' : 'openTab';
+}
+
+/** Why the first USB connection opens a tab (shown there). */
+export const USB_TAB_WHY = 'First USB connection: choose the board in the browser\'s list. The toolbar popup cannot show that list (it closes when the list opens), so this tab does, once. After that, Connect over USB works from the popup.';
+
+/** Why Bluetooth opens a tab (one line, in the popup). */
+export const BLE_TAB_WHY = 'Bluetooth opens this wallet in a tab: the browser\'s Bluetooth list needs one, and the board stays connected to that tab only, so keep it open.';
 
 /**
  * Why there is no `navigator.bluetooth`, and how to turn it on. Brave hides
@@ -104,4 +134,6 @@ export function bluetoothHelp(nav = navigator) {
   return 'This browser has no Web Bluetooth. Use desktop Chrome, Edge or Brave, or connect over USB.';
 }
 
-export const inTab = () => new URLSearchParams(location.search).has('tab');
+export function inTab() {
+  return typeof location !== 'undefined' && new URLSearchParams(location.search).has('tab');
+}

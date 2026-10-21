@@ -215,6 +215,10 @@ pub async fn dispatch(state: &State, method: &str, params: Value, on_event: OnEv
             }
             json!({ "built": built, "ms": wallet::now_ms() - t0 })
         }
+        "devForgetTransparentSpends" => {
+            // DEV ONLY, testnet: for the e2e check of the transparent spend search.
+            json!({ "forgotten": w.dev_forget_transparent_spends()? })
+        }
         "signSoft" => {
             // DEV ONLY, testnet: zecz's soft signer standing in for the board.
             let index = params.get("accountIndex").and_then(Value::as_u64).unwrap_or(0) as u32;

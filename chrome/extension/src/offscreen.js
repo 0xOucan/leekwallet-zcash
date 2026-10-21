@@ -16,6 +16,7 @@
 //                 { host }                          engine state changes, to every page
 // `hostState` is answered here: whether the engine is up, what it is doing,
 // and the last sync progress, so a popup opened mid-sync can show it.
+// `board.usbPorts` says whether a board port is granted (no chooser needed).
 // `board.<op>` calls go to the USB board (BoardHost.run), answered with
 // `{ id, result }` or `{ id, error, errorData }`, and its state goes to every
 // page as `{ board }`. `board.disconnect` also closes any serial port this
@@ -200,7 +201,20 @@ const board = new BoardHost({
   },
 });
 
+/**
+ * Whether this document can open the board over USB without asking: the
+ * ports the extension was granted (in a tab, by the browser's chooser) that
+ * are the board's. The popup connects from here when there is one, and
+ * opens a tab for the chooser only when there is none.
+ */
+async function usbPorts() {
+  if (!navigator.serial) return { serial: false, granted: 0 };
+  const granted = (await navigator.serial.getPorts()).filter(isBoardPort);
+  return { serial: true, granted: granted.length };
+}
+
 async function runBoard(op, params) {
+  if (op === 'usbPorts') return usbPorts();
   if (op !== 'disconnect') return board.run(op, params);
   const r = await board.run('disconnect');
   await SerialLink.closeAll();

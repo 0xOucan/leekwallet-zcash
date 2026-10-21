@@ -215,7 +215,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 |---|---|---|---|---|
 | USB | done | done | Phase 8 | Phase 9 |
 | Bluetooth | - | done | Phase 8 | Phase 9 |
-| QR | - | done (slow, see 7) | Phase 8 | Phase 9 |
+| QR | - | done (slow, see 7) | Phase 8 | not planned (USB and Bluetooth only) |
 | SD card | done | not planned (see 6.x) | Phase 8 | - |
 
 **Recommendation to users:** USB or Bluetooth for everyday signing. QR or the SD card when the device must stay off every link.
@@ -396,7 +396,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 - **MV3.** The service worker only routes.
 - **Device and long-running work in an offscreen document,** LeekWallet's proven pattern: a service worker has no `navigator.serial` and is evicted.
 - **Device protocol:** the TypeScript `session.ts` and `framing.ts` from LeekWallet's `app/packages/core`, checked against the firmware's conformance vectors. Or `leek-device` compiled to WASM, decided in 9.1.
-- **Transports:** Web Serial for USB, Web Bluetooth for BLE (from an extension page; it needs a user gesture), and a popup QR page.
+- **Transports:** Web Serial for USB, Web Bluetooth for BLE (from an extension page; it needs a user gesture). No QR through the webcam: the extension uses USB and Bluetooth only (decided 2026-10-20).
 - **Wallet engine:** our librustzcash rev in WASM, with threads, in a dedicated worker started by the offscreen document (9.1).
 
 **9.1 Engine spike (M, the largest risk). Done (2026-10-16): see [CHROME-ENGINE.md](CHROME-ENGINE.md).**
@@ -416,7 +416,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 - Done when: a testnet send from a software wallet, broadcast from the extension.
 
 **9.3 The board (M).**
-- Pair and sign over Web Serial and Web Bluetooth, and QR through the webcam.
+- Pair and sign over Web Serial and Web Bluetooth (no QR: USB and Bluetooth only).
 - Done when: a testnet send signed by the board from the extension.
 - **USB in the extension: done on the board (2026-10-17); Bluetooth done on PC, not yet on the board.** In Brave 152 over USB, the board paired, its account imported and synced on testnet and on mainnet, it confirmed the mainnet address, and it signed a mainnet send that the extension proved and broadcast.
   - `chrome/extension/src/board/`: the protocol in plain ES modules (framing, CBOR, the v2 session with WebCrypto X25519/HKDF and vendored ChaCha20-Poly1305, every `z*` call, the `.zsig` writer), a twin of `leek-device`.
@@ -424,7 +424,9 @@ Not the thin forwarder planned before: its own software wallets, the board over 
   - Tested against zdev: Node over the USB framing and a fake GATT server at MTU 23, and from an extension page in headless Chromium with the real engine.
   - Testnet and mainnet sends signed on the board over USB in Brave 152 (the user's run).
   - **Board data hidden without the board (2026-10-17).** A device account is shown only while a board whose seed fingerprint matches it is connected (read with `zGetAccount` on connect); otherwise the popup shows the board section and "Connect your LeekWallet board to see this wallet." The data stays on OPFS and keeps syncing. Another board sees none of it and is offered its own import. "Forget this board" (confirmed) deletes the account through the engine's new `deleteAccount`. Also: the Bluetooth button opens the tab whatever the popup sees, and the tab says which flag enables Web Bluetooth (Brave's own, and on Linux Experimental Web Platform features); a USB timeout says to check the board is unlocked and its Link set to USB, and "Switch to Bluetooth" ends the USB session; an unmined send to self shows the fee, not -0.
-  - Left: the same over Bluetooth on the board; QR through the webcam; accounts other than 0.
+  - USB and Bluetooth on the board: both work (the user's runs in Brave).
+  - **USB without a tab, passphrase, transparent spends (2026-10-20).** "Connect over USB" connects from the popup when a board port is granted, and opens the tab (saying why) only for the first grant. The hidden wallet: a passphrase entered on the board (followed by polling `getStatus`) or typed in the popup (`setPassphrase`, XFP confirmed on the board), shown and imported as its own account by its seed fingerprint, dropped on lock and disconnect. The engine finds transparent spends the scan cannot see (zecz-core's `fetch_transaction_data`).
+  - Left: accounts other than 0.
 
 **9.4 Dapp interface (M).**
 - Zcash has no EIP-1193. Offer `window.zcash`: connect, accounts, `sendTransaction(zip321)`, `signPczt`.

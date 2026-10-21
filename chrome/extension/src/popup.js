@@ -17,7 +17,8 @@
 
 import { EngineClient } from './engine-client.js';
 import { formatZec, historyEntry } from './format.js';
-import { LocalBoard, RemoteBoard, bluetoothHelp, grantUsb, inTab } from './board-client.js';
+import { BLE_TAB_WHY, LocalBoard, RemoteBoard, USB_TAB_WHY, bluetoothHelp, grantUsb, inTab, usbPlan } from './board-client.js';
+import { passphraseComplaint } from './board/host.js';
 
 const root = document.getElementById('root');
 const query = new URLSearchParams(location.search);
@@ -56,6 +57,8 @@ const ui = {
   quietCancel: false, // a sync stopped by the popup itself, not the user
   switching: null, // 'ble' after "Switch to Bluetooth" ended the USB session
   forgotten: new Set(), // accounts "Forget this board" is deleting: hidden at once
+  usbTabOnly: false, // the USB port is held by this tab (the offscreen document cannot see the grant)
+  passHint: null, // the outcome of a passphrase sent from here (never the passphrase)
 };
 
 // ------------------------------------------------------------- helpers
@@ -153,8 +156,9 @@ async function refresh() {
   ui.balances = balances;
   ui.history = history;
   // Shown on the next open while a sync holds the engine (calls queue
-  // behind it), and only while this account is.
-  await chrome.storage.local.set({ [`cache-${net()}`]: { status: ui.status, shown: acct, balances, addresses, history } });
+  // behind it), and only while this account is. Not for a hidden
+  // (passphrase) wallet: its balance and addresses stay out of storage.
+  if (!hiddenWallet()) await chrome.storage.local.set({ [`cache-${net()}`]: { status: ui.status, shown: acct, balances, addresses, history } });
 }
 
 /** The last answers, while a sync holds the engine: an account's data only while it is shown. */
@@ -270,6 +274,8 @@ async function saveServer(value) {
 // ------------------------------------------------------------- board
 
 const boardReady = () => ui.boardState?.phase === 'ready';
+/** The board has a passphrase applied: a hidden wallet, another seed fingerprint. */
+const hiddenWallet = () => boardReady() && !!ui.boardState.passphrase;
 
 /**
  * Ends the board's session, whichever link: the board's wallet is hidden
@@ -280,6 +286,7 @@ async function disconnectBoard() {
   const b = ui.board;
   const usb = b?.kind === 'usb' ? b.run('disconnect') : ui.engine.call('board.disconnect');
   const local = b && b.kind !== 'usb' ? b.run('disconnect') : null;
+  ui.passHint = null;
   await Promise.all([usb, local].map((p) => p?.catch(() => {})));
 }
 const acctInfo = () => (ui.status?.accounts ?? []).find((a) => a.uuid === account());
@@ -311,14 +318,38 @@ async function openTab(connect) {
   window.close();
 }
 
+/**
+ * "Connect over USB". With a board port already granted (the browser's
+ * chooser was used once, in a tab) the offscreen document opens it: no
+ * tab, from the popup too. With none, the chooser is needed, and only a
+ * tab can show it.
+ */
 async function connectUsb() {
-  if (ui.board?.kind !== 'usb') useBoard(new RemoteBoard(ui.engine));
   ui.needUsbGrant = false;
   ui.switching = null;
+  ui.error = null;
+  const ports = await ui.engine.call('board.usbPorts').catch(() => ({ serial: true, granted: 0 }));
+  const plan = usbPlan(ports);
+  if (plan === 'noSerial') {
+    ui.error = 'This browser has no Web Serial: use desktop Chrome, Edge or Brave.';
+    return render();
+  }
+  if (plan === 'openTab') return openTab('usb');
+  if (plan === 'choose') {
+    ui.needUsbGrant = true;
+    return render();
+  }
+  await connectRemoteUsb();
+}
+
+async function connectRemoteUsb() {
+  if (ui.board?.kind !== 'usb') useBoard(new RemoteBoard(ui.engine));
+  ui.usbTabOnly = false;
   await guarded('Connecting to the board…', async () => {
     try {
       await ui.board.run('connect', { kind: 'usb', network: net() });
     } catch (e) {
+      // The grant went (the board was unplugged and is another port now, say).
       if (e.need === 'usbPermission') {
         ui.needUsbGrant = true;
         if (!inTab()) await openTab('usb');
@@ -331,18 +362,29 @@ async function connectUsb() {
 
 async function grantAndConnectUsb() {
   // Straight from the click: requestPort needs the user's gesture.
-  let chosen;
+  let port;
   try {
-    chosen = await grantUsb();
+    port = await grantUsb();
   } catch (e) {
     ui.error = String(e?.message ?? e);
     return render();
   }
-  if (!chosen) {
+  if (!port) {
     ui.error = 'No board was chosen. If the list was empty: is the cable a data cable, and is the board set to USB (Settings → Link)?';
     return render();
   }
-  await connectUsb();
+  ui.needUsbGrant = false;
+  // The grant is the extension's: the offscreen document sees it, and the
+  // board is held there (it outlives this tab, and the popup finds it).
+  const ports = await ui.engine.call('board.usbPorts').catch(() => ({ serial: true, granted: 0 }));
+  if (ports.granted > 0) return connectRemoteUsb();
+  // A browser that keeps the grant for this tab only: hold the port here,
+  // as Bluetooth is held, and say so.
+  await disconnectBoard();
+  const local = new LocalBoard(ui.engine, { serialPort: port });
+  ui.usbTabOnly = true;
+  useBoard(local);
+  await guarded('Connecting to the board…', () => local.run('connect', { kind: 'usb', network: net() }));
 }
 
 async function connectBluetooth() {
@@ -379,6 +421,81 @@ async function switchToBluetooth() {
   render();
 }
 
+/**
+ * The weaker path to a hidden wallet: the passphrase typed here. It goes
+ * from the field to the board and the field is emptied whatever happens;
+ * it is never stored, logged, or put in the page's state.
+ */
+async function sendPassphrase(input) {
+  const complaint = passphraseComplaint(input.value);
+  if (complaint) {
+    ui.passHint = complaint;
+    input.value = '';
+    return render();
+  }
+  ui.passHint = null;
+  const pending = ui.board.run('setPassphrase', { passphrase: input.value, network: net() });
+  input.value = '';
+  await guarded('Check the fingerprint (XFP) on the board, then confirm there…', async () => {
+    try {
+      const r = await pending;
+      ui.passHint = r.xfp
+        ? `Applied. The board showed XFP ${r.xfp}: if that is not the wallet you expected, the passphrase was mistyped. Disconnect or lock the board to drop it.`
+        : 'Applied. Check the XFP against the one the board showed.';
+    } catch (e) {
+      ui.passHint = String(e?.message ?? e);
+    }
+  });
+}
+
+/**
+ * One field for the whole page's life: render() redraws everything (a sync
+ * does, every batch), and a new field would drop what is being typed.
+ */
+let passInput = null;
+
+function passphraseSection() {
+  const s = ui.boardState;
+  passInput ??= h('input', { type: 'password', id: 'passphrase', autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off', 'aria-label': 'Passphrase', maxlength: 63 });
+  const input = passInput;
+  const busy = !!ui.busy || !!ui.signing;
+  return h(
+    'details',
+    { id: 'passpanel', open: ui.passOpen ?? (!!s.passphrase || !!ui.passHint), ontoggle: (e) => (ui.passOpen = e.target.open) },
+    h('summary', {}, 'Passphrase (hidden wallet)'),
+    h(
+      'p',
+      { id: 'pass-state', class: s.passphrase ? 'notice' : 'muted' },
+      s.passphrase ? `Hidden wallet open: a passphrase is applied on the board${s.xfp ? ` (XFP ${s.xfp})` : ''}.` : 'No passphrase applied: the wallet without one.',
+    ),
+    h(
+      'p',
+      { class: 'muted' },
+      'A passphrase opens a separate wallet from the same seed: another seed fingerprint, other addresses, another balance. This wallet keeps it apart by its fingerprint and never mixes it with the one without. The board forgets the passphrase on lock and on disconnect, and so does this wallet.',
+    ),
+    h(
+      'p',
+      { class: 'muted' },
+      'Its synced data (what its viewing key has seen, never a key that spends) is kept in this browser under that fingerprint, so anyone with this browser profile can tell a second wallet was opened here. "Forget this board", with the hidden wallet connected, deletes it.',
+    ),
+    h('p', {}, h('strong', {}, 'Enter it on the board'), ' (safer): Settings → Passphrase on the board. Its keyboard is slower, and it is the only way the passphrase never leaves the board. This wallet follows within a few seconds.'),
+    h(
+      'details',
+      { id: 'passdisclose', open: !!ui.passDisclose, ontoggle: (e) => (ui.passDisclose = e.target.open) },
+      h('summary', {}, 'Type it here instead (less safe)'),
+      h(
+        'div',
+        { class: 'notice bad' },
+        h('p', {}, 'Typing a passphrase here is weaker than typing it on the board, and the encrypted link does not change that: this browser sees every character before anything is encrypted, so anything that has this computer (malware, a screen recorder, an extension that reads pages) sees it too.'),
+        h('p', {}, 'A wrong passphrase does not fail: it opens a different, empty wallet. The board shows the fingerprint (XFP) of the seed it derived; check it before you use that wallet, and confirm on the board.'),
+      ),
+      h('label', {}, h('span', {}, 'Passphrase'), input),
+      h('div', { class: 'row' }, h('button', { id: 'passapply', onclick: () => void sendPassphrase(input), disabled: busy }, 'Send to the board')),
+    ),
+    ui.passHint ? h('p', { class: 'notice', id: 'passhint' }, ui.passHint) : null,
+  );
+}
+
 /** "Forget this board": its accounts on this network, and all synced for them. */
 async function forgetBoard() {
   const fp = boardFingerprint();
@@ -412,10 +529,13 @@ async function forgetBoard() {
 async function importFromBoard(birthday = null) {
   await guarded('Reading the account from the board…', async () => {
     try {
-      const r = await ui.board.run('importAccount', { network: net(), accountIndex: 0, birthday });
+      const hidden = hiddenWallet();
+      const r = await ui.board.run('importAccount', { network: net(), accountIndex: 0, birthday, name: hidden ? 'LeekWallet #0 (passphrase)' : null });
       ui.needBirthday = null;
-      ui.prefs.account[net()] = r.account.uuid;
-      await savePrefs();
+      if (!hidden) {
+        ui.prefs.account[net()] = r.account.uuid;
+        await savePrefs();
+      }
       ui.addresses = r.addresses;
       await refresh();
     } catch (e) {
@@ -509,13 +629,14 @@ function boardSection() {
             h('button', { id: 'connect-usb', onclick: () => void connectUsb(), disabled: busy || s.phase === 'connecting' }, 'Connect over USB'),
             h('button', { id: 'connect-ble', class: ui.switching === 'ble' ? 'primary' : null, onclick: () => void connectBluetooth(), disabled: busy || s.phase === 'connecting' }, 'Bluetooth'),
           ),
+      inTab() && query.get('connect') === 'usb' && ui.needUsbGrant ? h('p', { class: 'notice', id: 'usb-why' }, USB_TAB_WHY) : null,
       inTab()
         ? navigator.bluetooth
           ? query.get('connect') === 'ble' && !ui.board?.kind?.startsWith('ble')
             ? h('p', { class: 'muted', id: 'ble-press' }, 'Press Bluetooth to choose the board in the browser\'s list.')
             : null
           : h('p', { class: 'notice', id: 'ble-help' }, bluetoothHelp())
-        : h('p', { class: 'muted' }, 'Bluetooth, and the first USB connection, open this wallet in a tab: the browser draws its device chooser there.'),
+        : h('p', { class: 'muted', id: 'ble-why' }, BLE_TAB_WHY),
     );
   } else if (s.phase === 'pairing') {
     lines.push(
@@ -534,11 +655,21 @@ function boardSection() {
       h(
         'div',
         { class: 'row' },
-        h('span', { class: 'grow', id: 'board-ready' }, `Connected: ${s.label ?? s.kind}${s.kind === 'ble' ? ' (keep this tab open)' : ''}`),
+        h('span', { class: 'grow', id: 'board-ready' }, `Connected: ${s.label ?? s.kind}${s.kind === 'ble' || ui.board?.kind === 'usb-tab' ? ' (keep this tab open)' : ''}${s.passphrase ? ' · hidden wallet (passphrase)' : ''}`),
         s.kind === 'usb' ? h('button', { class: 'link', id: 'switch-ble', onclick: () => void switchToBluetooth(), disabled: busy }, 'Switch to Bluetooth') : null,
         h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, disconnectBoard), disabled: busy }, 'Disconnect'),
       ),
-      fp ? null : h('p', { class: 'notice bad', id: 'board-account-error' }, s.accountError ?? 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),
+      ui.usbTabOnly && ui.board?.kind === 'usb-tab'
+        ? h('p', { class: 'notice', id: 'usb-tab-only' }, 'This browser gave the USB port to this tab only, so the board is connected from here: keep this tab open while you use it.')
+        : null,
+      s.locked
+        ? h('p', { class: 'notice', id: 'board-locked' }, 'The board locked, and dropped any passphrase. Unlock it with your PIN on the board to see its wallet.')
+        : s.waiting === 'wallet'
+          ? h('p', { class: 'muted', id: 'board-reading' }, 'The board\'s wallet changed. Reading which wallet it holds now…')
+          : fp
+            ? null
+            : h('p', { class: 'notice bad', id: 'board-account-error' }, s.accountError ?? 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),
+      s.locked ? null : passphraseSection(),
     );
     if (known && ui.confirmForget) {
       lines.push(
@@ -559,7 +690,7 @@ function boardSection() {
 }
 
 function boardImportSection() {
-  if (!boardReady()) return null;
+  if (!boardReady() || !boardFingerprint()) return null;
   if (ui.needBirthday) {
     const form = h(
       'form',
@@ -579,9 +710,10 @@ function boardImportSection() {
   return h(
     'section',
     {},
-    h('h2', {}, 'Import from the board'),
+    h('h2', {}, hiddenWallet() ? 'Import the hidden wallet' : 'Import from the board'),
     h('p', { class: 'muted' }, `The board gives its ${NETWORKS[net()]} viewing key for account 0; the spending keys stay on it.`),
-    h('button', { class: 'primary', id: 'import-board', onclick: () => void importFromBoard(), disabled: !!ui.busy }, "Import the board's account"),
+    hiddenWallet() ? h('p', { class: 'muted', id: 'hidden-import' }, 'This is the passphrase wallet: it becomes a separate account here, shown only while the board has this passphrase applied.') : null,
+    h('button', { class: 'primary', id: 'import-board', onclick: () => void importFromBoard(), disabled: !!ui.busy }, hiddenWallet() ? "Import the hidden wallet's account" : "Import the board's account"),
   );
 }
 
@@ -866,6 +998,12 @@ function replaceRoot(...parts) {
 }
 
 function render() {
+  const typing = passInput && document.activeElement === passInput;
+  renderPage();
+  if (typing && passInput.isConnected) passInput.focus();
+}
+
+function renderPage() {
   const host = ui.engine?.host;
   const engineOk = host?.ready;
   const acct = (ui.status?.accounts ?? []).find((a) => a.uuid === account());
@@ -954,7 +1092,13 @@ async function main() {
       await openNetwork();
     }
   });
-  if (query.get('connect') === 'usb') ui.needUsbGrant = true;
+  // Opened for the USB chooser: unless a port is granted by now, say why
+  // and offer it; with one, connect here at once.
+  if (query.get('connect') === 'usb') {
+    const ports = await ui.engine.call('board.usbPorts').catch(() => ({ serial: true, granted: 0 }));
+    if (usbPlan(ports, true) === 'connect') void connectRemoteUsb();
+    else ui.needUsbGrant = true;
+  }
   render();
   // Hidden accounts sync too; nothing of theirs is shown.
   if (ui.status?.accounts?.length && !ui.syncing) void sync();
