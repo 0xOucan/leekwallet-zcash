@@ -1698,3 +1698,13 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   as long as Bluetooth is the selected transport, not only for two minutes
   after a disconnect. Pairing still needs the passkey and ALLOW on the
   board, and USB mode does not advertise at all.
+
+### Tablet retest of 6.17 and the slow advertising (2026-10-21)
+- Board flashed with main (network in getStatus, slow Bluetooth
+  advertising); the release APK from 6.17 installed on the SM-T500.
+- All passed: USB without the app closing; Reconnect over Bluetooth after
+  the app was closed for over two minutes, with no board restart or button
+  press; dense QR scanning with brightness, zoom and the camera switch; the
+  app following the board's network when it was switched between Mainnet
+  and Testnet on the board; activity labels; a testnet send signed by the
+  board and broadcast.
