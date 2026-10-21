@@ -48,7 +48,9 @@ impl BleTransport {
         let peripheral = found
             .into_iter()
             .next()
-            .ok_or(BleError::NotFound { scanned_for: scan_time })?;
+            // A remembered board that did not advertise: usually still
+            // connected somewhere, or past its advertising window.
+            .ok_or(BleError::NotAdvertising { scanned_for: scan_time })?;
         Self::attach(peripheral).await
     }
 
@@ -223,6 +225,16 @@ impl BleTransport {
         self.peripheral.disconnect().await?;
         Ok(())
     }
+
+    /// Whether a link outlives its transport here: never on the desktop,
+    /// where btleplug's peripheral goes with the transport. Android's blec
+    /// keeps one per process (android.rs).
+    pub fn link_open() -> bool {
+        false
+    }
+
+    /// Nothing to release without a transport on the desktop.
+    pub async fn release_link() {}
 }
 
 async fn adapter() -> Result<Adapter, BleError> {

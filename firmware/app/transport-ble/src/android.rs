@@ -87,15 +87,36 @@ impl BleTransport {
     /// range. Rare with a single wallet on the desk, and exactly the kind of
     /// rare that signs the wrong transaction.
     pub async fn connect_id(id: &str, scan_time: Duration) -> Result<Self, BleError> {
+        preflight().await?;
+        // A link this process still holds is released first. The board does
+        // not advertise while a peer is connected, so a link left open (the
+        // activity was closed and reopened in a process Android kept alive, or
+        // a drop the webview never heard of) hides the board from the scan
+        // below until it is power-cycled. That was the "Reconnect only works
+        // after restarting the board" report, 2026-10-20.
+        release_stale_link().await;
+
         // Scan first even though blec's `connect` would do it implicitly: its
         // implicit scan is unfiltered and one second long, and we want the
         // permission and adapter-state diagnostics below rather than a bare
         // "connection failed" three retries later.
         let found = Self::scan(scan_time).await?;
-        if !found.iter().any(|d| d.id == id) {
-            return Err(BleError::NotFound { scanned_for: scan_time });
+        if found.iter().any(|d| d.id == id) {
+            return Self::attach(id).await;
         }
-        Self::attach(id).await
+
+        // Not seen advertising. Try the remembered id directly once (blec
+        // knows a peer it saw earlier in this process), bounded so a board
+        // that is gone fails in seconds, not after blec's three retries.
+        match tokio::time::timeout(DIRECT_CONNECT, Self::attach(id)).await {
+            Ok(Ok(t)) => Ok(t),
+            Ok(Err(e @ (BleError::PermissionDenied | BleError::AdapterOff))) => Err(e),
+            _ => {
+                // Whatever half of a link the attempt left is not kept.
+                release_stale_link().await;
+                Err(BleError::NotAdvertising { scanned_for: scan_time })
+            }
+        }
     }
 
     /// List everything advertising the service, without connecting to any of it.
@@ -295,10 +316,44 @@ impl BleTransport {
     /// stream forces it; callers are written against one signature.
     pub async fn disconnect(&mut self) -> Result<(), BleError> {
         let handler = get_handler()?;
-        let _ = handler.unsubscribe(CHAR_NOTIFY_UUID).await;
-        handler.disconnect().await?;
+        let _ = tokio::time::timeout(DISCONNECT_WAIT, handler.unsubscribe(CHAR_NOTIFY_UUID)).await;
+        // blec waits for the stack's disconnect event with no deadline of its
+        // own; a stack that never sends it must not hang the app's close.
+        match tokio::time::timeout(DISCONNECT_WAIT, handler.disconnect()).await {
+            Ok(r) => r?,
+            Err(_) => return Err(BleError::Timeout),
+        }
         Ok(())
     }
+
+    /// Whether blec holds a connected peer in this process, whoever opened it.
+    pub fn link_open() -> bool {
+        get_handler().map(|h| h.is_connected()).unwrap_or(false)
+    }
+
+    /// Close whatever link blec holds in this process, with or without a
+    /// transport for it (bounded, best effort). See `release_stale_link`.
+    pub async fn release_link() {
+        release_stale_link().await;
+    }
+}
+
+/// How long a direct connection to a board that did not advertise may take.
+const DIRECT_CONNECT: Duration = Duration::from_secs(8);
+
+/// How long a disconnect may wait for the stack to confirm it.
+const DISCONNECT_WAIT: Duration = Duration::from_secs(3);
+
+/// Close a link blec still holds, best effort and bounded, then give the
+/// board a moment to start advertising again.
+async fn release_stale_link() {
+    let Ok(handler) = get_handler() else { return };
+    if !handler.is_connected() {
+        return;
+    }
+    let _ = tokio::time::timeout(DISCONNECT_WAIT, handler.unsubscribe(CHAR_NOTIFY_UUID)).await;
+    let _ = tokio::time::timeout(DISCONNECT_WAIT, handler.disconnect()).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
 }
 
 /// Everything that must be true before a scan or a connect can possibly work,
