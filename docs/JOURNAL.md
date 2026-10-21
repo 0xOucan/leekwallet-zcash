@@ -1491,3 +1491,69 @@ in two tabs. Branch `companion-auto-ux`.
   WebAssembly, compressed).
 - Left, on the phone: the camera prompt and a real scan; Reconnect over
   Bluetooth by id; sync pausing in the background.
+
+### 9.3 Chrome: USB without a tab, the hidden wallet, transparent spends (2026-10-20)
+From the user's run of the extension on the board in Brave (USB and
+Bluetooth both work), on branch `chrome-test-fixes`.
+- **USB without a tab.** "Connect over USB" now asks the offscreen
+  document first (`board.usbPorts`: does its `getPorts()` hold an
+  Espressif port?). With one, it connects there straight from the
+  toolbar popup. With none, it opens the tab, which says why ("First USB
+  connection: choose the board in the browser's list … After that,
+  Connect over USB works from the popup."). After the chooser, if the
+  offscreen document still sees no port (a browser that keeps the grant
+  for the choosing page only; not seen yet, but it would explain a tab on
+  every connect), the tab holds the port itself, like Bluetooth, and
+  says to keep it open. The popup explains Bluetooth's tab in one line.
+  Not tried on the board yet: whether Brave's offscreen `getPorts()` sees
+  the grant made in the tab is the thing to look at.
+- **Passphrase (hidden wallet)**, the Companion's panel: enter it on the
+  board (Settings → Passphrase; the default, and the safer path) or type
+  it here (less safe, behind a disclosure with the same warnings).
+  Typed, it goes as `setPassphrase`; the board shows the XFP and applies
+  it only when confirmed there; the popup shows the XFP it answered, and
+  a refusal leaves the wallet as it was. Entered on the board, `BoardHost`
+  notices through `getStatus`, polled every 4 s while connected and idle
+  (`unlocked`, `passphrase`, `activeWallet`), and reads the fingerprint
+  again. The hidden wallet is another seed fingerprint, so the
+  board-account hiding shows it, or offers "Import the hidden wallet's
+  account", as a separate device account keyed by that fingerprint, never
+  mixed with the plain one. Lock and Disconnect drop it on both sides;
+  its balance and addresses stay out of the popup's storage cache.
+  Limitation: a passphrase replaced by another on the board without a
+  lock leaves `getStatus` unchanged.
+- **Stale transparent balance in the engine.** The Chrome engine had the
+  gap found in the desktop app on 2026-10-18: `sync::run` only adds
+  UTXOs, so a transparent coin spent by another wallet stays. Ported
+  zecz-core's `fetch_transaction_data` to `chrome/engine` over gRPC-web
+  (its `ChainData` trait in `lwd.rs`, not `Send` here): transaction data
+  requests answered, then the unspent coins compared with the UTXO set
+  and the t-address's transactions stored for a vanished one. The sync
+  result and a `transactions` event carry the summary. A DEV ONLY
+  `devForgetTransparentSpends` (testnet) makes a wallet that never saw
+  its spends, for e2e step 4b. Through the ChainSafe testnet proxy the
+  step ran with no failures (GetTransaction, GetTaddressTxids and
+  GetAddressUtxos all pass through it). The abandon-art test account has
+  no spent transparent coin today (12,500,000 zat unspent), so 4b only
+  notes that; its offline coverage is zecz-core's
+  `tests/transparent_spend.rs`, the same code.
+- **No QR through the webcam** in the extension (user decision): USB and
+  Bluetooth only. Dropped from chrome/README.md, the roadmap and
+  CHROME-ENGINE.md.
+- e2e: "Forget this board" (step 8) now waits for the deletion, which
+  follows the sync the popup starts on open; with the longer sync it
+  raced the status call (one failure in the first run).
+- Tests: `board.test.mjs` + `format.test.mjs` 44/44 (new: a passphrase
+  typed here against zdev, "TREZOR" giving the `pp1` vectors' fingerprint
+  and UFVK, dropped on Disconnect and by the board on reconnect; one
+  refused on the board; one entered on the board before connecting; the
+  firmware's passphrase rules; a board that stops answering while idle;
+  `usbPlan`). `e2e.mjs` 67/67 (new: the full-transaction step with no
+  failures; the popup opening a tab for the first USB grant and saying
+  why, and the Bluetooth line; a passphrase typed in the popup, its XFP,
+  the hidden wallet imported as its own account and kept out of the
+  storage cache, hidden on Disconnect and not back on reconnect).
+- Left, on the board in Brave: Connect over USB from the popup after the
+  first grant (no tab); a passphrase entered on the board and one typed
+  here (compare the XFP); a shield made elsewhere disappearing from the
+  extension's transparent balance after a sync.

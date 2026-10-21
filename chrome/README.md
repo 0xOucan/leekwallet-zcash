@@ -16,12 +16,13 @@ and the board over USB (Web Serial) and Bluetooth (Web Bluetooth): pair
 with the six digits, import the board's account, check an address on its
 screen, and send or shield signed on it, proven and broadcast here.
 Tested against zdev (the firmware's protocol on a PTY), and on the real
-board over USB in Brave 152: pairing, import and sync on testnet and
-mainnet, an address confirmed on the board, and a mainnet send signed on
-the board, proven and broadcast from the extension (and testnet sends
-since). A board's wallet is shown only while that board is connected.
-Bluetooth is not yet tried on the board. No software wallets yet (9.4),
-no QR yet.
+board in Brave 152 over USB and Bluetooth: pairing, import and sync on
+testnet and mainnet, an address confirmed on the board, and sends signed
+on the board, proven and broadcast from the extension. A board's wallet
+is shown only while that board is connected; a passphrase on the board
+opens its hidden wallet as a separate account. The board's links here are
+USB and Bluetooth only: no QR through the webcam. No software wallets yet
+(9.4).
 
 ## How it fits together
 
@@ -78,24 +79,33 @@ and Android use that one) and of LeekWallet's `session.ts`/`framing.ts`:
 
 Where it runs, and why:
 
-- **USB: the offscreen document.** Web Serial needs a document, and a
-  signature must outlive the popup (it closes on blur). `requestPort()`
-  needs a click in a tab: the toolbar popup closes when Chrome's chooser
-  takes focus, so the first USB connection opens the wallet in a tab once.
-  The grant is kept for the extension's origin, so from then on the
-  offscreen document's `getPorts()` finds the board (Espressif VID 0x303a).
-  Its state reaches every page as `{ board }` on the engine port, and its
+- **USB: the offscreen document, with no tab once granted.** Web Serial
+  needs a document, and a signature must outlive the popup (it closes on
+  blur). "Connect over USB" first asks the offscreen document
+  (`board.usbPorts`) whether its `getPorts()` has a board port
+  (Espressif VID 0x303a). If it has, the board connects there straight
+  from the popup: no tab. Only with no port granted yet does it open the
+  wallet in a tab, which says why: `requestPort()` needs a click in a
+  page that can show Chrome's chooser, and the toolbar popup closes when
+  the chooser takes focus. The grant is the extension origin's, so after
+  that one time the popup connects by itself. Should a browser keep the
+  grant for the choosing tab only (the offscreen document still sees no
+  port right after it), that tab holds the port itself, as it holds a
+  Bluetooth board, and says to keep it open. The offscreen board's state
+  reaches every page as `{ board }` on the engine port, and its
   operations are `board.<op>` calls on that port (`board.connect`,
   `board.importAccount`, `board.showAddress`, `board.signAndFinish`,
-  `board.cancel`, `board.disconnect`, `board.state`).
+  `board.setPassphrase`, `board.checkWallet`, `board.cancel`,
+  `board.disconnect`, `board.state`, `board.usbPorts`).
 - **Bluetooth: the tab that chose the device.** A `BluetoothDevice` cannot
   be handed to another document, `requestDevice()` needs a click in a tab,
   and `navigator.bluetooth.getDevices()` (to find it again elsewhere) is
   still behind a flag. So a Bluetooth board is driven from that tab, which
-  stays open while it signs; the engine is still the offscreen one.
+  stays open while it signs; the engine is still the offscreen one. The
+  popup says so in one line under the buttons.
 
 The popup: Connect over USB / Bluetooth, the six digits to compare (press
-ALLOW on the board), "Enter your PIN on the board", Import the board's
+ALLOW on the board), the passphrase panel, "Enter your PIN on the board", Import the board's
 account (account 0 of the network chosen in the header), Verify on the
 board (the address shown, rotated or not), a send form (to, amount, memo)
 and a Shield button when there are transparent funds. Both build a compact
@@ -122,6 +132,42 @@ each see their own Bluetooth board: a wallet shown in the tab that holds
 the Bluetooth connection stays hidden in the toolbar popup, and a popup
 opened or reopened shows nothing of it until a matching board connects
 there.
+
+**Passphrase (hidden wallet).** A BIP 39 passphrase makes another seed,
+so the board shows another seed fingerprint, other addresses and another
+balance. The board section has a "Passphrase (hidden wallet)" panel, as
+the Companion's:
+
+- **Enter it on the board** (the default, and the safer path: the
+  passphrase never leaves the board): Settings → Passphrase on the board.
+  While connected and idle, `BoardHost` asks `getStatus` every 4 s; when
+  `unlocked`, `passphrase` or `activeWallet` changes it hides the wallet
+  shown and reads the account's fingerprint again (`zGetAccount`).
+- **Type it here (less safe)**, behind a closed disclosure with the
+  Companion's warnings: this browser sees every character before
+  anything is encrypted, and a wrong passphrase opens a different, empty
+  wallet. `setPassphrase` goes over the encrypted session, the board
+  shows the fingerprint (XFP) and applies it only when confirmed there;
+  the popup shows the XFP the board answered. A refusal or timeout leaves
+  the board in the wallet it was in. The field is checked against the
+  firmware's rule (1 to 63 printable ASCII characters), emptied whatever
+  happens, kept across redraws only as the one input element, and the
+  passphrase is never in any state, message, log or storage.
+
+The hidden wallet is just another fingerprint: the board-account hiding
+above shows its account only while the board has that passphrase
+applied, offers "Import the hidden wallet's account" (a separate device
+account, named "LeekWallet #0 (passphrase)", keyed by its fingerprint),
+and never mixes it with the wallet without a passphrase. Its balance and
+addresses are not written to the popup's cache in `chrome.storage.local`,
+nor chosen as the remembered account; its synced data stays on OPFS like
+any account's (the panel says so: anyone with this browser profile can
+tell a second wallet was opened), and "Forget this board" with the
+hidden wallet connected deletes it. The board drops a passphrase on lock
+and on disconnect (a host-supplied one when the session ends); so does
+`BoardHost`: Disconnect clears `passphrase` and `xfp`, a board found
+locked hides its wallet ("Unlock it with your PIN on the board"), and a
+board that drops the session ends the connection.
 
 Disconnect hides the wallet at once in every view: `BoardHost` publishes
 "disconnected" before it closes the link, and gives the link 5 s at most
@@ -234,8 +280,23 @@ bridge to its PTY: the same modules, with Chromium's WebCrypto. Step 8
 drives the popup itself (as a tab) with a stand-in `navigator.bluetooth`
 whose GATT server is zdev: no board, nothing of the wallet shown; its
 board over Bluetooth, the wallet; Disconnect, hidden again; zdev with a
-passphrase (another wallet), only its own import offered; then "Forget
-this board" deletes the account. `board.test.mjs` also checks the board's
+passphrase (another wallet), only its own import offered; a passphrase
+typed in the popup (the abandon-art board with "TREZOR"):
+the XFP shown, the plain wallet hidden, the hidden one imported as its
+own account (the `pp1` UFVK and address) and kept out of the storage
+cache, hidden on Disconnect, and not back on reconnect; "Connect over
+USB" from the toolbar popup with no port granted opens a tab that says
+why; then "Forget this board" deletes the account.
+
+`board.test.mjs` also checks the passphrase: one typed here
+(`setPassphrase` "TREZOR": the XFP zdev showed, the fingerprint and UFVK
+of the `pp1` vectors, an import keyed by it, nothing of the passphrase in
+any state, gone after Disconnect, the board back to the plain wallet on
+reconnect), one refused on the board (the wallet kept), the firmware's
+length and charset rules, one entered on the board before connecting
+(flagged from `getStatus`), and a board that stops answering while idle
+(the watch hides its wallet); and `usbPlan`, which decides whether
+Connect over USB needs a tab. It also checks the board's
 fingerprint on connect, and that after a USB timeout (a port that never
 answers) the message names the Link setting, the port is released and
 Bluetooth connects next. With a Web Serial stand-in on zdev's PTY
@@ -266,6 +327,37 @@ mode on (Chromium disables a reloaded unpacked extension otherwise). The
 broadcast run needs funds on that public account (its
 keys are test vectors, so anyone may spend them) and signs with the dev
 soft signer. Env: `LWD` (endpoint), `HEADED=1`, `KEEP=1`, `VERBOSE=1`.
+
+## Transparent spends the scan cannot see
+
+Compact blocks carry no transparent inputs, so `zcash_client_backend`'s
+`sync::run` only ever adds UTXOs: a transparent coin of this wallet spent
+by another wallet with the same keys (zecz, the desktop app, the
+Companion shielding it) would stay in the balance for good, with Shield
+offered over it. So `Wallet::sync` ends as zecz-core's does, with
+`fetch_transaction_data` (`engine/src/wallet.rs`, over the gRPC-web
+client's `ChainData` in `engine/src/lwd.rs`):
+
+1. It answers the wallet database's transaction data requests:
+   GetTransaction for the ones to enhance (storing a transaction in full
+   marks the transparent coins it spends), the chain status of unmined
+   ones, and GetTaddressTxids for t-address spend searches, then
+   `notify_address_checked`. The ZIP 320 checks (outputs still unspent,
+   asked from height 0 on every sync) go to one GetAddressUtxos call.
+   Storing can raise new requests, so up to four rounds.
+2. It compares every unspent transparent coin of the wallet with the
+   server's UTXO set (GetAddressUtxos of their t-addresses); for a coin
+   missing there it stores that t-address's transactions from the height
+   the coin was mined, which records the spend.
+
+A failed request is counted (`failed`) and asked again on the next sync,
+never fatal. A cancelled sync skips the step. The engine is wasm32 only,
+so the logic's offline tests are zecz-core's (`host/zecz-core/tests/transparent_spend.rs`,
+the same code); here `e2e.mjs` step 4b checks it against testnet:
+`devForgetTransparentSpends`, then a sync must bring the transparent
+balance back (exercised only when the test account has spent transparent
+coins; otherwise it says so), and every sync must end the step with no
+failures.
 
 ## The engine's message API
 
@@ -303,7 +395,7 @@ wallet's first account.
 | `addresses` | `account?` | `{ unified, diversifierIndex, transparent, orchardOnly }` |
 | `nextAddress` | `account?` | `{ unified, diversifierIndex, transparent }`: a fresh diversified address (rotation) |
 | `checkAddress` | `address`, `network?` | `{ kind: "unified"\|"transparent" }` |
-| `sync` | `batch?` (1000) | `{ cancelled, tip, scannedBlocks, elapsedMs, status }`. Events below. |
+| `sync` | `batch?` (1000) | `{ cancelled, tip, scannedBlocks, elapsedMs, status, transactions }`. Events below. `transactions` (null when cancelled) is the full-transaction step: `{ stored, statuses, vanishedCoins, failed }`. |
 | `cancelSync` | | `{ cancelling }`: the sync stops after its batch, resolving `cancelled: true` |
 | `syncStatus` | | `{ chainTip, fullyScanned, progressNum, progressDen, synced }` or null |
 | `balances` | `account?` | `{ account, chainTip, fullyScanned, synced, balances: { orchard, ironwood, transparent: { total, spendable, pending }, total, spendable } }` |
@@ -319,11 +411,13 @@ wallet's first account.
 | `warmProver` | | `{ built, ms }`: builds the proving key ahead of a send |
 | `signSoft` | `signerView`, `mnemonic`, `accountIndex?` | `{ zsig }`. DEV ONLY, testnet only: zecz's soft signer, for tests without a board |
 | `devAccountSpec` | `mnemonic`, `accountIndex?` | `{ ufvk, origin }`. DEV ONLY, testnet only |
+| `devForgetTransparentSpends` | | `{ forgotten }`: DEV ONLY, testnet only. Forgets every recorded spend of the wallet's transparent coins, so the next sync must find them again (e2e 4b) |
 
 Events (`{ event }` to every connected page):
 
 - `{ event: "sync", phase: "started", server, tip, fullyScanned }`
 - `{ event: "sync", phase: "scanned", start, end, tip, scannedBlocks, elapsedMs }`
+- `{ event: "sync", phase: "transactions", stored, statuses, vanishedCoins, failed, elapsedMs }`
 - `{ event: "import", phase: "treeState", height, server }`
 - `{ event: "prove", phase: "loadingKey" | "proving", pool, circuit?, elapsedMs }`
 - `{ event: "finish", phase: "signaturesApplied" | "stored", ... }`
@@ -335,8 +429,12 @@ document `hostState`.
 
 ## Not yet
 
-- 9.3: Bluetooth on the real board (USB works); QR through the webcam.
-  Account 0 only.
+- 9.3: account 0 only. No QR through the webcam, by decision: the
+  extension talks to the board over USB and Bluetooth only.
+- A passphrase replaced by another on the board, with no lock between,
+  leaves `getStatus` unchanged (`passphrase: 1` both times), so the
+  watch does not notice it; Disconnect and connect again (or lock the
+  board) to read the new wallet. One typed here is always read again.
 - 9.4: software wallets (create/restore, passphrase, WebCrypto), several
   accounts in the popup.
 - The proving key is not cached across sessions; wasm-opt is used only
