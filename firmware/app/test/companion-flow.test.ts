@@ -12,12 +12,20 @@ import { join } from "node:path";
 
 import type { CborValue } from "../packages/core/src/cbor.ts";
 import { DeviceError } from "../packages/core/src/transport.ts";
-import type { ZCall } from "../packages/core/src/zcash.ts";
+import type { ZCall, ZNetwork } from "../packages/core/src/zcash.ts";
+import type { Invoke } from "../src/tauri-transport.ts";
 import { boardLabel, forgetBoard, loadBoard, saveBoard, BOARD_KEY } from "../src/board-memory.ts";
 import { ReceiveModel } from "../src/receive-model.ts";
 import { SyncScheduler, type Timers } from "../src/sync-scheduler.ts";
 import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying } from "../src/zcash-auto.ts";
 import { fakeWallet } from "./fake-wallet.ts";
+import { txHead, txKindLabel } from "../src/tx-labels.ts";
+import { isWrongNetwork, networkFromStatus, otherNetwork, wrongNetwork, WRONG_NETWORK } from "../src/network-guard.ts";
+import { closeLeftoverLink, releasedMessage } from "../src/link-events.ts";
+import {
+  capabilityRange, centerCrop, clampToRange, decodePasses, enhance, loadCamera, nextCamera, saveCamera,
+  videoConstraints, CAMERA_KEY,
+} from "../src/qr-tuning.ts";
 import { repo } from "./zdev.ts";
 
 let failures = 0;
@@ -310,6 +318,122 @@ group("auto: a board that cannot record the birthday still gets its wallet");
   const logs: string[] = [];
   const r = await ensureWallet(await readAccountRetrying(b.call, 0, "test", { retryMs: 1 }), { call: b.call, invoke: w.invoke, log: (l) => logs.push(l) });
   check(r.created && !r.storedOnBoard && logs.some((l) => /not recorded on the board/.test(l)), "created, and the log says why the board has no birthday");
+}
+
+group("activity: every kind has a label, a send to yourself shows its fee");
+{
+  check(txKindLabel("received") === "Received" && txKindLabel("sent") === "Sent", "received and sent");
+  check(txKindLabel("self") === "Sent to yourself", "self is \"Sent to yourself\"");
+  check(txKindLabel("shielded") === "Shielded" && txKindLabel("internal") === "Moved between pools", "shielded and internal");
+  check(txKindLabel("swapOut") === "Swap out" && txKindLabel("refund_pending") === "Refund pending", "a newer kind reads as words");
+  for (const k of [undefined, null, 7, "", "<b>", "x".repeat(80)]) {
+    const l = txKindLabel(k);
+    check(l === "Transaction" && !/undefined/.test(l), `kind ${JSON.stringify(k)} -> ${l}`);
+  }
+  const self = txHead({ kind: "self", deltaZat: -10_000, amountZat: 10_000, feeZat: 10_000 });
+  check(self.label === "Sent to yourself" && self.amount === "−0.0001 ZEC fee" && self.dir === "out", `self: ${JSON.stringify(self)}`);
+  const selfNoFee = txHead({ kind: "self", deltaZat: -15_000, amountZat: 15_000, feeZat: null });
+  check(selfNoFee.amount === "−0.00015 ZEC fee", "without a known fee, the balance change is the fee");
+  check(txHead({ kind: "sent", deltaZat: -150_010_000, amountZat: 150_000_000, feeZat: 10_000 }).amount === "−1.5001 ZEC", "a send shows what left");
+  check(txHead({ kind: "received", deltaZat: 100_000, amountZat: 100_000, feeZat: null }).amount === "+0.001 ZEC", "a receive");
+  const hidden = txHead({ kind: "self", deltaZat: -10_000, amountZat: 10_000, feeZat: 10_000 }, true);
+  check(hidden.amount === "••••" && hidden.label === "Sent to yourself", "hidden balances stay hidden");
+  const fresh = txHead({ kind: "mystery", deltaZat: -1, amountZat: 1, feeZat: null });
+  check(`${fresh.label} · date`.startsWith("Mystery · "), "never \"undefined · date\"");
+}
+
+group("wrong network: the board's 0x0528, and the one-tap switch");
+{
+  check(WRONG_NETWORK === 0x0528, "the code");
+  check(isWrongNetwork(new DeviceError(0x0528, "the board is set to Mainnet")), "0x0528 is the wrong network");
+  check(!isWrongNetwork(new DeviceError(0x0300, "no wallet")) && !isWrongNetwork(new Error("x")) && !isWrongNetwork(null), "nothing else is");
+  check(otherNetwork("test") === "main" && otherNetwork("main") === "test", "two networks");
+  const w = wrongNetwork("test", "the board is set to Mainnet; switch it to Testnet in Settings > Network, or use the Mainnet app.");
+  check(w.board === "main" && w.button === "Switch the app to Mainnet", `button: ${w.button}`);
+  check(/set to Mainnet and this app to Testnet/.test(w.text) && /Settings → Network/.test(w.text), "says both networks and the board setting");
+  check(/\(The board says: the board is set to Mainnet;.*Mainnet app\.\)$/.test(w.text), `keeps the board's words once: ${w.text}`);
+  check(/\(The board says: the board is set to Testnet\.\)$/.test(wrongNetwork("main", "device error 0x0528: the board is set to Testnet").text), "without the code prefix");
+  check(wrongNetwork("main").button === "Switch the app to Testnet" && !/board says/.test(wrongNetwork("main").text), "and the other way, without a message");
+
+  /* A board on Mainnet, the app on Testnet: refused, switched, read. */
+  const board: ZNetwork = "main";
+  const b = scriptedBoard((m, p) => {
+    if (m !== "zGetAccount") throw new Error(`asked ${m}`);
+    if (p["network"] !== board) throw new DeviceError(WRONG_NETWORK, "the board is set to Mainnet");
+    const km = keys.find((k) => k.name === "main/abandon-art/pp0/acct0")!;
+    return { account: 0, network: board, seedFingerprint: unhex(km.seed_fingerprint), ufvk: km.ufvk, ua: km.ua, tAddress: km.transparent_address };
+  });
+  let app: ZNetwork = "test";
+  let note: ReturnType<typeof wrongNetwork> | null = null;
+  try { await readAccountRetrying(b.call, 0, app, { retryMs: 1 }); } catch (e) { if (isWrongNetwork(e)) note = wrongNetwork(app, (e as Error).message); }
+  check(note !== null && note.board === "main", "the refusal becomes the notice");
+  app = note!.board; // the tap
+  const a = await readAccountRetrying(b.call, 0, app, { retryMs: 1 });
+  check(a.network === "main" && b.asked.length === 2, "after the switch the account reads, once more and no more");
+
+  check(networkFromStatus("main") === "main" && networkFromStatus("Testnet") === "test" && networkFromStatus(" mainnet ") === "main", "getStatus network, in its spellings");
+  for (const v of [undefined, null, 1, "", "regtest", {}]) check(networkFromStatus(v) === null, `no network from ${JSON.stringify(v)}`);
+}
+
+group("link: closed on a new start and in the background, said in words");
+{
+  const asked: string[] = [];
+  const invoke = (async <T,>(cmd: string): Promise<T> => { asked.push(cmd); return true as T; }) as Invoke;
+  const line = await closeLeftoverLink(invoke);
+  check(asked[0] === "link_reset" && line !== null && /left open by the previous run/.test(line), `a leftover link: ${line}`);
+  const none = await closeLeftoverLink((async <T,>() => false as T) as Invoke);
+  check(none === null, "nothing left over, nothing said");
+  const old = await closeLeftoverLink((async () => { throw new Error("unknown command link_reset"); }) as Invoke);
+  check(old !== null && /could not close/.test(old), "an older backend does not stop the start");
+  check(await closeLeftoverLink(null) === null, "a browser tab has no link");
+  check(/background for more than 30 seconds/.test(releasedMessage("background")) && /Reconnect/.test(releasedMessage("background")), "background");
+  check(!/undefined/.test(releasedMessage("")) && /no reason given/.test(releasedMessage("")), "an empty reason still reads");
+}
+
+group("scanner: camera memory, sliders, crops, passes, contrast");
+{
+  const mem = new Map<string, string>();
+  const st = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+  check(JSON.stringify(loadCamera(st)) === JSON.stringify({ facing: "environment" }), "the rear camera by default");
+  saveCamera({ deviceId: "abc" }, st);
+  check(mem.get(CAMERA_KEY) === "id:abc" && JSON.stringify(loadCamera(st)) === JSON.stringify({ deviceId: "abc" }), "a chosen camera is remembered");
+  saveCamera({ facing: "user" }, st);
+  check(JSON.stringify(loadCamera(st)) === JSON.stringify({ facing: "user" }), "the front camera is remembered");
+  mem.set(CAMERA_KEY, "garbage");
+  check("facing" in loadCamera(st), "garbage reads as the rear camera");
+  const vc = videoConstraints({ deviceId: "abc" }) as { deviceId: { exact: string }; width: { ideal: number }; height: { ideal: number } };
+  check(vc.deviceId.exact === "abc" && vc.width.ideal === 1920 && vc.height.ideal === 1080, "full HD asked of the chosen camera");
+  const devs = [{ deviceId: "rear" }, { deviceId: "front" }];
+  check(JSON.stringify(nextCamera(devs, { facing: "environment" }, "rear")) === JSON.stringify({ deviceId: "front" }), "rear -> front");
+  check(JSON.stringify(nextCamera(devs, { deviceId: "front" })) === JSON.stringify({ deviceId: "rear" }), "front -> rear");
+  check(JSON.stringify(nextCamera([{ deviceId: "" }], { facing: "environment" })) === JSON.stringify({ facing: "user" }), "ids unknown: the other facing mode");
+  const ev = capabilityRange({ min: -2, max: 2, step: 0.5 }, 0);
+  check(ev !== null && ev.min === -2 && ev.max === 2 && ev.value === 0, "exposure compensation as a slider");
+  check(capabilityRange(undefined, 0) === null && capabilityRange({ min: 1, max: 1 }, 1) === null, "no slider without a range");
+  check(clampToRange(-7, { min: -2, max: 2, step: 0.5 }) === -2 && clampToRange(0.74, { min: -2, max: 2, step: 0.5 }) === 0.5, "clamped onto the step");
+  const z = capabilityRange({ min: 1, max: 8 }, 3);
+  check(z !== null && z.step === 0.35 && Math.abs(z.value - 3.1) < 1e-9, `zoom without a step gets one: ${JSON.stringify(z)}`);
+  const c = centerCrop(1920, 1080);
+  check(c.size === 648 && c.sx === 636 && c.sy === 216, `the middle square: ${JSON.stringify(c)}`);
+  const seen = new Set<string>();
+  for (let n = 0; n < 6; n++) {
+    const ps = decodePasses(n);
+    check(ps.length === 2 && ps[0]!.region === "center" && !ps[0]!.contrast, "the middle at full resolution every frame");
+    seen.add(JSON.stringify(ps[1]));
+  }
+  check(seen.size === 3, "three extra passes in rotation: the whole frame, contrast, the other binarizer");
+  check(decodePasses(0, -2).every((p) => p.contrast), "brightness lowered in software: every pass gets the contrast");
+  /* A washed-out code: dark modules at 200, light at 250 (a glowing screen). */
+  const px = new Uint8ClampedArray(4 * 100);
+  for (let i = 0; i < 100; i++) { const v = i % 2 ? 250 : 200; px.set([v, v, v, 255], i * 4); }
+  enhance(px);
+  check(px[0] === 0 && px[4] === 255 && px[3] === 255, `stretched to black and white: ${px[0]}, ${px[4]}`);
+  const grey = new Uint8ClampedArray(4 * 3);
+  [60, 128, 200].forEach((v, i) => grey.set([v, v, v, 255], i * 4));
+  const plain = grey.slice();
+  enhance(plain, 0);
+  enhance(grey, -3);
+  check(grey[4]! < plain[4]!, `darker in the middle with the brightness lowered: ${grey[4]} < ${plain[4]}`);
 }
 
 console.log(`\n${failures ? "FAILED" : "PASSED"} (${failures} failure${failures === 1 ? "" : "s"})`);

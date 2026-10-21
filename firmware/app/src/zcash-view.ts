@@ -18,6 +18,7 @@ import {
 } from "../packages/core/src/zcash.ts";
 import type { Invoke } from "./tauri-transport.ts";
 import { readAccountRetrying } from "./zcash-auto.ts";
+import { isWrongNetwork, wrongNetwork } from "./network-guard.ts";
 
 export interface ZcashDeps {
   /** The paired client's call, or null when there is no encrypted session. */
@@ -69,6 +70,13 @@ export interface ZcashView {
   busy<T>(what: string, f: () => Promise<T>): Promise<T>;
   /** A board operation is running (busy() would refuse another). */
   readonly working: boolean;
+  /**
+   * The board said which network it is on (getStatus `network`, newer
+   * firmware): the app follows it, without the Mainnet question, since
+   * the board's own setting is the user's choice already made. True when
+   * the app switched.
+   */
+  followBoard(n: ZNetwork): boolean;
 }
 
 export function initZcash(deps: ZcashDeps): ZcashView {
@@ -98,6 +106,9 @@ export function initZcash(deps: ZcashDeps): ZcashView {
       return await f();
     } catch (e) {
       deps.log(`zcash: ${what} failed: ${zErrorText(e)}`);
+      /* The board is on the other network: say so with the way out, on
+       * every tab, not only in this operation's status line. */
+      if (isWrongNetwork(e)) showWrongNetwork(e);
       throw e;
     } finally {
       working = false;
@@ -147,8 +158,23 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     void busy("reading the account", readAccount).catch((e) => status(zErrorText(e)));
   }
 
+  /** The board refused a request for this network: the notice and its button. */
+  let wrongTo: ZNetwork | null = null;
+  function showWrongNetwork(e: unknown): void {
+    const w = wrongNetwork(network, (e as { message?: string }).message);
+    wrongTo = w.board;
+    $("zwrongnettext").textContent = w.text;
+    $("zwrongnetgo").textContent = w.button;
+    $("zwrongnet").hidden = false;
+  }
+  function hideWrongNetwork(): void {
+    wrongTo = null;
+    $("zwrongnet").hidden = true;
+  }
+
   function setNetwork(n: ZNetwork): void {
     $("zmainask").hidden = true;
+    hideWrongNetwork();
     if (n === network) return;
     network = n;
     try { localStorage.setItem(NETWORK_KEY, n); } catch { /* the choice still holds for this run */ }
@@ -185,6 +211,7 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     });
     /* The user may have switched while the board was deriving. */
     if (n !== network || i !== account) throw new Error("the network or account changed while reading");
+    hideWrongNetwork();
     renderAccount(a);
     status(`Account ${a.account}, ${networkLabel(a.network)}. Verify the address on the board before you receive.`);
     deps.log(`zcash: read account ${a.account} on ${a.network}`);
@@ -239,6 +266,15 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     $("zmainno").focus();
   });
   $("zmainyes").addEventListener("click", () => setNetwork("main"));
+  /* One tap: the app moves to the board's network, which reads the
+   * account again (changed() -> autoRead) and opens that wallet. Mainnet
+   * keeps its banner; the board's setting was the user's choice. */
+  $("zwrongnetgo").addEventListener("click", () => {
+    const to = wrongTo;
+    if (!to) return;
+    deps.log(`zcash: switching the app to ${networkLabel(to)}, the board's network`);
+    setNetwork(to);
+  });
   $("zmainno").addEventListener("click", () => { $("zmainask").hidden = true; });
 
   $<HTMLInputElement>("zaccount").addEventListener("change", (ev) => {
@@ -372,6 +408,13 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     reset() {
       clearAccount();
       clearSigned();
+      hideWrongNetwork();
+    },
+    followBoard(n) {
+      if (n === network) return false;
+      deps.log(`zcash: the board is set to ${networkLabel(n)}; the app follows it`);
+      setNetwork(n);
+      return true;
     },
     onAccount(f) { accountListeners.push(f); },
     opened() { autoRead(); },

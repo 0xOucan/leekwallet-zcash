@@ -142,6 +142,15 @@
               Mainnet: real ZEC. Check every address and amount on the board's
               own screen before you accept.
             </p>
+            <!-- The board refused a request for the other network (0x0528):
+                 one tap switches the app to the board's network and reads
+                 again (src/network-guard.ts). -->
+            <div class="notice notice--danger" id="zwrongnet" role="alert" hidden>
+              <p id="zwrongnettext"></p>
+              <div class="row">
+                <button type="button" id="zwrongnetgo"></button>
+              </div>
+            </div>
 
             <div class="ztabs" role="tablist" aria-label="Zcash">
               <button type="button" role="tab" id="ztab-wallet" aria-controls="zpane-wallet" aria-selected="false" data-wallet hidden>Wallet</button>
@@ -251,7 +260,20 @@
               </div>
               <div class="zscan" id="zwscanbox" hidden>
                 <video id="zwscanvideo" playsinline muted></video>
-                <button type="button" id="zwscancancel" class="secondary">Cancel</button>
+                <!-- For dense codes on bright screens (the board's own):
+                     brightness (exposure, or a software contrast), zoom when
+                     the camera has it, and the other camera. -->
+                <div class="zscan__controls">
+                  <label class="zscan__ctl"><span id="zwscanexplabel">Brightness</span>
+                    <input type="range" id="zwscanexp" min="-3" max="0" step="1" value="0" /></label>
+                  <label class="zscan__ctl" id="zwscanzoomrow" hidden><span>Zoom</span>
+                    <input type="range" id="zwscanzoom" min="1" max="1" step="0.1" value="1" /></label>
+                </div>
+                <p class="muted zscan__tip">A code on a bright screen: lower the brightness, zoom in, and keep the code in the middle, 10–20 cm away.</p>
+                <div class="row">
+                  <button type="button" id="zwscanswitch" class="secondary" hidden>Switch camera</button>
+                  <button type="button" id="zwscancancel" class="secondary">Cancel</button>
+                </div>
               </div>
               <p class="muted" id="zwscanstatus" role="status" aria-live="polite"></p>
               <label class="field"><span>To</span>

@@ -231,9 +231,16 @@ screen and the account read from the board (`setShellVisible` in main.ts).
 
 **Network.** Testnet unless switched; Mainnet asks first ("Mainnet moves real
 ZEC") and keeps a danger banner up while it is on. Each network has its own
-wallet, server and address book; nothing is shared between them. A board that
-refuses a request for the other network (its network guard) is shown in the
-board's own words: every board error is displayed verbatim, with its code.
+wallet, server and address book; nothing is shared between them. A board
+that refuses a request for the other network (its network guard, 0x0528)
+gets a notice on every tab saying which network each side is on, with the
+board's own words, and one button, *Switch the app to Mainnet/Testnet*,
+which switches and reads the account again (`src/network-guard.ts`; no
+Mainnet question there: the board's setting is the user's choice already
+made, and the Mainnet banner stays up). Firmware that reports its network
+in `getStatus` (`network`) is followed on connect and when it changes on
+the board, before anything is refused; older firmware works as before.
+Every other board error is displayed verbatim, with its code.
 
 **Automatic, as in Zodl.** Connecting is one guided flow with no other
 click: Connect (or, from the launcher, *Reconnect your board*) pairs (compare
@@ -256,7 +263,22 @@ over Bluetooth, the peer id and advertised name, kept in the webview's
 storage; never a key, passkey or anything of the session, which is a fresh
 handshake (passkey, ALLOW) on every connection. *Forget it* in the Device
 panel drops it. Reconnecting over Bluetooth goes to that id
-(`ble_connect`), so another board in range is never picked.
+(`ble_connect`), so another board in range is never picked: a 4 s scan,
+then the id directly; a board found neither way is reported as "The board
+is not advertising: it may still be connected to this or another app.
+Restart the board or wait ~30 s", plus that a button press on the board
+makes it advertise again (it stops two minutes after a disconnect).
+
+**The link is closed when nobody uses it** (`src-tauri/src/link.rs`,
+`src/link-events.ts`): the board serves one peer and does not advertise
+while connected, so a link left open keeps every later connection out.
+The app sends a GATT disconnect (and releases USB) after 30 s in the
+background (Android onPause; not at once, since Android pauses the app
+for its own permission dialogs), when it closes, and at start for a link
+an earlier run of the same process left open (Android often keeps the
+process when the activity is closed with Back). A request waiting on the
+board is never cut. The session on screen then ends with the reason, and
+*Reconnect your board* starts again.
 
 **Board** (any build):
 - Read the board's account for the network and account number: unified and
@@ -304,6 +326,10 @@ code is used):
   checked against the wallet's, the compact signer view is signed on the
   board, and the wallet proves, broadcasts and shows the txid.
 - *Activity*: history with memos, recipients, fee, and an explorer link.
+  Each row is named by zecz's kind (`src/tx-labels.ts`): Received, Sent,
+  *Sent to yourself* (shown with what it cost, the fee), Shielded, Moved
+  between pools; a kind added later reads as its own name, never
+  "undefined".
 - *Contacts*, *Settings* (server per network, checked before it is saved;
   wallet info; forget this network's wallet).
 
@@ -319,7 +345,15 @@ is read in the webview by the bundled `zxing-wasm` reader (`src/qr-scan.ts`):
 `BarcodeDetector` is missing from WebKitGTK and crashed the Android webview
 without Play Services, jsQR could not read dense codes off a screen, and
 Tauri's barcode-scanner plugin is mobile only. It costs about 1 MB of
-WebAssembly and `'wasm-unsafe-eval'` in the CSP. On Linux the backend enables
+WebAssembly and `'wasm-unsafe-eval'` in the CSP. For dense codes on bright
+screens (a unified address on the board's 240×240 display): 1920×1080
+asked of the camera, continuous autofocus where offered, the middle of the
+picture decoded at full resolution every frame, and in rotation the whole
+frame, a software contrast pass and the other binarizer
+(`src/qr-tuning.ts`). Under the picture: *Brightness* (the camera's
+exposure compensation, or a software darkening where it has none),
+*Zoom* when the camera has it, and *Switch camera*; the camera chosen is
+remembered (`leek.qr.camera`). On Linux the backend enables
 WebKitGTK's media stream and grants camera requests only; on Android the
 manifest declares the camera (ANDROID.md).
 
@@ -352,12 +386,16 @@ Tests: `pnpm test` includes `packages/core/test/zcash.test.ts` (the golden
 `.zsig`, reply checks, chunking, amounts), `packages/core/test/zip321.test.ts`
 (payment requests, address networks) and `test/companion-flow.test.ts` (the
 sync schedule, the remembered board, Receive's rotation and board view, the
-automatic set-up over a scripted board); `pnpm test:zdev` pairs with zdev
+automatic set-up over a scripted board, the activity labels, the
+wrong-network notice and switch, the link's close-on-start, and the
+scanner's camera memory, sliders, crops, passes and contrast); `pnpm test:zdev` pairs with zdev
 (`make -C firmware/sim build/zdev`, the firmware's protocol on a PTY) using the
 Companion's framing and session, and signs the PCZT vectors on both networks, runs the automatic set-up against
-zdev on Testnet and Mainnet boards (`--network`) and with a passphrase, and
+zdev on Testnet and Mainnet boards (`--network`) and with a passphrase
+(and the one-tap switch after the board's 0x0528), and
 checks a rotated address and its transparent receiver on the board;
-`cargo test --lib` in src-tauri covers the save command and the import checks,
+`cargo test --lib` in src-tauri covers the save command, the import checks
+and the background-release timing (`link.rs`),
 and `cargo test --lib -- --ignored online` imports and syncs the public test
 account against testnet lightwalletd. To drive the desktop app against zdev,
 start zdev with `--link /tmp/zdev` and the app with `LEEK_SERIAL_PORT=/tmp/zdev`.
@@ -390,9 +428,10 @@ for a bug report:
 - **Board**: firmware, model and chain from `getFeatures` (read once per
   connection); from `zGetFeatures` over the paired session, asked when the
   report is made: the signer backend, branch IDs, PCZT and chunk limits and
-  address display; the board's network setting is not reported by the
-  firmware (it refuses requests for the other network), and the report says
-  so; the board account read (account, network, seed fingerprint, birthday).
+  address display; the board's network setting when its `getStatus`
+  reports it (older firmware does not: it refuses requests for the other
+  network, and the report says so); the board account read (account,
+  network, seed fingerprint, birthday).
 - **Zcash**: the Companion's network and account; the wallet's lightwalletd
   server (and the default), when it last answered, the wallet's account and
   ZFP, birthday, sync height against the tip, and how the last sync ended.

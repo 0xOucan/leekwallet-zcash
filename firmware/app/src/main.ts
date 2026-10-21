@@ -26,6 +26,9 @@ import { BleTransport, scanBle, BLE_NOT_FOUND } from "./ble-transport.ts";
 import qrcodegen from "qrcode-generator";
 import { initFlasher, tauriFlashBridge } from "./flasher.ts";
 import { boardLabel, forgetBoard, loadBoard, saveBoard, type RememberedBoard } from "./board-memory.ts";
+import { networkFromStatus } from "./network-guard.ts";
+import { closeLeftoverLink, releasedMessage, RELEASED_EVENT } from "./link-events.ts";
+import type { ZNetwork } from "../packages/core/src/zcash.ts";
 import {
   deriveSession, generateKeypair, generateNonce, verifyCommitment,
   NONCE_BYTES, COMMIT_BYTES, PROTOCOL_VERSION, Session,
@@ -517,8 +520,21 @@ let deviceFeatures: Record<string, CborValue> | null = null;
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+/* The board's Settings -> Network, when its getStatus reports it (newer
+ * firmware); null on firmware without the field, where a request for the
+ * other network is refused with 0x0528 instead (src/network-guard.ts). */
+let boardNetwork: ZNetwork | null = null;
+
+/** The app follows the board's network, when the board says which. */
+function followBoardNetwork(): void {
+  if (boardNetwork !== null && zcashView?.followBoard(boardNetwork)) {
+    log(`the board is set to ${networkLabel(boardNetwork)}: the app switched to it`);
+  }
+}
+
 async function readStatus(): Promise<DeviceStatus> {
   const s = await (client as Client).call("getStatus");
+  boardNetwork = networkFromStatus(s["network"]);
   return {
     unlocked: s["unlocked"] === 1,
     walletCount: Number(s["walletCount"] ?? 0),
@@ -596,6 +612,8 @@ async function poll(): Promise<void> {
       invalidateDerived(reason);
       if (now.unlocked) setShellVisible(true);
     }
+    /* Switched on the board while connected: the app follows. */
+    if (now.unlocked) followBoardNetwork();
   } catch {
     /* A poll failing is not itself news; the connection state covers it. */
   } finally {
@@ -1090,6 +1108,9 @@ async function unlock(): Promise<void> {
     }
     log("device unlocked");
     lastStatus = await readStatus();
+    /* Before the home screen reads the account: on the board's network,
+     * when it says which, so nothing is refused for the other one. */
+    if (lastStatus.unlocked) followBoardNetwork();
     setShellVisible(lastStatus.unlocked);
     $("passpanel").hidden = !lastStatus.unlocked;
     if (!lastStatus.unlocked) {
@@ -1277,7 +1298,8 @@ async function disconnect(): Promise<void> {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   lastStatus = UNKNOWN_STATUS;
   deviceFeatures = null;
-  await transport?.close();
+  boardNetwork = null;
+  await transport?.close().catch((e: unknown) => log(`closing the link: ${String((e as Error).message ?? e)}`));
   transport = null;
   client = null;
   setConnection("disconnected", "Disconnected");
@@ -1390,7 +1412,26 @@ async function initEnvironment(): Promise<void> {
  * selector would read as "mock" and quietly connect to a simulation on a
  * machine that has a device attached. */
 ($("connect") as HTMLButtonElement).disabled = true;
-void initEnvironment();
+/* A link the backend still holds from before this webview started has no
+ * session behind it and keeps the board from advertising: closed first
+ * (src/link-events.ts, src-tauri/src/link.rs). */
+void closeLeftoverLink(invoker()).then((line) => { if (line) log(line); }).finally(() => void initEnvironment());
+
+/* The backend closed the link while the app was in the background (or is
+ * closing): the session on screen is over, said in words. */
+{
+  type Listen = <T>(event: string, cb: (e: { payload: T }) => void) => Promise<unknown>;
+  const listen = (window as unknown as { __TAURI__?: { event?: { listen?: Listen } } }).__TAURI__?.event?.listen;
+  void listen?.<{ reason: string }>(RELEASED_EVENT, (e) => {
+    const line = releasedMessage(e.payload?.reason ?? "");
+    if (!client) { log(line); return; }
+    void disconnect().finally(() => {
+      setConnection("disconnected", "Link closed — reconnect");
+      log(line);
+      announce(line);
+    });
+  });
+}
 initPassphrase();
 initFlasher(tauriFlashBridge(log));
 applyPreConnectVisibility();
@@ -1549,8 +1590,10 @@ async function diagnosticsReport(): Promise<string> {
     L.push("Zcash features: not read (no paired session).");
   }
   /* The board answers for one network only (its own setting) and refuses a
-   * request for the other; it does not report the setting itself. */
-  L.push("Network setting: not reported by the firmware; it refuses requests for the other network.");
+   * request for the other (0x0528); newer firmware reports it in getStatus. */
+  L.push(boardNetwork === null
+    ? "Network setting: not reported by this firmware; it refuses requests for the other network (0x0528)."
+    : `Network setting: ${networkLabel(boardNetwork)} (getStatus)`);
   const acct = zcashView?.boardAccount ?? null;
   L.push(
     acct === null
