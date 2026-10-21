@@ -221,58 +221,16 @@ WalletError wallet_get_mnemonic(char *mnemonic_out, size_t max_length);
  */
 bool wallet_validate_mnemonic(const char *mnemonic);
 
-// ========== HD Path Parsing ========== //
-
-/**
- * Parse HD path string into HDPath struct
- * @param path_str Path string like "m/44'/133'/0'/0/0"
- * @param path_out Parsed path structure
- * @return true on success, false on invalid path
- *
- * Supported formats:
- * - Standard BIP44: "m/44'/133'/0'/0/0"
- * - With or without 'm/' prefix
- * - Hardened notation: ' or h suffix
- * - Max 5 levels (purpose/coin/account/change/index)
- */
-bool wallet_parse_path(const char *path_str, HDPath *path_out);
-
-/**
- * Format HDPath struct as path string
- * @param path Path structure
- * @param out Buffer to receive string (min 32 bytes)
- * @param out_size Size of output buffer
- * @return true on success
- */
-bool wallet_format_path(const HDPath *path, char *out, size_t out_size);
 
 // ========== Key Derivation ========== //
 
 /**
- * Select active wallet by HD path
- * @param path HD derivation path
- */
-WalletError wallet_select_path(const HDPath *path);
-
-/**
- * Get the current HD path
- * @param path_out Path structure to fill
- * @return true if path is set, false if no wallet selected
- */
-bool wallet_get_current_path(HDPath *path_out);
-
-/**
- * Get public key for the current path
- * @param pubkey_out Public key structure to fill
- */
-WalletError wallet_get_public_key(PublicKey *pubkey_out);
-
-/**
  * Select a path and read its public key under one lock.
  *
- * Prefer this over select-then-read. Those are two calls sharing mutable
- * derivation state, and the UI task preempts the protocol task, so anything
- * between them can change which key is read.
+ * The selection and the read share mutable derivation state, and the UI task
+ * preempts the protocol task, so they are one call: nothing can change which
+ * key is read in between. (The separate select and read calls, and the path
+ * parser, served the Ethereum address screens and are gone.)
  */
 WalletError wallet_get_public_key_at_path(const HDPath *path, PublicKey *pubkey_out);
 

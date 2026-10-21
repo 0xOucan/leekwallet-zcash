@@ -35,7 +35,6 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
 
-#include "blind-signing.h"
 #include "cbor.h"
 #include "memzero.h"
 #include "leek-wallet.h"
@@ -871,14 +870,7 @@ static void dispatch(const uint8_t *payload, size_t len)
     } else if (strcmp(method, "getFeatures") == 0) {
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 4);
-        /* The real state, never a constant. A host that cannot tell whether
-         * the device is in the weaker mode cannot warn anyone about it, and
-         * this field is the only place it is visible from off-device. It is
-         * readable pre-session on purpose: it describes the device, not the
-         * wallet, and it is the answer to "will you refuse my dapp?". */
-        cbor_write_text(&w, "blindSigning");
-        cbor_write_uint(&w, blind_signing_enabled() ? 1 : 0);
+        cbor_write_map(&w, 3);
         /* Which chain this firmware speaks. Was implied - LeekWallet only
            ever spoke Ethereum and answered with no chain at all - and a host
            built for that firmware must be able to tell it is not talking to

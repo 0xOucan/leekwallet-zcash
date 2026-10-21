@@ -21,7 +21,6 @@
 #include "entropy.h"
 #include "session.h"
 #include "text-entry.h"
-#include "blind-signing.h"
 #include "device-wipe.h"
 #include "transport.h"
 #include "protocol.h"
@@ -142,9 +141,6 @@ static void screen_lock_hold_on_button(button_id_t btn);
 static void screen_lock_confirm_render(void);
 static void screen_lock_confirm_on_button(button_id_t btn);
 
-static void screen_blind_warn_enter(void);
-static void screen_blind_warn_render(void);
-static void screen_blind_warn_on_button(button_id_t btn);
 
 static void screen_mnemonic_verify_enter(void);
 static void screen_mnemonic_verify_render(void);
@@ -301,13 +297,6 @@ static const screen_t screen_lock_confirm = {
     .enter = NULL,
     .render = screen_lock_confirm_render,
     .on_button = screen_lock_confirm_on_button,
-    .exit = NULL
-};
-
-static const screen_t screen_blind_warn = {
-    .enter = screen_blind_warn_enter,
-    .render = screen_blind_warn_render,
-    .on_button = screen_blind_warn_on_button,
     .exit = NULL
 };
 
@@ -492,11 +481,9 @@ typedef enum {
      * the only way out there is, because ending temporary mode means destroying
      * the seed, and destroying the seed is what locking does. */
     MENU_END_TEMP,
-    /* The air gap (RESEARCH-AIRGAP-VAULT.md sections 35-37). Show address is
-     * on every board: it needs nothing but the panel. Scan needs a camera and
-     * is simply absent without one, rather than present and apologising.
-     * Both are placeholders until Zcash lands: Show Address says so, and Scan
-     * assembles a UR and then refuses it (airgap.h). */
+    /* The air gap. Show address is on every board: it needs nothing but the
+     * panel. Scan needs a camera and is simply absent without one, rather
+     * than present and apologising; it takes ur:leek-pczt (airgap.h). */
     MENU_SHOW_ADDRESS,
     MENU_SCAN,
     /* SD storage mode (roadmap 1.4): load a .zkv seed for the session, or
@@ -3009,9 +2996,9 @@ static void screen_settings_render(void)
                      item_idx == settings_selection ? ">" : " ",
                      transport_label(transport_get()));
         } else if (item_idx == SET_BLE_NAME) {
-            /* The name is on the menu line for the same reason the blind
-             * signing state is: it is broadcast to everyone in range, so it
-             * should be visible without going looking for it. Truncated for
+            /* The name is on the menu line because it is broadcast to
+             * everyone in range, so it should be visible without going
+             * looking for it. Truncated for
              * the 21-column display only - what goes on air is whatever
              * ble_name_get() returns. */
             snprintf(line, sizeof(line), "%s %.14s",
@@ -3193,7 +3180,7 @@ static void screen_settings_on_button(button_id_t btn)
 /* ============================================================================
  * QR Out Screen
  *
- * The return path (RESEARCH-AIRGAP-VAULT.md section 32). qr-out.c owns which
+ * The return path (qr-out.h). qr-out.c owns which
  * part is up and guarantees it fits; this only draws it, steps it on a timer
  * from service_qr_out(), and lets the user try the three module sizes, since
  * which one a camera reads off this panel is a bench question.
@@ -4486,10 +4473,6 @@ static void screen_wipe_confirm_on_button(button_id_t btn)
             ESP_LOGW(TAG, "Wipe confirmed by user");
             device_wipe();
             wallet_init();
-            /* The wipe erased the stored flag; drop the cached copy too, or
-             * this boot would keep answering "on" for a device that no longer
-             * has it stored and the next boot would disagree. */
-            blind_signing_forget();
             /* Same reasoning one level down (T45): the account selection lives
              * in the settings namespace, which a wipe does not erase, so a
              * wiped device would come up deriving the next seed at whatever
@@ -4509,75 +4492,6 @@ static void screen_wipe_confirm_on_button(button_id_t btn)
         }
     } else {
         /* Anything else aborts. */
-        ui_set_screen(SCREEN_SETTINGS);
-        return;
-    }
-
-    ui_invalidate();
-}
-
-/* ============================================================================
- * Blind Signing Warning (T16, PROTOCOL.md 6bis)
- *
- * The device refuses calldata it cannot describe. This screen is the only way
- * past that refusal, and it deliberately costs something: the same repeated
- * deliberate act as a wipe, because both are decisions whose consequence
- * arrives later and cannot be taken back at the moment it matters.
- *
- * There is no command that reaches here. A host able to switch the protection
- * off would be a host the protection never protected you from, so enabling is
- * on-device only, by construction rather than by policy.
- * ============================================================================ */
-
-/* One more than a wipe's three. A wipe destroys a device you can restore from
- * a backup; this one changes what every future signature means, silently, from
- * now on. */
-#define BLIND_CONFIRM_PRESSES 5
-
-static int blind_confirm_count = 0;
-
-static void screen_blind_warn_enter(void)
-{
-    ESP_LOGI(TAG, "Blind signing warning screen");
-    blind_confirm_count = 0;
-}
-
-static void screen_blind_warn_render(void)
-{
-    oled_clear();
-    oled_draw_string_centered(0, "!! BLIND SIGN !!");
-
-    /* What it costs, in words, and no reassurance. The user is about to give
-     * up the thing that makes this a hardware wallet rather than a keyring. */
-    oled_draw_string(1, 0, "Allows signing");
-    oled_draw_string(2, 0, "calls this device");
-    oled_draw_string(3, 0, "cannot read.");
-    oled_draw_string(4, 0, "A bad app can");
-    oled_draw_string(5, 0, "drain you.");
-
-    int left = BLIND_CONFIRM_PRESSES - blind_confirm_count;
-    char msg[32];
-    snprintf(msg, sizeof(msg), "Press OK %u more", (unsigned)(left < 0 ? 0 : left));
-    oled_draw_string_centered(6, msg);
-
-    oled_draw_string(7, 0, "BACK      ENABLE");
-}
-
-static void screen_blind_warn_on_button(button_id_t btn)
-{
-    if (btn != BUTTON_ACCEPT) {
-        /* Anything else abandons it, and the count goes with the screen. */
-        ui_set_screen(SCREEN_SETTINGS);
-        return;
-    }
-
-    if (++blind_confirm_count >= BLIND_CONFIRM_PRESSES) {
-        if (!blind_signing_set(true)) {
-            /* Failing to persist means the next boot would disagree with this
-             * one about whether the device is protected. Say so and stay off
-             * rather than run in a state that will not survive a reset. */
-            ESP_LOGE(TAG, "Blind signing could not be stored; left off");
-        }
         ui_set_screen(SCREEN_SETTINGS);
         return;
     }
@@ -5658,7 +5572,6 @@ void ui_init(void)
     screens[SCREEN_SETTINGS] = &screen_settings;
     screens[SCREEN_ENTROPY] = &screen_entropy;
     screens[SCREEN_WIPE_CONFIRM] = &screen_wipe_confirm;
-    screens[SCREEN_BLIND_WARN] = &screen_blind_warn;
     screens[SCREEN_MNEMONIC_VERIFY] = &screen_mnemonic_verify;
     screens[SCREEN_SESSION_CONFIRM] = &screen_session_confirm;
     screens[SCREEN_LOCK_HOLD] = &screen_lock_hold;
@@ -6075,8 +5988,6 @@ void ui__reset_static_state_for_test(void)
     host_lock_pending = false;
     sign_outcome = SIGN_PENDING;
     sign_expired_pending = false;
-    blind_confirm_count = 0;
-    blind_signing_forget();
     host_passphrase_pending = false;
     memzero(host_passphrase_xfp, sizeof(host_passphrase_xfp));
 #if LEEK_HAS_ZCASH

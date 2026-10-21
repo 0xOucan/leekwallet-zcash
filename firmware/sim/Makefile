@@ -400,7 +400,6 @@ $(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
                   $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/aescrypt.c $(CRYPTO)/aes/aeskey.c \
                   $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/gf128mul.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
-                  ../src/blind-signing.c \
                   ../src/cbor.c ../src/device-wipe.c \
                   ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
                   ../src/airgap.c ../src/camera.c ../src/ur-decoder.c \
@@ -437,7 +436,6 @@ PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.
                 ../src/sd-sign.c ../src/sdcard.c \
                 ../src/protocol.c ../src/cbor.c ../src/session.c ../src/pin.c \
                 ../src/ble-chunk.c ../src/ble.c ../src/ble-name.c ../src/transport.c ../src/entropy.c \
-                ../src/blind-signing.c \
                 ../src/airgap.c ../src/ur-decoder.c ../src/ur-encoder.c ../src/ur.c \
                 ../src/ur-fountain.c ../src/qr-out.c \
                 $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \

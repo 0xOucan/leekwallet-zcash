@@ -227,7 +227,7 @@ int main(void)
      * The host model has no pages, so what it can check is that settings no
      * part of the wipe path touches are gone afterwards -- `leek_ui` is erased
      * by nothing else, and a wiped device used to be handed on with the
-     * previous owner's blind-signing preference still enabled. Proving the
+     * previous owner's settings still in place. Proving the
      * *bytes* are gone needs `esptool read_flash` on a board, before and
      * after; this test cannot and does not claim it.
      */
@@ -237,15 +237,15 @@ int main(void)
 
         nvs_handle_t nvs;
         CHECK(nvs_open("leek_ui", NVS_READWRITE, &nvs) == ESP_OK, "could not open settings");
-        CHECK(nvs_set_u8(nvs, "blind", 1) == ESP_OK, "could not set blind signing");
+        CHECK(nvs_set_u8(nvs, "bright", 2) == ESP_OK, "could not set the brightness");
         CHECK(nvs_commit(nvs) == ESP_OK, "could not commit the setting");
         nvs_close(nvs);
-        CHECK(fake_nvs_has("leek_ui", "blind"), "setup: the setting was not stored");
+        CHECK(fake_nvs_has("leek_ui", "bright"), "setup: the setting was not stored");
 
         device_wipe();
         reboot();
 
-        CHECK(!fake_nvs_has("leek_ui", "blind"),
+        CHECK(!fake_nvs_has("leek_ui", "bright"),
               "a setting outside the wipe path survived the wipe");
     }
 

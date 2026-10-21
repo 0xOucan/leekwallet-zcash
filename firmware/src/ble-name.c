@@ -19,7 +19,7 @@ static const char *TAG = "ble-name";
 #define BLE_NAME_NAMESPACE "leek_ui"
 #define BLE_NAME_KEY       "ble_name"
 
-/* Cached, like the blind-signing flag: this is read when advertising starts
+/* Cached: this is read when advertising starts
  * and a flash error at that moment must not be able to change the name that
  * goes on air. `loaded` is what lets the default survive a device that has
  * never been renamed. */

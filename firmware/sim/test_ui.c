@@ -30,7 +30,6 @@
 bool fake_protocol_rx_enabled(void);
 #include "mnemonic-entry.h"
 #include "text-entry.h"
-#include "blind-signing.h"
 #include "memzero.h"
 #include "leek-wallet.h"
 #include "session.h"
@@ -1649,18 +1648,6 @@ static bool settings_select(const char *label)
     return false;
 }
 
-/* The Zcash firmware signs no Ethereum, so the setting that governed
- * undecodable Ethereum calls is not offered: no "Blind" row in Settings. */
-static void test_no_blind_signing_entry(void)
-{
-    printf("== settings offer no blind-signing entry\n");
-    boot_unlocked_with_seed();
-
-    CHECK(!blind_signing_enabled(), "blind signing is not off on a fresh device");
-    CHECK(!settings_select("Blind"), "settings still offer a blind-signing entry");
-    CHECK(settings_select("Wipe"), "settings lost the Wipe entry");
-}
-
 /* Locking takes the channel with it.
  *
  * The encrypted session used to survive a lock: the wallet closed, the host
@@ -2804,7 +2791,6 @@ int main(void)
     test_qr_airgap_signing();
     test_scan_assembles_then_refuses_every_type();
     test_qr_out_animates_and_leaves_cleanly();
-    test_no_blind_signing_entry();
     test_locking_closes_the_channel();
     test_an_expired_approval_leaves_the_screen();
     test_host_passphrase_confirmation();

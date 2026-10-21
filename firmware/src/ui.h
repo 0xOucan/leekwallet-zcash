@@ -48,14 +48,10 @@ typedef enum {
     SCREEN_PASSPHRASE,
     SCREEN_PASSPHRASE_CONFIRM,
     SCREEN_HOST_PASSPHRASE_CONFIRM,
-    /* Turning blind signing on (T16). Its own screen rather than a toggle in
-     * the settings list, because switching off a protection should cost more
-     * than one press and should not be possible without reading why. */
-    SCREEN_BLIND_WARN,
     /* Renaming the device for BLE advertising (T56). */
     SCREEN_BLE_NAME,
     /* What a temporary seed costs, before one is typed (T69). Its own screen
-     * for the same reason SCREEN_BLIND_WARN is: the user is about to enter a
+     * rather than a line in a list: the user is about to enter a
      * mode where locking, rebooting or a flat battery destroys their seed, and
      * that has to be read rather than discovered. */
     SCREEN_TEMP_SEED,
