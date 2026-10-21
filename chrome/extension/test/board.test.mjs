@@ -19,11 +19,11 @@ await vendor();
 const { decodeCbor, encodeCbor } = await import('../src/board/cbor.js');
 const { BleReassembler, FRAME, UsbFrameDecoder, chunkForBle, encodeFrame, encodeUsbFrame } = await import('../src/board/framing.js');
 const { Device, DeviceError, ERR, toHex, fromHex: fromHexT, wrongNetworkMessage } = await import('../src/board/device.js');
-const { BoardHost, BoardNeeds } = await import('../src/board/host.js');
+const { BoardHost, BoardNeeds, passphraseComplaint } = await import('../src/board/host.js');
 const { BleLink } = await import('../src/board/ble-link.js');
 const { SerialLink } = await import('../src/board/serial-link.js');
 const { LinkTimeout, linkTimeoutHint } = await import('../src/board/link.js');
-const { bluetoothHelp } = await import('../src/board-client.js');
+const { bluetoothHelp, usbPlan } = await import('../src/board-client.js');
 const { encodeZsig, parseZsig, POOL } = await import('../src/board/zsig.js');
 const { Session, deriveKeys, generateKeyPair, sharedSecret } = await import('../src/board/session.js');
 const { repo, startZdev, PtyLink, fakeBluetoothDevice, fakeSerialPort, zdevBinary } = await import('./zdev.mjs');
@@ -359,6 +359,117 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
     }
   });
 
+  test('a passphrase typed here: the board confirms its XFP, the hidden wallet is another fingerprint, and disconnect drops it', async () => {
+    const z = await startZdev({ yes: true });
+    const { engine, calls } = fakeEngine('test');
+    const states = [];
+    const host = new BoardHost({ engine, openLink: async () => new PtyLink(z.link), onState: (s) => states.push(s), watchMs: 0 });
+    const plain = key('test/abandon-art/pp0/acct0');
+    const hidden = key('test/abandon-art/pp1/acct0'); // passphrase "TREZOR"
+    try {
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      assert.equal(host.state.seedFingerprint, plain.seed_fingerprint);
+      assert.equal(host.state.passphrase, false);
+      const r = await host.run('setPassphrase', { passphrase: hidden.passphrase, network: 'test' });
+      assert.match(r.xfp, /^[0-9A-F]{8}$/);
+      assert.ok(z.out.includes(`XFP ${r.xfp}`), 'the XFP returned is the one the board showed');
+      assert.equal(host.state.seedFingerprint, hidden.seed_fingerprint);
+      assert.equal(host.state.passphrase, true);
+      assert.equal(host.state.xfp, r.xfp);
+      // The wallet shown before is hidden while the new one is read.
+      const i = states.findIndex((s) => s.task?.op === 'passphrase' && s.task.phase === 'wallet');
+      assert.ok(i >= 0 && states[i].seedFingerprint === null);
+      // Nothing of the passphrase in the state.
+      assert.ok(!JSON.stringify(states).includes(hidden.passphrase));
+      // Its account is another device account, keyed by its fingerprint.
+      await host.run('importAccount', { network: 'test', birthday: 4_501_000, name: 'LeekWallet #0 (passphrase)' });
+      const ic = calls.find((c) => c.method === 'importAccount').params;
+      assert.equal(ic.ufvk, hidden.ufvk);
+      assert.deepEqual(ic.origin, { seedFingerprint: hidden.seed_fingerprint, accountIndex: 0 });
+      assert.equal(ic.name, 'LeekWallet #0 (passphrase)');
+      // Disconnect forgets it here, and the board drops it with the session.
+      await host.run('disconnect');
+      assert.equal(host.state.passphrase, false);
+      assert.equal(host.state.xfp, null);
+      assert.equal(host.state.seedFingerprint, null);
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      assert.equal(host.state.seedFingerprint, plain.seed_fingerprint);
+      assert.equal(host.state.passphrase, false);
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('a passphrase refused on the board: the board keeps its wallet, and so does the host', async () => {
+    const z = await startZdev({ yes: false });
+    const host = new BoardHost({ engine: fakeEngine('test').engine, openLink: async () => new PtyLink(z.link), watchMs: 0 });
+    try {
+      z.answer('y'); // pairing
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      const fp = host.state.seedFingerprint;
+      z.answer('n'); // the XFP screen
+      await assert.rejects(host.run('setPassphrase', { passphrase: 'TREZOR', network: 'test' }), (e) => /^Passphrase not applied: rejected on the board\. The board kept the wallet it was in\.$/.test(e.message));
+      assert.equal(host.state.phase, 'ready');
+      assert.equal(host.state.seedFingerprint, fp);
+      assert.equal(host.state.passphrase, false);
+      assert.ok(!host.state.error.includes('TREZOR'));
+      // Refused here, before the board: nothing to send, or what the board cannot type.
+      await assert.rejects(host.run('setPassphrase', { passphrase: '' }), /empty passphrase/);
+      await assert.rejects(host.run('setPassphrase', { passphrase: 'café' }), /printable ASCII/);
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('a passphrase entered on the board before connecting: the hidden wallet, flagged from getStatus', async () => {
+    const z = await startZdev({ yes: true, passphrase: 'TREZOR' });
+    const states = [];
+    const host = new BoardHost({ engine: fakeEngine('test').engine, openLink: async () => new PtyLink(z.link), onState: (s) => states.push(s), watchMs: 0 });
+    try {
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      assert.equal(host.state.seedFingerprint, key('test/abandon-art/pp1/acct0').seed_fingerprint);
+      assert.equal(host.state.passphrase, true);
+      assert.equal(host.state.xfp, null); // the board showed it, not to this host
+      // Nothing changed: a check keeps the wallet shown (no re-read).
+      const n = states.length;
+      await host.run('checkWallet', { network: 'test' });
+      assert.equal(host.state.seedFingerprint, key('test/abandon-art/pp1/acct0').seed_fingerprint);
+      assert.ok(states.slice(n).every((s) => s.seedFingerprint));
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
+  test('a board that stops answering while idle (it locked and dropped the session): the watch hides its wallet', async () => {
+    const z = await startZdev({ yes: true });
+    let dead = false;
+    const host = new BoardHost({
+      engine: fakeEngine('test').engine,
+      watchMs: 100,
+      openLink: async () => {
+        const pty = new PtyLink(z.link);
+        // A link whose board is gone the moment `dead` is set.
+        return { kind: 'usb', label: 'zdev', send: (t, p) => pty.send(t, p), recv: (ms) => (dead ? Promise.reject(new Error('the board dropped the session')) : pty.recv(ms)), drain: () => pty.drain(), close: () => pty.close() };
+      },
+    });
+    try {
+      await host.run('connect', { kind: 'usb', network: 'test' });
+      assert.ok(host.state.seedFingerprint);
+      dead = true;
+      const t0 = Date.now();
+      while (host.state.phase !== 'disconnected' && Date.now() - t0 < 5e3) await new Promise((r) => setTimeout(r, 20));
+      assert.equal(host.state.phase, 'disconnected');
+      assert.equal(host.state.seedFingerprint, null);
+      assert.match(host.state.error ?? '', /dropped the session/);
+    } finally {
+      await host.run('disconnect');
+      z.stop();
+    }
+  });
+
   test('a USB timeout says what to check, closes the port, and Bluetooth connects next', async () => {
     const z = await startZdev({ yes: true });
     const port = silentSerialPort();
@@ -574,6 +685,27 @@ function silentSerialPort() {
     },
   };
 }
+
+describe('USB without a tab, and the passphrase rules', () => {
+  test('Connect over USB: connect where a board port is granted; the chooser (a tab) only without one', () => {
+    assert.equal(usbPlan({ serial: true, granted: 1 }, false), 'connect');
+    assert.equal(usbPlan({ serial: true, granted: 2 }, true), 'connect');
+    assert.equal(usbPlan({ serial: true, granted: 0 }, false), 'openTab');
+    assert.equal(usbPlan({ serial: true, granted: 0 }, true), 'choose');
+    assert.equal(usbPlan({ serial: false, granted: 0 }, false), 'noSerial');
+  });
+
+  test("the passphrase rules are the firmware's: 1 to 63 bytes of printable ASCII", () => {
+    assert.equal(passphraseComplaint('TREZOR'), null);
+    assert.equal(passphraseComplaint(' ~'.repeat(31) + 'x'), null);
+    assert.match(passphraseComplaint(''), /empty passphrase/);
+    assert.match(passphraseComplaint('x'.repeat(64)), /up to 63/);
+    assert.match(passphraseComplaint('tab\there'), /printable ASCII/);
+    assert.match(passphraseComplaint('ñ'), /printable ASCII/);
+    // The complaint never repeats the passphrase.
+    assert.ok(!passphraseComplaint('secretñ').includes('secret'));
+  });
+});
 
 describe('link timeouts and Web Bluetooth help', () => {
   test('a timeout names the link and its setting on the board', () => {

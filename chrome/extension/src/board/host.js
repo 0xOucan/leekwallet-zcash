@@ -12,8 +12,15 @@
 //   await host.run('connect', { kind: 'usb', network: 'test' });
 //   await host.run('importAccount', { network: 'test' });
 //   await host.run('signAndFinish', { network, accountIndex, signerView, broadcast: true });
+//   await host.run('setPassphrase', { passphrase, network });   // typed here: the weaker path
+//
+// Which wallet the board holds can change under the host: the user enters
+// a passphrase on the board (the safer path), the board locks, or another
+// wallet is selected there. So while connected and idle the host asks
+// `getStatus` every `watchMs`, and when what it says changes (unlocked,
+// passphrase, active wallet) it reads the account's seed fingerprint again.
 
-import { Device, fromHex, toHex } from './device.js';
+import { Device, DeviceError, ERR, USER_TIMEOUT, fromHex, toHex } from './device.js';
 import { encodeZsig } from './zsig.js';
 
 /** An error the popup acts on (it carries what to ask the user next). */
@@ -39,7 +46,25 @@ function closeLink(link) {
   ]).finally(() => clearTimeout(timer));
 }
 
-const OPS = new Set(['connect', 'disconnect', 'cancel', 'state', 'account', 'importAccount', 'showAddress', 'signAndFinish']);
+const OPS = new Set(['connect', 'disconnect', 'cancel', 'state', 'account', 'importAccount', 'showAddress', 'signAndFinish', 'setPassphrase', 'checkWallet']);
+
+/** How often a connected, idle board is asked whether its wallet changed. */
+export const WATCH_MS = 4000;
+
+/**
+ * The firmware's rule for a passphrase (protocol.c, setPassphrase): 1 to 63
+ * bytes of printable ASCII, the set the board's own keyboard can type. An
+ * error message, or null when it may be sent. Never echoes the passphrase.
+ */
+export function passphraseComplaint(value) {
+  if (typeof value !== 'string' || value.length === 0) return 'Nothing to send. An empty passphrase is the wallet without one, not a passphrase.';
+  if (new TextEncoder().encode(value).length > 63) return 'Too long: the board accepts up to 63 characters.';
+  for (const ch of value) {
+    const c = ch.codePointAt(0);
+    if (c < 0x20 || c > 0x7e) return "Only printable ASCII, the characters the board's own keyboard can type.";
+  }
+  return null;
+}
 
 export class BoardHost {
   #openLink;
@@ -49,18 +74,29 @@ export class BoardHost {
   #busy = null;
   #abort = null;
   #linkClosing = null;
+  #network = 'test';
+  #watchMs;
+  #watchTimer = null;
+  #watching = null;
+  /** The board's last `getStatus`: { unlocked, passphrase, activeWallet }. */
+  #status = null;
   /**
    * What the popup draws. Plain JSON: it crosses runtime ports.
    * `seedFingerprint` is the ZIP 32 fingerprint of the seed the board has
    * unlocked, read once connected: the popup shows a device account only
    * while the board that holds its seed is connected.
+   * `passphrase`: the board says a passphrase is applied (a hidden wallet,
+   * entered on the board or from here); `xfp`: the fingerprint the board
+   * showed for a passphrase sent from here. `locked`: the board locked
+   * while connected (no wallet is shown until it is unlocked again).
    */
-  state = { phase: 'disconnected', kind: null, label: null, passkey: null, waiting: null, task: null, error: null, seedFingerprint: null, lastResult: null };
+  state = { phase: 'disconnected', kind: null, label: null, passkey: null, waiting: null, task: null, error: null, seedFingerprint: null, passphrase: false, xfp: null, locked: false, lastResult: null };
 
-  constructor({ openLink, engine, onState }) {
+  constructor({ openLink, engine, onState, watchMs = WATCH_MS }) {
     this.#openLink = openLink;
     this.#engine = engine;
     this.#onState = onState ?? (() => {});
+    this.#watchMs = watchMs;
   }
 
   /** The operation running now, or null. */
@@ -86,6 +122,8 @@ export class BoardHost {
       await this.#close('disconnected');
       return { ...this.state };
     }
+    // A status check in flight is short: wait for it rather than refuse.
+    if (this.#watching) await this.#watching.catch(() => {});
     if (this.#busy) throw new Error(`the board is busy (${this.#busy})`);
     this.#busy = op;
     if (this.state.error) this.#set({ error: null });
@@ -115,7 +153,11 @@ export class BoardHost {
   async #close(why) {
     const d = this.#device;
     this.#device = null;
-    this.#set({ phase: 'disconnected', passkey: null, waiting: null, task: null, seedFingerprint: null, accountError: null, error: why === 'disconnected' ? null : why });
+    this.#stopWatch();
+    this.#status = null;
+    // The board drops a passphrase sent from here when the session ends;
+    // this side forgets everything about it too.
+    this.#set({ phase: 'disconnected', passkey: null, waiting: null, task: null, seedFingerprint: null, passphrase: false, xfp: null, locked: false, accountError: null, error: why === 'disconnected' ? null : why });
     // A close already under way (the link failed by itself) is waited for too.
     if (d) this.#linkClosing = closeLink(d.link);
     await this.#linkClosing;
@@ -134,7 +176,8 @@ export class BoardHost {
 
   async op_connect({ kind, network = 'test' }, signal) {
     if (this.#device) await this.#close('disconnected');
-    this.#set({ phase: 'connecting', kind, label: null, passkey: null, waiting: null, seedFingerprint: null, accountError: null, error: null });
+    this.#network = network;
+    this.#set({ phase: 'connecting', kind, label: null, passkey: null, waiting: null, seedFingerprint: null, passphrase: false, xfp: null, locked: false, accountError: null, error: null });
     let link;
     try {
       link = await this.#openLink(kind, (why) => {
@@ -162,19 +205,126 @@ export class BoardHost {
       this.#set({ phase: 'unlocking', waiting: null });
       await device.ensureUnlocked({ signal, onWaiting: () => this.#set({ waiting: 'pin' }) });
       const features = await device.zGetFeatures().catch(() => null);
+      this.#status = await this.#readStatus(device).catch(() => null);
       // Which wallet this is. The fingerprint is the seed's, the same on
       // both networks; deriving the account takes the board a few seconds.
       this.#set({ waiting: 'wallet' });
-      // Without it (an error on the board) no device account is shown,
-      // and the popup says why (a board set to the other network, say).
-      let accountError = null;
-      const acc = await device.zGetAccount(0, network).catch((e) => ((accountError = String(e?.message ?? e)), null));
-      this.#set({ phase: 'ready', passkey: null, waiting: null, features, seedFingerprint: acc?.seedFingerprint ?? null, accountError });
+      const wallet = await this.#readWallet(device, network);
+      this.#set({ phase: 'ready', passkey: null, waiting: null, features, passphrase: !!this.#status?.passphrase, locked: false, ...wallet });
+      this.#startWatch();
       return { ...this.state };
     } catch (e) {
       await this.#close(String(e?.message ?? e));
       throw e;
     }
+  }
+
+  /** getStatus, the fields that say which wallet is open. */
+  async #readStatus(device) {
+    const s = await device.call('getStatus');
+    return { unlocked: s?.unlocked === 1, passphrase: s?.passphrase === 1, activeWallet: Number(s?.activeWallet ?? 0) };
+  }
+
+  /**
+   * The seed fingerprint of the board's wallet now. Without it (an error
+   * on the board) no device account is shown, and the popup says why (a
+   * board set to the other network, say).
+   */
+  async #readWallet(device, network) {
+    let accountError = null;
+    const acc = await device.zGetAccount(0, network).catch((e) => ((accountError = String(e?.message ?? e)), null));
+    return { seedFingerprint: acc?.seedFingerprint ?? null, accountError };
+  }
+
+  #startWatch() {
+    this.#stopWatch();
+    if (!this.#watchMs) return;
+    this.#watchTimer = setInterval(() => {
+      if (this.#busy || this.#watching || !this.#device?.paired) return;
+      this.#watching = this.#check().finally(() => (this.#watching = null));
+      this.#watching.catch(() => {});
+    }, this.#watchMs);
+  }
+
+  #stopWatch() {
+    clearInterval(this.#watchTimer);
+    this.#watchTimer = null;
+  }
+
+  /**
+   * Did the board's wallet change (a passphrase entered or dropped on the
+   * board, a lock, another wallet selected)? If so, its fingerprint is read
+   * again: a hidden wallet is another account, and its accounts show only
+   * while the fingerprint matches. A session the board dropped (it locked,
+   * say) ends here, hiding the wallet.
+   */
+  async #check({ force = false } = {}) {
+    const device = this.#device;
+    if (!device?.paired) return { ...this.state };
+    let status;
+    try {
+      status = await this.#readStatus(device);
+    } catch (e) {
+      if (this.#device === device && !device.paired) await this.#close(String(e?.message ?? e));
+      throw e;
+    }
+    const before = this.#status;
+    this.#status = status;
+    if (!status.unlocked) {
+      // Locked on the board: it dropped any passphrase, and what it holds
+      // is unknown until it is unlocked again.
+      if (!this.state.locked || this.state.seedFingerprint) this.#set({ locked: true, seedFingerprint: null, passphrase: false, xfp: null });
+      return { ...this.state };
+    }
+    const changed = force || !before || this.state.locked || before.passphrase !== status.passphrase || before.activeWallet !== status.activeWallet || before.unlocked !== status.unlocked;
+    if (!changed) return { ...this.state };
+    // Hidden at once: the wallet shown belonged to the state before.
+    const xfp = status.passphrase && before?.passphrase && !force ? this.state.xfp : null;
+    this.#set({ locked: false, seedFingerprint: null, passphrase: status.passphrase, xfp, waiting: 'wallet' });
+    const wallet = await this.#readWallet(device, this.#network);
+    if (this.#device === device) this.#set({ ...wallet, waiting: null });
+    return { ...this.state };
+  }
+
+  /** Asks the board now whether its wallet changed (the popup's Check, and tests). */
+  async op_checkWallet({ network } = {}) {
+    this.#ready();
+    if (network) this.#network = network;
+    return this.#check();
+  }
+
+  /**
+   * The weaker path to a hidden wallet: the passphrase typed in this
+   * browser, sent over the encrypted session. The board derives the seed,
+   * shows its fingerprint (XFP) and applies it only if the user confirms
+   * there; a refusal or a timeout leaves the wallet it was in. Nothing here
+   * keeps the passphrase: it is not in the state, the error, or any log.
+   */
+  async op_setPassphrase({ passphrase, network }) {
+    const device = this.#ready();
+    if (network) this.#network = network;
+    const complaint = passphraseComplaint(passphrase);
+    if (complaint) throw new Error(complaint);
+    this.#set({ task: { op: 'passphrase', phase: 'confirm' } });
+    let r;
+    try {
+      r = await device.call('setPassphrase', { passphrase }, USER_TIMEOUT);
+    } catch (e) {
+      const why =
+        e instanceof DeviceError && e.code === ERR.USER_REJECTED
+          ? 'rejected on the board'
+          : e instanceof DeviceError && e.code === ERR.USER_TIMEOUT
+            ? 'no answer on the board in time'
+            : String(e?.message ?? e);
+      throw new Error(`Passphrase not applied: ${why}. The board kept the wallet it was in.`);
+    }
+    const xfp = Number.isInteger(r?.fingerprint) ? r.fingerprint.toString(16).toUpperCase().padStart(8, '0') : null;
+    // Another wallet now: hide the one shown, then read the new one.
+    this.#set({ seedFingerprint: null, passphrase: true, xfp, locked: false, task: { op: 'passphrase', phase: 'wallet' }, waiting: 'wallet' });
+    this.#status = await this.#readStatus(device).catch(() => null);
+    const wallet = await this.#readWallet(device, this.#network);
+    this.#set({ ...wallet, waiting: null });
+    return { xfp, seedFingerprint: this.state.seedFingerprint };
   }
 
   async op_account({ network, accountIndex = 0 }) {
