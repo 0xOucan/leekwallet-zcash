@@ -141,8 +141,12 @@ fi
 # file that flashes cleanly and then never boots.
 # ---------------------------------------------------------------------------
 case "${ENV_NAME}" in
-    pixie*)   CHIP="esp32c3"; BOARD="pixie" ;;
-    esp32s3*) CHIP="esp32s3"; BOARD="s3" ;;
+    pixie*)      CHIP="esp32c3"; BOARD="pixie" ;;
+    # The Zcash board. Its own name: the s3 image has other pins, flashes onto
+    # the same chip without complaint, and the Companion's flasher tells the
+    # two apart by this token (app/src/flasher.ts classifyAsset).
+    esp32s3cam*) CHIP="esp32s3"; BOARD="s3cam" ;;
+    esp32s3*)    CHIP="esp32s3"; BOARD="s3" ;;
     *)        CHIP=""; BOARD="" ;;
 esac
 

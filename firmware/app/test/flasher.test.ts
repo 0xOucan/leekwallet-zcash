@@ -16,6 +16,9 @@
 
 import {
   chipRefusal,
+  classifyAsset,
+  releasesSummary,
+  type Release,
   describeProgress,
   digestRefusal,
   flashBlockedReason,
@@ -144,6 +147,28 @@ group("progress says what is happening and what not to do");
   // A zero-length total must not produce NaN% on screen.
   check(describeProgress({ stage: "writing", current: 0, total: 0 }).includes("0%"),
     "an empty image produced a nonsense percentage");
+}
+
+group("releases: what release.sh names, and a release with nothing to flash");
+{
+  check(classifyAsset("leekwallet-s3cam-0.2.0-update.bin")?.board === "ESP32-S3 CAM", "the Zcash board's update image");
+  check(classifyAsset("leekwallet-s3cam-0.2.0-provision.bin")?.kind === "provision", "the provision image");
+  check(classifyAsset("leekwallet-s3-0.2.0-update.bin")?.board === "ESP32-S3",
+    "release.sh's s3 image was taken for another board");
+  check(classifyAsset("leekwallet-pixie-0.2.0-update.bin")?.board === "ESP32-C3 (Pixie)", "the Pixie image");
+  check(classifyAsset("leekwallet-0.2.0-update.bin") === null, "an image naming no board is offered");
+  check(classifyAsset("SHA256SUMS") === null && classifyAsset("firmware.bin") === null, "not a flasher image");
+
+  const rel = (assets: Release["assets"]): Release => ({ tag: "v0.1.0", publishedAt: "", htmlUrl: "", assets });
+  const none = releasesSummary([]);
+  check(/No firmware release/.test(none) && /-update\.bin/.test(none) && /SHA256SUMS/.test(none) && /pio run -e esp32s3cam/.test(none),
+    `no releases: the message does not say what is missing and what to do: ${none}`);
+  const empty = releasesSummary([rel([]), rel([])]);
+  check(/None of the 2 releases/.test(empty) && /choose its \.bin/.test(empty),
+    `releases without assets: ${empty}`);
+  const one = releasesSummary([rel([]), rel([{ name: "leekwallet-s3cam-0.1.0-update.bin", kind: "update",
+    board: "ESP32-S3 CAM", downloadUrl: "https://x", size: 1, sha256: null }])]);
+  check(one.startsWith("1 firmware release "), `only the flashable release counts: ${one}`);
 }
 
 if (failures) {
