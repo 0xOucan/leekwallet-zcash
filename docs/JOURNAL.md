@@ -1491,3 +1491,46 @@ in two tabs. Branch `companion-auto-ux`.
   WebAssembly, compressed).
 - Left, on the phone: the camera prompt and a real scan; Reconnect over
   Bluetooth by id; sync pausing in the background.
+
+### Firmware cleanup: the board's network in getStatus, EVM leftovers and docs removed, the flasher's empty releases (2026-10-20)
+
+- **The board's network, reported.** The board refuses z* requests for the
+  other network (0x0528), and a companion found out only by being
+  refused. `getStatus`, polled by every companion, now carries
+  `network: "main" | "test"` from Settings > Network, following a switch
+  at once (sim test both ways, a mutant, zdev with `--network` and
+  SIGUSR1/2). Clients: `parseStatus()` and `DeviceStatus.network` in
+  packages/core (null on older firmware; the mock takes a `network`
+  option), `board_network()` and `Device::network()` in leek-device,
+  `Device.getStatus()` and `statusNetwork()` in the Chrome extension. No
+  screen uses it yet. The 0x0528 message no longer says "use the Testnet
+  app": "the board is set to Testnet; switch it to Mainnet in Settings >
+  Network, or switch the app to Testnet" (101 characters; the error
+  buffer grew to fit).
+- **EVM leftovers out of the firmware.** The blind-signing setting
+  (src/blind-signing.c/.h, its warning screen, the NVS flag and
+  getFeatures' `blindSigning`) governed nothing since the Ethereum signer
+  went; deleted, with its conformance case and mutants. The vault's
+  Ethereum path API (`wallet_parse_path`, `wallet_format_path`,
+  `wallet_get_current_path`) had no caller; deleted, and the select and
+  read helpers became static. getFeatures is now chain, firmware, model.
+- **Docs.** firmware/README.md rewritten for the Zcash board (hardware,
+  storage modes, PlatformIO, protocol, simulator, credits). Eighteen
+  upstream EVM documents deleted from firmware/docs, the upstream
+  workflows in firmware/.github deleted, firmware/ROADMAP.md replaced by a
+  pointer. PROTOCOL.md lost its Ethereum signing, dapp, chain and
+  blind-signing sections and gained a getStatus section. Roadmap 6.14 now
+  names "Zcash LeekWallet" (`io.leekwallet.zcash.companion`, Zcash only);
+  9.3's QR through the webcam is dropped (USB and Bluetooth only).
+- **The flasher.** The repository's releases carry no firmware, and the
+  flasher drew each as a title with no button. Now releases without an
+  image are hidden and the panel says what a release needs and how to
+  build the image instead. It also took release.sh's own
+  `leekwallet-s3-…` names for Pixie images; it reads the board token now,
+  and release.sh names the esp32s3cam build `s3cam`. What a release must
+  carry: app/README.md "Firmware releases" and roadmap 6.12.
+- Tests: `make -C firmware/sim test` passes (40 suites); `pio run -e
+  esp32s3cam` builds (RAM 60.6%, flash 80.6%); `cargo test` in host 81
+  passed, 6 ignored; `pnpm typecheck` clean, `pnpm test` (10 suites, 25
+  conformance vectors) and `pnpm test:zdev` pass; the extension's
+  board.test.mjs 36 passed.
