@@ -7,7 +7,7 @@ lunch. It holds the seed, checks every transaction against its own keys, shows
 you what you are signing, and signs it. Your phone or computer builds and proves
 the transaction; the keys never leave the device.
 
-Built on [LeekWallet](firmware/README.md), an open-source ESP32 hardware wallet
+Built on [LeekWallet](https://github.com/0xoucan/leekwallet), an open-source ESP32 hardware wallet
 for Ethereum, turned into a Zcash-only one (firmware and every app here),
 for Zcash's shielded pools: **Ironwood** (NU6.3), **Orchard**, and transparent
 outputs.

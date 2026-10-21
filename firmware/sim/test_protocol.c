@@ -35,7 +35,6 @@
 #include "cbor.h"
 #include "esp_stubs.h"
 #include "fake_nvs.h"
-#include "blind-signing.h"
 #include "fake_usb.h"
 #include "fake_wallet.h"
 #include "leek-wallet.h"
@@ -433,11 +432,6 @@ static void fresh_device(void)
 {
     fake_usb_reset();
     fake_nvs_reset();
-    /* The wipe of simulated flash took the blind-signing flag with it; the
-     * cached copy has to go too, or a test that enabled it would leak the
-     * weaker mode into the next one. This is the same call the wipe screen
-     * makes on hardware. */
-    blind_signing_forget();
     pin__reset_static_state_for_test();
     pin_init();
     fake_wallet_reset();
@@ -648,9 +642,8 @@ static void test_plaintext_ping_and_features(void)
     size_t body_len;
     CborItem it;
     if (f.present && result_body(&f, &body, &body_len)) {
-        CHECK(cbor_map_find(body, body_len, "blindSigning", &it) &&
-              it.type == CBOR_UINT && it.value == 0,
-              "getFeatures does not report blind signing off by default");
+        CHECK(!cbor_map_find(body, body_len, "blindSigning", &it),
+              "getFeatures still reports the Ethereum blind-signing flag");
         CHECK(cbor_map_find(body, body_len, "model", &it) && it.type == CBOR_TEXT,
               "getFeatures names no model");
         CHECK(cbor_map_find(body, body_len, "chain", &it) && it.type == CBOR_TEXT &&
@@ -690,6 +683,22 @@ static void test_status_is_public_but_thin(void)
         CHECK(!cbor_map_find(body, body_len, "passphraseValue", &it),
               "getStatus reveals the passphrase itself");
     }
+
+    /* The board's network, so a companion knows before a z* request is
+     * refused with 0x0528. It follows Settings > Network at once. */
+    for (int net = 1; net >= 0; net--) {
+        stub_zcash_network = (uint8_t)net;
+        send_plain(payload, req(payload, sizeof(payload), "getStatus"));
+        f = next_frame();
+        char text[8] = "";
+        CHECK(f.present && result_body(&f, &body, &body_len) &&
+              cbor_map_find(body, body_len, "network", &it) &&
+              cbor_text_copy(&it, text, sizeof text) &&
+              strcmp(text, net ? "test" : "main") == 0,
+              "getStatus reported network \"%s\" for a board on %s", text,
+              net ? "Testnet" : "Mainnet");
+    }
+    stub_zcash_network = 1;
 }
 
 /* ---------------------------------------------------------- the handshake */
@@ -1917,7 +1926,7 @@ static void expect_wrong_network(const char *board, const char *asked, uint8_t a
     }
     char want[160];
     snprintf(want, sizeof want,
-             "the board is set to %s; switch it to %s in Settings > Network, or use the %s app",
+             "the board is set to %s; switch it to %s in Settings > Network, or switch the app to %s",
              board, asked, board);
     CHECK(strcmp(text, want) == 0, "%s: message \"%s\"", what, text);
     CHECK(wrong_network_notices == 1 && wrong_network_asked == asked_net,
@@ -3155,7 +3164,6 @@ static int run_all_tests(void);
 typedef enum {
     MC_PING,
     MC_GET_FEATURES,
-    MC_GET_FEATURES_BLIND_ON,
     MC_GET_STATUS_PLAIN,
     MC_GET_STATUS_IN_SESSION,
     MC_GET_STATUS_PLAIN_IN_SESSION,
@@ -3182,9 +3190,9 @@ typedef enum {
     MC_CASE_COUNT
 } MockCase;
 
-/* What the device has to be for the case to mean anything, in the four terms
- * the mock also has: does it hold a seed, is the PIN in, is a session up, is
- * blind signing on, and does the simulated user say yes. Written into the
+/* What the device has to be for the case to mean anything, in the terms
+ * the mock also has: does it hold a seed, is the PIN in, is a session up,
+ * and does the simulated user say yes. Written into the
  * vector file so the TypeScript side configures an equivalent device rather
  * than guessing from the case name. */
 typedef struct {
@@ -3192,7 +3200,6 @@ typedef struct {
     bool        wallet;
     bool        unlocked;
     bool        session;
-    bool        blind;
     bool        approve;
     bool        encrypted;      /* sent as 0x11 rather than 0x01 */
 } MockSetup;
@@ -3201,7 +3208,7 @@ static MockSetup mock_setup(MockCase c)
 {
     /* Defaults: a device with a seed, unlocked, session up, protections on,
      * user approves. Each case names only what it changes. */
-    MockSetup s = { case_name_mock((int)c), true, true, true, false, true, true };
+    MockSetup s = { case_name_mock((int)c), true, true, true, true, true };
 
     switch (c) {
         case MC_PING:
@@ -3215,10 +3222,6 @@ static MockSetup mock_setup(MockCase c)
             s.session = false;
             s.unlocked = false;
             s.encrypted = false;
-            break;
-        case MC_GET_FEATURES_BLIND_ON:
-            s.session = false; s.unlocked = false; s.encrypted = false;
-            s.blind = true;
             break;
         case MC_GET_STATUS_PLAIN_IN_SESSION:
             s.encrypted = false;    /* session up, request sent in the clear */
@@ -3247,7 +3250,6 @@ static size_t mock_request(MockCase c, uint8_t *buf, size_t cap)
         case MC_PING:
             return req(buf, cap, "ping");
         case MC_GET_FEATURES:
-        case MC_GET_FEATURES_BLIND_ON:
             return req(buf, cap, "getFeatures");
         case MC_GET_STATUS_PLAIN:
         case MC_GET_STATUS_IN_SESSION:
@@ -3313,7 +3315,6 @@ static const char *case_name_mock(int c)
     switch ((MockCase)c) {
         case MC_PING:                          return "ping";
         case MC_GET_FEATURES:                  return "getFeatures";
-        case MC_GET_FEATURES_BLIND_ON:         return "getFeatures, blind signing on";
         case MC_GET_STATUS_PLAIN:              return "getStatus, no session";
         case MC_GET_STATUS_IN_SESSION:         return "getStatus in a session";
         case MC_GET_STATUS_PLAIN_IN_SESSION:   return "plaintext getStatus in a session";
@@ -3359,9 +3360,6 @@ static void emit_case(FILE *out, MockCase c, bool first)
         pin_set("123456");
         pin_verify("123456");
     }
-    if (s.blind) {
-        CHECK(blind_signing_set(true), "%s: could not enable blind signing", s.name);
-    }
     if (s.session) {
         confirmed_session((uint8_t)(0x80 + c));
     }
@@ -3393,9 +3391,9 @@ static void emit_case(FILE *out, MockCase c, bool first)
     fprintf(out, "%s\n  {\n", first ? "" : ",");
     fprintf(out, "    \"name\": \"%s\",\n", s.name);
     fprintf(out, "    \"setup\": { \"wallet\": %s, \"unlocked\": %s, "
-                 "\"session\": %s, \"blindSigning\": %s, \"approve\": %s },\n",
+                 "\"session\": %s, \"approve\": %s },\n",
             s.wallet ? "true" : "false", s.unlocked ? "true" : "false",
-            s.session ? "true" : "false", s.blind ? "true" : "false",
+            s.session ? "true" : "false",
             s.approve ? "true" : "false");
     fprintf(out, "    \"frameType\": %u,\n", s.encrypted ? T_ENC_REQUEST : T_REQUEST);
     fprintf(out, "    \"request\": \"");
@@ -3405,10 +3403,6 @@ static void emit_case(FILE *out, MockCase c, bool first)
     fprintf(out, "    \"reply\": \"");
     write_hex(out, f.payload, f.len);
     fprintf(out, "\"\n  }");
-
-    /* Whatever the case left on, the next one starts from a fresh device -
-     * except this, which is cached outside the simulated flash. */
-    blind_signing_set(false);
 }
 
 static int emit_vectors(const char *path)

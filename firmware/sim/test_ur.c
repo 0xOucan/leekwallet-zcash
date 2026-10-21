@@ -209,7 +209,7 @@ static void test_multipart_is_detected(void)
  *
  * Regenerated rather than checked in and trusted. A corpus recorded from an
  * older ur.c would let the TS side agree with an encoder that no longer
- * exists, which is the failure docs/MIRROR-GAP.md describes.
+ * exists: a mirror kept by discipline rather than by a check.
  *
  * The payloads walk the shapes that broke things while this was written: empty,
  * one byte, the CBOR-ish sizes either side of a length prefix, and lengths that

@@ -16,12 +16,8 @@ govern those files. Nothing here is relicensed.
 | esp_jpeg (TJpgDec) | `components/esp_jpeg/` | Apache-2.0, wrapping TJpgDec's own | Yes |
 | ESP-IDF | build dependency, not vendored | Apache-2.0 | Yes |
 | zxing-wasm | `app/` npm dependency, WASM bundled into the app | MIT | Yes |
-| @1inch/aqua-sdk | no longer used — was a test-only devDependency of a deleted mini-app | LicenseRef-Degensoft-Aqua-Source-1.1 | **No — see below** |
 
-Every row above is bundled into a release except `@1inch/aqua-sdk`, which never
-was and now is not a dependency at all. The section on it below is kept as the
-record of why it could not be bundled, and of what contributors must not do
-with it if anyone reaches for it again.
+Every row above is bundled into a release.
 
 MIT is permissive and imposes only attribution, so MIT code may be distributed
 inside an Apache-2.0 project provided the copyright notices and license text
@@ -105,7 +101,7 @@ JPEG; nothing in the JPEG path is reached at runtime.
 ## zxing-wasm
 
 `zxing-wasm` — QR *decoding* from camera frames in the companion app
-(`app/src/wc/qr.ts`). Distinct from the `QRCode` entry above, which generates
+(`app/src/qr-scan.ts`). Distinct from the `QRCode` entry above, which generates
 codes on the device; this reads them on the host.
 
 License: MIT (the wrapper), wrapping zxing-cpp, Apache-2.0.
@@ -116,8 +112,8 @@ zxing-wasm fetches it from a CDN by default; that would be remote code arriving
 in the process that talks to a signing device, and is not done here.
 
 This replaced `jsqr`, which was 40 KB of readable JavaScript and preferable on
-every axis except the decisive one: it could not read a WalletConnect pairing
-code. The actual code, captured from the device camera at full resolution and
+every axis except the decisive one: it could not read a dense code off a
+camera. The actual code, captured from the device camera at full resolution and
 in focus, was handed to three decoders — jsQR found nothing, `@zxing/library`
 (the pure-JS ZXing port) found nothing, and zxing-cpp via WASM read it.
 Preprocessing the image three ways did not rescue either JS decoder.
@@ -174,7 +170,7 @@ this project under Apache-2.0.** No Colibri code is present here:
   file in this repository does.
 
 The component was renamed to `leek-wallet` to make that boundary unambiguous.
-Method *names* (`getStatus`, `unlock`, `signTypedData`) are shared for wire
+Method *names* (`getStatus`, `unlock`) are shared for wire
 compatibility; names and interfaces are not generally protected by copyright,
 and no implementation was copied.
 
@@ -182,75 +178,3 @@ and no implementation was copied.
 one.** Doing so would make this project AGPL and invalidate its license. If you
 want a behaviour Colibri has, read its documentation or observe its protocol,
 then write the implementation here.
-
-## @1inch/aqua-sdk
-
-The 1inch Aqua SDK. It was a **devDependency** of the Aqua mini-app, used only
-by a parity test that built the same `ship` and `dock` calldata the app built
-and asserted the two agreed byte for byte. The app is deleted and nothing
-depends on the SDK now. The analysis below stands as the reason it may not be
-reintroduced as anything a release contains.
-
-License: **Degensoft Aqua Source License 1.1** (`LicenseRef-Degensoft-Aqua-Source-1.1`),
-Copyright © 2025 Degensoft Ltd. Full text ships in the package: `LICENSE`.
-
-**Source-available, not open source, and not compatible with Apache-2.0.**
-
-### Why it is not a dependency
-
-Calling the deployed Aqua contracts is unaffected by this licence, and that is
-all the app that used to be here ever did. Putting the SDK *into a signed
-release binary* is a different act, and it fails on five independent clauses:
-
-- **§2.1 vs §1.7.** The grant covers distributing *unmodified* source or object
-  forms. §1.7 defines Modification to include static or dynamic linking and
-  "artifacts shipped/deployed together as one product". A bundled, tree-shaken,
-  minified companion is both, so the bundle is not what §2.1 permits us to hand
-  out.
-- **§5 and §6.** Commercial use requires a separate written agreement from
-  Degensoft; Degensoft may demand an annual audit. These are obligations that
-  would attach to whoever holds the binary. Our `LICENSE` tells them they have
-  none.
-- **§7.1.** The patent grant terminates when the licensee stops using the work
-  or asserts a claim, and forbids seeking patent protection for any system that
-  depends on it. Apache-2.0 §3 is irrevocable except on patent litigation.
-- **§9 and §11.3.** The licence terminates on uncured material breach and may
-  not be assigned without written consent. Apache-2.0 is perpetual and
-  irrevocable, and a public release is exactly an unconsented conveyance to
-  strangers.
-- **§5.3.** The waiver that makes ordinary use practical is revocable "at any
-  time in its sole discretion, including with respect to existing users", with
-  ten days to cure. Binaries already downloaded cannot be cured at all.
-
-There is also an internal contradiction worth knowing about: **§3.1 C requires
-the designation "Powered by Aqua"** in README and UI for distributed
-Modifications, while **§7.2 grants no right to use that designation** absent
-separate written permission. Any path that made us a distributor of a
-Modification would require contacting Degensoft to resolve it.
-
-The short version: this project cannot grant rights it does not hold, and cannot
-bind people who download a release to terms they never saw. Keeping the SDK out
-of the bundle avoids all of it, and costs nothing — see below.
-
-### What we get instead
-
-The SDK is more useful as a witness than as a dependency. `src/registry.ts` and
-`AquaProtocolContract` are two independent implementations of the same ABI, and
-`test/sdk-parity.test.ts` compares every byte either produces, plus the strategy
-hash, the three event topics and the registry address. Importing the SDK would
-have replaced two implementations with one and proved nothing. A differential
-test against the protocol authors' own code is the stronger result.
-
-### Rules for contributors
-
-1. **Do not import `@1inch/aqua-sdk` from any `src/` directory**, and do not
-   promote it to `dependencies`. Both would put it in the release bundle and
-   everything above would start applying. `test/sdk-parity.test.ts` fails if the
-   first happens.
-2. **Do not copy or vendor Aqua source**, SDK or contracts, into this
-   repository. Calling published contracts is permitted; a copied file is a
-   Modification under §1.7 and would pull this project under a licence it cannot
-   be released under.
-3. **If this project ever charges for anything**, re-read §5 before shipping,
-   not after — the triggers are measured on gross receipts and aggregate across
-   affiliates.

@@ -233,7 +233,11 @@ screen and the account read from the board (`setShellVisible` in main.ts).
 ZEC") and keeps a danger banner up while it is on. Each network has its own
 wallet, server and address book; nothing is shared between them. A board that
 refuses a request for the other network (its network guard) is shown in the
-board's own words: every board error is displayed verbatim, with its code.
+board's own words: every board error is displayed verbatim, with its code. The
+board also reports its setting in `getStatus` (`network`, `"main"` or
+`"test"`; `parseStatus()` in packages/core reads it into
+`DeviceStatus.network`, null on older firmware), for screens that want to say
+so before asking.
 
 **Automatic, as in Zodl.** Connecting is one guided flow with no other
 click: Connect (or, from the launcher, *Reconnect your board*) pairs (compare
@@ -379,6 +383,38 @@ identifier, so nothing carries over by itself:
   move its `zcash/` folder into the new directory before the first start to
   keep the synced wallets, server and contacts (viewing keys only).
 
+## Firmware releases
+
+The flasher (Flash firmware, in builds with the `flasher` feature) lists the
+releases of
+[0xOucan/leekwallet-zcash](https://github.com/0xOucan/leekwallet-zcash/releases)
+through the GitHub API and offers the images it finds in them. It offers a
+file only by its name, and checks the rest from the bytes. A release it can
+use carries:
+
+| Asset | Required | What the flasher does with it |
+|---|---|---|
+| `leekwallet-s3cam-<version>-update.bin` | yes | Listed in the open as "ESP32-S3 CAM — update (keeps your wallet)": the application alone, written at `0x10000` |
+| `leekwallet-s3cam-<version>-provision.bin` | for new boards | Behind a disclosure, "provision (ERASES every wallet)": bootloader, partition table and app merged, written at `0x0`, which erases the vault in `nvs` at `0x9000` |
+| `SHA256SUMS` | strongly | `sha256sum` format (`<hex>  <name>`). The digest of each image is checked against it after download; without it the flasher says there is nothing to cross-check against |
+| `SHA256SUMS.asc` | optional | Not read by the flasher; for people verifying by hand ([RELEASE.md](../docs/RELEASE.md)) |
+
+`./scripts/release.sh <tag> esp32s3cam` writes exactly these names into
+`release/<tag>/esp32s3cam/`, plus the separate `firmware.bin`,
+`bootloader.bin`, `partitions.bin`, `BUILDINFO` and `manifest-fragment.json`,
+which the flasher ignores (upload them anyway: they are what a verifier
+rebuilds against). The board token is matched as a word: `s3cam` is the Zcash
+board, `s3` the plain ESP32-S3 reference build and `pixie` the Pixie (which
+has no Zcash signer); a name with none of them is not offered. Each image is
+also checked for the chip it was built for (its header) against the board
+connected, so an image for the other chip is refused before writing.
+
+A release without such an image (a tag published for the apps, say) is not
+listed. When no release has one, or the repository has no public releases,
+the panel says so, names what a release needs, and points at the file picker:
+build the image yourself (`pio run -e esp32s3cam`; the update image is
+`.pio/build/esp32s3cam/firmware.bin`) and choose it there.
+
 ## Diagnostics
 
 *Diagnostics → Copy diagnostics* puts a plain-text report on the clipboard
@@ -390,9 +426,7 @@ for a bug report:
 - **Board**: firmware, model and chain from `getFeatures` (read once per
   connection); from `zGetFeatures` over the paired session, asked when the
   report is made: the signer backend, branch IDs, PCZT and chunk limits and
-  address display; the board's network setting is not reported by the
-  firmware (it refuses requests for the other network), and the report says
-  so; the board account read (account, network, seed fingerprint, birthday).
+  address display; the board account read (account, network, seed fingerprint, birthday).
 - **Zcash**: the Companion's network and account; the wallet's lightwalletd
   server (and the default), when it last answered, the wallet's account and
   ZFP, birthday, sync height against the tip, and how the last sync ended.

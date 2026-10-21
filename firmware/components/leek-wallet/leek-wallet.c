@@ -86,7 +86,6 @@ static struct {
     char passphrase[MAX_PASSPHRASE_LENGTH];  // BIP39 passphrase (RAM only)
     uint8_t seed[SEED_SIZE];  // Cached seed to avoid repeated PBKDF2
     HDNode node;
-    HDPath current_path;
     uint8_t wallet_count;
     uint8_t active_wallet_index;  // 1-based, 0 = none
 } state = {0};
@@ -1113,6 +1112,10 @@ static WalletError migrate_vault_to_current(const char *password, size_t length)
  */
 static SemaphoreHandle_t derive_lock = NULL;
 
+/* Both behind wallet_get_public_key_at_path(), and nothing else. */
+static WalletError wallet_select_path(const HDPath *path);
+static WalletError wallet_get_public_key(PublicKey *pubkey_out);
+
 static void derive_lock_init(void) {
     if (!derive_lock) {
         derive_lock = xSemaphoreCreateRecursiveMutex();
@@ -1866,103 +1869,7 @@ bool wallet_validate_mnemonic(const char *mnemonic) {
     return mnemonic_check(mnemonic);
 }
 
-// ========== HD Path Parsing ========== //
-
-bool wallet_parse_path(const char *path_str, HDPath *path_out) {
-    if (!path_str || !path_out) {
-        return false;
-    }
-
-    const char *p = path_str;
-
-    // Skip optional "m/" prefix
-    if (*p == 'm' || *p == 'M') {
-        p++;
-        if (*p == '/') {
-            p++;
-        } else if (*p != '\0') {
-            return false;  // Invalid: 'm' not followed by '/'
-        }
-    }
-
-    // Parse 5 path components: purpose'/coin'/account'/change/index
-    uint32_t parts[5] = {0};
-    bool hardened[5] = {false};
-    int count = 0;
-
-    while (*p && count < 5) {
-        // Parse number
-        if (*p < '0' || *p > '9') {
-            return false;
-        }
-
-        uint32_t val = 0;
-        while (*p >= '0' && *p <= '9') {
-            uint32_t digit = *p - '0';
-            // Check for overflow
-            if (val > (0x7FFFFFFF - digit) / 10) {
-                return false;
-            }
-            val = val * 10 + digit;
-            p++;
-        }
-        parts[count] = val;
-
-        // Check for hardened marker (' or h or H)
-        if (*p == '\'' || *p == 'h' || *p == 'H') {
-            hardened[count] = true;
-            p++;
-        }
-
-        count++;
-
-        // Expect '/' between components or end of string
-        if (*p == '/') {
-            p++;
-        } else if (*p != '\0') {
-            return false;
-        }
-    }
-
-    // Must have exactly 5 components for BIP44
-    if (count != 5 || *p != '\0') {
-        return false;
-    }
-
-    // Validate BIP44 structure (first 3 should be hardened)
-    if (!hardened[0] || !hardened[1] || !hardened[2]) {
-        return false;
-    }
-    // Last 2 should NOT be hardened for standard BIP44
-    if (hardened[3] || hardened[4]) {
-        return false;
-    }
-
-    path_out->purpose = parts[0];
-    path_out->coin_type = parts[1];
-    path_out->account = parts[2];
-    path_out->change = parts[3];
-    path_out->address_index = parts[4];
-
-    return true;
-}
-
-bool wallet_format_path(const HDPath *path, char *out, size_t out_size) {
-    if (!path || !out || out_size < 24) {
-        return false;
-    }
-
-    int len = snprintf(out, out_size, "m/%lu'/%lu'/%lu'/%lu/%lu",
-                       (unsigned long)path->purpose,
-                       (unsigned long)path->coin_type,
-                       (unsigned long)path->account,
-                       (unsigned long)path->change,
-                       (unsigned long)path->address_index);
-
-    return len > 0 && (size_t)len < out_size;
-}
-
-WalletError wallet_select_path(const HDPath *path) {
+static WalletError wallet_select_path(const HDPath *path) {
     if (!state.initialized) {
         return WALLET_ERROR_NOT_INITIALIZED;
     }
@@ -2005,9 +1912,6 @@ WalletError wallet_select_path(const HDPath *path) {
     // Fill public key
     hdnode_fill_public_key(&state.node);
 
-    // Store current path
-    memcpy(&state.current_path, path, sizeof(HDPath));
-
     ESP_LOGI(TAG, "Selected path m/%lu'/%lu'/%lu'/%lu/%lu",
              (unsigned long)path->purpose, (unsigned long)path->coin_type,
              (unsigned long)path->account, (unsigned long)path->change,
@@ -2016,15 +1920,7 @@ WalletError wallet_select_path(const HDPath *path) {
     return WALLET_OK;
 }
 
-bool wallet_get_current_path(HDPath *path_out) {
-    if (!state.has_mnemonic || !path_out) {
-        return false;
-    }
-    memcpy(path_out, &state.current_path, sizeof(HDPath));
-    return true;
-}
-
-WalletError wallet_get_public_key(PublicKey *pubkey_out) {
+static WalletError wallet_get_public_key(PublicKey *pubkey_out) {
     if (!state.initialized) {
         return WALLET_ERROR_NOT_INITIALIZED;
     }

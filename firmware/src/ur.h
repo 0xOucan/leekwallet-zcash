@@ -8,12 +8,9 @@
  * codes: CBOR payload, CRC-32 checksum, Bytewords text, and an optional
  * fountain code for splitting a payload across animated frames.
  *
- * EIP-4527 is a *profile* on top of it - it names the CBOR structures
- * (`crypto-hdkey`, `eth-sign-request`, `eth-signature`) and says nothing about
- * the encoding. Keeping the two apart in the code is deliberate: EIP-4527 is
- * marked Stagnant while BC-UR is what the wallets actually interoperate over,
- * and a chain-agnostic profile later should be an addition rather than a
- * rewrite. See docs/RESEARCH-AIRGAP-VAULT.md section 19.
+ * The types carried on top of it (ur:leek-pczt, ur:leek-zsig) are named in
+ * airgap.h and described in docs/zcash/ROADMAP.md (QR signing); this file knows nothing
+ * about them, so a type added later is an addition rather than a rewrite.
  *
  * This file is the encoding only. No allocation, no globals, caller owns every
  * buffer - the same constraints as the rest of the firmware.

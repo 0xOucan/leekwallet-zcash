@@ -148,8 +148,8 @@ esp_err_t oled_fill_page(uint8_t page, uint8_t pattern);
 esp_err_t oled_draw_qrcode(const char *data);
 
 /**
- * The largest QR version the 64-row panel can show, at scale 1.
- * See RESEARCH-AIRGAP-VAULT.md section 32.
+ * The largest QR version the 64-row panel can show, at scale 1:
+ * (10 * 4 + 17) modules plus a 2 px quiet zone each side is 61 rows.
  */
 #define OLED_QR_MAX_VERSION 10
 

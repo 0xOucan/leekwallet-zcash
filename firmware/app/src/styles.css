@@ -151,7 +151,7 @@ p  { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-sm);
 }
 
 /*
- * Launcher (L1, docs/UI-SPEC-V2.md §1 and §2e). One column on every
+ * Launcher (L1). One column on every
  * platform, including the two-column grid @900px main declares below — the
  * launcher opts itself out (see the media query at the bottom of this file)
  * because §2e asks for "one thing per screen" everywhere, and a 640px-wide
@@ -188,7 +188,7 @@ p  { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-sm);
 .launcher__title { font-size: var(--text-lg); font-weight: 500; }
 .launcher__desc { font-size: var(--text-sm); color: var(--muted); }
 
-/* A destination's way back (docs/UI-SPEC-V2.md §1: "there is a way back").
+/* A destination's way back ("there is a way back").
  * Full-width tap target, ≥44px, placed first in reading and tab order so it
  * is found before anything else in the destination — the same reasoning
  * .skiplink already uses for "skip to main". */

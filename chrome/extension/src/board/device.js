@@ -27,6 +27,12 @@ export function wrongNetworkMessage(asked) {
   return `The board is set to ${board}, but this wallet is on ${app}. Switch the board to ${app} in Settings → Network, or switch this wallet to ${board}.`;
 }
 
+/** The board's network from a getStatus result: "main", "test", or null. */
+export function statusNetwork(s) {
+  const n = s?.network;
+  return n === 'main' || n === 'test' ? n : null;
+}
+
 /** Replies can take as long as a person reading the review pages. */
 export const USER_TIMEOUT = 150e3;
 const SHORT = 10e3;
@@ -262,6 +268,16 @@ export class Device {
       if (s?.unlocked === 1) return;
     }
     throw new Error('the board was not unlocked in time');
+  }
+
+  /**
+   * getStatus, with `network` parsed: the board's Settings > Network, "main"
+   * or "test", or null on firmware that predates the field. The board refuses
+   * z* requests for the other network (0x0528); this says so before asking.
+   */
+  async getStatus() {
+    const s = await this.call('getStatus');
+    return { ...s, network: statusNetwork(s) };
   }
 
   zGetFeatures() {

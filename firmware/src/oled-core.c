@@ -455,8 +455,7 @@ bool oled_qr_fits(uint8_t version, uint8_t scale)
         return false;
     }
     /* Modules times scale plus the 2 px quiet zone each side, in 64 rows.
-       That gives version 10 at scale 1 and version 3 at scale 2, the two
-       ceilings RESEARCH-AIRGAP-VAULT.md section 32 measured. */
+       That gives version 10 at scale 1 and version 3 at scale 2. */
     const unsigned px = (unsigned)(version * 4 + 17) * scale + 4;
     return px <= OLED_HEIGHT;
 }

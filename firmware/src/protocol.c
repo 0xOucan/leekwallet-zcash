@@ -35,7 +35,6 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
 
-#include "blind-signing.h"
 #include "cbor.h"
 #include "memzero.h"
 #include "leek-wallet.h"
@@ -273,9 +272,9 @@ static void send_frame(uint8_t type, const uint8_t *payload, size_t len)
  */
 static void send_error_ex(uint16_t code, const char *message, bool allow_encrypt)
 {
-    /* Room for the longest message (the wrong-network one, ~95 characters)
+    /* Room for the longest message (the wrong-network one, 101 characters)
      * with the CBOR around it and the session tag. */
-    uint8_t out[160];
+    uint8_t out[176];
     CborWriter w;
     cbor_writer_init(&w, out, sizeof(out));
 
@@ -673,9 +672,9 @@ static bool network_is_the_boards(uint8_t network)
     if (network == board) {
         return true;
     }
-    char why[100];
+    char why[112];
     snprintf(why, sizeof why,
-             "the board is set to %s; switch it to %s in Settings > Network, or use the %s app",
+             "the board is set to %s; switch it to %s in Settings > Network, or switch the app to %s",
              network_title(board), network_title(network), network_title(board));
     ui_notify_wrong_network(network);
     send_error((uint16_t)(ERR_ZSIGN_BASE | (unsigned)-ZSIGN_E_BOARD_NETWORK), why);
@@ -871,14 +870,7 @@ static void dispatch(const uint8_t *payload, size_t len)
     } else if (strcmp(method, "getFeatures") == 0) {
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 4);
-        /* The real state, never a constant. A host that cannot tell whether
-         * the device is in the weaker mode cannot warn anyone about it, and
-         * this field is the only place it is visible from off-device. It is
-         * readable pre-session on purpose: it describes the device, not the
-         * wallet, and it is the answer to "will you refuse my dapp?". */
-        cbor_write_text(&w, "blindSigning");
-        cbor_write_uint(&w, blind_signing_enabled() ? 1 : 0);
+        cbor_write_map(&w, 3);
         /* Which chain this firmware speaks. Was implied - LeekWallet only
            ever spoke Ethereum and answered with no chain at all - and a host
            built for that firmware must be able to tell it is not talking to
@@ -898,7 +890,7 @@ static void dispatch(const uint8_t *payload, size_t len)
         WalletStatus status = wallet_get_status();
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 6);
+        cbor_write_map(&w, 7);
         /* The account the device's own screens are on. Reported so the host can
          * follow it: the app invalidates everything it derived whenever this
          * changes, exactly as it does for the passphrase, which stops the
@@ -907,6 +899,12 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_uint(&w, ui_hd_account());
         cbor_write_text(&w, "activeWallet");
         cbor_write_uint(&w, status.active_wallet_index);
+        /* The network chosen under Settings > Network, "main" or "test". The
+         * board refuses z* requests for the other one (0x0528), and a
+         * companion that reads this first can say so, or follow the board,
+         * before it asks. Not a secret: the board shows it on its screen. */
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, ui_zcash_network() == ZCASH_NET_MAIN ? "main" : "test");
         /* Temporary mode, said out loud.
          *
          * `activeWallet` is 0 throughout it -- deliberately, because no stored

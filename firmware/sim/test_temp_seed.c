@@ -44,10 +44,8 @@ static const char *TEMPORARY =
 
 #define PIN "482913"
 
-/* m/44'/133'/0'/0/0, the Zcash transparent path. Keys are asked for by path
- * here: wallet_get_public_key() reads whatever node a previous
- * wallet_select_path() left behind, which is not a question about this
- * feature. */
+/* m/44'/133'/0'/0/0, the Zcash transparent path. Keys are asked for by path,
+ * in one call under the derivation lock. */
 static const HDPath KEY0 = {
     .purpose = 44, .coin_type = 133, .account = 0, .change = 0, .address_index = 0
 };

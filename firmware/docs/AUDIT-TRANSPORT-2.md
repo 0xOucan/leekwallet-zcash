@@ -1,5 +1,8 @@
 # Transport audit, second pass — verifying the v2 handshake
 
+> Audit of upstream LeekWallet, before the Zcash fork. File and line
+> references are to that tree.
+
 The first pass (`docs/AUDIT-TRANSPORT.md`) found C-1: the v1 passkey was a pure function of the
 X25519 shared secret, so a relay could grind offline for a private key reproducing the digits the
 device was already showing. That has been replaced by a commit-then-reveal handshake. This pass
@@ -387,7 +390,7 @@ rather than assuming: `FrameDecoder` and `Session` are both fields of `Client`
 (`main.ts:825`) with `client = null` on every failure path. `txCounter`/`rxCounter` are
 initialised in the `Session` constructor (`session.ts:223, 226`) and there is no way to rebind
 keys to an existing one, so counters reset per session by construction rather than by a call
-someone could forget. `localStorage` holds chains, tokens and RPC preferences and nothing
+someone could forget. `localStorage` holds app preferences and nothing
 session-derived. There is no resumption path to reuse a stale session even if one survived.
 
 Smaller leaks, all recommended rather than changed: the passkey stays in the DOM after

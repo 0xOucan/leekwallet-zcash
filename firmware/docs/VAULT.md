@@ -71,7 +71,7 @@ explicit about.
 
 ```
 Vault (one PIN)
-├── seed 1 ──┬── no passphrase  → wallet A → m/44'/60'/0'/0/0, /1, /2 ...
+├── seed 1 ──┬── no passphrase  → wallet A → ZIP 32 accounts 0, 1, 2 ...
 │            └── passphrase "x" → wallet B (unrelated to A)
 ├── seed 2 ──── ...
 └── seed 30 ─── ...
@@ -84,8 +84,8 @@ Only the first is stored.
 keeping genuinely separate identities with separate backups, and sharing one
 device across people.
 
-**What they cost:** N seeds means N backups. One seed with multiple BIP44
-accounts (`m/44'/60'/account'/...`) covers most "separate wallets" needs with a
+**What they cost:** N seeds means N backups. One seed with multiple ZIP 32
+accounts covers most "separate wallets" needs with a
 single thing to protect, which is exactly why the single-seed convention exists.
 The 30 slots are a capability, not a recommendation — the default path should
 stay one seed and many accounts.

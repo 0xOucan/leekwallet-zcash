@@ -1,5 +1,11 @@
 # Running LeekWallet on the Firefly Pixie
 
+> **In LeekWallet Zcash the Pixie signs nothing.** The Zcash signer is built
+> for Xtensa only, and the Pixie is a RISC-V ESP32-C3, so the `pixie` build
+> leaves out every Zcash source (`LEEK_HAS_ZCASH 0`). It still boots, holds
+> seeds in the vault and pairs, which is what this port record describes. The
+> Zcash board is the ESP32-S3 CAM ([WIRING-S3CAM.md](WIRING-S3CAM.md)).
+
 **Status: complete and working on hardware. The display is done.** Flashing a
 Pixie from the website is blocked — see "Browser flashing is blocked" below.
 
@@ -22,7 +28,6 @@ And the protocol answers over USB:
 
 ```
 ping           -> RESPONSE   {result:{pong:1}}
-getFeatures    -> RESPONSE   {blindSigning:0, firmware:"0.1.0", model:"LeekWallet-Pixie"}
 getStatus      -> RESPONSE   {account:0, activeWallet:0, temporary:0, passphrase:0, unlocked:0, walletCount:0}
 getMnemonic    -> ERROR      unknown or not yet implemented
 ```
@@ -107,8 +112,8 @@ vault portable between the two boards. That was the open question in the
 
 ## Why
 
-The [Firefly Pixie](https://github.com/firefly/pixie-device) is already in the
-hands of Ethereum developers. Supporting it means a working hardware wallet for
+The [Firefly Pixie](https://github.com/firefly/pixie-device) is already on
+developers' desks. Supporting it means a working hardware wallet for
 people who **do not have to buy anything** — which is the same argument this
 project makes about $12 boards, applied to hardware that is already on desks.
 
@@ -147,9 +152,8 @@ security-critical part:
 
 ```
 components/leek-wallet/    vault, BIP-39/32/44, AES-256-GCM, PBKDF2
-components/trezor-crypto/  secp256k1, SHA-2/3, HMAC
+components/trezor-crypto/  BIP-32, SHA-2, HMAC
 src/protocol.c  cbor.c  session.c  ble.c  transport.c  ble-chunk.c
-src/eth-tx.c  eth-decode.c  eip712.c  blind-signing.c
 src/pin.c  device-wipe.c  entropy.c  mnemonic-entry.c  text-entry.c
 ```
 
@@ -306,9 +310,8 @@ shim over `firefly-display`. Done when the PIN screen renders and a button moves
 the cursor.
 
 **2 — It is a wallet.** *(done)*
-Unlock, create a seed, view an address, sign over USB. Everything above the
-shim is already written. Done when `app/scripts/test-dapp.mjs personal` returns
-a signature that recovers to the displayed address.
+Unlock, create a seed, pair over USB. Everything above the shim is already
+written.
 
 **3 — It is the same wallet.** *(done)*
 BLE, session handshake, the passkey comparison, temporary seed, hold-to-lock.
@@ -394,7 +397,7 @@ scheduling. One core is *different* real scheduling, not less of it. The H-1
 repro, the 180 s idle timeout and hold-to-lock all need re-running on a Pixie.
 
 **2. Stack sizes were tuned on the S3.** The protocol and BLE tasks were raised
-to 8 KB after a 744-byte EIP-712 render struct caused an overflow that surfaced
+to 8 KB after a 744-byte render struct caused an overflow that surfaced
 as "unlock failed: derivation failed". `warn_on_thin_stack()` will report the
 margin on the C3; watch it during phase 2 rather than after a user finds it.
 
@@ -412,10 +415,10 @@ Fill the empty cells from measurements on both boards; do not estimate them.
 | Unlock (vault KDF) | **423 ms** | 508 ms |
 | Seed derivation (PBKDF2 BIP-39) | — | ~460 ms |
 | BIP-32 derivation | — | — |
-| secp256k1 sign | — | — |
 | Display | 240×240 colour | 128×64 mono |
 | LED feedback | 4× RGB | none |
 | Airgapped QR signing | **no camera** | planned |
-| Blind signing, refusals, dice, temp seed | same | same |
+| Zcash signing | **none** (RISC-V) | yes |
+| Dice, temp seed | same | same |
 | Companion support | same protocol | same protocol |
 | Cost to a new user | **already owned** | ~$12–15 |

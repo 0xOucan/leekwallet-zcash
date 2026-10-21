@@ -3,19 +3,8 @@
  *
  *   camera strings ─► airgap_scan_feed ─► ur-decoder ─► (type gate)
  *
- * ---------------------------------------------------------------------------
- * A stub, on purpose
- *
- * LeekWallet accepted one UR type here, `eth-sign-request`, and handed it to
- * the Ethereum signing path. That path is gone (roadmap 1.1), and nothing
- * else is signable yet, so every complete UR is refused as the wrong type.
- * The scanning machinery - camera, viewfinder, multi-part fountain assembly -
- * is kept and still runs, so a scan reports progress and then says plainly
- * that it cannot use what it read.
- *
- * Phase 5 adds the `zcash-pczt` type here: a complete PCZT goes to a worker
- * that asks the user and hands a signed PCZT back over SCREEN_QR_OUT. Until
- * then nothing scanned can reach a key.
+ * One UR type is accepted, ur:leek-pczt (below). Any other complete UR is
+ * refused as the wrong type, so nothing else scanned can reach a key.
  */
 
 #ifndef LEEK_AIRGAP_H

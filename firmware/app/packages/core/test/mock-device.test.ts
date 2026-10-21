@@ -240,11 +240,11 @@ async function main(): Promise<void> {
   {
     const dev = await connected();
     const r = await call(dev, "getFeatures");
-    check(r.result?.["blindSigning"] === 0, "the inherited blind-signing flag must read off");
+    check(!("blindSigning" in (r.result ?? {})), "the Ethereum blind-signing flag is gone");
     check(r.result?.["chain"] === "zcash", "getFeatures must name the Zcash firmware");
     check(typeof r.result?.["model"] === "string", "getFeatures names no model");
     /* `initialized` existed only here, so app code could branch on a field real
-     * hardware never sends. protocol.c writes exactly four keys. */
+     * hardware never sends. protocol.c writes exactly three keys. */
     check(!("initialized" in (r.result ?? {})),
       `getFeatures invented a field: ${JSON.stringify(r.result)}`);
   }

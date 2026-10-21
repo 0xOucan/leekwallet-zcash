@@ -81,7 +81,7 @@ bool device_wipe_pending(void)
  * function's name promises it does not. The erase below is the flash-level
  * one, and it takes the whole partition -- including `leek_ui`, which nothing
  * else here touches and which is why a wiped device used to be handed on with
- * the previous owner's blind-signing setting still enabled.
+ * the previous owner's settings still in place.
  *
  * A power cut in the middle leaves NVS unmountable, and `app_main()` already
  * answers that by erasing and re-initialising it. The end state of an

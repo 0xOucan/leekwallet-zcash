@@ -48,17 +48,10 @@ MUTANTS = [
     ("src/transport.c", "        protocol_set_rx_enabled(false);     /* USB endpoint stops answering */",
      "        protocol_set_rx_enabled(true);", "cable stays live under BLE"),
 
-    # The blind-signing setting (T16). Nothing consults it until the Zcash
-    # signing path lands, but it is still stored, reported and switched on
-    # behind a warning, and each of those can still go wrong.
-    ("src/protocol.c", "cbor_write_uint(&w, blind_signing_enabled() ? 1 : 0);",
-     "cbor_write_uint(&w, 0);", "getFeatures hides the setting"),
-    ("src/blind-signing.c", "        enabled = (stored == 1);", "        enabled = true;",
-     "any stored byte turns blind signing on"),
-    ("src/blind-signing.c", "    enabled = false;      /* the default",
-     "    enabled = true;       /* the default", "blind signing defaults to on"),
-    ("src/ui.c", "if (++blind_confirm_count >= BLIND_CONFIRM_PRESSES) {",
-     "if (++blind_confirm_count >= 1) {", "one press enables blind signing"),
+    # The board's network in getStatus: a companion trusts it to say which
+    # network the board answers for before it asks.
+    ("src/protocol.c", 'cbor_write_text(&w, ui_zcash_network() == ZCASH_NET_MAIN ? "main" : "test");',
+     'cbor_write_text(&w, "test");', "getStatus reports Testnet whatever the board is set to"),
 
     # Job 1: a reply must match the frame type of the request that caused it.
     # Each of these is the old, state-driven behaviour, or its mirror.

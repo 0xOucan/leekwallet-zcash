@@ -189,8 +189,8 @@ not silently reintroduce wall-clock time first.
 
 ```bash
 git tag -s v0.3.0 -m "v0.3.0"          # signed tag; the tag is a claim too
-./scripts/release.sh v0.3.0            # default, unsigned firmware
-./scripts/release.sh v0.3.0 esp32s3-secure   # the signed, shippable one
+./scripts/release.sh v0.3.0 esp32s3cam      # the Zcash board, unsigned firmware
+./scripts/release.sh v0.3.0 esp32s3-secure   # signed (secure boot), not yet used for Zcash
 ```
 
 `scripts/release.sh` clones the tag into a temporary directory and builds
@@ -210,7 +210,7 @@ definitions of "the key is safe to use" would drift.
 | `*-signed.bin` (secure env only) | the same, with secure boot v2 signatures |
 | `SHA256SUMS` | hashes of every `.bin` above |
 | `SHA256SUMS.asc` | detached GPG signature over `SHA256SUMS`, made by hand |
-| `leekwallet-<board>-<version>-provision.bin` | the same three merged into one image, written at `0x0` — **erases every wallet** |
+| `leekwallet-<board>-<version>-provision.bin` (`<board>`: `s3cam` for the Zcash board, `s3`, `pixie`) | the same three merged into one image, written at `0x0` — **erases every wallet** |
 | `leekwallet-<board>-<version>-update.bin` | the application alone, written at `0x10000` — keeps the wallet |
 | `manifest-fragment.json` | the entry the website's flasher manifest expects, hash included |
 | `BUILDINFO` | tag, commit, environment, platform pin, rebuild instructions |
@@ -227,8 +227,7 @@ form.
 at `0x9000`, which is *before* the application at `0x10000`, so the merged
 image spans it and the 0xFF padding erases it. Writing the provision image to
 a board that holds a seed destroys the seed — that is not a theoretical
-hazard, it happened to a development board and is written up in
-[RELEASE-0.1.md](RELEASE-0.1.md#a-merged-image-at-0x0-destroys-the-wallet).
+hazard, it happened to a development board.
 
 The merged image still exists because the three parts go to three different
 offsets and a user who transposes two of them gets a board that no longer
@@ -393,7 +392,7 @@ much cheaper than learning it from the first user who tries. The certificate
 digest it prints is public by construction, and is the value to compare across
 releases to see that the signing identity has not changed.
 
-`.github/workflows/release.yml` decodes the keystore into `$RUNNER_TEMP`,
+A release workflow must decode the keystore into `$RUNNER_TEMP`,
 never into the workspace — a keystore inside the checkout is one `git add -A`
 away from being in the repository forever — and deletes it in an `if: always()`
 step so a failed build does not leave it on a runner's disk. If the secret is
@@ -419,7 +418,7 @@ Covered above under "Cutting a release": `LEEK_SIGNING_KEY=<key-id>` makes
 wrote before reporting success. It is opt-in because a script that signs by
 default signs a build nobody has read yet.
 
-The release workflow deliberately does **not** sign. Putting this key in a
+A release workflow must **not** sign. Putting this key in a
 repository secret would place it on every runner the workflow ever schedules,
 which is the opposite of the arrangement the rest of this section describes.
 CI publishes a *draft* release; the maintainer downloads `SHA256SUMS`, checks
@@ -613,50 +612,13 @@ more than once — see the header of `scripts/preflight-secure.sh`.
 
 ## CI
 
-`.github/workflows/ci.yml` runs the host suites and the app checks on
-`ubuntu-latest`, `windows-latest` and `macos-latest`, because the companion is
-published for three operating systems and "it builds on Linux" is not evidence
-about the other two. It is not evidence about devices either: no runner has a
-board or a Bluetooth radio, so USB enumeration, pairing and every signing flow
-stay unverified on Windows and macOS until a person with that OS and a board
-runs them. [RELEASE-0.1.md](RELEASE-0.1.md) carries that per-platform status,
-and the release notes repeat it rather than letting a green matrix imply
-otherwise.
+The firmware has no workflow of its own. Upstream LeekWallet's `ci.yml` and
+`release.yml` came along under `firmware/.github/`, where GitHub never ran
+them, and were deleted. The repository's workflows (`.github/workflows/` at
+the top level) cover the host crates, the desktop app on three systems and
+the Chrome extension.
 
-The firmware job stays Linux-only — both targets cross-compile, so a second and
-third runner would download the same toolchain to answer a question already
-answered — and it builds **both** of them: `./scripts/check.sh firmware` now
-runs `esp32s3` and `pixie`. The C3 image is built on every commit whether or
-not it ships, because a target that is only built when a tag is cut is a target
-that is discovered broken while cutting the tag. It lives in `check.sh` rather
-than as an extra workflow step so that a developer running the script locally
-learns exactly what CI learns.
-
-`.github/workflows/ci.yml` also has two reproducibility jobs — `repro` for the
-firmware and `repro-app` for the companion — both running on every push.
-They are separate because they need entirely different toolchains, and because
-two red crosses that name which half broke are worth more than one that does
-not. A check that runs is worth more than a procedure in a document
-that nobody opens, and reproducibility is exactly the property that rots
-silently — a dependency bump reintroduces a timestamp and nothing complains
-until someone tries to verify a release months later.
-
-That job builds the firmware twice, so it is the slowest thing in CI. It runs
-as its own job rather than inside `check.sh` so that the fast host suites still
-report in seconds, and so that `./scripts/check.sh` stays the thing a developer
-runs before a commit rather than a five-minute wait.
-
-`.github/workflows/release.yml` is the other half: a tag matching `v*` builds
-the firmware for both boards, merges each into a single flashable image, builds
-the companion on all three desktop platforms, builds the Android APK, hashes
-everything into one `SHA256SUMS` and attaches the lot to a **draft** release.
-Draft rather than published, because two things still have to be done by a
-person: the release notes must carry the per-platform test status from
-[RELEASE-0.1.md](RELEASE-0.1.md), and `SHA256SUMS` still needs a signature made
-off the build machine.
-
-**Neither workflow has ever executed.** The repository has no remote, so they are
-written to be correct on inspection rather than iterated against a runner.
-The YAML parses and the shell in them is syntax-checked; nothing beyond that
-has been demonstrated. Expect the first real run to need adjusting, and do not treat a green badge as
-having been demonstrated until one has actually gone green.
+A firmware release is cut by hand, from a tag, with
+`./scripts/release.sh <tag> esp32s3cam`, and published as a GitHub release of
+0xOucan/leekwallet-zcash. What it must carry for the Companion's flasher to
+offer it is in [app/README.md](../app/README.md#firmware-releases).

@@ -20,6 +20,7 @@ import { encodeCbor, decodeCbor, type CborValue } from "./cbor.ts";
 import { encodeFrame, FrameDecoder, FrameType } from "./framing.ts";
 import { ErrorCode, type Transport } from "./transport.ts";
 import { PROTOCOL_VERSION } from "./session.ts";
+import type { ZNetwork } from "./zcash.ts";
 
 export interface MockOptions {
   /** Milliseconds each command takes. Real key derivation costs ~1 s. */
@@ -33,7 +34,7 @@ export interface MockOptions {
    * Whether the simulated user eventually types the PIN after `unlock`.
    *
    * `unlock` only prompts — the device answers `{prompted:1, unlocked:0}` and
-   * the host polls `getStatus` (PROTOCOL.md 6e #1). Default true so the demo
+   * the host polls `getStatus` (PROTOCOL.md 6c). Default true so the demo
    * app makes progress; set false to drive `enterPin()` by hand, which is the
    * only way to assert on the window where the device is prompting and still
    * locked.
@@ -56,11 +57,11 @@ export interface MockOptions {
   autoConfirmSession?: boolean;
 
   /**
-   * The `blindSigning` flag the firmware still reports in getFeatures (a
-   * setting inherited from LeekWallet; nothing on the Zcash firmware reads
-   * it). Here only so the conformance vectors that set it compare.
+   * The network the board is set to (Settings > Network), reported in
+   * getStatus. Default "test", like the simulator the conformance vectors
+   * come from.
    */
-  blindSigning?: boolean;
+  network?: ZNetwork;
 }
 
 type Handler = (params: Record<string, CborValue>) => CborValue;
@@ -142,7 +143,7 @@ export class MockDevice implements Transport {
       autoConfirmSession: options.autoConfirmSession ?? true,
       autoPin: options.autoPin ?? true,
       pinEntryMs: options.pinEntryMs ?? 400,
-      blindSigning: options.blindSigning ?? false,
+      network: options.network ?? "test",
     };
     this.unlocked = this.opts.startUnlocked;
   }
@@ -306,7 +307,6 @@ export class MockDevice implements Transport {
      * here and existed nowhere else, so app code could branch on a field real
      * hardware never sends. */
     getFeatures: () => ({
-      blindSigning: this.opts.blindSigning ? 1 : 0,
       chain: "zcash",
       firmware: "0.1.0-mock",
       model: "LeekWallet-mock",
@@ -325,6 +325,7 @@ export class MockDevice implements Transport {
       /* Reported like the real device, so the mock cannot certify an app that
        * ignores the field -- the failure this suite exists to catch. */
       account: this.hdAccount,
+      network: this.opts.network,
     }),
 
     /**

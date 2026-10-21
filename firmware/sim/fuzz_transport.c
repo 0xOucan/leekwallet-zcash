@@ -26,7 +26,6 @@
 #include <time.h>
 
 #include "ble-chunk.h"
-#include "blind-signing.h"
 #include "cbor.h"
 #include "esp_stubs.h"
 #include "fake_nvs.h"
@@ -154,7 +153,6 @@ static void fresh_device(void)
 {
     fake_usb_reset();
     fake_nvs_reset();
-    blind_signing_forget();
     pin__reset_static_state_for_test();
     pin_init();
     fake_wallet_reset();

@@ -150,7 +150,7 @@ export interface ReleaseAsset {
   /** "update" keeps the wallet, "provision" erases every one. Never guessed
    * from bytes — see the module doc — always from the filename suffix. */
   kind: "update" | "provision";
-  board: "ESP32-C3 (Pixie)" | "ESP32-S3";
+  board: "ESP32-S3 CAM" | "ESP32-S3" | "ESP32-C3 (Pixie)";
   downloadUrl: string;
   size: number;
   /** From this release's SHA256SUMS asset, when one was found and parsed.
@@ -168,20 +168,54 @@ export interface Release {
 
 /* This project's releases: the Zcash firmware. Not upstream LeekWallet's,
  * which ship the EVM firmware this Companion no longer speaks to. */
+const RELEASES_PAGE = "github.com/0xOucan/leekwallet-zcash/releases";
 const RELEASES_API = "https://api.github.com/repos/0xOucan/leekwallet-zcash/releases";
 
-/** Board and image kind out of a filename — the two things a release build
- * actually names. Everything else (chip id, digest) is checked from bytes. */
-function classifyAsset(name: string): Pick<ReleaseAsset, "kind" | "board"> | null {
+/**
+ * Board and image kind out of a filename — the two things a release build
+ * actually names. Everything else (chip id, digest) is checked from bytes.
+ *
+ * The names scripts/release.sh writes: `leekwallet-<board>-<version>-update.bin`
+ * and `…-provision.bin`, board `s3cam` (env esp32s3cam, the Zcash board),
+ * `s3` (env esp32s3) or `pixie`. Anything else is not an image this app
+ * offers. (It used to call every name without "esp32s3" in it a Pixie image,
+ * release.sh's own `leekwallet-s3-…` included.)
+ */
+export function classifyAsset(name: string): Pick<ReleaseAsset, "kind" | "board"> | null {
   const lower = name.toLowerCase();
   let kind: ReleaseAsset["kind"];
   if (lower.endsWith("-update.bin")) kind = "update";
   else if (lower.endsWith("-provision.bin")) kind = "provision";
   else return null;
-  const board = lower.includes("esp32s3") || lower.includes("esp32-s3")
-    ? "ESP32-S3"
-    : "ESP32-C3 (Pixie)";
-  return { kind, board };
+  const tokens = lower.split(/[-_.]/);
+  const board = tokens.includes("s3cam") || tokens.includes("esp32s3cam")
+    ? "ESP32-S3 CAM"
+    : tokens.includes("s3") || tokens.includes("esp32s3") || lower.includes("esp32-s3")
+      ? "ESP32-S3"
+      : tokens.includes("pixie") || tokens.includes("c3") || tokens.includes("esp32c3")
+        ? "ESP32-C3 (Pixie)"
+        : null;
+  return board ? { kind, board } : null;
+}
+
+/**
+ * What the releases panel says above the list. A release with no image this
+ * app can flash (a tag published before any firmware was attached, or one
+ * for the apps) is not listed, and when no release has one the panel says so,
+ * names what a release must carry, and points at the file picker below, rather
+ * than drawing release titles with no button under them.
+ */
+export function releasesSummary(releases: Release[]): string {
+  const flashable = releases.filter((r) => r.assets.length > 0);
+  if (flashable.length > 0) {
+    return `${flashable.length} firmware release${flashable.length === 1 ? "" : "s"} from ${RELEASES_PAGE}.`;
+  }
+  const what = releases.length === 0
+    ? `No firmware release has been published at ${RELEASES_PAGE} yet.`
+    : `None of the ${releases.length} release${releases.length === 1 ? "" : "s"} at ${RELEASES_PAGE} carries a firmware image yet.`;
+  return `${what} A release needs leekwallet-s3cam-<version>-update.bin ` +
+    "(and -provision.bin for a new board) with a SHA256SUMS file. Until then, build the image " +
+    "yourself (pio run -e esp32s3cam) and choose its .bin file below.";
 }
 
 /** `name  digest` or `digest  name`, one per line — the shape `sha256sum` writes. */
@@ -200,7 +234,7 @@ export function parseShaSums(text: string): Record<string, string> {
  * The releases list, or a thrown error naming what went wrong.
  *
  * Never returns an empty array on failure — an empty list reads as "no
- * releases exist" (UI-REDESIGN-PLAN.md §2a), which is a lie the caller must
+ * releases exist", which is a lie the caller must
  * not be allowed to render. A genuinely empty releases page is possible and
  * is a different, honest state the caller renders itself; this function only
  * ever returns [] for that case, and throws for every kind of "could not ask".
@@ -213,6 +247,12 @@ export async function fetchReleases(): Promise<Release[]> {
     throw new Error(
       `Could not reach GitHub to list releases: ${String((e as Error).message ?? e)}`,
     );
+  }
+  if (res.status === 404) {
+    /* The repository is private or gone: there is nothing public to list,
+     * which is not the same as "GitHub failed". */
+    throw new Error(`${RELEASES_PAGE} is not public (GitHub answered 404), so there are no ` +
+      "releases to offer. Build the image yourself (pio run -e esp32s3cam) and choose its .bin file below.");
   }
   if (!res.ok) {
     throw new Error(`GitHub returned ${res.status} listing releases — could not list them.`);
@@ -466,7 +506,7 @@ export function initFlasher(bridge: FlashBridge | null): void {
   };
 
   /* panel's own [hidden] is no longer this module's to set (L1,
-   * docs/UI-SPEC-V2.md §1): it is a launcher destination now, shown only when
+   * the launcher): it is one of its destinations now, shown only when
    * chosen from the launcher or entered via Back from elsewhere — see
    * applyPreConnectVisibility() in main.ts. Its default in index.html is
    * `hidden`, same as before this module ran at all. */
@@ -527,12 +567,8 @@ export function initFlasher(bridge: FlashBridge | null): void {
 
   const renderReleases = (releases: Release[]): void => {
     releasesList.replaceChildren();
-    if (releases.length === 0) {
-      releasesStatus.textContent = "No releases published yet.";
-      return;
-    }
-    releasesStatus.textContent = `${releases.length} release${releases.length === 1 ? "" : "s"} from github.com/0xOucan/leekwallet-zcash.`;
-    for (const rel of releases) {
+    releasesStatus.textContent = releasesSummary(releases);
+    for (const rel of releases.filter((r) => r.assets.length > 0)) {
       const box = document.createElement("div");
       box.className = "field";
       const title = document.createElement("strong");
@@ -597,7 +633,7 @@ export function initFlasher(bridge: FlashBridge | null): void {
     .then(renderReleases)
     .catch((e: unknown) => {
       // Never an empty list on failure — that reads as "no releases exist",
-      // which is not what happened (UI-REDESIGN-PLAN.md §2a/§4).
+      // which is not what happened.
       releasesStatus.textContent = String((e as Error).message ?? e);
     });
 

@@ -121,5 +121,5 @@ After camera, SD, PSRAM, USB and strapping pins, these are free:
 | Serial log | **43 / 44** | UART0, kept |
 | Spare | **2** | free, but it also drives LED_ON — see board.h before using it as an input |
 
-No strapping pin is used. See
-[RESEARCH-AIRGAP-VAULT.md](RESEARCH-AIRGAP-VAULT.md) for what is built on top.
+No strapping pin is used. The Zcash board's full wiring, with the screen,
+encoder and buttons, is in [WIRING-S3CAM.md](WIRING-S3CAM.md).
