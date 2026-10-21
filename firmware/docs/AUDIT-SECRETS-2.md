@@ -1,5 +1,8 @@
 # Secret-handling audit, second pass
 
+> Audit of upstream LeekWallet, before the Zcash fork. File and line
+> references are to that tree.
+
 Scope: the PIN, the vault, and everything in flash that touches them. This is a follow-up to
 `docs/AUDIT-SECRETS.md` and deliberately does not repeat it — the first pass's findings are taken
 as read, its top finding (F1, the unsalted SHA-256×101 PIN verifier) is re-verified rather than

@@ -1,5 +1,8 @@
 # Entropy audit, second pass — verifying the fixes, and what the first pass missed
 
+> Audit of upstream LeekWallet, before the Zcash fork. File and line
+> references are to that tree.
+
 Scope: `src/entropy.c`, `src/entropy.h`, `src/rand_esp32.c`,
 `scripts/check-rng-unique.sh`, and every consumer of `random_buffer()` /
 `entropy_fill()`. `src/transport.c`, `src/session.c`, `src/button.c`, the vault

@@ -1,5 +1,9 @@
 # Transport audit — the device↔companion link
 
+> Audit of upstream LeekWallet, before the Zcash fork. File and line
+> references are to that tree; the session, framing and CBOR layers it covers
+> are the ones this firmware still runs.
+
 Scope: the USB and BLE links between the ESP32-S3 and the companion app, on
 desktop and Android. The session handshake, the record layer, the framing, the
 CBOR parser, and the two radios' own properties. Not in scope: the vault, the
@@ -379,7 +383,7 @@ any hit reproduces, and drives five targets:
 | `chunk` | random chunk sequences into `ble_chunk_push`, with the reassembler's invariants asserted after every call, and every completed frame handed to `protocol_handle_frame` the way `ble.c` does |
 | `usb` | arbitrary byte streams with sync markers sprinkled in, split across random read boundaries, through the real `consume()` |
 | `frame` | structured frames whose declared length is deliberately a lie: 0, 0xFFFF, one over, one under, random |
-| `session` | mutated CBOR sealed under a *confirmed* session — the only path that reaches `dispatch()`, `eth-decode` and `eip712` with bytes the peer chose |
+| `session` | mutated CBOR sealed under a *confirmed* session — the only path that reaches `dispatch()` and the command handlers with bytes the peer chose |
 
 The corpus is built with the real CBOR writer from six valid requests
 (`getStatus`, `getAddress`, `signTransaction`, `signMessage`, `signTypedData`
@@ -420,8 +424,7 @@ Reading the parsers alongside that:
   values, tags and major type 7 are all refused rather than interpreted
   (`src/cbor.c:164`, `src/cbor.c:204`). `cbor_read` refuses a string longer
   than the remaining buffer before advancing (`src/cbor.c:193`). Recursion is
-  bounded at depth 8 (`src/cbor.c:18`), and `cbor_skip` counts from itself,
-  which the EIP-712 walker is aware of and compensates for.
+  bounded at depth 8 (`src/cbor.c:18`), and `cbor_skip` counts from itself.
 - One latent overflow in `cbor_text_copy`: `item->value + 1 > out_size`
   computes in `uint32_t`, and `value == 0xFFFFFFFF` wraps to zero and turns the
   bound into a permission. Unreachable — nothing can produce a text item that
@@ -523,17 +526,11 @@ PROTOCOL_MAX_FRAME=1024 BLE_CHUNK_MAX_FRAME=512
 largest frame BLE reassembles: 512 bytes; 516 refused
 ```
 
-`sim/test_eip712.c` reports a Permit2 `PermitSingle` request at 569 bytes of
-CBOR, which is 588 on the wire once the type byte, the length and the
-Poly1305 tag are added. **A Permit2 signature that works on the cable is
-impossible over Bluetooth**, and the raised limit exists precisely for that
-request. Not changed, because the fix is not free: raising the constant grows
-a static `BleReassembler` by 512 bytes and, more importantly, grows the
-`out[]` buffer in `ble_chunk_split` on the caller's stack, and the BLE worker
-task has already overflowed once in this codebase's history. The right change
-is to raise `BLE_CHUNK_MAX_FRAME` to `PROTOCOL_MAX_FRAME` *and* give
-`on_rx_write`'s single-write staging buffer its own smaller constant, which
-wants a hardware check. Owner's call.
+A frame between 512 and 1024 bytes therefore worked on the cable and was
+impossible over Bluetooth. Not changed at the time, because the fix is not
+free: raising the constant grows a static `BleReassembler` and the `out[]`
+buffer in `ble_chunk_split` on the caller's stack. (Since fixed: the BLE limit
+is now defined as `PROTOCOL_MAX_FRAME`, 4096 for Zcash's PCZT chunks.)
 
 **M-4 — a device left on BLE is a stable, self-identifying beacon.** Public
 static address, no privacy/RPA configuration (`src/ble.c:392`), a service UUID

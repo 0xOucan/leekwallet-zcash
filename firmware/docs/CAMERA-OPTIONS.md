@@ -14,7 +14,7 @@ possible, plus an honest account of which numbers vendors publish and which they
 The display half of QR signing already exists (`src/qrcode.c`). The missing half is input.
 
 The screen is 128x64 monochrome, which caps a single QR frame somewhere around version 10-14 —
-far short of a signed EIP-1559 transaction. So the transport is **animated QR**: BC-UR, the
+far short of a signed transaction. So the transport is **animated QR**: BC-UR, the
 fountain-coded multipart scheme Keystone uses, in both directions. That single fact reshapes the
 purchase, because animated QR is a *stream*. The device is not photographing one code and
 stopping; it is decoding frame after frame until the fountain converges.

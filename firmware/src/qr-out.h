@@ -13,10 +13,10 @@
  * ---------------------------------------------------------------------------
  * The modes
  *
- * RESEARCH-AIRGAP-VAULT.md section 32: the trade is module size against frame
- * count, and only the bench can say which one the OV5640 reads off this panel.
- * So all three candidates are here and the user can step between them; the
- * default is the one that section calls "animated, readable".
+ * The trade is module size against frame count, and only the bench can say
+ * which one a phone camera reads off this panel. So all three candidates are
+ * here and the user can step between them; the default is the animated,
+ * readable one.
  *
  * ---------------------------------------------------------------------------
  * Fit is guaranteed, not hoped for

@@ -31,8 +31,8 @@ Coldcard uses one this way.
 
 ## The model: gate, do not sign
 
-The ATECC608B is **not** used to sign transactions. secp256k1 signing stays in
-`trezor-crypto` on the ESP32, where it is auditable and where the seed already
+The ATECC608B is **not** used to sign transactions. Signing stays in
+the signers on the ESP32, where it is auditable and where the seed already
 lives during an unlock.
 
 The 608 holds one thing: a secret that is released **only** on a correct PIN, and

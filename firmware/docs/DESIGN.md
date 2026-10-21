@@ -68,7 +68,7 @@ Two families, both open source, both with a slight terminal heritage:
 | Role | Family | Use |
 |---|---|---|
 | UI | IBM Plex Sans | Labels, buttons, prose |
-| Data | IBM Plex Mono | Addresses, hashes, amounts, chain IDs, **anything the user must verify** |
+| Data | IBM Plex Mono | Addresses, hashes, amounts, **anything the user must verify** |
 
 Monospace for verifiable data is a security property, not a style choice — proportional fonts
 make `l`/`1` and `0`/`O` ambiguous in an address.
@@ -108,14 +108,9 @@ require a confirm step. ✅ `cursor: pointer` on every clickable element. ✅ Vi
 `outline: 2px solid var(--accent); outline-offset: 2px` — never `outline: none` without a
 replacement.
 
-**Address display.** Always mono, always EIP-55 checksummed casing, always chunked in 4s:
-
-```
-0x71C7 656E EC7A B88B 098D EFB7 51B7 401B 5F6D 8976
-```
-
-Never truncate an address the user is meant to verify. Truncation (`0x71C7…8976`) is allowed
-only in lists where a full copy is one click away.
+**Address display.** Always mono, always chunked so it can be read aloud, and paged in
+full on the board for the user to compare. Never truncate an address the user is meant to
+verify; truncation (`u1abc…xyz`) is allowed only in lists where a full copy is one click away.
 
 **Device status.** Persistent, always visible: connection state and which wallet is selected.
 Transport is implied by platform — BLE on Android, cable on desktop — so do not make the user
@@ -167,7 +162,7 @@ Explicitly out of scope for this project:
 
 ---
 
-## M1 — design-system pass for the shell redesign (UI-REDESIGN-PLAN.md §1)
+## M1 — design-system pass for the shell redesign
 
 `ui-ux-pro-max` is a GitHub-hosted skill and this environment has no network
 access to install third-party skills; it could not be run. Its stated remit —

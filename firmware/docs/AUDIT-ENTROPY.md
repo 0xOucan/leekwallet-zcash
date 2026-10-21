@@ -1,5 +1,8 @@
 # Entropy audit — seed generation
 
+> Audit of upstream LeekWallet, before the Zcash fork. File and line
+> references are to that tree.
+
 > **Status.** §1–§6 are the audit as first written, at `c27c082`. A later pass
 > implemented R2, R3, R5, R6 and R7; §8 records exactly what changed and what
 > the numbers are afterwards, and the findings in §5 are annotated **FIXED**

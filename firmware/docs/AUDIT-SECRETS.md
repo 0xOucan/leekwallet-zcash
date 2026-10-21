@@ -1,5 +1,8 @@
 # Secret-handling audit
 
+> Audit of upstream LeekWallet, before the Zcash fork. File and line
+> references are to that tree.
+
 Scope: every secret the firmware holds, with the BIP-39 passphrase at the centre — where it
 lives, what erases it, and what an attacker with the flash gets today. Companion-app passphrase
 handling (`app/src/main.ts`) is included because it is one of the two entry paths.
