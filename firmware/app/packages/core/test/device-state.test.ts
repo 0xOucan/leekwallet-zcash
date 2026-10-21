@@ -8,7 +8,7 @@
 
 import { MockDevice } from "../src/mock-device.ts";
 import { PROTOCOL_VERSION } from "../src/session.ts";
-import { derivationsInvalidated, PERSIST_DERIVED_ADDRESSES, type DeviceStatus } from "../src/device-state.ts";
+import { derivationsInvalidated, parseStatus, PERSIST_DERIVED_ADDRESSES, type DeviceStatus } from "../src/device-state.ts";
 import { encodeCbor, decodeCbor, type CborValue } from "../src/cbor.ts";
 import { encodeFrame, FrameDecoder, FrameType } from "../src/framing.ts";
 
@@ -17,7 +17,7 @@ const check = (c: boolean, m: string) => { if (!c) { console.log(`  FAIL: ${m}`)
 const group = (n: string) => console.log(`== ${n}`);
 
 const S = (o: Partial<DeviceStatus>): DeviceStatus => ({
-  unlocked: true, walletCount: 1, activeWallet: 1, temporary: false, passphrase: false, account: 0, ...o,
+  unlocked: true, walletCount: 1, activeWallet: 1, temporary: false, passphrase: false, account: 0, network: "test", ...o,
 });
 
 async function call(dev: MockDevice, method: string, params: Record<string, CborValue> = {}) {
@@ -86,14 +86,7 @@ async function main() {
     dev.autoLock();
 
     const s = await call(dev, "getStatus");
-    const now: DeviceStatus = {
-      unlocked: s["unlocked"] === 1,
-      walletCount: Number(s["walletCount"]),
-      activeWallet: Number(s["activeWallet"]),
-      temporary: s["temporary"] === 1,
-      passphrase: s["passphrase"] === 1,
-      account: Number(s["account"] ?? 0),
-    };
+    const now = parseStatus(s);
     check(derivationsInvalidated(S({ passphrase: true }), now),
       "polling must notice a lock the app did not cause");
   }
@@ -126,6 +119,24 @@ async function main() {
     const after = await call(dev, "getStatus");
     check(Number(before["account"]) === 0 && Number(after["account"]) === 3,
       `the device did not report its account (${String(before["account"])} -> ${String(after["account"])})`);
+  }
+
+  group("getStatus says which network the board is set to");
+  {
+    /* The board refuses z* requests for the other network (0x0528); this is
+     * how a companion knows before it asks. */
+    for (const network of ["main", "test"] as const) {
+      const dev = new MockDevice({ startUnlocked: true, network });
+      await dev.open();
+      const s = parseStatus(await call(dev, "getStatus"));
+      check(s.network === network, `a board on ${network} reported ${String(s.network)}`);
+    }
+    check(parseStatus({ unlocked: 1 }).network === null,
+      "firmware without the field must read as unknown, not as a network");
+    check(parseStatus({ network: "regtest" }).network === null,
+      "a network the protocol does not define must read as unknown");
+    check(!derivationsInvalidated(S({ network: "main" }), S({ network: "test" })),
+      "switching the board's network derives nothing new for the app's network");
   }
 
   console.log(`\n${failures ? "FAILED" : "PASSED"} (${failures} failure${failures === 1 ? "" : "s"})`);

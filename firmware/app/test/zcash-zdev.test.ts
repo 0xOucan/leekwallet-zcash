@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { DeviceError } from "../packages/core/src/transport.ts";
+import { parseStatus } from "../packages/core/src/device-state.ts";
 import {
   encodeZsig, parseZsig, toHex, zErrorText, zGetAccount, zGetFeatures, ZErr, ZPool,
   zSetBirthday, zShowAddress, zSign, type ZNetwork,
@@ -195,6 +196,8 @@ async function autoFlow(network: ZNetwork): Promise<void> {
   const w = fakeWallet({ tip: network === "main" ? 3_100_000 : 3_700_000 });
   try {
     await dev.pair();
+    check(parseStatus(await dev.call("getStatus")).network === network,
+      `getStatus does not report the board on ${network}`);
     const k = key(`${network}/abandon-art/pp0/acct0`);
     const a = await readAccountRetrying(dev.call, 0, network);
     check(a.seedFingerprint === k.seed_fingerprint && a.birthday === null, "the account, no birthday yet");

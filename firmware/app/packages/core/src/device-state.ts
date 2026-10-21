@@ -21,6 +21,9 @@
  * the wrong balance.
  */
 
+import type { CborValue } from "./cbor.ts";
+import type { ZNetwork } from "./zcash.ts";
+
 export interface DeviceStatus {
   unlocked: boolean;
   walletCount: number;
@@ -42,6 +45,36 @@ export interface DeviceStatus {
    * identities, it does not hide them.
    */
   account: number;
+  /**
+   * The network the board is set to under Settings > Network. The board
+   * refuses z* requests for the other one (0x0528), so a companion reads this
+   * to say so, or to follow the board, before it asks. Null on firmware that
+   * predates the field.
+   *
+   * Not part of the invalidation tuple: switching it derives nothing new for
+   * the network the app is on, it only makes the board refuse it.
+   */
+  network: ZNetwork | null;
+}
+
+/** A getStatus result, as the board writes it (protocol.c). */
+export function parseStatus(s: Record<string, CborValue>): DeviceStatus {
+  const net = s["network"];
+  return {
+    unlocked: s["unlocked"] === 1,
+    walletCount: Number(s["walletCount"] ?? 0),
+    activeWallet: Number(s["activeWallet"] ?? 0),
+    /* Absent on firmware that predates the field, where it is also always
+     * false: temporary mode and this flag shipped together. */
+    temporary: s["temporary"] === 1,
+    passphrase: s["passphrase"] === 1,
+    /* Absent on firmware older than this field. Defaulting to 0 makes such a
+     * device look permanently parked on the default account, which is what it
+     * effectively is from the host's side: it never reports a change, so
+     * nothing is ever invalidated for a reason the app cannot see. */
+    account: Number(s["account"] ?? 0),
+    network: net === "main" || net === "test" ? net : null,
+  };
 }
 
 export const UNKNOWN_STATUS: DeviceStatus = {
@@ -51,6 +84,7 @@ export const UNKNOWN_STATUS: DeviceStatus = {
   temporary: false,
   passphrase: false,
   account: 0,
+  network: null,
 };
 
 /**

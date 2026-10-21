@@ -40,7 +40,6 @@ interface Vector {
     wallet: boolean;
     unlocked: boolean;
     session: boolean;
-    blindSigning: boolean;
     approve: boolean;
   };
   frameType: number;
@@ -174,7 +173,6 @@ async function deviceFor(v: Vector): Promise<MockDevice> {
     startUnlocked: v.setup.unlocked,
     autoApprove: v.setup.approve,
     autoConfirmSession: true,
-    blindSigning: v.setup.blindSigning,
     /* The C fixture preloads exactly one seed. walletCount is compared
      * exactly in getStatus, so this is a real assertion, not scaffolding. */
     walletCount: 1,

@@ -18,7 +18,7 @@ await vendor();
 
 const { decodeCbor, encodeCbor } = await import('../src/board/cbor.js');
 const { BleReassembler, FRAME, UsbFrameDecoder, chunkForBle, encodeFrame, encodeUsbFrame } = await import('../src/board/framing.js');
-const { Device, DeviceError, ERR, toHex, fromHex: fromHexT, wrongNetworkMessage } = await import('../src/board/device.js');
+const { Device, DeviceError, ERR, toHex, fromHex: fromHexT, statusNetwork, wrongNetworkMessage } = await import('../src/board/device.js');
 const { BoardHost, BoardNeeds } = await import('../src/board/host.js');
 const { BleLink } = await import('../src/board/ble-link.js');
 const { SerialLink } = await import('../src/board/serial-link.js');
@@ -144,6 +144,15 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
     await new Promise((r) => setTimeout(r, 50));
     assert.match(shown, /^\d{6}$/);
     assert.equal(z.passkeys.at(-1), shown);
+  });
+
+  test("getStatus reports the board's network and follows Settings > Network", async () => {
+    for (const network of ['main', 'test']) {
+      await z.switchNetwork(network);
+      assert.equal((await dev.getStatus()).network, network);
+    }
+    assert.equal(statusNetwork({ unlocked: 1 }), null, 'firmware without the field');
+    assert.equal(statusNetwork({ network: 'regtest' }), null);
   });
 
   test('zGetFeatures', async () => {

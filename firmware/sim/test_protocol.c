@@ -683,6 +683,22 @@ static void test_status_is_public_but_thin(void)
         CHECK(!cbor_map_find(body, body_len, "passphraseValue", &it),
               "getStatus reveals the passphrase itself");
     }
+
+    /* The board's network, so a companion knows before a z* request is
+     * refused with 0x0528. It follows Settings > Network at once. */
+    for (int net = 1; net >= 0; net--) {
+        stub_zcash_network = (uint8_t)net;
+        send_plain(payload, req(payload, sizeof(payload), "getStatus"));
+        f = next_frame();
+        char text[8] = "";
+        CHECK(f.present && result_body(&f, &body, &body_len) &&
+              cbor_map_find(body, body_len, "network", &it) &&
+              cbor_text_copy(&it, text, sizeof text) &&
+              strcmp(text, net ? "test" : "main") == 0,
+              "getStatus reported network \"%s\" for a board on %s", text,
+              net ? "Testnet" : "Mainnet");
+    }
+    stub_zcash_network = 1;
 }
 
 /* ---------------------------------------------------------- the handshake */
@@ -1910,7 +1926,7 @@ static void expect_wrong_network(const char *board, const char *asked, uint8_t a
     }
     char want[160];
     snprintf(want, sizeof want,
-             "the board is set to %s; switch it to %s in Settings > Network, or use the %s app",
+             "the board is set to %s; switch it to %s in Settings > Network, or switch the app to %s",
              board, asked, board);
     CHECK(strcmp(text, want) == 0, "%s: message \"%s\"", what, text);
     CHECK(wrong_network_notices == 1 && wrong_network_asked == asked_net,

@@ -1,7 +1,7 @@
 [
   {
     "name": "ping",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a1666d6574686f646470696e67",
     "replyType": 2,
@@ -9,47 +9,39 @@
   },
   {
     "name": "getFeatures",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a1666d6574686f646b6765744665617475726573",
     "replyType": 2,
-    "reply": "a166726573756c74a46c626c696e645369676e696e670065636861696e657a63617368686669726d7761726565302e312e30656d6f64656c6d4c65656b57616c6c65742d5333"
-  },
-  {
-    "name": "getFeatures, blind signing on",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": true, "approve": true },
-    "frameType": 1,
-    "request": "a1666d6574686f646b6765744665617475726573",
-    "replyType": 2,
-    "reply": "a166726573756c74a46c626c696e645369676e696e670165636861696e657a63617368686669726d7761726565302e312e30656d6f64656c6d4c65656b57616c6c65742d5333"
+    "reply": "a166726573756c74a365636861696e657a63617368686669726d7761726565302e312e30656d6f64656c6d4c65656b57616c6c65742d5333"
   },
   {
     "name": "getStatus, no session",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a1666d6574686f6469676574537461747573",
     "replyType": 2,
-    "reply": "a166726573756c74a6676163636f756e74006c61637469766557616c6c6574016974656d706f72617279006a706173737068726173650068756e6c6f636b6564006b77616c6c6574436f756e7401"
+    "reply": "a166726573756c74a7676163636f756e74006c61637469766557616c6c657401676e6574776f726b64746573746974656d706f72617279006a706173737068726173650068756e6c6f636b6564006b77616c6c6574436f756e7401"
   },
   {
     "name": "getStatus in a session",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f6469676574537461747573",
     "replyType": 18,
-    "reply": "a166726573756c74a6676163636f756e74006c61637469766557616c6c6574016974656d706f72617279006a706173737068726173650068756e6c6f636b6564016b77616c6c6574436f756e7401"
+    "reply": "a166726573756c74a7676163636f756e74006c61637469766557616c6c657401676e6574776f726b64746573746974656d706f72617279006a706173737068726173650068756e6c6f636b6564016b77616c6c6574436f756e7401"
   },
   {
     "name": "plaintext getStatus in a session",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 1,
     "request": "a1666d6574686f6469676574537461747573",
     "replyType": 2,
-    "reply": "a166726573756c74a6676163636f756e74006c61637469766557616c6c6574016974656d706f72617279006a706173737068726173650068756e6c6f636b6564016b77616c6c6574436f756e7401"
+    "reply": "a166726573756c74a7676163636f756e74006c61637469766557616c6c657401676e6574776f726b64746573746974656d706f72617279006a706173737068726173650068756e6c6f636b6564016b77616c6c6574436f756e7401"
   },
   {
     "name": "unknown method, no session",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a1666d6574686f646b6765744d6e656d6f6e6963",
     "replyType": 127,
@@ -57,7 +49,7 @@
   },
   {
     "name": "unknown method in a session",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f646b6765744d6e656d6f6e6963",
     "replyType": 126,
@@ -65,7 +57,7 @@
   },
   {
     "name": "a request with no method",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a1696e6f746d6574686f6401",
     "replyType": 127,
@@ -73,7 +65,7 @@
   },
   {
     "name": "selectWallet with no session",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a2666d6574686f646c73656c65637457616c6c657465696e64657801",
     "replyType": 127,
@@ -81,7 +73,7 @@
   },
   {
     "name": "selectWallet while locked",
-    "setup": { "wallet": true, "unlocked": false, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": true, "approve": true },
     "frameType": 17,
     "request": "a2666d6574686f646c73656c65637457616c6c657465696e64657801",
     "replyType": 126,
@@ -89,7 +81,7 @@
   },
   {
     "name": "getAddress (removed)",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f646a67657441646472657373",
     "replyType": 126,
@@ -97,7 +89,7 @@
   },
   {
     "name": "signTransaction (removed)",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f646f7369676e5472616e73616374696f6e",
     "replyType": 126,
@@ -105,7 +97,7 @@
   },
   {
     "name": "unlock while locked",
-    "setup": { "wallet": true, "unlocked": false, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f6466756e6c6f636b",
     "replyType": 18,
@@ -113,7 +105,7 @@
   },
   {
     "name": "unlock while already unlocked",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f6466756e6c6f636b",
     "replyType": 18,
@@ -121,7 +113,7 @@
   },
   {
     "name": "unlock with no session",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a1666d6574686f6466756e6c6f636b",
     "replyType": 127,
@@ -129,7 +121,7 @@
   },
   {
     "name": "lock",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f64646c6f636b",
     "replyType": 18,
@@ -137,7 +129,7 @@
   },
   {
     "name": "lock with no session",
-    "setup": { "wallet": true, "unlocked": false, "session": false, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": false, "approve": true },
     "frameType": 1,
     "request": "a1666d6574686f64646c6f636b",
     "replyType": 127,
@@ -145,7 +137,7 @@
   },
   {
     "name": "selectWallet 1",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a2666d6574686f646c73656c65637457616c6c657465696e64657801",
     "replyType": 18,
@@ -153,7 +145,7 @@
   },
   {
     "name": "selectWallet with no index",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a1666d6574686f646c73656c65637457616c6c6574",
     "replyType": 126,
@@ -161,7 +153,7 @@
   },
   {
     "name": "selectWallet, no such wallet",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a2666d6574686f646c73656c65637457616c6c657465696e64657809",
     "replyType": 126,
@@ -169,7 +161,7 @@
   },
   {
     "name": "setPassphrase",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a2666d6574686f646d736574506173737068726173656a706173737068726173656768756e74657232",
     "replyType": 18,
@@ -177,7 +169,7 @@
   },
   {
     "name": "setPassphrase, empty",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a2666d6574686f646d736574506173737068726173656a7061737370687261736560",
     "replyType": 126,
@@ -185,7 +177,7 @@
   },
   {
     "name": "setPassphrase, not printable ASCII",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": true },
     "frameType": 17,
     "request": "a2666d6574686f646d736574506173737068726173656a7061737370687261736565636166c3a9",
     "replyType": 126,
@@ -193,7 +185,7 @@
   },
   {
     "name": "setPassphrase rejected on device",
-    "setup": { "wallet": true, "unlocked": true, "session": true, "blindSigning": false, "approve": false },
+    "setup": { "wallet": true, "unlocked": true, "session": true, "approve": false },
     "frameType": 17,
     "request": "a2666d6574686f646d736574506173737068726173656a706173737068726173656768756e74657232",
     "replyType": 126,
@@ -201,7 +193,7 @@
   },
   {
     "name": "setPassphrase while locked",
-    "setup": { "wallet": true, "unlocked": false, "session": true, "blindSigning": false, "approve": true },
+    "setup": { "wallet": true, "unlocked": false, "session": true, "approve": true },
     "frameType": 17,
     "request": "a2666d6574686f646d736574506173737068726173656a706173737068726173656768756e74657232",
     "replyType": 126,

@@ -14,7 +14,7 @@ import { encodeFrame, FrameDecoder, FrameType } from "../packages/core/src/frami
 import { MockDevice } from "../packages/core/src/mock-device.ts";
 import { DeviceError, ErrorCode, type Transport } from "../packages/core/src/transport.ts";
 import {
-  derivationsInvalidated, UNKNOWN_STATUS, type DeviceStatus,
+  derivationsInvalidated, parseStatus, UNKNOWN_STATUS, type DeviceStatus,
 } from "../packages/core/src/device-state.ts";
 import {
   availableTransports, invoker, listPorts, TauriSerialTransport, type HardwareKind,
@@ -518,21 +518,7 @@ let deviceFeatures: Record<string, CborValue> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 async function readStatus(): Promise<DeviceStatus> {
-  const s = await (client as Client).call("getStatus");
-  return {
-    unlocked: s["unlocked"] === 1,
-    walletCount: Number(s["walletCount"] ?? 0),
-    activeWallet: Number(s["activeWallet"] ?? 0),
-    /* Absent on firmware that predates the field, where it is also always
-     * false: temporary mode and this flag shipped together. */
-    temporary: s["temporary"] === 1,
-    passphrase: s["passphrase"] === 1,
-    /* Absent on firmware older than this field. Defaulting to 0 makes such a
-     * device look permanently parked on the default account, which is what it
-     * effectively is from the host's side: it never reports a change, so
-     * nothing is ever invalidated for a reason the app cannot see. */
-    account: Number(s["account"] ?? 0),
-  };
+  return parseStatus(await (client as Client).call("getStatus"));
 }
 
 /**
@@ -663,7 +649,7 @@ let zcashWallet: ZcashWallet | null = null;
  * is no longer) an unlocked wallet to show: unlock, a host-side passphrase,
  * a poll that saw the state move, and disconnect.
  *
- * This is the safety behaviour docs/UI-L5-SPEC.md §3 calls out by name: a
+ * This is a safety behaviour, named here: a
  * locked or disconnected device must never leave an address or a send form
  * on screen. Hiding #seczcash hides everything the wallet drew, and the
  * Zcash view forgets the account it read.
@@ -680,7 +666,7 @@ function setShellVisible(visible: boolean): void {
 }
 
 /**
- * The launcher (L1, docs/UI-SPEC-V2.md §1 and §2e).
+ * The launcher (L1).
  *
  * Two destinations, entered and left one at a time — "one thing per screen"
  * per §2e: connect a device, or flash its firmware. The home screen (above)
@@ -1298,7 +1284,7 @@ async function disconnect(): Promise<void> {
   ($("disconnect") as HTMLButtonElement).disabled = true;
   log("disconnected; session secrets cleared");
   // Symmetric with connectOnce()'s "the app moves itself to the wallet
-  // screen" (docs/UI-SPEC-V2.md §1c): losing the session moves it back to
+  // screen": losing the session moves it back to
   // the launcher, whether Disconnect was pressed directly or via the connect
   // destination's Back button (connectDestBack, above).
   goToLauncher();

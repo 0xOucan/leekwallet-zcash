@@ -193,6 +193,18 @@ pub fn get_uint(v: &Value, key: &str) -> Result<u64> {
     }
 }
 
+/// The network a `getStatus` result says the board is set to (Settings >
+/// Network): `Some("main")`, `Some("test")`, or `None` on firmware that
+/// predates the field. The board refuses z* requests for the other network
+/// with 0x0528; this is how a companion knows before it asks.
+pub fn board_network(status: &Value) -> Option<&'static str> {
+    match get(status, "network") {
+        Some(Value::Text(t)) if t == "main" => Some("main"),
+        Some(Value::Text(t)) if t == "test" => Some("test"),
+        _ => None,
+    }
+}
+
 /// `{result: …}` → the result, `{code, message}` → a DeviceError.
 fn decode_reply(frame_type: u8, body: &[u8]) -> Result<Value> {
     let v: Value = ciborium::de::from_reader(body).context("device reply is not CBOR")?;
@@ -405,6 +417,13 @@ impl Device {
             }
         }
         bail!("the device was not unlocked in time")
+    }
+
+    /// The network the board is set to, from `getStatus` (see
+    /// [`board_network`]).
+    pub fn network(&mut self) -> Result<Option<&'static str>> {
+        let s = self.call("getStatus", vec![], SHORT)?;
+        Ok(board_network(&s))
     }
 
     /// `zGetAccount`: UFVK, UA, t-address and ZIP 32 seed fingerprint.
@@ -667,6 +686,24 @@ mod tests {
         dev.z_get_account(0, "test").unwrap();
         assert!(is_code(&dev.z_get_account(0, "test").unwrap_err(), ERR_NO_WALLET));
         assert_eq!(asked.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn get_status_says_which_network_the_board_is_on() {
+        let status = |net: Option<&str>| {
+            let mut m = vec![(Value::Text("unlocked".into()), Value::Integer(1.into()))];
+            if let Some(n) = net {
+                m.push((Value::Text("network".into()), Value::Text(n.into())));
+            }
+            Value::Map(m)
+        };
+        let (mut dev, asked) = scripted(vec![Ok(status(Some("main"))), Ok(status(Some("test")))]);
+        assert_eq!(dev.network().unwrap(), Some("main"));
+        assert_eq!(dev.network().unwrap(), Some("test"));
+        assert_eq!(*asked.lock().unwrap(), ["getStatus", "getStatus"]);
+        // Older firmware, or a value the protocol does not define.
+        assert_eq!(board_network(&status(None)), None);
+        assert_eq!(board_network(&status(Some("regtest"))), None);
     }
 
     #[test]

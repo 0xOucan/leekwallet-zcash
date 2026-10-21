@@ -48,6 +48,11 @@ MUTANTS = [
     ("src/transport.c", "        protocol_set_rx_enabled(false);     /* USB endpoint stops answering */",
      "        protocol_set_rx_enabled(true);", "cable stays live under BLE"),
 
+    # The board's network in getStatus: a companion trusts it to say which
+    # network the board answers for before it asks.
+    ("src/protocol.c", 'cbor_write_text(&w, ui_zcash_network() == ZCASH_NET_MAIN ? "main" : "test");',
+     'cbor_write_text(&w, "test");', "getStatus reports Testnet whatever the board is set to"),
+
     # Job 1: a reply must match the frame type of the request that caused it.
     # Each of these is the old, state-driven behaviour, or its mirror.
     ("src/protocol.c",
