@@ -1768,8 +1768,13 @@ function renderSwaps(): void {
         li.append(el("div", "swap__line", `Pay ${s.amountInFormatted} ${assetName(s.origin)} to the deposit address below, from your wallet on ${chainName(s.origin.blockchain)}.`));
       }
       const d = s.details;
-      if (d?.refundedAmountFormatted) {
+      /* 1Click reports refundedAmountFormatted as "0" on every swap, refunded
+       * or not: a non-empty string is not a refund. Only an amount above zero
+       * is; until the swap ends, say where a refund would go. */
+      if (d?.refundedAmountFormatted && Number(d.refundedAmountFormatted) > 0) {
         li.append(el("div", "swap__line", `Refunded ${d.refundedAmountFormatted} ${s.origin.symbol} to ${chunk(s.refundTo)}${d.refundReason ? ` (${d.refundReason})` : ""}`));
+      } else if (s.refundTo && !FINAL_SWAP.includes(s.state)) {
+        li.append(el("div", "swap__line", `A refund, if any, would go to ${chunk(s.refundTo)}`));
       }
       if (s.depositAddress) li.append(copyLine("", "Deposit", s.depositAddress, "Copy the deposit address (look it up on " + (swapInfo?.explorer ?? "explorer.near-intents.org") + ")"));
       if (s.depositTxid) li.append(copyLine("", "Deposit tx", s.depositTxid, "Copy the deposit transaction id"));
