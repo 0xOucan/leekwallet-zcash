@@ -19,7 +19,7 @@ serialport = { version = "4", optional = true }
 # because an unrooted app cannot open /dev/ttyACM* and the USB Host API that
 # can is on the JVM side — see `src/android.rs` for the full reasoning.
 tauri = { version = "2", optional = true }
-tauri-plugin-serialplugin = { version = "3.0.2", optional = true }
+tauri-plugin-serialplugin = { version = "3.0.9", optional = true }
 
 [features]
 default = ["serialport"]

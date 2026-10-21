@@ -87,7 +87,9 @@ pub async fn ports(app: tauri::AppHandle) -> Result<Vec<Port>, String> {
     use leek_transport_serial::TransportError;
 
     let serial = plugin_state(&app)?;
-    let found = blocking(move || list_ports(&serial)).await?.map_err(|e| e.to_string())?;
+    let found = blocking(move || list_ports(&serial))
+        .await?
+        .map_err(|e| with_logcat("listing USB devices", e.to_string()))?;
     if found.is_empty() {
         return Err(TransportError::NoDevice.to_string());
     }
@@ -118,7 +120,7 @@ pub async fn connect(
     let serial = plugin_state(&app)?;
     let transport = blocking(move || UsbTransport::open(serial, &path))
         .await?
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| with_logcat("opening the USB device", e.to_string()))?;
     *state.0.lock().await = Some(transport);
     Ok(())
 }
@@ -205,7 +207,22 @@ pub async fn request(
     // dialog on some phones — for a failure the user is about to be told how
     // to fix.
     *guard = Some(transport);
-    result.map_err(|e| e.to_string())
+    result.map_err(|e| match e {
+        // Silence has its own advice (main.ts, the board's Link setting).
+        leek_transport_serial::TransportError::Timeout => e.to_string(),
+        other => with_logcat("a USB request", other.to_string()),
+    })
+}
+
+/// The logcat tags that show what Android's USB stack did, for a bug report.
+#[cfg(target_os = "android")]
+pub const LOGCAT: &str = "adb logcat -s RustStdoutStderr SerialPlugin UsbFdBridge AndroidRuntime";
+
+/// A USB failure, logged for logcat and returned with the tags to read.
+#[cfg(target_os = "android")]
+fn with_logcat(what: &str, e: String) -> String {
+    eprintln!("leek-usb: {what} failed: {e}");
+    format!("{e}\n(For a bug report: {LOGCAT})")
 }
 
 /// The plugin's own state, which is where its Android USB handle lives.
@@ -231,7 +248,37 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| format!("USB worker failed: {e}"))
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| {
+        eprintln!("leek-usb: the USB worker stopped unexpectedly: {e}");
+        format!("USB: the worker stopped unexpectedly ({e}). For a bug report: {LOGCAT}")
+    })
+}
+
+/// Close the USB link if one is open: the lifecycle's release (link.rs).
+/// True when there was one. Bounded by the lock: a request waiting on the
+/// board keeps its link.
+#[cfg(target_os = "android")]
+pub async fn release(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    let state = app.state::<Connection>();
+    let taken = match tokio::time::timeout(std::time::Duration::from_secs(3), state.0.lock()).await {
+        Ok(mut guard) => guard.take(),
+        Err(_) => return false,
+    };
+    match taken {
+        Some(transport) => {
+            // Off the UI thread: closing crosses into the JVM to release the fd.
+            let _ = blocking(move || drop(transport)).await;
+            true
+        }
+        None => false,
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+pub async fn release(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    let state = app.state::<Connection>();
+    let taken = state.0.try_lock().ok().and_then(|mut g| g.take());
+    taken.is_some()
 }
