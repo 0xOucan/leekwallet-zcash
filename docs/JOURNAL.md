@@ -1546,4 +1546,15 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   and reads again (`src/network-guard.ts`). When `getStatus` carries
   `network` (the firmware agent is adding it) the app follows the board
   on connect and when it changes; without the field nothing changes.
-- Tests: see the commit; NEAR swaps are not part of this (6.6).
+- Tests: `pnpm typecheck` clean; `pnpm test` passes (new groups: the
+  activity labels, the wrong-network notice and switch, the link events,
+  the scanner's settings and image work); `pnpm test:zdev` passes (new:
+  the one-tap switch after zdev's 0x0528 on both networks; getStatus
+  `network` checked when present); `cargo test --lib` 21 passed, 1
+  ignored (new: the background-release timing); transport-ble 17 passed
+  (new: the not-advertising message); `cargo check --target
+  aarch64-linux-android` clean.
+- Release arm64 APK: 25.1 MB (25,065,056 bytes).
+- Left, on the tablet: USB with logcat, Reconnect after Back and after
+  30 s in the background, a unified address QR from the board's screen
+  with the brightness lowered. NEAR swaps are not part of this (6.6).
