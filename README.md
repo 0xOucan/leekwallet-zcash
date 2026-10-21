@@ -50,7 +50,7 @@ outputs.
 | **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
 | **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, sync, balances, receive. Pairs with the board over Web Serial and Web Bluetooth, imports its account, verifies addresses on it, sends and shields signed on it. On the real board (Brave): sends signed over USB on testnet and mainnet, Bluetooth paired with addresses confirmed; the board's wallet is hidden unless that board is connected. Software wallets next ([chrome/README.md](chrome/README.md)) |
 | **Mainnet** | Ready: mainnet vectors and tests, servers of the wrong chain refused, one birthday per network on the board, which refuses any request for the other network than its own setting, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation; the board has signed mainnet sends and a shield, from `zecz` and from the Chrome extension. Testnet stays the default. Checklist: [MAINNET.md](docs/zcash/MAINNET.md) |
-| **NEAR Intents** | In the desktop app: swaps from and into ZEC through 1Click, with the ZEC deposit signed on the board, status tracking and fresh shielded refund addresses (mainnet only). Tested against recorded answers and dry quotes; the first real swap is next |
+| **NEAR Intents** | In the desktop app: swaps from and into ZEC through 1Click, with the ZEC deposit signed on the board, status tracking and fresh shielded refund addresses (mainnet only). First mainnet swap done: ZEC → USDC on Base, the deposit signed on the board over Bluetooth, paid out in about 10 minutes |
 
 ## What works
 
@@ -177,7 +177,8 @@ The full plan, with a "done when" check for each step, is in
 - [x] The board refuses requests for the other network (10.3)
 - [x] Zcash in the LeekWallet Companion, desktop and Android build (6.14), on the real board next
 - [x] The Companion is Zcash only: its EVM code, WalletConnect and the EVM extension removed
-- [ ] A first real swap; NEAR Intents on Android and Chrome
+- [x] The first mainnet NEAR swap, ZEC → USDC on Base, signed on the board (8.6)
+- [ ] NEAR Intents on Android and Chrome
 - [ ] A proper account type in the Android app and an offer to Zodl upstream
 - [ ] Releases and the hackathon submission
 

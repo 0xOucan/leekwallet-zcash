@@ -1491,3 +1491,21 @@ in two tabs. Branch `companion-auto-ux`.
   WebAssembly, compressed).
 - Left, on the phone: the camera prompt and a real scan; Reconnect over
   Bluetooth by id; sync pausing in the background.
+
+### 8.6 The first mainnet NEAR Intents swap (2026-10-20)
+- From the desktop app on mainnet, the board over Bluetooth: ZEC → USDC on
+  Base, 0.00135 ZEC (just above 1Click's minimum), slippage 1%, no API key
+  (1Click's 0.25% fee). Quoted about 1.7026 USDC; paid out 1.704349 USDC.
+- The deposit address was transparent (t1…), as expected: the deposit and
+  its amount are public on the Zcash chain; the refund address was a fresh
+  shielded one of the wallet. Fee 0.00015 ZEC.
+- Timing: quote at 02:46 UTC, the deposit mined about 4 minutes later,
+  1Click stayed at PENDING_DEPOSIT for a few more confirmations, SUCCESS at
+  02:56 UTC: about 10 minutes end to end.
+- The board showed the deposit address, the amount and Mainnet; the user
+  checked the payout on Base's explorer. Txids and addresses kept out of
+  the repo.
+- Fixed: the swap card said "Refunded 0 ZEC to …" while the swap was
+  pending: 1Click sends refundedAmountFormatted "0" on every swap. Now only
+  an amount above zero is a refund; an open swap says where a refund would
+  go.
