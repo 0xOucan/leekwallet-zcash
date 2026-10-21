@@ -267,7 +267,8 @@ panel drops it. Reconnecting over Bluetooth goes to that id
 then the id directly; a board found neither way is reported as "The board
 is not advertising: it may still be connected to this or another app.
 Restart the board or wait ~30 s", plus that a button press on the board
-makes it advertise again (it stops two minutes after a disconnect).
+makes it advertise quickly again (after a disconnect it advertises every
+100 ms for two minutes, then every 1.28 s until a connection).
 
 **The link is closed when nobody uses it** (`src-tauri/src/link.rs`,
 `src/link-events.ts`): the board serves one peer and does not advertise

@@ -382,9 +382,11 @@ from the code (no logcat was taken):
 - **Reconnect after closing the app.** Two causes, both addressed:
   the app (Back, or swiped away while Android kept the process) left the
   Bluetooth link open, and the board does not advertise while a peer is
-  connected; and the board's advertising window closes two minutes after
+  connected; and the board's advertising window closed two minutes after
   a disconnect (firmware `BLE_ADV_WINDOW_MS`), after which only a button
-  press re-opens it. The app now closes the link after 30 s in the
+  press re-opened it. The firmware now drops to slow advertising (every
+  1.28 s, no end) when the window closes, and a press brings back the fast
+  window. The app now closes the link after 30 s in the
   background, on exit, and at start when the process still holds one
   (`src-tauri/src/link.rs`); Reconnect scans 4 s, tries the remembered id
   directly, and otherwise says the board is not advertising and what to

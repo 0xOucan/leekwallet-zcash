@@ -310,7 +310,22 @@ static const struct ble_gatt_svc_def gatt_services[] = {
 
 static int on_gap_event(struct ble_gap_event *event, void *arg);
 
+/* After the fast window: slow advertising, every 1.28 s and with no end. A
+ * board that went quiet after two minutes could not be found again by a
+ * companion that remembered it (the Android app's Reconnect failed until the
+ * board was restarted or a button pressed); one advert a second keeps it
+ * findable at a fraction of the fast window's radio time. */
+static bool adv_slow;
+
+static void ble_advertise_mode(bool slow);
+
+/* Every caller but the end of the fast window wants the fast window. */
 static void ble_advertise(void)
+{
+    ble_advertise_mode(false);
+}
+
+static void ble_advertise_mode(bool slow)
 {
     struct ble_hs_adv_fields fields;
     struct ble_gap_adv_params adv_params;
@@ -363,18 +378,23 @@ static void ble_advertise(void)
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-    adv_params.itvl_min = 160;   /* 100 ms */
-    adv_params.itvl_max = 160;
+    adv_slow = slow;
+    adv_params.itvl_min = adv_slow ? 2048 : 160;   /* 1.28 s : 100 ms */
+    adv_params.itvl_max = adv_params.itvl_min;
 
-    rc = ble_gap_adv_start(addr_type, NULL, BLE_ADV_WINDOW_MS, &adv_params,
-                           on_gap_event, NULL);
+    rc = ble_gap_adv_start(addr_type, NULL, adv_slow ? BLE_HS_FOREVER : BLE_ADV_WINDOW_MS,
+                           &adv_params, on_gap_event, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "adv_start failed: %d", rc);
         advertising = false;
         return;
     }
     advertising = true;
-    ESP_LOGI(TAG, "Advertising for %d s", BLE_ADV_WINDOW_MS / 1000);
+    if (adv_slow) {
+        ESP_LOGI(TAG, "Advertising slowly until a connection or a button press");
+    } else {
+        ESP_LOGI(TAG, "Advertising for %d s", BLE_ADV_WINDOW_MS / 1000);
+    }
 }
 
 static int on_gap_event(struct ble_gap_event *event, void *arg)
@@ -409,11 +429,14 @@ static int on_gap_event(struct ble_gap_event *event, void *arg)
             return 0;
 
         case BLE_GAP_EVENT_ADV_COMPLETE:
-            /* The window closed with nobody connecting. Not an error and not a
-             * fault: it is the whole point. The transport stays enabled, so a
-             * press re-opens it without a reboot or a menu. */
+            /* The fast window closed with nobody connecting. Not an error:
+             * drop to slow advertising rather than going silent, so a
+             * remembered companion can still reconnect. A press brings back
+             * the fast window. */
             advertising = false;
-            ESP_LOGI(TAG, "Advertising window closed; press a button to advertise again");
+            if (running && !adv_slow) {
+                ble_advertise_mode(true);
+            }
             return 0;
 
         case BLE_GAP_EVENT_DISCONNECT:
@@ -582,14 +605,19 @@ void ble_transport_refresh_name(void)
  *
  * Safe to call at any time and does nothing unless it is needed: not while a
  * peer is connected (there is nothing to advertise for, and NimBLE would
- * refuse), not while already advertising, and not while the transport is
- * stopped. That means a caller may wire it to "any button press" without
+ * refuse), not while the fast window is already open (slow advertising
+ * gives way to it), and not while the transport is stopped. That means a caller may wire it to "any button press" without
  * knowing the radio's state, which is what ui.c does.
  */
 void ble_transport_advertise_again(void)
 {
-    if (!running || advertising || conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+    if (!running || (advertising && !adv_slow) || conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         return;
+    }
+    if (advertising) {
+        /* Slow advertising runs forever; stop it to start the fast window. */
+        ble_gap_adv_stop();
+        advertising = false;
     }
     ESP_LOGI(TAG, "Advertising window re-opened by a button press");
     ble_advertise();
