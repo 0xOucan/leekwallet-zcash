@@ -269,12 +269,18 @@ One codebase for both: our app is the Zodl fork with our branding. The hardware 
 **6.12 Release (S).**
 - A signed mainnet APK (our keystore), reproducible-build notes, and a GitHub release.
 - F-Droid later, since the FOSS flavor exists.
+- The board's firmware goes in a GitHub release of `0xOucan/leekwallet-zcash` too, because the Companion's flasher reads that repository's releases. Built with `firmware/scripts/release.sh <tag> esp32s3cam`, the release must carry:
+  - `leekwallet-s3cam-<version>-update.bin`: the application, written at `0x10000`, keeps the wallet;
+  - `leekwallet-s3cam-<version>-provision.bin`: bootloader, partition table and app merged, written at `0x0`, erases every wallet (new boards only);
+  - `SHA256SUMS` in `sha256sum` format, which the flasher checks each download against, and `SHA256SUMS.asc` signed by hand;
+  - the separate `firmware.bin`, `bootloader.bin`, `partitions.bin` and `BUILDINFO`, for anyone rebuilding the tag to compare.
+- A release without a `-update.bin` or `-provision.bin` naming a board (`s3cam`) is not offered by the flasher, which says what is missing and points to building the image by hand. Details: `firmware/app/README.md`, "Firmware releases".
 
 **6.13 Staying current with Zodl (ongoing).**
 - Rebase `leekwallet` on each Zodl release.
 - The diff outside `feature-leekwallet` stays small on purpose.
 
-**6.14 Zcash in the LeekWallet Companion (M).** The Companion (firmware/app, Tauri: Linux, macOS, Windows, Android as `com.leekwallet.companion`) gains a Zcash section beside its EVM screens, one app for both networks with their data kept apart (unlike the Zodl fork, two apps).
+**6.14 Zcash in the LeekWallet Companion (M).** The Companion (firmware/app, Tauri: Linux, macOS, Windows, Android), shown as "Zcash LeekWallet" with the application id `io.leekwallet.zcash.companion`, is a Zcash-only app (its EVM screens were removed): one app for both networks with their data kept apart (unlike the Zodl fork, two apps).
 - Board tools, over the Companion's own session (`packages/core/src/zcash.ts`): network switch (testnet default, mainnet behind a warning), the board's account (UFVK, UA, t-address, fingerprint, birthday per network), QR and copy, verify on the board, set the birthday, and signing a `.pczt` file into a `.zsig`. Board errors shown verbatim.
 - The wallet, over zecz linked into src-tauri with the desktop app's modules compiled in: import from the board, sync, balance and pools, rotating addresses, send with memo and review, shield prompt, history, contacts, server per network. Screens after Zodl's.
 - Done when: on desktop and on the phone, a testnet wallet imported from the board syncs, receives, and sends and shields signed on the board; the same on mainnet with a small amount; `pnpm test`, `pnpm test:zdev` and `cargo test` pass.
@@ -396,7 +402,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 - **MV3.** The service worker only routes.
 - **Device and long-running work in an offscreen document,** LeekWallet's proven pattern: a service worker has no `navigator.serial` and is evicted.
 - **Device protocol:** the TypeScript `session.ts` and `framing.ts` from LeekWallet's `app/packages/core`, checked against the firmware's conformance vectors. Or `leek-device` compiled to WASM, decided in 9.1.
-- **Transports:** Web Serial for USB, Web Bluetooth for BLE (from an extension page; it needs a user gesture), and a popup QR page.
+- **Transports:** Web Serial for USB, Web Bluetooth for BLE (from an extension page; it needs a user gesture). No QR flows (dropped, see 9.3).
 - **Wallet engine:** our librustzcash rev in WASM, with threads, in a dedicated worker started by the offscreen document (9.1).
 
 **9.1 Engine spike (M, the largest risk). Done (2026-10-16): see [CHROME-ENGINE.md](CHROME-ENGINE.md).**
@@ -416,7 +422,8 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 - Done when: a testnet send from a software wallet, broadcast from the extension.
 
 **9.3 The board (M).**
-- Pair and sign over Web Serial and Web Bluetooth, and QR through the webcam.
+- Pair and sign over Web Serial and Web Bluetooth.
+- ~~QR through the webcam~~: dropped (user decision, 2026-10-20). The extension talks to the board over USB and Bluetooth only, with no QR flows.
 - Done when: a testnet send signed by the board from the extension.
 - **USB in the extension: done on the board (2026-10-17); Bluetooth done on PC, not yet on the board.** In Brave 152 over USB, the board paired, its account imported and synced on testnet and on mainnet, it confirmed the mainnet address, and it signed a mainnet send that the extension proved and broadcast.
   - `chrome/extension/src/board/`: the protocol in plain ES modules (framing, CBOR, the v2 session with WebCrypto X25519/HKDF and vendored ChaCha20-Poly1305, every `z*` call, the `.zsig` writer), a twin of `leek-device`.
@@ -424,7 +431,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
   - Tested against zdev: Node over the USB framing and a fake GATT server at MTU 23, and from an extension page in headless Chromium with the real engine.
   - Testnet and mainnet sends signed on the board over USB in Brave 152 (the user's run).
   - **Board data hidden without the board (2026-10-17).** A device account is shown only while a board whose seed fingerprint matches it is connected (read with `zGetAccount` on connect); otherwise the popup shows the board section and "Connect your LeekWallet board to see this wallet." The data stays on OPFS and keeps syncing. Another board sees none of it and is offered its own import. "Forget this board" (confirmed) deletes the account through the engine's new `deleteAccount`. Also: the Bluetooth button opens the tab whatever the popup sees, and the tab says which flag enables Web Bluetooth (Brave's own, and on Linux Experimental Web Platform features); a USB timeout says to check the board is unlocked and its Link set to USB, and "Switch to Bluetooth" ends the USB session; an unmined send to self shows the fee, not -0.
-  - Left: the same over Bluetooth on the board; QR through the webcam; accounts other than 0.
+  - Left: the same over Bluetooth on the board; accounts other than 0.
 
 **9.4 Dapp interface (M).**
 - Zcash has no EIP-1193. Offer `window.zcash`: connect, accounts, `sendTransaction(zip321)`, `signPczt`.
@@ -486,7 +493,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
   - A script that flashes the board, pairs, imports and signs the vector PCZTs over USB and BLE, and checks the signatures.
   - The serial-relay log capture (`serial_tap.py`) made a tool.
 - **11.3 End-to-end matrix (ongoing).**
-  - Links (USB, BLE, QR, SD) times companions (CLI, Android, desktop, Chrome), each a testnet send checked on an explorer.
+  - Links (USB, BLE, QR, SD) times companions (CLI, Android, desktop, Chrome), each a testnet send checked on an explorer (Chrome: USB and Bluetooth only).
   - Results kept in `docs/JOURNAL.md`.
 - **11.4 Testnet funds (S).** A faucet routine and a funded test account per companion; a small mainnet budget for 6.6, 8.6 and 10.3.
 
