@@ -13,7 +13,19 @@
 | [../firmware/docs/PROTOCOL.md](../firmware/docs/PROTOCOL.md) | The device protocol: pairing, session, every call |
 | [../firmware/docs/WIRING-S3CAM.md](../firmware/docs/WIRING-S3CAM.md) | Wiring the board, screen, encoder and buttons |
 
-Component READMEs: [host](../host/README.md), [desktop](../desktop/README.md),
-[chrome](../chrome/README.md), [vectors](../vectors/README.md),
-[firmware](../firmware/README.md), [firmware/sim](../firmware/sim/README.md),
-and the [Android app](https://github.com/0xOucan/leekwallet-zcash-android).
+## Product READMEs
+
+The products and what each one is: [Ecosystem](../README.md#ecosystem) in
+the top README.
+
+| Product | README |
+|---|---|
+| Board firmware (`firmware/`, upstream LeekWallet's README with a Zcash note) | [firmware/README.md](../firmware/README.md) |
+| Zcash LeekWallet app (`firmware/app/`, desktop and Android) | [firmware/app/README.md](../firmware/app/README.md), Android build: [ANDROID.md](../firmware/app/ANDROID.md) |
+| Zcash desktop app (`desktop/`, NEAR Intents swaps) | [desktop/README.md](../desktop/README.md) |
+| Chrome extension (`chrome/`) | [chrome/README.md](../chrome/README.md) |
+| LeekWallet Zcash for Android (Zodl fork, own repo) | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android#readme) |
+| `zecz` CLI | [host/zecz-cli/README.md](../host/zecz-cli/README.md) |
+| Host crates | [host/README.md](../host/README.md): [zecz-core](../host/zecz-core/README.md), [leek-device](../host/leek-device/README.md), [leek-android](../host/leek-android/README.md) |
+| Simulator and firmware tests (zdev) | [firmware/sim/README.md](../firmware/sim/README.md) |
+| Test vectors | [vectors/README.md](../vectors/README.md) |

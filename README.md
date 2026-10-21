@@ -39,18 +39,51 @@ outputs.
 - Pairing is an encrypted session (X25519, HKDF, ChaCha20-Poly1305) confirmed by
   a six-digit passkey on both screens ([PROTOCOL.md](firmware/docs/PROTOCOL.md)).
 
+## Ecosystem
+
+Every product here is Zcash only: no Ethereum or other EVM code in the
+firmware or in any app. All of it is our work. The firmware and the Zcash
+LeekWallet app started as forks of [LeekWallet](firmware/README.md); the
+Android app is a fork of [Zodl](https://github.com/zodl-inc/zodl-android)
+and lives in its own repository, under Zodl's MIT license. Everything in
+this repository is Apache-2.0.
+
+| Product | What it is | Platforms | Networks | Status | README |
+|---|---|---|---|---|---|
+| **Board firmware** (`firmware/`) | The signer. It holds the seed, checks each PCZT against its own keys, shows it, and signs. Forked from LeekWallet (an ESP32 Ethereum wallet) with its history, now Zcash only | ESP32-S3 board | Mainnet or Testnet, a setting on the board; it refuses requests for the other one | Done, tested on the board: shielded and transparent spends over USB, Bluetooth, QR and SD; compact PCZT; address check; first mainnet send and shield | [firmware](firmware/README.md) (upstream's README, with a Zcash note on top) |
+| **Zcash LeekWallet** (`firmware/app/`) | Our companion app, id `io.leekwallet.zcash.companion`, built from LeekWallet's Companion with its EVM side removed. A full wallet: connects and sets up by itself, syncs, receives, sends and shields signed on the board | Linux, Windows, macOS, Android (Tauri 2) | Mainnet and Testnet in one app | On the real board and an Android tablet over Bluetooth: connects and sets up by itself, testnet send, mainnet balance, rotating addresses verified on the board, passphrase wallet, QR scan for paying. USB on Android is being fixed | [firmware/app](firmware/app/README.md) |
+| **Zcash desktop app** (`desktop/`) | The desktop wallet on `zecz-core`, with swaps from and into ZEC through NEAR Intents (1Click) | Linux, Windows, macOS (Tauri 2; built in CI) | Testnet/Mainnet switch; swaps on mainnet only | Tested on the board: import, verify, send, shield. First mainnet swap done: ZEC → USDC on Base, the deposit signed on the board over Bluetooth, paid out in about 10 minutes | [desktop](desktop/README.md) |
+| **Chrome extension** (`chrome/`) | A Zcash wallet in the browser: librustzcash in WebAssembly, the wallet on OPFS, gRPC-web sync; the board over Web Serial and Web Bluetooth | Chromium browsers (tested in Brave) | Mainnet and Testnet | On the board: sends signed over USB on testnet and mainnet, Bluetooth pairing and address check. Software wallets next | [chrome](chrome/README.md) |
+| **LeekWallet Zcash for Android** ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`) | Our fork of Zodl (MIT). Two apps that install side by side: **LeekWallet Zcash** (mainnet) and **LeekWallet Zcash (testnet)**. Everything Zodl does, plus an account whose keys stay on the board, signed over USB, Bluetooth or QR | Android | One app per network | Tested on testnet: import, send, shield, "Verify on device". Mainnet: connects, shows the balance and verifies addresses on the board; it refuses a board set to the other network | [in its repo](https://github.com/0xOucan/leekwallet-zcash-android#readme) |
+| **`zecz` CLI** (`host/zecz-cli`) | Our command-line wallet: pair, import, sync, build a PCZT, sign on the board, prove, broadcast; `.zkv` SD seed cards | A computer with Rust (used on Linux) | Testnet (default) and Mainnet, one data directory per network | Full flow on testnet; mainnet sends and a shield signed on the board | [host/zecz-cli](host/zecz-cli/README.md) |
+| **Libraries** (`host/`) | `zecz-core`, the wallet engine behind `zecz` and both Tauri apps; `leek-device`, the board's client and the `.zsig` format; `leek-android`, the JNI library the Android fork loads | Rust | Both | In use by every companion above | [zecz-core](host/zecz-core/README.md), [leek-device](host/leek-device/README.md), [leek-android](host/leek-android/README.md) |
+| **zdev** (`firmware/sim`) | A simulated board: the firmware's own protocol, signers and review code on a PTY, so companions can be tested without hardware. Development only | Linux | Both (`--network`) | Used by the host, app and Chrome tests | [firmware/sim](firmware/sim/README.md) |
+| **Test vectors** (`vectors/`) | Keys, PCZTs (valid and refused), a `.zsig` and a `.zkv`, generated from librustzcash and shared by every implementation | | Both | | [vectors](vectors/README.md) |
+
+**One app soon.** The Zcash LeekWallet app will absorb the desktop app
+(`desktop/`, with its NEAR swaps), so there is a single app for desktop and
+Android. The merged app will move to a top-level folder.
+
+**`zecz` is ours, not an official Zcash tool.** It is built on `zecz-core`,
+our engine, which uses librustzcash (the official Zcash Rust libraries) for
+keys, sync, PCZTs, proving and the wallet database. The official tools are
+full nodes and their wallets: zcashd (retired), zebrad (a full node, with no
+wallet) and Zallet (the full-node wallet that replaces zcashd's, in beta).
+None of them knows the board. `zecz` is a light wallet: it syncs from a lightwalletd server, holds
+only the board's viewing key, and hands each transaction to the board to
+sign.
+
 ## Status
 
-| Component | State |
-|---|---|
-| **Board + firmware** | Done and tested on real hardware: signs shielded and transparent spends (shielding) over USB, Bluetooth, QR and SD; compact PCZT; verifies any of its addresses |
-| **Android app** ([repo](https://github.com/0xOucan/leekwallet-zcash-android)) | Imports the board's account; sends and shielding signed over USB, Bluetooth and QR; "Verify on device" on the Receive screen; a mainnet app and a testnet app side by side |
-| **LeekWallet Zcash Companion** (`firmware/app/`) | LeekWallet's own app (Tauri: desktop and Android), shown as "Zcash LeekWallet" (`io.leekwallet.zcash.companion`), now Zcash only (its EVM side was removed): one app for mainnet and testnet, board tools (account, verify, sign a `.pczt` file) and a full wallet with Zodl-like screens, signed on the board. Tested against the simulated board; the real board and phone are next |
-| **`zecz` CLI** | Full flow on testnet: pair, import, sync, send (compact), sign on the board, prove, broadcast; `.zkv` SD cards |
-| **Desktop app** (`desktop/`) | Pairs with the board over USB and Bluetooth, imports its account, syncs, verifies addresses on the board, sends and shields signed on the board (tested on the board); receive QR with rotating addresses, history, contacts. Builds on Linux, Windows and macOS in CI |
-| **Chrome extension** (`chrome/`) | Engine done: librustzcash in WebAssembly in an extension worker, wallet stored on OPFS (survives restarts), gRPC-web sync, the whole send path in its API; a popup with network switch, sync, balances, receive. Pairs with the board over Web Serial and Web Bluetooth, imports its account, verifies addresses on it, sends and shields signed on it. On the real board (Brave): sends signed over USB on testnet and mainnet, Bluetooth paired with addresses confirmed; the board's wallet is hidden unless that board is connected. Software wallets next ([chrome/README.md](chrome/README.md)) |
-| **Mainnet** | Ready: mainnet vectors and tests, servers of the wrong chain refused, one birthday per network on the board, which refuses any request for the other network than its own setting, a Testnet/Mainnet switch in the desktop app with a real-funds confirmation; the board has signed mainnet sends and a shield, from `zecz` and from the Chrome extension. Testnet stays the default. Checklist: [MAINNET.md](docs/zcash/MAINNET.md) |
-| **NEAR Intents** | In the desktop app: swaps from and into ZEC through 1Click, with the ZEC deposit signed on the board, status tracking and fresh shielded refund addresses (mainnet only). First mainnet swap done: ZEC → USDC on Base, the deposit signed on the board over Bluetooth, paid out in about 10 minutes |
+- **Mainnet: ready.** Mainnet vectors and tests, servers of the wrong chain
+  refused, one birthday per network on the board, which refuses any request
+  for the other network than its own setting, and a Testnet/Mainnet switch
+  in the desktop app with a real-funds confirmation. The board has signed
+  mainnet sends and a shield, from `zecz` and from the Chrome extension.
+  Testnet stays the default. Checklist: [MAINNET.md](docs/zcash/MAINNET.md).
+- **NEAR Intents**, in the desktop app: swaps from and into ZEC through
+  1Click, the ZEC deposit signed on the board, status tracking and fresh
+  shielded refund addresses (mainnet only).
 
 ## What works
 
@@ -62,7 +95,7 @@ outputs.
 | Links | USB serial and Bluetooth LE for everyday signing; animated QR (UR fountain codes, the board's camera) and the SD card when the board must stay off every link |
 | Screen | 128×128 SH1107 OLED, EC11 rotary encoder + buttons; receive address as text and QR |
 | Address check | The app sends the address it displays, even a rotated diversified one; the board proves it is its own (Orchard `pk_d = [ivk]·g_d`, index recovered by FF1 decryption, transparent receiver checked at that index) and only then shows it to confirm. Foreign or mixed addresses are refused |
-| Companions | `zecz` CLI (PC), LeekWallet Zcash for Android (a [Zodl](https://github.com/zodl-inc/zodl-android) fork: one mainnet app, one testnet app), the desktop app, the Chrome extension, and the LeekWallet Zcash Companion (desktop and Android, both networks in one app) |
+| Companions | See [Ecosystem](#ecosystem) |
 
 Testnet transactions signed on the board include
 `1daaff6366fccbd6ea50f137a975a5013b2632083446b5220205ad16057b1ef0` (the first,
@@ -96,9 +129,10 @@ Everything runs at 3.3 V.
 | Path | What |
 |---|---|
 | `firmware/` | Device firmware (ESP-IDF 5.5 via PlatformIO), forked from LeekWallet with its history. Zcash code in `src/zcash-*.c`, the C signer in `components/zsign-c`, the Rust signer in `components/zsign-rust` |
+| `firmware/app/` | The Zcash LeekWallet app (Tauri 2: desktop and Android) |
 | `firmware/sim/` | Host simulator and tests: the firmware's C code built for Linux with fakes for the hardware; `zdev`, a simulated device on a PTY |
-| `host/` | Rust crates ([README](host/README.md)): `zecz-core` (the wallet engine), `zecz-cli` (`zecz`), `leek-device` (the board's client and `.zsig`), `leek-android` (JNI library for the app) |
-| `desktop/` | LeekWallet Zcash desktop app (Tauri 2) on `zecz-core`, for Linux, Windows and macOS |
+| `host/` | Rust crates ([README](host/README.md)): [`zecz-core`](host/zecz-core/README.md), [`zecz-cli`](host/zecz-cli/README.md), [`leek-device`](host/leek-device/README.md), [`leek-android`](host/leek-android/README.md) |
+| `desktop/` | The Zcash desktop app (Tauri 2) on `zecz-core`, with NEAR Intents swaps |
 | `chrome/` | The Chrome extension: `engine/` (Rust → WebAssembly), `extension/` (MV3), `engine-spike/` (the 9.1 study) |
 | `.github/workflows/` | CI: host tests, desktop builds on the three systems, the Chrome engine and extension |
 | `vectors/` | Key and PCZT test vectors (valid, compact, mainnet, transparent, refused) and their generators ([README](vectors/README.md)) |
@@ -112,7 +146,10 @@ which is ignored here.
 
 ## Build and test
 
-Toolchain details: [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md).
+Toolchain details: [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md). The Zcash
+LeekWallet app builds as its [README](firmware/app/README.md) says; the
+Android fork builds as [its README](https://github.com/0xOucan/leekwallet-zcash-android#readme)
+says.
 
 **Firmware** (PlatformIO):
 
@@ -150,6 +187,8 @@ $Z send --to <address> --amount 0.001 --zec --memo "hi" --compact --out tx.pczt
 $Z sign-device --port /dev/ttyACM0 --in tx.pczt --out tx.zsig   # review on the board
 $Z finish --pczt tx.pczt --sigs tx.zsig      # prove, apply signatures, broadcast
 ```
+
+Every command: [host/zecz-cli/README.md](host/zecz-cli/README.md).
 
 ## Roadmap
 
