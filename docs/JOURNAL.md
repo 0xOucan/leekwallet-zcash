@@ -1759,3 +1759,24 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
 - Left, on the tablet and on Linux: the copy from a real old desktop
   directory, the wallet list and a watch-only wallet, a price preview on
   testnet and a small mainnet swap from the tablet, signed on the board.
+
+### Knob direction setting (2026-10-22)
+- New: **Settings > Knob**, shown as `Knob Normal` or `Knob Reversed`,
+  next to Word entry. OK toggles it; the next click of the knob already
+  follows it, and it is kept across restarts (NVS namespace `leek_ui`,
+  u8 key `knob_rev`, 1 = Reversed).
+- Normal: clockwise is DOWN (next menu item, next page), as before.
+  Reversed swaps UP and DOWN for the encoder only, in `src/button.c`
+  where a detent becomes an event; the four buttons never change. It is
+  XORed with the build flag `BOARD_ENC_REVERSE`, which stays the fix for
+  an encoder wired the other way round.
+- Only boards with an encoder (the S3 CAM board) show the item.
+- Simulator: `fake_encoder_detent()` in `sim/fake_input.c` maps a turn
+  the same way as the firmware (one shared inline,
+  `button_encoder_event()`). New tests: both directions in both modes, in
+  `test_button` and through the menu in `test_ui`; the setting survives a
+  simulated reboot.
+- `make -C firmware/sim test` passes. `pio run -e esp32s3cam` builds:
+  RAM 60.6% (198,704 of 327,680 bytes), Flash 80.6% (3,380,517 of
+  4,194,304 bytes).
+- Not yet tried on the board.
