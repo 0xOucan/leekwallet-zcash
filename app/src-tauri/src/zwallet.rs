@@ -14,6 +14,9 @@
 //! passphrase on the board is another seed, so another wallet, with its
 //! own directory and address book. The server setting is per network and
 //! shared. Nothing here holds a spending key.
+//!
+//! On the first start after the old desktop app, its wallets, address
+//! books, swaps and settings are copied in (`leek_zcash_wallet::migrate`).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +24,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use leek_zcash_wallet::keys::{self, WalletKey};
-use leek_zcash_wallet::{backend, contacts, hardware, settings};
+use leek_zcash_wallet::{backend, contacts, hardware, migrate, settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use zecz::wallet;
@@ -46,6 +49,16 @@ impl ZState {
     pub fn new(app: &AppHandle) -> Result<Self> {
         let app_data = app.path().app_data_dir().context("no app data directory")?;
         let root = app_data.join("zcash");
+        // The old desktop app's data, copied once. A failure is said and
+        // the app starts anyway: the old directory is never touched, so the
+        // copy can be tried again on the next start.
+        if let Some(old) = migrate::old_dir_beside(&app_data) {
+            match migrate::from_desktop(&old, &root) {
+                Ok(Some(r)) => eprintln!("zcash: copied from {}: {:?}; left: {:?}", r.from, r.copied, r.skipped),
+                Ok(None) => {}
+                Err(e) => eprintln!("zcash: the old desktop app's data was not copied: {e:#}"),
+            }
+        }
         Ok(ZState { root, busy: [Arc::default(), Arc::default()] })
     }
 

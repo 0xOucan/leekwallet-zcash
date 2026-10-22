@@ -14,6 +14,8 @@
 //!   (one wallet per network and board seed and account, or per viewing
 //!   key), with the older one-wallet-per-network layout settled into it.
 //! - [`contacts`], [`settings`]: the address books and the saved servers.
+//! - [`migrate`]: the first start after the old desktop app, which copies
+//!   its wallets, contacts and swaps into this app's layout.
 //!
 //! Nothing here holds a spending key: the wallets are viewing keys, and
 //! every spend is signed on the board.
@@ -22,4 +24,5 @@ pub mod backend;
 pub mod contacts;
 pub mod hardware;
 pub mod keys;
+pub mod migrate;
 pub mod settings;
