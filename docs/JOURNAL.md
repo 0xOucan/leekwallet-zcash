@@ -1708,3 +1708,54 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   app following the board's network when it was switched between Mainnet
   and Testnet on the board; activity labels; a testnet send signed by the
   board and broadcast.
+
+### One app: the desktop app merged into Zcash LeekWallet (2026-10-21)
+- The Companion (`firmware/app/`) moved to `app/` with `git mv`, its
+  Android scripts to `app/scripts/`. It keeps its id
+  `io.leekwallet.zcash.companion` and name, Zcash LeekWallet, and is now
+  the only app for Linux, macOS, Windows and Android. `desktop/`
+  (`com.leekwallet.zcash`) is deleted, after the parity checklist in
+  `app/README.md`.
+- The `#[path]` includes of the desktop's modules are gone. One Cargo
+  workspace rooted at `app/src-tauri` with two crates: `app/zcash-wallet`
+  (the wallet over zecz-core; `keys.rs` names a wallet by network and
+  board seed fingerprint and account, or by viewing key, and `migrate.rs`
+  copies the old app's data) and `app/near-intents` (1Click; no zecz in
+  it: the caller passes the network, its address check, the wallet's
+  address and balance). The transports and `packages/core` know nothing
+  of either, so a future LeekWallet ETH app can take them alone.
+- NEAR Intents on every platform, Android included (6.6): the Swap tab,
+  laid out for a phone, over `src-tauri/src/swaps.rs`. The deposit of a
+  swap from ZEC is a send signed on the board like any other, and
+  `zw_finish` records its txid with the swap. A refund is said only when
+  1Click reports a refunded amount above zero (it says "0" on every swap).
+- From the desktop app as well: watch-only import of a viewing key and
+  every wallet of both networks listed and opened without the board
+  (Wallets on this device), contacts edited in place, the solid red
+  mainnet bar, network badges and the swap timeline.
+- Data: on the first start the app copies (never moves or deletes) the
+  old desktop app's wallets, address books, swaps and settings into its
+  own layout, each wallet to the place of the account it holds, and
+  writes `zcash/migrated-from-desktop.json`. Tested on temporary
+  directories only; the real data directories on this machine were not
+  read.
+- CI: `.github/workflows/app.yml` replaces `desktop.yml`: typecheck,
+  frontend tests and `tauri build` on Ubuntu, Windows and macOS; zdev and
+  the Rust workspace tests on Ubuntu; an aarch64 Android `cargo check`;
+  the host tests. `chrome.yml` unchanged.
+- Tests: `pnpm typecheck` clean; `pnpm test` passes (new:
+  `test/swap.test.ts`); `pnpm test:zdev` passes; `cargo test --workspace`
+  in `app/src-tauri`: shell 16 passed, 1 ignored; zcash-wallet 4 + 6
+  (1 ignored) + 4 migration + 3 settings passed; near-intents 13 passed,
+  1 ignored (live dry quote); `cargo check --target aarch64-linux-android`
+  clean; `make -C firmware/sim test` passes; `cargo test` in `host/` 81
+  passed, 6 ignored; Chrome extension: board tests 42 passed, e2e 67/67
+  on the third run (the first two hit the live testnet server: a
+  "malformed response" from lightwalletd, then a 180 s timeout importing
+  the passphrase wallet; nothing of the extension changed but comments
+  and the tokens.css path).
+- Builds: `pnpm tauri build` on Linux: .deb 12.1 MB, AppImage 92.8 MB;
+  release arm64 APK 26.7 MB (26,687,072 bytes, debug keystore).
+- Left, on the tablet and on Linux: the copy from a real old desktop
+  directory, the wallet list and a watch-only wallet, a price preview on
+  testnet and a small mainnet swap from the tablet, signed on the board.
