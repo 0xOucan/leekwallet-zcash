@@ -27,30 +27,12 @@ mod serial;
 // background, on close, and when a new webview finds one left open.
 mod link;
 
-// The Zcash wallet (feature `zcash-wallet`): the desktop app's own modules,
-// compiled in from desktop/src-tauri/src rather than copied, so importing,
-// syncing, proposing, finishing, the address book and the per-network
-// server settings are one implementation with the desktop's tests behind
-// it. `backend` keeps its name because `hardware` refers to it as
-// `crate::backend`. Only zwallet.rs is the Companion's own: the commands,
-// with the board left to the webview's session. Parts of the desktop
-// modules (its own Rust pairing, swap helpers) are unused here.
+// The Zcash wallet (feature `zcash-wallet`): the commands over the wallet
+// layer (app/zcash-wallet) and NEAR Intents swaps (app/near-intents). The
+// board is never reached from here: the webview holds its session, and a
+// send is proposed here, signed there, and finished here.
 #[cfg(feature = "zcash-wallet")]
-#[allow(dead_code)]
-#[path = "../../../desktop/src-tauri/src/backend.rs"]
-mod backend;
-#[cfg(feature = "zcash-wallet")]
-#[allow(dead_code)]
-#[path = "../../../desktop/src-tauri/src/hardware.rs"]
-mod zhardware;
-#[cfg(feature = "zcash-wallet")]
-#[allow(dead_code)]
-#[path = "../../../desktop/src-tauri/src/contacts.rs"]
-mod zcontacts;
-#[cfg(feature = "zcash-wallet")]
-#[allow(dead_code)]
-#[path = "../../../desktop/src-tauri/src/settings.rs"]
-mod zsettings;
+mod swaps;
 #[cfg(feature = "zcash-wallet")]
 mod zwallet;
 
@@ -193,6 +175,7 @@ pub fn run() {
             {
                 use tauri::Manager;
                 _app.manage(zwallet::ZState::new(_app.handle())?);
+                _app.manage(swaps::SwapState::default());
             }
             #[cfg(target_os = "linux")]
             {
@@ -224,7 +207,11 @@ pub fn run() {
             #[cfg(feature = "zcash-wallet")]
             zwallet::zw_status,
             #[cfg(feature = "zcash-wallet")]
+            zwallet::zw_wallets,
+            #[cfg(feature = "zcash-wallet")]
             zwallet::zw_import,
+            #[cfg(feature = "zcash-wallet")]
+            zwallet::zw_import_watch,
             #[cfg(feature = "zcash-wallet")]
             zwallet::zw_forget,
             #[cfg(feature = "zcash-wallet")]
@@ -254,7 +241,21 @@ pub fn run() {
             #[cfg(feature = "zcash-wallet")]
             zwallet::zw_contact_save,
             #[cfg(feature = "zcash-wallet")]
-            zwallet::zw_contact_remove
+            zwallet::zw_contact_remove,
+            #[cfg(feature = "zcash-wallet")]
+            swaps::swap_info,
+            #[cfg(feature = "zcash-wallet")]
+            swaps::swap_tokens,
+            #[cfg(feature = "zcash-wallet")]
+            swaps::swap_quote,
+            #[cfg(feature = "zcash-wallet")]
+            swaps::swap_execute,
+            #[cfg(feature = "zcash-wallet")]
+            swaps::swap_status,
+            #[cfg(feature = "zcash-wallet")]
+            swaps::swap_list,
+            #[cfg(feature = "zcash-wallet")]
+            swaps::swap_forget
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Zcash LeekWallet")

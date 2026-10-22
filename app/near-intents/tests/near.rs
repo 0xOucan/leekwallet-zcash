@@ -1,4 +1,4 @@
-//! NEAR Intents swaps (src/near.rs) without the network: the 1Click
+//! NEAR Intents swaps (src/lib.rs) without the network: the 1Click
 //! client against recorded answers, the quote checks, the refusals, the
 //! status state machine and the swaps file.
 //!
@@ -16,8 +16,8 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use leekwallet_zcash_lib::near::{
-    self, check_executable, check_funds, format_units, next_state, parse_units, Direction, HttpResponse, OneClick,
+use leek_near_intents::{
+    self as near, check_funds, format_units, next_state, parse_units, Direction, HttpResponse, OneClick,
     QuoteContext, QuoteParams, SwapRecord, SwapState, Token, Transport, PREVIEW_ADDRESS, ZEC_ASSET,
 };
 use serde_json::{json, Value};
@@ -26,6 +26,16 @@ use zecz::Network;
 
 const MAIN: Network = Network::MainNetwork;
 const TEST: Network = Network::TestNetwork;
+
+/// The address check the app hands the crate: zecz's, on `net`.
+fn checker(net: Network) -> impl Fn(&str) -> anyhow::Result<String> {
+    move |a| zecz::wallet::check_address(net, a).map(str::to_string)
+}
+
+/// [`near::check_executable`] for a wallet on `net`.
+fn check_executable(rec: &SwapRecord, net: Network, now: OffsetDateTime) -> anyhow::Result<u64> {
+    near::check_executable(rec, net == MAIN, &checker(net), now)
+}
 const USDC_SOL: &str = "nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near";
 const SOL_WALLET: &str = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 /// A mainnet transparent address (vectors), standing in for a deposit address.
@@ -174,7 +184,8 @@ fn quote_with(m: &Mock, network: Network, spendable: Option<u64>, p: &QuoteParam
     let toks = tokens(m);
     let own = || -> anyhow::Result<String> { Ok(OWN.to_string()) };
     let bal = move || -> anyhow::Result<Option<u64>> { Ok(spendable) };
-    let ctx = QuoteContext { network, own_address: &own, spendable: &bal, now: now() };
+    let check = checker(network);
+    let ctx = QuoteContext { mainnet: network == MAIN, own_address: &own, spendable: &bal, check_address: &check, now: now() };
     near::request_quote(&OneClick::with_base(m, "https://1click.test", key.map(str::to_string)), &toks, &ctx, p)
 }
 
@@ -257,7 +268,7 @@ fn dry_quote_on_testnet_previews_with_the_placeholder() {
     assert!(!rec.authenticated);
     // Not stored.
     let d = TempDir::new("dry");
-    assert!(near::save(&near::path_in(&d.0, MAIN), &rec).is_err());
+    assert!(near::save(&d.0.join("swaps-main.json"), &rec).is_err());
 }
 
 #[test]
@@ -610,11 +621,9 @@ impl Drop for TempDir {
 }
 
 #[test]
-fn swaps_are_kept_per_network() {
+fn swaps_are_kept_in_their_file() {
     let d = TempDir::new("store");
-    let path = near::path_in(&d.0, MAIN);
-    assert!(path.ends_with("swaps-main.json"));
-    assert!(near::path_in(&d.0, TEST).ends_with("swaps-test.json"));
+    let path = d.0.join("swaps-main.json");
     assert!(near::list(&path).unwrap().is_empty());
 
     let mut a = stored_quote();
@@ -669,7 +678,8 @@ fn live_tokens_and_dry_quote() {
     assert!(tokens.iter().any(|t| t.asset_id == USDC_SOL));
     let own = || -> anyhow::Result<String> { Ok(OWN.to_string()) };
     let bal = || -> anyhow::Result<Option<u64>> { Ok(None) };
-    let ctx = QuoteContext { network: MAIN, own_address: &own, spendable: &bal, now: OffsetDateTime::now_utc() };
+    let check = checker(MAIN);
+    let ctx = QuoteContext { mainnet: true, own_address: &own, spendable: &bal, check_address: &check, now: OffsetDateTime::now_utc() };
     let rec = near::request_quote(&client, &tokens, &ctx, &from_zec("0.01", true)).unwrap();
     assert!(rec.dry && rec.deposit_address.is_none());
     assert_eq!(rec.amount_in, "1000000");

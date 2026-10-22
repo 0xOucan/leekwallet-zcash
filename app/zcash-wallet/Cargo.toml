@@ -1,0 +1,36 @@
+[package]
+name = "leek-zcash-wallet"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "The Zcash LeekWallet app's wallet layer over zecz: wallets keyed by board seed or viewing key, sync, send and shield for the board to sign, contacts, settings, the move from the old desktop app"
+# A member of the app's Cargo workspace (src-tauri/Cargo.toml), so it shares
+# the app's lock file and target directory: librustzcash builds once.
+workspace = "../src-tauri"
+
+# No Tauri, no transport, no window: blocking functions that take a
+# directory and return plain, serializable data. The app's commands
+# (src-tauri/src/zwallet.rs) run them on worker threads; the tests call them
+# directly. The board never appears here: the webview holds the paired
+# session and hands back the `.zsig` it signed.
+[dependencies]
+# `default-features = false` drops zecz's serial port: the board is reached
+# through the webview, and the `serialport` crate cannot build for Android.
+zecz-core = { path = "../../host/zecz-core", default-features = false }
+anyhow = "1"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# A current-thread runtime per call for zecz's async network code.
+tokio = { version = "1", features = ["rt"] }
+
+[dev-dependencies]
+# Offline wallets for the tests (empty tree states, no lightwalletd) and a
+# real transaction to store in one, as host/zecz-core's tests build them
+# (the same pinned revision).
+pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
+zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+rand = { version = "0.10", features = ["sys_rng"] }

@@ -1,10 +1,12 @@
-//! The app's choices that outlive a run: which network the wallet follows
-//! (testnet unless the user switched) and, per network, the lightwalletd
-//! server when it is not the default one.
+//! The app's choices that outlive a run: per network, the lightwalletd
+//! server when it is not the default one, and an optional NEAR Intents
+//! 1Click API key.
 //!
-//! Kept as `<app data dir>/settings.json`, written to a temporary file and
-//! renamed, like the contacts. Each network has its own wallet directory
-//! (`wallets/<test|main>`) and address book, so switching never mixes them.
+//! Kept as `settings.json` in the wallets' root, written to a temporary
+//! file and renamed, like the contacts. The network on screen is the
+//! webview's choice; the file still carries the `network` field of the
+//! format the old desktop app wrote (and this app reads, see
+//! [`crate::migrate`]).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use zecz::{Network, Profile};
+use zecz::Network;
 
 /// Format version of the file.
 const VERSION: u32 = 1;
@@ -21,7 +23,8 @@ const VERSION: u32 = 1;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub version: u32,
-    /// "test" or "main".
+    /// "test" or "main": the network the old desktop app was on. Kept so
+    /// the file it wrote reads, and is written back, unchanged.
     pub network: String,
     /// lightwalletd endpoint per network ("test", "main") when the user set
     /// one; absent means the network's default.
@@ -48,15 +51,9 @@ pub fn parse_network(s: &str) -> Result<Network> {
     }
 }
 
-/// `<app data dir>/settings.json`.
+/// `<root>/settings.json`.
 pub fn path_in(app_data: &Path) -> PathBuf {
     app_data.join("settings.json")
-}
-
-/// `<app data dir>/wallets/<test|main>`: one wallet directory per network,
-/// since a zecz data directory is bound to one.
-pub fn wallet_dir(app_data: &Path, network: Network) -> PathBuf {
-    app_data.join("wallets").join(zecz::wallet::network_name(network))
 }
 
 /// Checks a lightwalletd URL the user typed: http(s)://host[:port], no
@@ -107,12 +104,6 @@ impl Settings {
         }
         Ok(())
     }
-
-    /// The wallet profile for the selected network, under `app_data`.
-    pub fn profile(&self, app_data: &Path) -> Result<Profile> {
-        let network = self.network()?;
-        Ok(Profile::new(network, wallet_dir(app_data, network), Some(self.server_for(network))))
-    }
 }
 
 /// The saved settings; the defaults (testnet, default servers) when there
@@ -133,45 +124,6 @@ pub fn load(path: &Path) -> Result<Settings> {
         check_server(server)?;
     }
     Ok(s)
-}
-
-/// The network part of the settings, as the frontend shows it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkDto {
-    /// "test" or "main": the network the app is on now.
-    pub network: String,
-    /// The server in use for it.
-    pub server: String,
-    pub default_server: String,
-    /// The server was set by the user (not the default).
-    pub custom_server: bool,
-    /// LEEKZ_NETWORK or LEEKZ_SERVER chose this run's network or server;
-    /// the saved choice applies again after a switch or a restart without them.
-    pub from_environment: bool,
-}
-
-impl NetworkDto {
-    pub fn of(profile: &Profile, saved: &Settings, from_environment: bool) -> Self {
-        NetworkDto {
-            network: profile.net_name().to_string(),
-            server: profile.server.clone(),
-            default_server: zecz::wallet::default_server(profile.network).to_string(),
-            custom_server: profile.server != zecz::wallet::default_server(profile.network),
-            from_environment: from_environment && (saved.network().ok() != Some(profile.network) || saved.server_for(profile.network) != profile.server),
-        }
-    }
-}
-
-/// Switches the saved network and returns the settings and the profile
-/// to use from now on (that network's wallet directory and server).
-pub fn switch_network(path: &Path, app_data: &Path, network: Network) -> Result<(Settings, Profile)> {
-    // Preferences only: an unreadable file is replaced rather than a trap.
-    let mut s = load(path).unwrap_or_default();
-    s.network = zecz::wallet::network_name(network).to_string();
-    save(path, &s)?;
-    let p = s.profile(app_data)?;
-    Ok((s, p))
 }
 
 /// Saves the server for `network` (None: back to the default) and returns

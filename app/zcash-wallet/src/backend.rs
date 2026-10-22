@@ -1,5 +1,6 @@
-//! What the commands do, without Tauri: blocking functions over
-//! `zecz::wallet` that take a profile and return plain, serializable data.
+//! The wallet itself: blocking functions over `zecz::wallet` that take a
+//! profile (a wallet directory, its network and server) and return plain,
+//! serializable data.
 //!
 //! Each call opens the wallet, does its work and closes it again. The
 //! wallet database is SQLite and the handle is not `Sync`, so holding one
@@ -7,7 +8,7 @@
 //! opening is cheap next to anything that touches lightwalletd.
 //!
 //! The functions block (network calls run on a private current-thread
-//! runtime), so the Tauri layer runs them on a worker thread, and the
+//! runtime), so the app's commands run them on a worker thread, and the
 //! integration tests call them directly.
 
 use std::future::Future;
@@ -159,6 +160,39 @@ pub fn profile_status(profile: &Profile) -> Result<ProfileStatus> {
         }
     }
     Ok(s)
+}
+
+/// Imports the board's account (as `zGetAccount` gave it to the webview)
+/// as this profile's wallet, born at `birthday`.
+///
+/// The board derives its address itself; its viewing key must lead to the
+/// same one, or the key is not what the board showed. A wallet that
+/// already tracks the account as watch-only is refused: it could never
+/// put the ZIP 32 origin on a spend, so the board could never sign one.
+pub fn import_board(p: &Profile, ufvk: &str, seed_fingerprint: &str, account: u32, ua: &str, birthday: u32) -> Result<Imported> {
+    let fp: [u8; 32] = hex::decode(seed_fingerprint.trim())
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .context("the seed fingerprint is not 32 bytes of hex")?;
+    let derived = wallet::addresses_for_ufvk(p.network, ufvk.trim()).context("the board's viewing key")?;
+    if derived.unified != ua.trim() {
+        bail!("the board's address does not match its own viewing key; refusing to import");
+    }
+    let sapling = sapling_activation(p.network);
+    if birthday < sapling {
+        bail!("birthday {birthday} is before Sapling activation ({sapling})");
+    }
+    let spec = AccountSpec::device(ufvk.trim().to_string(), fp, account, crate::hardware::DEVICE_NAME);
+    let (w, outcome) = block_on(Wallet::init(p.clone(), &spec, birthday, |_| {}))??;
+    if w.key_origin()? != spec.origin {
+        bail!(
+            "This network's wallet already holds another account, or this one as watch-only. Forget the wallet in Settings and import again."
+        );
+    }
+    Ok(match outcome {
+        InitOutcome::AlreadyImported { addresses } => Imported { already_imported: true, birthday: w.birthday()?, addresses: addresses.into() },
+        InitOutcome::Imported(a) => Imported { already_imported: false, birthday: a.birthday, addresses: a.addresses.into() },
+    })
 }
 
 /// Imports a bare UFVK as a view-only account born at `birthday`.
@@ -347,20 +381,4 @@ pub fn next_address(profile: &Profile) -> Result<NewAddressDto> {
 pub fn swap_address(profile: &Profile, fresh: bool) -> Result<String> {
     let mut w = Wallet::open(profile.clone())?;
     Ok(if fresh { w.next_shielded_address()?.unified } else { w.addresses()?.orchard_only })
-}
-
-/// `text` as a QR code in SVG, black on white with its quiet zone in any
-/// theme (scanners expect dark on light). Error correction M: an address
-/// is long, and a screen is clean.
-pub fn qr_svg(text: &str) -> Result<String> {
-    use qrcode::render::svg;
-    use qrcode::{EcLevel, QrCode};
-    let code = QrCode::with_error_correction_level(text.as_bytes(), EcLevel::M).context("too long for a QR code")?;
-    Ok(code
-        .render::<svg::Color>()
-        .min_dimensions(256, 256)
-        .dark_color(svg::Color("#000000"))
-        .light_color(svg::Color("#ffffff"))
-        .quiet_zone(true)
-        .build())
 }

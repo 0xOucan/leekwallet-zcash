@@ -29,12 +29,19 @@
 //! Swaps are mainnet only: 1Click has no testnet. On testnet the screen can
 //! only preview a price (a dry quote against a placeholder address).
 //!
-//! Every swap with a deposit address is kept in
-//! `<app data dir>/swaps-main.json` (the quote, its signature, the deposit
-//! txid and the last status), so a restart keeps following it.
+//! Every swap with a deposit address is kept in a swaps file (the quote,
+//! its signature, the deposit txid and the last status), so a restart keeps
+//! following it. Which file is the app's business: the Zcash LeekWallet app
+//! keeps one per wallet, next to its address book.
+//!
+//! No wallet engine is linked here. What a swap needs of the wallet (its
+//! network, a fresh address of its own, its spendable balance, whether it
+//! can pay an address) comes in through [`QuoteContext`] and the arguments
+//! of [`check_executable`], so this crate stays a client of 1Click and of a
+//! file, and the same code serves the desktop and the Android build.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -42,7 +49,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
-use zecz::Network;
 
 /// The 1Click API.
 pub const BASE_URL: &str = "https://1click.chaindefuser.com";
@@ -101,7 +107,7 @@ impl Default for Http {
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(30)))
             .http_status_as_error(false)
-            .user_agent(concat!("leekwallet-zcash-desktop/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("leekwallet-zcash/", env!("CARGO_PKG_VERSION")))
             .build();
         Http { agent: config.into() }
     }
@@ -677,12 +683,17 @@ pub struct QuoteParams {
 
 /// The wallet's part in a quote, so tests need no wallet.
 pub struct QuoteContext<'a> {
-    pub network: Network,
+    /// The wallet is on mainnet: 1Click has no testnet, so anything else
+    /// can only preview a price.
+    pub mainnet: bool,
     /// The wallet's address for this swap (refunds from ZEC, payout into
     /// ZEC): a fresh Orchard-only one for a real quote.
     pub own_address: &'a dyn Fn() -> Result<String>,
     /// The spendable balance in zatoshis, None before a sync.
     pub spendable: &'a dyn Fn() -> Result<Option<u64>>,
+    /// What kind of address the wallet sees in `a` on its network
+    /// ("unified", "transparent", "tex", ...), or why it cannot pay it.
+    pub check_address: &'a dyn Fn(&str) -> Result<String>,
     pub now: OffsetDateTime,
 }
 
@@ -721,7 +732,7 @@ fn find<'t>(tokens: &'t [Token], asset: &str) -> Result<&'t Token> {
 /// real quote (not dry) is mainnet only and gets a deposit address; the
 /// caller stores the record it returns.
 pub fn request_quote<T: Transport>(client: &OneClick<T>, tokens: &[Token], ctx: &QuoteContext, p: &QuoteParams) -> Result<SwapRecord> {
-    let mainnet = ctx.network == Network::MainNetwork;
+    let mainnet = ctx.mainnet;
     if !mainnet && !p.dry {
         bail!("NEAR Intents swaps are mainnet only. On testnet you can preview a price (dry run); switch to Mainnet to swap.");
     }
@@ -788,9 +799,9 @@ pub fn request_quote<T: Transport>(client: &OneClick<T>, tokens: &[Token], ctx: 
         let d = d.ok_or_else(|| anyhow!("1Click sent a quote without a deposit address"))?;
         if p.direction == Direction::FromZec {
             // The deposit is a send from this wallet: it must be an address
-            // zecz can pay on mainnet (unified or transparent; a TEX address
+            // the wallet can pay on mainnet (unified or transparent; a TEX address
             // needs a two-step send the device does not sign).
-            let kind = zecz::wallet::check_address(ctx.network, &d)
+            let kind = (ctx.check_address)(&d)
                 .with_context(|| format!("1Click's deposit address {d} cannot be paid from this wallet"))?;
             deposit_transparent = kind == "transparent";
             if q.deposit_memo.is_some() {
@@ -858,9 +869,10 @@ fn check_echo(req: &QuoteRequest, resp: &QuoteResponse) -> Result<()> {
 }
 
 /// Checks a stored swap can be paid from this wallet now and returns the
-/// deposit amount in zatoshis.
-pub fn check_executable(rec: &SwapRecord, network: Network, now: OffsetDateTime) -> Result<u64> {
-    if network != Network::MainNetwork {
+/// deposit amount in zatoshis. `mainnet` and `check_address` are the
+/// wallet's, as in [`QuoteContext`].
+pub fn check_executable(rec: &SwapRecord, mainnet: bool, check_address: &dyn Fn(&str) -> Result<String>, now: OffsetDateTime) -> Result<u64> {
+    if !mainnet {
         bail!("NEAR Intents swaps are mainnet only.");
     }
     if rec.direction != Direction::FromZec {
@@ -881,7 +893,7 @@ pub fn check_executable(rec: &SwapRecord, network: Network, now: OffsetDateTime)
         );
     }
     let address = rec.deposit_address.as_deref().ok_or_else(|| anyhow!("this quote has no deposit address"))?;
-    zecz::wallet::check_address(network, address)?;
+    check_address(address)?;
     let zat: u64 = rec.amount_in.parse().map_err(|_| anyhow!("bad deposit amount {:?}", rec.amount_in))?;
     if zat == 0 {
         bail!("bad deposit amount 0");
@@ -930,11 +942,6 @@ const VERSION: u32 = 1;
 struct Book {
     version: u32,
     swaps: Vec<SwapRecord>,
-}
-
-/// `<app data dir>/swaps-<test|main>.json`.
-pub fn path_in(app_data: &Path, network: Network) -> PathBuf {
-    app_data.join(format!("swaps-{}.json", zecz::wallet::network_name(network)))
 }
 
 /// The stored swaps, newest first; none when the file does not exist yet.

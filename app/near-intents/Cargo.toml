@@ -1,0 +1,28 @@
+[package]
+name = "leek-near-intents"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Cross-chain swaps to and from ZEC through NEAR Intents' 1Click API: quotes, the checks on them, their status and the swaps file"
+# A member of the app's Cargo workspace (src-tauri/Cargo.toml).
+workspace = "../src-tauri"
+
+# No wallet engine and no Tauri: the wallet's part in a swap (its own
+# address, its balance, whether it can pay an address) comes in through
+# `QuoteContext`, so this crate builds and tests on its own and another
+# wallet could use it as it is.
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Blocking HTTPS on the caller's worker thread, over rustls with ring and
+# the webpki roots, the TLS stack the lightwalletd client already links
+# (desktop and Android alike). No gzip, no cookies.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+# RFC 3339 deadlines of 1Click quotes.
+time = { version = "0.3", features = ["formatting", "parsing"] }
+
+[dev-dependencies]
+# The address checks the app makes, for the tests' quotes.
+zecz-core = { path = "../../host/zecz-core", default-features = false }

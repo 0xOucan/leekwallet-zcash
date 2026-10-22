@@ -1,8 +1,8 @@
-//! The desktop backend end to end, without a window: profile status,
-//! a watch-only import of the public test account (abandon x23 art,
-//! vectors/keys.json), a sync with progress events, and the wallet
-//! screens: history (a real transaction stored in an offline wallet),
-//! receive addresses and their QR code, shield refusals, contacts.
+//! The wallet layer end to end, without a window: profile status, the
+//! imports (from the board, or a viewing key) of the public test account
+//! (abandon x23 art, vectors/keys.json), a sync with progress events, and
+//! the wallet screens: history (a real transaction stored in an offline
+//! wallet), receive addresses, shield refusals, contacts.
 //!
 //! The testnet test is #[ignore]d; run it with
 //! `cargo test --test backend -- --ignored`.
@@ -10,8 +10,8 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use leekwallet_zcash_lib::backend::{self, SyncProgress};
-use leekwallet_zcash_lib::{contacts, hardware};
+use leek_zcash_wallet::backend::{self, SyncProgress};
+use leek_zcash_wallet::{contacts, hardware};
 use serde_json::Value;
 use zecz::wallet::{AccountBirthday, AccountSpec};
 use zecz::{Network, Profile, Wallet};
@@ -27,7 +27,7 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
-        let p = std::env::temp_dir().join(format!("leekz-desktop-{tag}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("leekz-wallet-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         TempDir(p)
@@ -65,6 +65,26 @@ fn empty_profile_and_bad_input() {
 }
 
 const TEST: Network = Network::TestNetwork;
+
+/// What a board import checks before the network or the disk.
+#[test]
+fn a_board_import_is_checked_first() {
+    let d = TempDir::new("board");
+    let k = key_vector("test/abandon-art/pp0/acct0");
+    let other = key_vector("test/abandon-art/pp0/acct1");
+    let p = Profile::new(TEST, d.0.join("w"), Some("https://127.0.0.1:9".into()));
+    let (u, fp, ua) = (k["ufvk"].as_str().unwrap(), k["seed_fingerprint"].as_str().unwrap(), k["ua"].as_str().unwrap());
+    // The board's address is not its key's.
+    let e = backend::import_board(&p, u, fp, 0, other["ua"].as_str().unwrap(), 3_000_000).unwrap_err();
+    assert!(format!("{e:#}").contains("does not match"), "{e:#}");
+    // A key of the other network.
+    let m = key_vector("main/abandon-art/pp0/acct0");
+    assert!(backend::import_board(&p, m["ufvk"].as_str().unwrap(), fp, 0, m["ua"].as_str().unwrap(), 3_000_000).is_err());
+    // Before Sapling, and a short fingerprint.
+    assert!(format!("{:#}", backend::import_board(&p, u, fp, 0, ua, 1000).unwrap_err()).contains("Sapling"));
+    assert!(format!("{:#}", backend::import_board(&p, u, "abcd", 0, ua, 3_000_000).unwrap_err()).contains("32 bytes"));
+    assert!(!p.exists(), "nothing was written");
+}
 const ABANDON_ART: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
                            abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
                            abandon art";
@@ -132,7 +152,7 @@ fn history_of_an_offline_wallet() {
 }
 
 #[test]
-fn receive_addresses_and_qr() {
+fn receive_addresses() {
     let d = TempDir::new("receive");
     let profile = Profile::new(TEST, d.0.join("w"), None);
     let kv = key_vector("test/abandon-art/pp0/acct0");
@@ -146,9 +166,6 @@ fn receive_addresses_and_qr() {
     // The default address stays what the device reports.
     assert_eq!(backend::addresses(&profile).unwrap().unified, kv["ua"].as_str().unwrap());
 
-    let svg = backend::qr_svg(&a.unified).unwrap();
-    assert!(svg.contains("<svg") && svg.contains("#000000") && svg.contains("#ffffff"), "{svg:.200}");
-    assert!(backend::qr_svg(&"x".repeat(5000)).is_err());
 }
 
 #[test]

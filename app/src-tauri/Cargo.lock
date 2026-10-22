@@ -311,6 +311,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "bech32"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3182,6 +3188,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "leek-near-intents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "time",
+ "ureq",
+ "zecz-core",
+]
+
+[[package]]
 name = "leek-transport-ble"
 version = "0.1.0"
 dependencies = [
@@ -3202,15 +3220,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "leek-zcash-wallet"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "pczt",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zcash_client_backend",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zecz-core",
+]
+
+[[package]]
 name = "leekwallet-companion"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "espflash",
  "hex",
+ "leek-near-intents",
  "leek-transport-ble",
  "leek-transport-serial",
- "qrcode",
+ "leek-zcash-wallet",
  "serde",
  "serde_json",
  "serialport",
@@ -3220,6 +3256,7 @@ dependencies = [
  "tauri-plugin-blec",
  "tauri-plugin-opener",
  "tauri-plugin-serialplugin",
+ "time",
  "tokio",
  "webkit2gtk",
  "zecz-core",
@@ -4538,12 +4575,6 @@ checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
 ]
-
-[[package]]
-name = "qrcode"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-xml"
@@ -6642,6 +6673,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "ureq"
+version = "3.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a7ac20be9b7726e0bbdbf974c059676d9acb1cd414961f570a4e8231cacd7fc"
+dependencies = [
+ "base64 0.23.1",
+ "log",
+ "percent-encoding",
+ "rustls",
+ "rustls-pki-types",
+ "ureq-proto",
+ "utf8-zero",
+ "webpki-roots",
+]
+
+[[package]]
+name = "ureq-proto"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841583fc36089d7d59419568ae157f43a5a03a2e5a81ba87c77d1596ef46e922"
+dependencies = [
+ "base64 0.23.1",
+ "http",
+ "httparse",
+ "log",
+]
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6665,6 +6724,12 @@ dependencies = [
  "unic-ucd-ident",
  "url",
 ]
+
+[[package]]
+name = "utf8-zero"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "utf8_iter"

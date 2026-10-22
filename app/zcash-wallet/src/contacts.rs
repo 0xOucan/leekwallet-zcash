@@ -1,6 +1,7 @@
 //! The address book: names for addresses the user pays, kept on this
-//! computer only, as JSON in the app data directory (one file per network,
-//! since an address belongs to one).
+//! device only, as JSON beside the wallets (one file per network and seed,
+//! [`crate::keys::WalletKey::contacts_path`]: an address belongs to one
+//! network, and a passphrase wallet keeps its own book).
 //!
 //! The file is small and rewritten whole: written to a temporary file
 //! beside it, then renamed over it, so a crash leaves the old book or the
@@ -31,7 +32,9 @@ struct Book {
     contacts: Vec<Contact>,
 }
 
-/// `<app data dir>/contacts-<test|main>.json`.
+/// `<root>/contacts-<test|main>.json`: the one book per network of the old
+/// desktop app and the first Companion builds, which [`crate::keys`]
+/// settles into the book of the wallet it belonged to.
 pub fn path_in(app_data: &Path, network: Network) -> PathBuf {
     app_data.join(format!("contacts-{}.json", zecz::wallet::network_name(network)))
 }

@@ -3,7 +3,16 @@ name = "leekwallet-companion"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "LeekWallet Zcash Companion"
+description = "Zcash LeekWallet: the one app for the board (desktop and Android)"
+
+# The app's crates build in one workspace with one lock file and one target
+# directory, rooted here because `tauri build` and `tauri android` expect
+# src-tauri to be the Cargo project: the wallet layer (../zcash-wallet) and
+# NEAR Intents (../near-intents). The transports (../transport-serial,
+# ../transport-ble) stay outside it: host/ builds them too, and they carry
+# no Zcash and no Tauri, so another app can take them as they are.
+[workspace]
+members = [".", "../zcash-wallet", "../near-intents"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -18,7 +27,7 @@ default = ["zcash-wallet"]
 # board tools (account, address check, PCZT signing) is a meaningful thing
 # to ship. Without it the Zcash section offers those and says nothing of a
 # wallet; the webview asks `zw_available`.
-zcash-wallet = ["dep:zecz-core", "dep:anyhow", "dep:qrcode"]
+zcash-wallet = ["dep:zecz-core", "dep:anyhow", "dep:leek-zcash-wallet", "dep:leek-near-intents", "dep:time"]
 
 # The USB firmware flasher (T65). Behind a feature because espflash pulls in a
 # sizeable dependency tree for something most builds do not need, and because a
@@ -56,9 +65,13 @@ hex = "0.4"
 # `serialport` crate cannot build for Android at all.
 zecz-core = { path = "../../host/zecz-core", default-features = false, optional = true }
 anyhow = { version = "1", optional = true }
-# The desktop app's backend module, compiled in (src/lib.rs), draws its own
-# receive QR; unused here (the webview draws one) but part of that module.
-qrcode = { version = "=0.14.1", default-features = false, features = ["svg"], optional = true }
+# The wallet layer over zecz (wallets, imports, sync, send for the board to
+# sign, contacts, settings, the move from the old desktop app) and NEAR
+# Intents swaps, each its own crate with its own tests.
+leek-zcash-wallet = { path = "../zcash-wallet", optional = true }
+leek-near-intents = { path = "../near-intents", optional = true }
+# The clock 1Click's deadlines are checked against.
+time = { version = "0.3", optional = true }
 
 # Desktop speaks both USB CDC and BLE; the device serves one at a time
 # (PROTOCOL.md 3b), so which one is live is a runtime question, not a build-time
@@ -133,8 +146,7 @@ lto = "fat"
 codegen-units = 1
 
 # Scanning (trial decryption) and Halo 2 proving are unbearably slow
-# unoptimized (the desktop app's rule, desktop/src-tauri/Cargo.toml), and a
-# debug APK is what ANDROID.md builds. Dependencies are always optimized
+# unoptimized, and a debug APK is what ANDROID.md builds. Dependencies are always optimized
 # and carry no debug info, which also keeps the debug APK's library small;
 # this crate itself stays quick to rebuild and debuggable.
 [profile.dev.package."*"]
