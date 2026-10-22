@@ -268,12 +268,52 @@ static void test_overflow_keeps_the_newest_and_is_not_silent(void)
           (unsigned long)button__overflow_count_for_test(), taps + 1 - cap);
 }
 
+/* Settings > Knob. One detent maps through button_encoder_event(), which is
+ * what button.c's encoder poll calls with BOARD_ENC_REVERSE XOR the setting.
+ * This board has no encoder to poll, so the rule is checked directly, along
+ * with the flag the real driver keeps for it. */
+static void test_knob_direction_maps_turns(void)
+{
+    printf("== Knob: a turn maps to UP/DOWN, and Reversed swaps them\n");
+    boot();
+
+    CHECK(!button_knob_reversed(), "the knob did not start Normal");
+    CHECK(button_encoder_event(+1, button_knob_reversed()) == BUTTON_DOWN,
+          "Normal: clockwise is not DOWN");
+    CHECK(button_encoder_event(-1, button_knob_reversed()) == BUTTON_UP,
+          "Normal: anticlockwise is not UP");
+
+    button_set_knob_reversed(true);
+    CHECK(button_knob_reversed(), "the setting did not take");
+    CHECK(button_encoder_event(+1, button_knob_reversed()) == BUTTON_UP,
+          "Reversed: clockwise is not UP");
+    CHECK(button_encoder_event(-1, button_knob_reversed()) == BUTTON_DOWN,
+          "Reversed: anticlockwise is not DOWN");
+
+    /* A board wired the other way (BOARD_ENC_REVERSE=1) XOR the setting:
+     * the two flips cancel. */
+    const bool board_reverse = true;
+    CHECK(button_encoder_event(+1, board_reverse != button_knob_reversed()) == BUTTON_DOWN,
+          "board reversal and the setting did not cancel");
+
+    /* Buttons are not the knob: K1 is still UP with the setting on. */
+    tap(1u << 0);
+    button_id_t got[4];
+    int n = drain(got, 4);
+    CHECK(n == 1 && got[0] == BUTTON_UP,
+          "Reversed changed a physical button (%s)",
+          n >= 1 ? button_get_name(got[0]) : "none");
+
+    button_set_knob_reversed(false);
+}
+
 int main(void)
 {
     test_one_tap_is_one_event();
     test_queue_holds_a_full_stall();
     test_no_press_lost_across_a_stall();
     test_overflow_keeps_the_newest_and_is_not_silent();
+    test_knob_direction_maps_turns();
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
            failures, failures == 1 ? "" : "s");

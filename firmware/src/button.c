@@ -91,6 +91,22 @@ static int64_t button_last_change[4] = {0, 0, 0, 0}; /* Time of last raw change 
 static const gpio_num_t buttons[] = {PIN_K1, PIN_K2, PIN_K3, PIN_K4};
 static const button_id_t button_ids[] = {BUTTON_K1, BUTTON_K2, BUTTON_K3, BUTTON_K4};
 
+/* Settings > Knob. Written by the UI task, read by the poll task; a single
+ * aligned bool, so a turn in flight sees either the old sense or the new one,
+ * never a torn value. Kept on boards without an encoder so the setting has
+ * one home everywhere; there it simply has nothing to flip. */
+static volatile bool knob_reversed = false;
+
+void button_set_knob_reversed(bool reversed)
+{
+    knob_reversed = reversed;
+}
+
+bool button_knob_reversed(void)
+{
+    return knob_reversed;
+}
+
 #if LEEK_HAS_ENCODER
 /* The EC11: a turn is UP or DOWN, one event per detent. Its push switch is
  * wired to K4 (ACCEPT) with the button, so it needs nothing here. Sampled
@@ -105,11 +121,8 @@ static void encoder_poll_once(int64_t now)
     if (step == 0) {
         return;
     }
-    if (BOARD_ENC_REVERSE) {
-        step = -step;
-    }
     button_event_t event = {
-        .id = step > 0 ? BUTTON_DOWN : BUTTON_UP,
+        .id = button_encoder_event(step, (BOARD_ENC_REVERSE != 0) != knob_reversed),
         .timestamp = now,
     };
     button_queue_press(&event);
@@ -304,5 +317,6 @@ void button__reset_static_state_for_test(void)
     }
     button_overflows = 0;
     button_queue = NULL;
+    knob_reversed = false;
 }
 #endif

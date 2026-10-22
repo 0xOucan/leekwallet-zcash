@@ -6,6 +6,7 @@
 #ifndef BUTTON_H
 #define BUTTON_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -36,6 +37,31 @@ typedef struct {
     button_id_t id;
     int64_t timestamp;
 } button_event_t;
+
+/**
+ * The button event one encoder detent becomes.
+ *
+ * `step` is what encoder_feed() returns, +1 clockwise and -1 anticlockwise.
+ * Unreversed, clockwise is DOWN: the next menu item, the next review page.
+ * `reversed` is the board's compile-time BOARD_ENC_REVERSE XORed with the
+ * user's "Knob" setting, so either one alone flips it and both cancel out.
+ *
+ * Inline and pure so the firmware and the host fakes map a turn the same
+ * way: there is one rule, written once.
+ */
+static inline button_id_t button_encoder_event(int step, bool reversed)
+{
+    const bool clockwise = step > 0;
+    return (clockwise != reversed) ? BUTTON_DOWN : BUTTON_UP;
+}
+
+/**
+ * The user's knob direction, from Settings > Knob. Reversed swaps UP and DOWN
+ * for encoder turns only; physical UP/DOWN buttons are never affected. Kept
+ * in RAM here and persisted by ui.c, which owns the settings namespace.
+ */
+void button_set_knob_reversed(bool reversed);
+bool button_knob_reversed(void);
 
 /**
  * Initialize button subsystem

@@ -50,6 +50,14 @@ status, roadmap). This file is about the board and its firmware.
 | EC11 rotary encoder | turn for UP/DOWN, press for OK |
 | Four-button module | UP, DOWN, BACK, OK |
 
+Turning the knob clockwise is DOWN (the next menu item, the next page) and
+anticlockwise is UP. In the pickers (PIN digits, seed and passphrase
+letters, the device name, the dice face) clockwise and the DOWN button move
+forward, so a PIN digit goes up. If you prefer it the other way round, **Settings > Knob**
+switches between Normal and Reversed; the change applies on the next click of
+the knob, is kept across restarts, and does not affect the UP and DOWN
+buttons.
+
 Everything runs at 3.3 V. Wiring: [docs/WIRING-S3CAM.md](docs/WIRING-S3CAM.md);
 the board's pins: [docs/BOARD-S3CAM-PINOUT.md](docs/BOARD-S3CAM-PINOUT.md).
 

@@ -395,6 +395,13 @@ static bool pin_can_submit(void)
     return pin_cursor >= PIN_MIN_LENGTH;
 }
 
+/* PICKER_FORWARD: in every "prev <cur> next" picker - PIN digits, seed and
+ * passphrase letters, the BLE name, the dice face - DOWN moves forward (to
+ * the right-hand neighbour, the digit one higher) and UP moves back. DOWN is
+ * what a clockwise click of the knob sends, and clockwise should increase,
+ * as it is already "next" in every menu and review. Physical buttons follow
+ * the same rule, so DN now raises a digit. To restore the old sense, swap
+ * the signs at each call site marked PICKER_FORWARD. */
 static void pin_option_scroll(int dir)
 {
     int n = pin_can_submit() ? PIN_OPTION_COUNT : 10;
@@ -801,6 +808,18 @@ static int64_t  last_activity_us = 0;
  * 1 test). Not secret, and only a view: the signer takes the network a PCZT
  * declares, never this. */
 #define UI_KEY_NETWORK      "zc_net"
+/* Settings > Knob: 1 when encoder turns are reversed (UP and DOWN swapped for
+ * the knob only). XORed with the board's BOARD_ENC_REVERSE in button.c, so a
+ * board wired the other way round is fixed at compile time and this stays a
+ * matter of taste. Absent or any other value is Normal. */
+#define UI_KEY_KNOB_REVERSE "knob_rev"
+
+/* Only a board with an encoder offers the setting; on the others there is
+ * nothing for it to turn. The host tests ask for it explicitly so the menu
+ * item can be exercised without building for that board. */
+#ifndef UI_HAS_KNOB_SETTING
+#define UI_HAS_KNOB_SETTING LEEK_HAS_ENCODER
+#endif
 
 /* Four steps rather than a slider: the OLED is legible across the whole range,
  * so fine control buys nothing and costs presses. Low is genuinely useful -
@@ -908,7 +927,25 @@ static void settings_load(void)
     if (nvs_get_u8(nvs, UI_KEY_NETWORK, &stored) == ESP_OK && stored <= 1) {
         zcash_network = stored;
     }
+    if (nvs_get_u8(nvs, UI_KEY_KNOB_REVERSE, &stored) == ESP_OK) {
+        button_set_knob_reversed(stored == 1);
+    }
     nvs_close(nvs);
+}
+
+/* Flipped and saved in one step, and effective on the next detent: button.c
+ * reads the flag on every turn, so there is nothing to restart. */
+static void knob_reverse_toggle(void)
+{
+    const bool reversed = !button_knob_reversed();
+    button_set_knob_reversed(reversed);
+
+    nvs_handle_t nvs;
+    if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, UI_KEY_KNOB_REVERSE, reversed ? 1 : 0);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
 }
 
 static void brightness_apply_and_save(void)
@@ -1191,6 +1228,10 @@ typedef enum {
     SET_BRIGHTNESS,
     SET_AUTOLOCK,
     SET_ENTRY_STYLE,
+    /* Beside Word entry: both are about how the controls behave. */
+#if UI_HAS_KNOB_SETTING
+    SET_KNOB,
+#endif
     SET_CHANGE_PIN,
 /* The Wi-Fi AP is a test fixture, not a feature (AUDIT S8g). It brings up an
  * access point with a hardcoded password on a device holding seeds, so it is
@@ -1220,6 +1261,9 @@ static const char *settings_items[SETTINGS_ITEMS] = {
     "Brightness",
     "Auto-lock",
     "Word entry",
+#if UI_HAS_KNOB_SETTING
+    "Knob direction",
+#endif
     "Change PIN",
 #ifdef CONFIG_ESP_WIFI_ENABLED
     "WiFi Test",
@@ -1441,11 +1485,11 @@ static void screen_pin_setup_on_button(button_id_t btn)
 {
     switch (btn) {
         case BUTTON_UP:
-            pin_option_scroll(1);
+            pin_option_scroll(-1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            pin_option_scroll(-1);
+            pin_option_scroll(1);
             break;
 
         case BUTTON_CANCEL:
@@ -1555,11 +1599,11 @@ static void screen_pin_unlock_on_button(button_id_t btn)
 {
     switch (btn) {
         case BUTTON_UP:
-            pin_option_scroll(1);
+            pin_option_scroll(-1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            pin_option_scroll(-1);
+            pin_option_scroll(1);
             break;
 
         case BUTTON_CANCEL:
@@ -1754,11 +1798,11 @@ static void screen_pin_change_on_button(button_id_t btn)
 {
     switch (btn) {
         case BUTTON_UP:
-            pin_option_scroll(1);
+            pin_option_scroll(-1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            pin_option_scroll(-1);
+            pin_option_scroll(1);
             break;
 
         case BUTTON_CANCEL:
@@ -2845,11 +2889,11 @@ static void screen_mnemonic_entry_on_button(button_id_t btn)
 
     switch (btn) {
         case BUTTON_UP:
-            mnemonic_entry_scroll(&entry, 1);
+            mnemonic_entry_scroll(&entry, -1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            mnemonic_entry_scroll(&entry, -1);
+            mnemonic_entry_scroll(&entry, 1);
             break;
 
         case BUTTON_CANCEL:
@@ -3025,6 +3069,13 @@ static void screen_settings_render(void)
             snprintf(line, sizeof(line), "%s Entry %s",
                      item_idx == settings_selection ? ">" : " ",
                      mnemonic_entry_blocks_enabled() ? "Blocks" : "Simple");
+#if UI_HAS_KNOB_SETTING
+        } else if (item_idx == SET_KNOB) {
+            /* "> Knob Reversed" is 15 columns of the 21. */
+            snprintf(line, sizeof(line), "%s Knob %s",
+                     item_idx == settings_selection ? ">" : " ",
+                     button_knob_reversed() ? "Reversed" : "Normal");
+#endif
         } else if (item_idx == SET_AUTOLOCK) {
             snprintf(line, sizeof(line), "%s Lock %s",
                      item_idx == settings_selection ? ">" : " ",
@@ -3129,6 +3180,14 @@ static void screen_settings_on_button(button_id_t btn)
                     ESP_LOGI(TAG, "Word entry: %s",
                              mnemonic_entry_blocks_enabled() ? "blocks" : "simple");
                     break;
+
+#if UI_HAS_KNOB_SETTING
+                case SET_KNOB:
+                    knob_reverse_toggle();
+                    ESP_LOGI(TAG, "Knob direction: %s",
+                             button_knob_reversed() ? "reversed" : "normal");
+                    break;
+#endif
 
                 case SET_BRIGHTNESS:
                     brightness_choice = brightness_next(brightness_choice);
@@ -3608,9 +3667,9 @@ static void screen_sd_seed_on_button(button_id_t btn)
         case SD_PASS_NEW:
         case SD_PASS_REPEAT:
             if (btn == BUTTON_UP) {
-                text_entry_scroll(&sd_entry, 1);
+                text_entry_scroll(&sd_entry, -1);   /* PICKER_FORWARD */
             } else if (btn == BUTTON_DOWN) {
-                text_entry_scroll(&sd_entry, -1);
+                text_entry_scroll(&sd_entry, 1);
             } else if (btn == BUTTON_CANCEL) {
                 if (!text_entry_back(&sd_entry)) {
                     sd_forget();
@@ -4365,11 +4424,11 @@ static void screen_entropy_on_button(button_id_t btn)
          * plus the commit. It also keeps the previous face armed, so a repeated
          * number costs a single press. */
         switch (btn) {
-            case BUTTON_UP:
-                dice_face = (uint8_t)(dice_face % 6 + 1);
+            case BUTTON_UP:   /* PICKER_FORWARD: DOWN is the next face */
+                dice_face = (uint8_t)((dice_face + 4) % 6 + 1);
                 break;
             case BUTTON_DOWN:
-                dice_face = (uint8_t)((dice_face + 4) % 6 + 1);
+                dice_face = (uint8_t)(dice_face % 6 + 1);
                 break;
             case BUTTON_ACCEPT:
                 entropy_add_dice_roll(dice_face, (uint64_t)esp_timer_get_time());
@@ -4625,8 +4684,8 @@ static void screen_mnemonic_verify_on_button(button_id_t btn)
     verify_last_wrong = false;
 
     switch (btn) {
-        case BUTTON_UP:   mnemonic_entry_scroll(&entry, 1);  break;
-        case BUTTON_DOWN: mnemonic_entry_scroll(&entry, -1); break;
+        case BUTTON_UP:   mnemonic_entry_scroll(&entry, -1); break;   /* PICKER_FORWARD */
+        case BUTTON_DOWN: mnemonic_entry_scroll(&entry, 1);  break;
 
         case BUTTON_CANCEL:
             if (!mnemonic_entry_back(&entry)) {
@@ -4851,8 +4910,8 @@ static void screen_passphrase_render(void)
 static void screen_passphrase_on_button(button_id_t btn)
 {
     switch (btn) {
-        case BUTTON_UP:   text_entry_scroll(&passphrase_entry, 1);  break;
-        case BUTTON_DOWN: text_entry_scroll(&passphrase_entry, -1); break;
+        case BUTTON_UP:   text_entry_scroll(&passphrase_entry, -1); break;   /* PICKER_FORWARD */
+        case BUTTON_DOWN: text_entry_scroll(&passphrase_entry, 1);  break;
 
         case BUTTON_CANCEL:
             /* Closes an open block first, and only then deletes: backing out
@@ -4979,8 +5038,8 @@ static void screen_ble_name_render(void)
 static void screen_ble_name_on_button(button_id_t btn)
 {
     switch (btn) {
-        case BUTTON_UP:   text_entry_scroll(&ble_name_entry, 1);  break;
-        case BUTTON_DOWN: text_entry_scroll(&ble_name_entry, -1); break;
+        case BUTTON_UP:   text_entry_scroll(&ble_name_entry, -1); break;   /* PICKER_FORWARD */
+        case BUTTON_DOWN: text_entry_scroll(&ble_name_entry, 1);  break;
 
         case BUTTON_CANCEL:
             ble_name_rejected = false;
