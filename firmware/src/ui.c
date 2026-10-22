@@ -801,6 +801,18 @@ static int64_t  last_activity_us = 0;
  * 1 test). Not secret, and only a view: the signer takes the network a PCZT
  * declares, never this. */
 #define UI_KEY_NETWORK      "zc_net"
+/* Settings > Knob: 1 when encoder turns are reversed (UP and DOWN swapped for
+ * the knob only). XORed with the board's BOARD_ENC_REVERSE in button.c, so a
+ * board wired the other way round is fixed at compile time and this stays a
+ * matter of taste. Absent or any other value is Normal. */
+#define UI_KEY_KNOB_REVERSE "knob_rev"
+
+/* Only a board with an encoder offers the setting; on the others there is
+ * nothing for it to turn. The host tests ask for it explicitly so the menu
+ * item can be exercised without building for that board. */
+#ifndef UI_HAS_KNOB_SETTING
+#define UI_HAS_KNOB_SETTING LEEK_HAS_ENCODER
+#endif
 
 /* Four steps rather than a slider: the OLED is legible across the whole range,
  * so fine control buys nothing and costs presses. Low is genuinely useful -
@@ -908,7 +920,25 @@ static void settings_load(void)
     if (nvs_get_u8(nvs, UI_KEY_NETWORK, &stored) == ESP_OK && stored <= 1) {
         zcash_network = stored;
     }
+    if (nvs_get_u8(nvs, UI_KEY_KNOB_REVERSE, &stored) == ESP_OK) {
+        button_set_knob_reversed(stored == 1);
+    }
     nvs_close(nvs);
+}
+
+/* Flipped and saved in one step, and effective on the next detent: button.c
+ * reads the flag on every turn, so there is nothing to restart. */
+static void knob_reverse_toggle(void)
+{
+    const bool reversed = !button_knob_reversed();
+    button_set_knob_reversed(reversed);
+
+    nvs_handle_t nvs;
+    if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, UI_KEY_KNOB_REVERSE, reversed ? 1 : 0);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
 }
 
 static void brightness_apply_and_save(void)
@@ -1191,6 +1221,10 @@ typedef enum {
     SET_BRIGHTNESS,
     SET_AUTOLOCK,
     SET_ENTRY_STYLE,
+    /* Beside Word entry: both are about how the controls behave. */
+#if UI_HAS_KNOB_SETTING
+    SET_KNOB,
+#endif
     SET_CHANGE_PIN,
 /* The Wi-Fi AP is a test fixture, not a feature (AUDIT S8g). It brings up an
  * access point with a hardcoded password on a device holding seeds, so it is
@@ -1220,6 +1254,9 @@ static const char *settings_items[SETTINGS_ITEMS] = {
     "Brightness",
     "Auto-lock",
     "Word entry",
+#if UI_HAS_KNOB_SETTING
+    "Knob direction",
+#endif
     "Change PIN",
 #ifdef CONFIG_ESP_WIFI_ENABLED
     "WiFi Test",
@@ -3025,6 +3062,13 @@ static void screen_settings_render(void)
             snprintf(line, sizeof(line), "%s Entry %s",
                      item_idx == settings_selection ? ">" : " ",
                      mnemonic_entry_blocks_enabled() ? "Blocks" : "Simple");
+#if UI_HAS_KNOB_SETTING
+        } else if (item_idx == SET_KNOB) {
+            /* "> Knob Reversed" is 15 columns of the 21. */
+            snprintf(line, sizeof(line), "%s Knob %s",
+                     item_idx == settings_selection ? ">" : " ",
+                     button_knob_reversed() ? "Reversed" : "Normal");
+#endif
         } else if (item_idx == SET_AUTOLOCK) {
             snprintf(line, sizeof(line), "%s Lock %s",
                      item_idx == settings_selection ? ">" : " ",
@@ -3129,6 +3173,14 @@ static void screen_settings_on_button(button_id_t btn)
                     ESP_LOGI(TAG, "Word entry: %s",
                              mnemonic_entry_blocks_enabled() ? "blocks" : "simple");
                     break;
+
+#if UI_HAS_KNOB_SETTING
+                case SET_KNOB:
+                    knob_reverse_toggle();
+                    ESP_LOGI(TAG, "Knob direction: %s",
+                             button_knob_reversed() ? "reversed" : "normal");
+                    break;
+#endif
 
                 case SET_BRIGHTNESS:
                     brightness_choice = brightness_next(brightness_choice);

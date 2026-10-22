@@ -11,6 +11,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "button.h"
+#include "board.h"
 
 #include <string.h>
 
@@ -20,11 +21,20 @@ static button_event_t items[QUEUE_CAP];
 static int head, count;
 static int queue_token;   /* address handed out as the opaque handle */
 
+/* Settings > Knob, as button.c holds it: RAM only, so a simulated reboot
+ * (which calls fake_input_reset) loses it and settings_load() must bring it
+ * back from NVS - which is the property a reboot test wants to see. */
+static bool knob_reversed;
+
+void button_set_knob_reversed(bool reversed) { knob_reversed = reversed; }
+bool button_knob_reversed(void)              { return knob_reversed; }
+
 void fake_input_reset(void)
 {
     head = 0;
     count = 0;
     memset(items, 0, sizeof(items));
+    knob_reversed = false;
 }
 
 esp_err_t button_init(void)
@@ -68,6 +78,20 @@ void fake_button_hold(button_id_t id)  { held_button = id; }
 void fake_button_release(void)         { held_button = BUTTON_NONE; }
 
 bool button_is_pressed(button_id_t id) { return held_button == id; }
+
+/* One encoder detent, +1 clockwise and -1 anticlockwise, mapped exactly as
+ * button.c maps it (button_encoder_event, board reversal XOR the setting)
+ * and queued like a real one. Returns the event, so a test can hand it to
+ * ui_handle_button() and know which way the knob was actually turned. */
+button_id_t fake_encoder_detent(int step)
+{
+    button_event_t event = {
+        .id = button_encoder_event(step, (BOARD_ENC_REVERSE != 0) != knob_reversed),
+        .timestamp = 0,
+    };
+    xQueueSend(&queue_token, &event, 0);
+    return event.id;
+}
 
 /* ------------------------------------------------------------- FreeRTOS */
 

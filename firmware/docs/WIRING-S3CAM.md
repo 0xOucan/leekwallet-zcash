@@ -78,8 +78,14 @@ flashing). 2 is the power LED and 48 the RGB LED.
   nothing is shorted. A multimeter from DT to GND with the knob on a click
   should read open. Add the resistor when you have one; the firmware is the
   same either way.
-- If clockwise scrolls up rather than down, build with
-  `-DBOARD_ENC_REVERSE=1`.
+- Clockwise is DOWN: the next menu item, the next page. To have it the other
+  way round, choose **Settings > Knob** on the board: it toggles between
+  Normal and Reversed, applies at once and is kept across restarts. It
+  swaps UP and DOWN for the knob only, never for the buttons.
+- If clockwise scrolls up rather than down in Normal, the encoder is wired
+  with A and B the other way round: build with `-DBOARD_ENC_REVERSE=1` (or
+  swap CLK and DT). The setting flips on top of that, so Normal always
+  means "clockwise is DOWN".
 - A common EC11 gives one quadrature cycle per detent (20 detents, 20
   pulses). If yours needs two clicks per step, it is the 30/15 kind: build
   with `-DENCODER_HALF_STEP`.

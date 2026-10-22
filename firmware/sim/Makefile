@@ -389,6 +389,9 @@ $(BUILD)/test_temp_seed: test_temp_seed.c esp_stubs.c host_stubs.c \
 # for why the real one is not linked here). The Wi-Fi/BLE/USB blocks in ui.c are
 # all behind CONFIG_* macros that stay undefined on the host, so they vanish.
 $(BUILD)/test_ui: CFLAGS += -DAES_VAR
+# The reference board has no encoder, so its build hides Settings > Knob; the
+# suite asks for the item so the setting can be driven through the menu.
+$(BUILD)/test_ui: CFLAGS += -DUI_HAS_KNOB_SETTING=1
 $(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
                   fake_input.c fake_protocol.c ../src/transport.c ../src/ble.c \
                   ../src/ble-name.c ../src/ble-chunk.c \

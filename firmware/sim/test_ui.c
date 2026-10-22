@@ -80,6 +80,7 @@ int         ui__lock_timeout_choice_for_test(void);
 int         ui__lock_timeout_stored_choice_for_test(void);
 
 void fake_input_reset(void);
+button_id_t fake_encoder_detent(int step);
 static void settings_goto(const char *label);
 
 /* The 12-word phrase fake_wallet hands out; a real BIP39 test vector. */
@@ -2071,6 +2072,71 @@ static void test_the_account_survives_a_reboot(void)
           (unsigned)ui__account_for_test());
 }
 
+/* ============================================================================
+ * Settings > Knob
+ * ============================================================================ */
+
+/* The item shows its value, flips on OK, and the next detent already obeys
+ * it: no reboot, no second screen. */
+static void test_the_knob_direction_flips_the_encoder(void)
+{
+    printf("== Settings > Knob swaps UP and DOWN for the encoder, at once\n");
+    boot_unlocked_with_seed();
+
+    settings_goto("Knob Normal");
+    CHECK(fake_encoder_detent(+1) == BUTTON_DOWN, "Normal: clockwise is not DOWN");
+    CHECK(fake_encoder_detent(-1) == BUTTON_UP, "Normal: anticlockwise is not UP");
+
+    press(BUTTON_ACCEPT);
+    CHECK(button_knob_reversed(), "OK did not reverse the knob");
+    CHECK_SCREEN(fake_oled_contains("> Knob Reversed"),
+                 "the menu line does not show the new value");
+    CHECK(fake_nvs_has("leek_ui", "knob_rev"), "the choice was not saved");
+    CHECK(fake_encoder_detent(+1) == BUTTON_UP, "Reversed: clockwise is not UP");
+    CHECK(fake_encoder_detent(-1) == BUTTON_DOWN, "Reversed: anticlockwise is not DOWN");
+
+    /* Driven by the knob itself, the way a user would find out: one
+     * anticlockwise detent in Reversed is DOWN, which moves the selection
+     * off the Knob line. */
+    press(fake_encoder_detent(-1));
+    CHECK_SCREEN(!fake_oled_contains("> Knob"),
+                 "a reversed anticlockwise turn did not move down the menu");
+
+    settings_goto("Knob Reversed");
+    press(BUTTON_ACCEPT);
+    CHECK(!button_knob_reversed(), "a second OK did not restore Normal");
+    CHECK(fake_encoder_detent(+1) == BUTTON_DOWN, "back to Normal: clockwise is not DOWN");
+}
+
+/* A preference about the hardware, so it survives a power cycle like
+ * brightness does. fake_input_reset() drops the RAM copy, as a real reboot
+ * does, so only settings_load() can bring it back. */
+static void test_the_knob_direction_survives_a_reboot(void)
+{
+    printf("== Settings > Knob persists across a reboot\n");
+    boot_unlocked_with_seed();
+
+    settings_goto("Knob Normal");
+    press(BUTTON_ACCEPT);
+    CHECK(button_knob_reversed(), "setup: could not reverse the knob");
+
+    fake_clock_reset();
+    fake_oled_reset();
+    fake_input_reset();
+    fake_wallet_reset();
+    pin__reset_static_state_for_test();
+    ui__reset_static_state_for_test();
+    CHECK(!button_knob_reversed(), "setup: the simulated reboot kept RAM state");
+    pin_init();
+    wallet_init();
+    ui_init();
+    ui_render();
+
+    CHECK(button_knob_reversed(), "the knob reverted to Normal across a reboot");
+    CHECK(fake_encoder_detent(+1) == BUTTON_UP,
+          "after the reboot, clockwise is not UP");
+}
+
 /* A wipe erases the vault namespaces, not the settings one, so the account has
  * to be reset explicitly or the next owner's first seed comes up at the
  * previous owner's account. */
@@ -2840,6 +2906,8 @@ int main(void)
     test_the_wallet_screen_names_the_account();
     test_the_account_survives_a_reboot();
     test_a_wipe_resets_the_account();
+    test_the_knob_direction_flips_the_encoder();
+    test_the_knob_direction_survives_a_reboot();
 
     test_a_tap_on_back_does_not_lock();
     test_the_hold_shows_progress();
