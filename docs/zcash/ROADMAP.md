@@ -252,6 +252,7 @@ One codebase for both: our app is the Zodl fork with our branding. The hardware 
 - First test a ZEC to USDC swap signed by the board. Then fix what breaks; the deposit is usually a transparent output, which the device already reviews with a warning.
 - Then add the `confidentiality` option to the quote.
 - Done when: a small mainnet swap completes, signed on the board.
+- On Android through the Zcash LeekWallet app instead (2026-10-21, built, the tablet next): the desktop app merged into it, so its Swap tab (app/near-intents, `app/src-tauri/src/swaps.rs`) is the same on Android as on the desktop: quotes, the deposit signed on the board over USB or Bluetooth, status polling, refunds. Left: a small mainnet swap from the tablet.
 
 **6.8 Compact PCZT in the app (S, after Phase 7).** Send the compact view over every link: half the QR frames, and faster USB and Bluetooth.
 
@@ -274,15 +275,16 @@ One codebase for both: our app is the Zodl fork with our branding. The hardware 
   - `leekwallet-s3cam-<version>-provision.bin`: bootloader, partition table and app merged, written at `0x0`, erases every wallet (new boards only);
   - `SHA256SUMS` in `sha256sum` format, which the flasher checks each download against, and `SHA256SUMS.asc` signed by hand;
   - the separate `firmware.bin`, `bootloader.bin`, `partitions.bin` and `BUILDINFO`, for anyone rebuilding the tag to compare.
-- A release without a `-update.bin` or `-provision.bin` naming a board (`s3cam`) is not offered by the flasher, which says what is missing and points to building the image by hand. Details: `firmware/app/README.md`, "Firmware releases".
+- A release without a `-update.bin` or `-provision.bin` naming a board (`s3cam`) is not offered by the flasher, which says what is missing and points to building the image by hand. Details: `app/README.md`, "Firmware releases".
 
 **6.13 Staying current with Zodl (ongoing).**
 - Rebase `leekwallet` on each Zodl release.
 - The diff outside `feature-leekwallet` stays small on purpose.
 
-**6.14 Zcash in the LeekWallet Companion (M).** The Companion (firmware/app, Tauri: Linux, macOS, Windows, Android), shown as "Zcash LeekWallet" with the application id `io.leekwallet.zcash.companion`, is a Zcash-only app (its EVM screens were removed): one app for both networks with their data kept apart (unlike the Zodl fork, two apps).
+**6.14 Zcash in the LeekWallet Companion (M).** The Companion (now `app/`, Tauri: Linux, macOS, Windows, Android), shown as "Zcash LeekWallet" with the application id `io.leekwallet.zcash.companion`, is a Zcash-only app (its EVM screens were removed): one app for both networks with their data kept apart (unlike the Zodl fork, two apps).
 - Board tools, over the Companion's own session (`packages/core/src/zcash.ts`): network switch (testnet default, mainnet behind a warning), the board's account (UFVK, UA, t-address, fingerprint, birthday per network), QR and copy, verify on the board, set the birthday, and signing a `.pczt` file into a `.zsig`. Board errors shown verbatim.
-- The wallet, over zecz linked into src-tauri with the desktop app's modules compiled in: import from the board, sync, balance and pools, rotating addresses, send with memo and review, shield prompt, history, contacts, server per network. Screens after Zodl's.
+- The wallet, over zecz linked into src-tauri through `app/zcash-wallet` (the desktop app's modules, now a crate): import from the board, sync, balance and pools, rotating addresses, send with memo and review, shield prompt, history, contacts, server per network. Screens after Zodl's.
+- One app since 2026-10-21: the desktop app (`desktop/`) merged into it, with its NEAR swaps (`app/near-intents`), watch-only wallets and look; its data is copied over on the first start. `desktop/` is gone.
 - Done when: on desktop and on the phone, a testnet wallet imported from the board syncs, receives, and sends and shields signed on the board; the same on mainnet with a small amount; `pnpm test`, `pnpm test:zdev` and `cargo test` pass.
 
 Not planned: SD card in the app. Android's removable-storage rules and missing slots make it worse than QR there. If it is ever wanted, it becomes "export/import file" through the system picker.
@@ -322,7 +324,7 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 ## Phase 8: Desktop - LeekWallet Zcash for Linux, Windows and macOS
 
 **Architecture.**
-- **Tauri v2**, starting from LeekWallet's `app/` already in `firmware/app`.
+- **Tauri v2**, starting from LeekWallet's `app/` already in `firmware/app`. Since 2026-10-21 Phase 8 is the one Zcash LeekWallet app in `app/` (desktop and Android); the paths below name where the work was first done, in `desktop/`, which merged into it (its modules are `app/zcash-wallet` and `app/near-intents`).
 - **The backend is Rust and reuses what exists:**
   - `zecz` as a library: wallet database per profile (`zcash_client_sqlite`), lightwalletd sync, proposals, PCZT, proving with cached parameters, and broadcast.
   - `leek-device` (serial port).
@@ -333,7 +335,7 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 **8.1 Skeleton (M).** `zecz` split into a library crate and a CLI. The Tauri app builds on Linux, Windows and macOS in CI, and opens and syncs a watch-only testnet account.
 - Library split done: `host/zecz-core` (lib `zecz`) holds the wallet API (`zecz::wallet`: profile, init, sync with progress, tip, balances, addresses, propose a send, finish) and prints nothing; `host/zecz-cli` is the `zecz` binary over it, with the same commands and output.
 - Tauri skeleton done: `desktop/` imports a UFVK as a watch-only account, syncs it with a progress bar, and shows balances per pool and the unified address. It builds and bundles on Linux (`tauri build --debug`), and its testnet sync test passes.
-- CI written (`.github/workflows/desktop.yml`: Linux, Windows, macOS builds; host and backend tests). Left: its first green run once pushed.
+- CI written (`.github/workflows/desktop.yml`: Linux, Windows, macOS builds; host and backend tests), now `.github/workflows/app.yml` for the one app, with an Android check.
 
 **8.2 Software wallets (M).**
 - Create or restore a 24-word seed with an optional passphrase.

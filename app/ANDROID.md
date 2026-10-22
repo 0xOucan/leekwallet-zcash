@@ -1,6 +1,6 @@
 # Android build (T29, T30, T59)
 
-The LeekWallet Zcash Companion (Zcash only; shown on the phone as **Zcash
+The Zcash LeekWallet app (`app/`, Zcash only; shown on the phone as **Zcash
 LeekWallet**, application id `io.leekwallet.zcash.companion`, see "Application
 id" below) runs on Android through the same Tauri shell as the desktop
 build, and since T59 it has **both transports** there: the `transports` command
@@ -278,8 +278,8 @@ export NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
 cd app
 pnpm install
 pnpm tauri android init          # only once per checkout, see "Generated project"
-bash ../scripts/android-usb-host.sh   # after EVERY init: USB host feature, Espressif filter, camera
-bash ../scripts/check-android-manifest.sh   # says what is still missing
+bash scripts/android-usb-host.sh   # after EVERY init: USB host feature, Espressif filter, camera
+bash scripts/check-android-manifest.sh   # says what is still missing
 pnpm android:build               # debug APK, all installed targets
 pnpm android:build:arm64         # just arm64, much faster
 pnpm android:release:arm64       # release APK, arm64, signed with a local key
@@ -676,9 +676,11 @@ it is built: the same environment, `pnpm tauri android init` (then
   unusable unoptimized and the debug APK carries the library uncompressed.
 - **Data** lives in the app's data directory under `zcash/`: one wallet
   directory per network, seed fingerprint and account
-  (`wallets/<test|main>-<zfp16>-<account>`, so a passphrase wallet is its own),
-  an address book per network and seed (`contacts-<net>-<zfp16>.json`), and
-  `settings.json` with a server per network. Viewing keys only. Wallets of the
+  (`wallets/<test|main>-<zfp16>-<account>`, so a passphrase wallet is its own;
+  `wallets/<net>-watch-<h16>` for a viewing key imported by hand), an address
+  book and a swaps file per network and seed (`contacts-<net>-<zfp16>.json`,
+  `swaps-<net>-<zfp16>.json`), and `settings.json` with a server per network
+  and the optional 1Click API key (README, "Where the data lives"). Viewing keys only. Wallets of the
   first builds (`wallets/test`, `wallets/main`) move to their keyed place the
   first time their board account is read.
 - **Zcash only.** The EVM screens, WalletConnect and the EVM QR air gap were
@@ -690,6 +692,17 @@ it is built: the same environment, `pnpm tauri android init` (then
   (`Android/data/io.leekwallet.zcash.companion/files/Download`), which needs no
   storage permission; on Android 11 and later only a USB file transfer or a
   file manager with access to `Android/data` reaches it.
+- **NEAR Intents swaps** (roadmap 6.6), since the desktop app merged into
+  this one (2026-10-21): the Swap tab is the desktop's, over
+  `app/near-intents` (ureq with rustls, so no system TLS on the phone),
+  laid out for a phone's width. The ZEC deposit is a send signed on the
+  board over USB or Bluetooth like any other. 1Click is reached over the
+  phone's network (`https://1click.chaindefuser.com`), which the CSP's
+  `connect-src` does not need to allow: the requests are made by the Rust
+  side. Built and checked for aarch64; a swap from the tablet is the next
+  test.
+- **Wallets on this device** (launcher): the wallets of both networks,
+  opened without the board, and a viewing key import (watch-only).
 - A build without the wallet: `cargo build --no-default-features` in
   src-tauri (or the Tauri CLI's `--no-default-features`); the Zcash screen
   then has only the board tools.
@@ -725,7 +738,7 @@ them after every init.
 
 Re-running `tauri android init`, or a fresh clone, wipes them. That is what
 `scripts/check-android-manifest.sh` exists to catch — it runs as part of
-`./scripts/check.sh` and before every release build, and fails loudly with
+`firmware/scripts/check.sh` and before every release build, and fails loudly with
 what to run.
 
 ### The camera

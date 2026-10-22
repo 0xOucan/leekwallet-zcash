@@ -3,9 +3,10 @@
 Our Rust client for the LeekWallet Zcash board: the v2 pairing handshake,
 the encrypted session, the Zcash calls, and the `.zsig` file. It does not
 care how the bytes travel, so one implementation serves
-[`zecz`](../zecz-cli/README.md) and [`zecz-core`](../zecz-core/README.md),
-the [desktop app](../../desktop/README.md) and the Android fork (through
-[`leek-android`](../leek-android/README.md)). It is the host half of the
+[`zecz`](../zecz-cli/README.md) and [`zecz-core`](../zecz-core/README.md)
+and the Android fork (through [`leek-android`](../leek-android/README.md)).
+The [Zcash LeekWallet app](../../app/README.md) speaks the same protocol
+from its webview (`app/packages/core`) and does not link this crate. It is the host half of the
 firmware's `session.c` and `protocol.c`; the wire format is in
 [PROTOCOL.md](../../firmware/docs/PROTOCOL.md).
 
@@ -23,7 +24,7 @@ receive one frame with a timeout.
 |---|---|---|
 | USB serial (desktop) | `leek_transport_serial::SerialTransport`; `Device::open("/dev/ttyACM0")` | here, feature `serial` (default) |
 | zdev, the simulated board | the same, on zdev's PTY | here |
-| Bluetooth LE (desktop) | `BlePort` (btleplug) | `desktop/src-tauri/src/link.rs` |
+| Bluetooth LE (desktop) | `BlePort` (btleplug) | the old desktop app's `link.rs` (git history; merged into `app/` on 2026-10-21) |
 | USB OTG and Bluetooth LE (Android) | `JniPort`, `JniBlePort`, over Kotlin objects | [`leek-android`](../leek-android/README.md) |
 
 Over USB every frame starts with the sync marker `LK`, then a big-endian

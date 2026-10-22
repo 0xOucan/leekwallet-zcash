@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
-description = "The Zcash LeekWallet app's wallet layer over zecz: wallets keyed by board seed or viewing key, sync, send and shield for the board to sign, contacts, settings, the move from the old desktop app"
+description = "The Zcash LeekWallet app's wallet layer over zecz: wallets keyed by board seed or viewing key, sync, send and shield for the board to sign, contacts, settings, the copy from the old desktop app"
 # A member of the app's Cargo workspace (src-tauri/Cargo.toml), so it shares
 # the app's lock file and target directory: librustzcash builds once.
 workspace = "../src-tauri"

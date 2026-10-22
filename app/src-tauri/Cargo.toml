@@ -21,9 +21,10 @@ tauri-build = { version = "2", features = [] }
 default = ["zcash-wallet"]
 
 # The Zcash wallet (src/zwallet.rs): sync, balances, history, send and
-# shield, over zecz (host/zecz-core), the engine of the zecz CLI and the
-# desktop app. Behind a feature because it is most of this binary's size
-# (librustzcash, Halo 2, SQLite) and because a build that only carries the
+# shield, over zecz (host/zecz-core) through app/zcash-wallet, and the
+# NEAR Intents swaps (src/swaps.rs over app/near-intents). Behind a
+# feature because it is most of this binary's size (librustzcash, Halo 2,
+# SQLite) and because a build that only carries the
 # board tools (account, address check, PCZT signing) is a meaningful thing
 # to ship. Without it the Zcash section offers those and says nothing of a
 # wallet; the webview asks `zw_available`.
@@ -66,7 +67,7 @@ hex = "0.4"
 zecz-core = { path = "../../host/zecz-core", default-features = false, optional = true }
 anyhow = { version = "1", optional = true }
 # The wallet layer over zecz (wallets, imports, sync, send for the board to
-# sign, contacts, settings, the move from the old desktop app) and NEAR
+# sign, contacts, settings, the copy from the old desktop app) and NEAR
 # Intents swaps, each its own crate with its own tests.
 leek-zcash-wallet = { path = "../zcash-wallet", optional = true }
 leek-near-intents = { path = "../near-intents", optional = true }

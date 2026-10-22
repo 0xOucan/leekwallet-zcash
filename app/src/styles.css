@@ -603,7 +603,7 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
 
 .launcher__tile--primary { border-color: var(--accent); }
 
-/* From the old desktop app (desktop/src/styles.css), so the one app keeps
+/* From the old desktop app (desktop/src/styles.css, now in git history), so the one app keeps
  * its look: mainnet is one solid red bar, the same in both themes, white on
  * #A33329 (contrast 6.5:1), on screen the whole time it is mainnet. */
 #zmainbanner {

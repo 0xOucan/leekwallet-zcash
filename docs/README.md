@@ -21,8 +21,7 @@ the top README.
 | Product | README |
 |---|---|
 | Board firmware (`firmware/`, upstream LeekWallet's README with a Zcash note) | [firmware/README.md](../firmware/README.md) |
-| Zcash LeekWallet app (`firmware/app/`, desktop and Android) | [firmware/app/README.md](../firmware/app/README.md), Android build: [ANDROID.md](../firmware/app/ANDROID.md) |
-| Zcash desktop app (`desktop/`, NEAR Intents swaps) | [desktop/README.md](../desktop/README.md) |
+| Zcash LeekWallet app (`app/`, desktop and Android, NEAR Intents swaps) | [app/README.md](../app/README.md), Android build: [ANDROID.md](../app/ANDROID.md) |
 | Chrome extension (`chrome/`) | [chrome/README.md](../chrome/README.md) |
 | LeekWallet Zcash for Android (Zodl fork, own repo) | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android#readme) |
 | `zecz` CLI | [host/zecz-cli/README.md](../host/zecz-cli/README.md) |

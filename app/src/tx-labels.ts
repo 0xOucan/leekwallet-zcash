@@ -3,7 +3,7 @@
  * activity, and Activity).
  *
  * The kinds are zecz's (host/zecz-core TxKind) as the desktop backend's
- * history names them (desktop/src-tauri/src/backend.rs, tx_dto): received,
+ * history names them (app/zcash-wallet/src/backend.rs, tx_dto): received,
  * sent, self (the account paid itself: every output was its own, and what
  * it lost was the fee), shielded and internal. A kind added there later
  * reads as its own name, or "Transaction", never "undefined" (the label a

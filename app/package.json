@@ -1,7 +1,7 @@
 {
   "name": "leekwallet-zcash-companion",
   "version": "0.1.0",
-  "description": "LeekWallet Zcash Companion workspace (Tauri v2: desktop + Android), Zcash only",
+  "description": "Zcash LeekWallet app workspace (Tauri v2: desktop + Android), Zcash only",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",

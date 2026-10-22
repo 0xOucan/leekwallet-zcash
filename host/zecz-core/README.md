@@ -5,9 +5,9 @@ library name `zecz`). It runs on the companion side: it syncs, builds
 PCZTs (ZIP 374) for the board, applies the board's `.zsig`, proves and
 broadcasts. The board only checks and signs.
 
-Used by the [`zecz` CLI](../zecz-cli/README.md), the
-[desktop app](../../desktop/README.md) and the
-[Zcash LeekWallet app](../../firmware/app/README.md). The
+Used by the [`zecz` CLI](../zecz-cli/README.md) and the
+[Zcash LeekWallet app](../../app/README.md) (desktop and Android, through
+`app/zcash-wallet`). The
 [Chrome engine](../../chrome/engine) cannot link it (tonic, files, tokio)
 and follows the same flow over gRPC-web.
 

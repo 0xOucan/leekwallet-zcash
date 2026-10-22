@@ -1,27 +1,45 @@
-# LeekWallet Zcash Companion
+# Zcash LeekWallet
 
-Shown as **Zcash LeekWallet** (launcher, window title), application id
-`io.leekwallet.zcash.companion`. The companion app of the LeekWallet Zcash
-board, **Zcash only**: one
+The app of the LeekWallet Zcash board, **Zcash only**: application id
+`io.leekwallet.zcash.companion`, shown as **Zcash LeekWallet**. One
 [Tauri v2](https://tauri.app) codebase for Linux, macOS, Windows and Android,
 talking to the board over USB or Bluetooth on every platform. It pairs with
-the board, unlocks it, applies a passphrase, and is a full Zcash wallet
-(sync, receive, send and shield signed on the board, history, contacts) for
-mainnet and testnet in one app.
+the board, unlocks it, applies a passphrase, and is a full Zcash wallet (sync,
+receive, send and shield signed on the board, history, contacts, watch-only
+wallets) with swaps from and into ZEC through NEAR Intents, for mainnet and
+testnet in one app, each network's data kept apart.
 
-It began as LeekWallet's EVM companion. Everything EVM (chains and RPC,
-balances and tokens, EVM send and signing, mini apps, WalletConnect, the
-`ur:eth-*` QR air gap, blind-signing settings, the EVM browser extension) was
-removed in October 2026: the board's firmware signs Zcash only. Git history
-keeps the old code; a future app for BTC, Zcash and EVM would be a separate
-project.
+It began as LeekWallet's EVM companion ("the Companion"). Everything EVM
+(chains and RPC, balances and tokens, EVM send and signing, mini apps,
+WalletConnect, the `ur:eth-*` QR air gap, blind-signing settings, the EVM
+browser extension) was removed in October 2026: the board's firmware signs
+Zcash only. On 2026-10-21 the separate Zcash desktop app (`desktop/`,
+`com.leekwallet.zcash`) merged into it, with its NEAR swaps, watch-only
+wallets and look, and the app moved from `firmware/app/` to `app/`; see
+"From the old desktop app" for its data and "Parity with the old desktop
+app" for what came over.
 
 ```
 app/
-├── packages/core/     @leekwallet/core: framing, CBOR, session, the z* calls
+├── packages/core/     @leekwallet/core: framing, CBOR, session, the z* calls (TypeScript)
+├── transport-serial/  leek-transport-serial: the board's USB serial link (Rust)
+├── transport-ble/     leek-transport-ble: the board's Bluetooth LE link (Rust)
+├── zcash-wallet/      leek-zcash-wallet: the wallet over zecz-core, the wallets'
+│                      names and places, the copy from the old desktop app
+├── near-intents/      leek-near-intents: NEAR Intents 1Click swaps, no zecz in it
 ├── src/               UI (shared by every platform)
-└── src-tauri/         Rust shell: transports, the Zcash wallet (zecz), capability allowlist
+├── src-tauri/         Tauri shell: transports, the wallet and swap commands,
+│                      capability allowlist; the Cargo workspace root
+└── scripts/           Android: USB host manifest, release signing, release build
 ```
+
+The parts are separate so another app can take some without the rest: the
+transports and `packages/core` know nothing of Zcash wallets (a future
+"LeekWallet ETH" app would reuse them), `zcash-wallet` knows nothing of the
+transports or Tauri, and `near-intents` takes the wallet's part (network,
+address check, its address and balance) through `QuoteContext` instead of
+linking zecz. `src-tauri` is where they meet; with `--no-default-features`
+it builds without the wallet and swaps.
 
 ## Building the Tauri desktop shell
 
@@ -90,6 +108,20 @@ frontend, it is a way to start half the app.
 
 `libEGL warning: DRI3 error` on startup is harmless; the window falls back to
 software rendering.
+
+### Release builds
+
+```bash
+pnpm tauri build                 # Linux .deb and AppImage, Windows .msi, macOS .app/.dmg
+pnpm android:release:arm64       # Android: release APK for arm64 (ANDROID.md)
+```
+
+The desktop bundles land in `src-tauri/target/release/bundle/`. Android
+needs the SDK, the NDK and JDK 21, and the generated project
+(`pnpm tauri android init --ci`, then `scripts/android-usb-host.sh`); the
+whole procedure, signing included, is [ANDROID.md](ANDROID.md). Limit the
+Rust jobs on a machine with little RAM: `CARGO_BUILD_JOBS=4 pnpm tauri
+build`.
 
 ## Setup
 
@@ -192,8 +224,12 @@ cd app/packages/core && npm test
 ```
 
 The Rust side moves bytes (USB and BLE, the same commands on desktop and
-Android, see ANDROID.md) and, with the `zcash-wallet` feature, runs the
-wallet engine; the protocol above the transports is identical on both.
+Android, see ANDROID.md) and, with the `zcash-wallet` feature (the
+default), runs the wallet engine (`zcash-wallet`) and the swaps
+(`near-intents`); the protocol above the transports is identical on both.
+The board session is the webview's: the Rust side proposes what the board
+signs and applies the `.zsig` it returns, and never talks to the board
+about a spend itself.
 
 ## Running it
 
@@ -298,10 +334,10 @@ the wallet that kept the PCZT checks. A compact view is the builder's choice
 
 **Wallet** (builds with the `zcash-wallet` feature, the default): the board's
 viewing key synced from lightwalletd by zecz (host/zecz-core), the engine of the
-CLI and the desktop app. Its import, sync, propose, finish, address book and
-server settings are the desktop app's own modules, compiled in from
-`desktop/src-tauri/src` (`src-tauri/src/lib.rs`); `src-tauri/src/zwallet.rs` is
-the commands. The screens follow Zodl's as a feature reference (nothing of its
+CLI. Its import, sync, propose, finish, address book and server settings are
+`app/zcash-wallet` (the old desktop app's modules, now a crate);
+`src-tauri/src/zwallet.rs` is the commands, `src-tauri/src/swaps.rs` the
+swap commands. The screens follow Zodl's as a feature reference (nothing of its
 code is used):
 
 - *Wallet* (home): the total (hideable), shielded (Orchard + Ironwood, each
@@ -331,8 +367,9 @@ code is used):
   *Sent to yourself* (shown with what it cost, the fee), Shielded, Moved
   between pools; a kind added later reads as its own name, never
   "undefined".
-- *Contacts*, *Settings* (server per network, checked before it is saved;
-  wallet info; forget this network's wallet).
+- *Swap*: NEAR Intents, below.
+- *Contacts* (add, edit, remove, pay), *Settings* (server per network,
+  checked before it is saved; wallet info; forget this network's wallet).
 
 **QR scanner.** Send only, Zcash only; no QR flow for pairing or signing.
 `packages/core/src/zip321.ts` parses the code strictly: the address (unified,
@@ -370,18 +407,7 @@ and switches wallet. The passphrase panel says this, and that the hidden
 wallet's synced data stays on this device under its fingerprint (forget it
 in Settings).
 
-Data lives in the app data directory under `zcash/` (on Linux
-`~/.local/share/io.leekwallet.zcash.companion/zcash/`, on macOS
-`~/Library/Application Support/io.leekwallet.zcash.companion/zcash/`, on
-Windows `%APPDATA%\io.leekwallet.zcash.companion\zcash\`, on Android the
-app's private storage):
-`wallets/<test|main>-<zfp16>-<account>` (zfp16: the first 8 bytes of the
-seed fingerprint, in hex), `contacts-<test|main>-<zfp16>.json`, and
-`settings.json` (the server per network, shared): viewing keys and what they
-have seen, never a spending key. A wallet from the first builds
-(`wallets/<net>`, `contacts-<net>.json`) is moved to its keyed place the
-first time the board account it belongs to is read; another seed's leaves it
-alone.
+Where the data lives: see "Where the data lives" below.
 
 Tests: `pnpm test` includes `packages/core/test/zcash.test.ts` (the golden
 `.zsig`, reply checks, chunking, amounts), `packages/core/test/zip321.test.ts`
@@ -395,11 +421,135 @@ Companion's framing and session, and signs the PCZT vectors on both networks, ru
 zdev on Testnet and Mainnet boards (`--network`) and with a passphrase
 (and the one-tap switch after the board's 0x0528), and
 checks a rotated address and its transparent receiver on the board;
-`cargo test --lib` in src-tauri covers the save command, the import checks
-and the background-release timing (`link.rs`),
-and `cargo test --lib -- --ignored online` imports and syncs the public test
-account against testnet lightwalletd. To drive the desktop app against zdev,
+`test/swap.test.ts` (the swap screen's rules: timeline, refunds, what may be
+paid, removed or polled, the form, the quote's rows); `cargo test --workspace`
+in src-tauri covers the save command, the import checks and the
+background-release timing (`link.rs`), the wallet crate (watch-only import
+and sync, history, addresses, shield refusals, contacts, settings, the
+wallets' names and places, the copy from the old desktop app) and the swap
+crate against 1Click answers recorded on 2026-10-17; `cargo test --lib --
+--ignored online` imports and syncs the public test account against testnet
+lightwalletd, and `cargo test -p leek-near-intents -- --ignored` asks 1Click
+for its token list and a dry quote (no deposit, no funds). To drive the desktop app against zdev,
 start zdev with `--link /tmp/zdev` and the app with `LEEK_SERIAL_PORT=/tmp/zdev`.
+
+## Wallets on this device
+
+*Wallets on this device* (launcher) lists every wallet this device holds,
+both networks, from `zw_wallets`: a board's (named by its seed fingerprint
+and account) or a viewing key imported by hand (watch-only), with its
+birthday and how far it is synced. *Open* shows it without the board:
+balance, history, receive addresses, contacts, sync. Sending, shielding and
+verifying an address need the board that holds its seed, and the screen
+says so with *Connect the board*; connecting one hands the screen to that
+board's own account. *Import a viewing key* takes a unified full viewing
+key (`uview1…`, `uviewtest1…`) and its birthday (*Use today's tip* for a new
+account): the old desktop app's watch-only import (roadmap 8.1).
+
+## Swaps (NEAR Intents)
+
+The *Swap* tab trades ZEC for any asset NEAR Intents' 1Click service lists,
+both ways, on **mainnet only** (1Click has no testnet: on testnet the tab
+offers only *Preview price*, a dry quote against a placeholder address). The
+same on desktop and Android (roadmap 6.6 and 8.6); the layout wraps to a
+phone's width. The flow is the 1Click docs'
+([Making a Request](https://docs.near-intents.org/integration/distribution-channels/1click-api/quickstart/making-a-request),
+[OpenAPI](https://1click.chaindefuser.com/docs/v0/openapi.yaml)):
+
+1. `GET /v0/tokens` fills the asset picker (kept five minutes).
+2. Direction, asset, amount, the address on the other chain and the
+   slippage (1% by default, at most 10%). *Preview price* asks a `dry`
+   quote; *Get quote* a real one, which comes with a deposit address and a
+   deadline and is stored with the wallet's swaps.
+3. **ZEC → asset**: the quote shows what is paid, received (about, and at
+   least after slippage), the rate, fees, the refund fee and the deadline.
+   *Review the deposit* builds a send of exactly the quoted amount to the
+   deposit address (`swap_execute`, compact signer view); the review, the
+   mainnet tick box and the signing on the board are the send's, so it
+   needs the board's wallet and the board connected.
+   **Asset → ZEC**: the tab shows the deposit address on the other chain,
+   with a QR code, to pay from a wallet there before the deadline; a
+   watch-only wallet can receive this way.
+4. After the broadcast, `zw_finish` records the txid with the swap; the
+   tab sends it to `/v0/deposit/submit` once, then reads `/v0/status`
+   every 20 s while it is open, until SUCCESS, REFUNDED or FAILED. Each
+   swap shows a timeline (quoted, deposit sent, deposit seen, swapping,
+   done / refunded / failed), the deposit address, the txids and the
+   payout's explorer link. A refund is shown only when 1Click reports a
+   refunded amount above zero: it reports `"0"` on every swap.
+
+Checks made before anything is signed: mainnet for anything but a preview;
+a board wallet to swap from ZEC; spendable ZEC for the deposit plus a fee;
+1Click's echo of the request (assets, amount, recipient, refund address,
+swap type) must match what was asked and the deposit amount must be exactly
+the amount asked; the deposit address must be a mainnet address the wallet
+can pay (unified or transparent; TEX refused); no deposit memo; at least 15
+minutes left before the deadline; the proposal must pay exactly that amount
+to that address. A status never moves a swap backwards.
+
+**Privacy.** The wallet's side of each swap (the refund address from ZEC,
+the payout address into ZEC) is a fresh Orchard-only unified address, so
+refunds and payouts stay shielded and swaps cannot be linked to each other
+or to the receive address. A transparent deposit address makes the deposit
+and its amount public on the chain, which the tab says.
+
+**API key.** Optional. Without one 1Click adds a 0.25% platform fee and
+refuses confidential quotes. A partner key (a JWT from
+partners.near-intents.org) goes in `LEEKZ_1CLICK_API_KEY` or as
+`"oneClickApiKey"` in `zcash/settings.json` (below); it is sent as a bearer
+token and never shown. None is in the repository.
+
+## Where the data lives
+
+Everything is under `zcash/` in the app data directory:
+
+| Platform | Directory |
+|---|---|
+| Linux | `~/.local/share/io.leekwallet.zcash.companion/zcash/` |
+| macOS | `~/Library/Application Support/io.leekwallet.zcash.companion/zcash/` |
+| Windows | `%APPDATA%\io.leekwallet.zcash.companion\zcash\` |
+| Android | the app's private storage (`/data/data/io.leekwallet.zcash.companion/`) |
+
+Inside it (`app/zcash-wallet/src/keys.rs`):
+
+- `wallets/<test|main>-<zfp16>-<account>`: a board's wallet, a zecz data
+  directory (`zfp16`: the first 8 bytes of the seed fingerprint, in hex);
+  `wallets/<test|main>-watch-<h16>` a viewing key imported by hand (`h16`:
+  the first 8 bytes of the SHA-256 of the key).
+- `contacts-<test|main>-<zfp16 or watch-h16>.json`: that seed's address book.
+- `swaps-<test|main>-<zfp16 or watch-h16>.json`: its swaps (mainnet only in
+  practice), each with the whole quote and 1Click's signature, the deposit
+  txid and the last status.
+- `settings.json`: the server per network and the 1Click API key, shared.
+- `migrated-from-desktop.json`: written once the old desktop app's data was
+  copied (below).
+
+Viewing keys and what they have seen, never a spending key. Each network
+keeps to itself: nothing of mainnet is read on testnet or the other way. A
+wallet from the first builds (`wallets/<net>`, `contacts-<net>.json`,
+`swaps-<net>.json`) is moved to its keyed place the first time it is opened.
+
+## From the old desktop app
+
+On its first start the app looks for the old desktop app's directory beside
+its own (`com.leekwallet.zcash`: `~/.local/share/com.leekwallet.zcash/` on
+Linux, `~/Library/Application Support/com.leekwallet.zcash/` on macOS,
+`%APPDATA%\com.leekwallet.zcash\` on Windows; it never existed on
+Android) and **copies** (`app/zcash-wallet/src/migrate.rs`):
+
+- each network's wallet, to the place of the account it holds (board or
+  watch-only), with that network's address book and swaps;
+- the servers and the 1Click API key, where this app has none set.
+
+The old directory is only read: nothing in it is moved, changed or deleted,
+so the old app still works and a failed copy is tried again on the next
+start. What this app already has wins (reported as skipped). The marker
+`zcash/migrated-from-desktop.json` lists what was copied and skipped; it is
+written once, so delete it to copy again. Once the new app shows your
+wallets, the old directory may be deleted by hand.
+
+`LEEKZ_NETWORK` and `LEEKZ_SERVER`, the old app's one-run overrides, are not
+read: the network switch and Settings → server do that here.
 
 ## The new application id (October 2026)
 
@@ -474,6 +624,32 @@ Never in it: the passkey, the passphrase, viewing keys, addresses, the
 wallet's data directory (it carries the user name on a desktop), or anything
 typed into a form.
 
+## Parity with the old desktop app
+
+What `desktop/` did, and where it is in this app (checked before
+`desktop/` was deleted, 2026-10-21):
+
+- [x] Pair with the board over USB serial and Bluetooth LE, passkey compared on both screens (the app's own session, `packages/core`)
+- [x] Import the board's account, birthday from the board or the user and recorded on the board (automatic set-up)
+- [x] Watch-only import of a unified full viewing key (Wallets on this device)
+- [x] Sync with progress, the full transactions fetched after the scan
+- [x] Balance per pool (Orchard, Ironwood, transparent), spendable and pending
+- [x] Receive: unified address with QR, new diversified addresses, transparent address under a PUBLIC warning, verify on the board
+- [x] Send with memo: review (payments, change, fee), compact PCZT signed on the board, prove, broadcast
+- [x] Shield transparent funds, signed on the board
+- [x] History: kind, amount, fee, recipients by contact name, memos, txid with copy
+- [x] Contacts: add, edit, remove, pick in Send, Pay
+- [x] Network switch with a mainnet confirmation; a solid red mainnet bar; the mainnet tick box before signing
+- [x] Server per network, checked against its chain before it is saved
+- [x] The board's seed checked against the wallet's before verifying or signing
+- [x] NEAR Intents swaps both ways, the deposit signed on the board, status polling, refunds, removal of finished swaps; testnet price preview
+- [x] 1Click API key from `LEEKZ_1CLICK_API_KEY` or settings
+- [x] The look: tokens, mainnet bar, network badges, swap timeline
+- [x] Its data: wallets, address books, swaps and settings copied on the first start
+- [x] CI on Linux, Windows and macOS (`.github/workflows/app.yml`, with an Android check)
+- [ ] `LEEKZ_NETWORK` / `LEEKZ_SERVER` one-run overrides: dropped on purpose (the network switch and Settings cover them)
+- [ ] The backend-drawn QR SVG (`qr_svg`): replaced by the webview's QR code
+
 ## Status
 
 Implemented and tested: framing (length-prefixed frames, BLE chunking,
@@ -482,10 +658,13 @@ appendix A), the session (X25519 commit-then-reveal, passkey, ChaCha20-
 Poly1305), the mock device (session, PIN, wallets, passphrase; its replies
 compared with the firmware's own by `mock-conformance.test.ts`, regenerated
 by `make -C firmware/sim conformance`), the z* calls against zdev, USB and
-BLE on desktop and Android, and the Zcash wallet.
+BLE on desktop and Android, the Zcash wallet, watch-only wallets and NEAR Intents swaps.
 
-Tests: `pnpm typecheck`; `pnpm test` (packages/core and the flasher);
-`pnpm test:zdev` (against zdev); `cargo test --lib` in src-tauri.
+Tests: `pnpm typecheck`; `pnpm test` (packages/core, the flasher, the
+companion flow and the swap screen); `pnpm test:zdev` (against zdev);
+`cargo test --workspace` in src-tauri (the shell, `zcash-wallet`,
+`near-intents`); `cargo check --target aarch64-linux-android`. CI:
+`.github/workflows/app.yml`.
 
 See [../docs/PROTOCOL.md](../docs/PROTOCOL.md) for the wire format and
 [../docs/DESIGN.md](../docs/DESIGN.md) for the visual language.
