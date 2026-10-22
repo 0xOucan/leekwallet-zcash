@@ -395,6 +395,13 @@ static bool pin_can_submit(void)
     return pin_cursor >= PIN_MIN_LENGTH;
 }
 
+/* PICKER_FORWARD: in every "prev <cur> next" picker - PIN digits, seed and
+ * passphrase letters, the BLE name, the dice face - DOWN moves forward (to
+ * the right-hand neighbour, the digit one higher) and UP moves back. DOWN is
+ * what a clockwise click of the knob sends, and clockwise should increase,
+ * as it is already "next" in every menu and review. Physical buttons follow
+ * the same rule, so DN now raises a digit. To restore the old sense, swap
+ * the signs at each call site marked PICKER_FORWARD. */
 static void pin_option_scroll(int dir)
 {
     int n = pin_can_submit() ? PIN_OPTION_COUNT : 10;
@@ -1478,11 +1485,11 @@ static void screen_pin_setup_on_button(button_id_t btn)
 {
     switch (btn) {
         case BUTTON_UP:
-            pin_option_scroll(1);
+            pin_option_scroll(-1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            pin_option_scroll(-1);
+            pin_option_scroll(1);
             break;
 
         case BUTTON_CANCEL:
@@ -1592,11 +1599,11 @@ static void screen_pin_unlock_on_button(button_id_t btn)
 {
     switch (btn) {
         case BUTTON_UP:
-            pin_option_scroll(1);
+            pin_option_scroll(-1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            pin_option_scroll(-1);
+            pin_option_scroll(1);
             break;
 
         case BUTTON_CANCEL:
@@ -1791,11 +1798,11 @@ static void screen_pin_change_on_button(button_id_t btn)
 {
     switch (btn) {
         case BUTTON_UP:
-            pin_option_scroll(1);
+            pin_option_scroll(-1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            pin_option_scroll(-1);
+            pin_option_scroll(1);
             break;
 
         case BUTTON_CANCEL:
@@ -2882,11 +2889,11 @@ static void screen_mnemonic_entry_on_button(button_id_t btn)
 
     switch (btn) {
         case BUTTON_UP:
-            mnemonic_entry_scroll(&entry, 1);
+            mnemonic_entry_scroll(&entry, -1);   /* see PICKER_FORWARD */
             break;
 
         case BUTTON_DOWN:
-            mnemonic_entry_scroll(&entry, -1);
+            mnemonic_entry_scroll(&entry, 1);
             break;
 
         case BUTTON_CANCEL:
@@ -3660,9 +3667,9 @@ static void screen_sd_seed_on_button(button_id_t btn)
         case SD_PASS_NEW:
         case SD_PASS_REPEAT:
             if (btn == BUTTON_UP) {
-                text_entry_scroll(&sd_entry, 1);
+                text_entry_scroll(&sd_entry, -1);   /* PICKER_FORWARD */
             } else if (btn == BUTTON_DOWN) {
-                text_entry_scroll(&sd_entry, -1);
+                text_entry_scroll(&sd_entry, 1);
             } else if (btn == BUTTON_CANCEL) {
                 if (!text_entry_back(&sd_entry)) {
                     sd_forget();
@@ -4417,11 +4424,11 @@ static void screen_entropy_on_button(button_id_t btn)
          * plus the commit. It also keeps the previous face armed, so a repeated
          * number costs a single press. */
         switch (btn) {
-            case BUTTON_UP:
-                dice_face = (uint8_t)(dice_face % 6 + 1);
+            case BUTTON_UP:   /* PICKER_FORWARD: DOWN is the next face */
+                dice_face = (uint8_t)((dice_face + 4) % 6 + 1);
                 break;
             case BUTTON_DOWN:
-                dice_face = (uint8_t)((dice_face + 4) % 6 + 1);
+                dice_face = (uint8_t)(dice_face % 6 + 1);
                 break;
             case BUTTON_ACCEPT:
                 entropy_add_dice_roll(dice_face, (uint64_t)esp_timer_get_time());
@@ -4677,8 +4684,8 @@ static void screen_mnemonic_verify_on_button(button_id_t btn)
     verify_last_wrong = false;
 
     switch (btn) {
-        case BUTTON_UP:   mnemonic_entry_scroll(&entry, 1);  break;
-        case BUTTON_DOWN: mnemonic_entry_scroll(&entry, -1); break;
+        case BUTTON_UP:   mnemonic_entry_scroll(&entry, -1); break;   /* PICKER_FORWARD */
+        case BUTTON_DOWN: mnemonic_entry_scroll(&entry, 1);  break;
 
         case BUTTON_CANCEL:
             if (!mnemonic_entry_back(&entry)) {
@@ -4903,8 +4910,8 @@ static void screen_passphrase_render(void)
 static void screen_passphrase_on_button(button_id_t btn)
 {
     switch (btn) {
-        case BUTTON_UP:   text_entry_scroll(&passphrase_entry, 1);  break;
-        case BUTTON_DOWN: text_entry_scroll(&passphrase_entry, -1); break;
+        case BUTTON_UP:   text_entry_scroll(&passphrase_entry, -1); break;   /* PICKER_FORWARD */
+        case BUTTON_DOWN: text_entry_scroll(&passphrase_entry, 1);  break;
 
         case BUTTON_CANCEL:
             /* Closes an open block first, and only then deletes: backing out
@@ -5031,8 +5038,8 @@ static void screen_ble_name_render(void)
 static void screen_ble_name_on_button(button_id_t btn)
 {
     switch (btn) {
-        case BUTTON_UP:   text_entry_scroll(&ble_name_entry, 1);  break;
-        case BUTTON_DOWN: text_entry_scroll(&ble_name_entry, -1); break;
+        case BUTTON_UP:   text_entry_scroll(&ble_name_entry, -1); break;   /* PICKER_FORWARD */
+        case BUTTON_DOWN: text_entry_scroll(&ble_name_entry, 1);  break;
 
         case BUTTON_CANCEL:
             ble_name_rejected = false;

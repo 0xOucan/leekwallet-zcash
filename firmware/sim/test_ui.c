@@ -1306,11 +1306,12 @@ static int dice_bits_for(int rolls)
 }
 
 /* Commit `face` on the wrapping 1..6 selector, which starts (and stays) on
- * whatever was last armed. Walks up because that is all these tests need. */
+ * whatever was last armed. Walks forward (DOWN, PICKER_FORWARD) because that
+ * is all these tests need. */
 static void roll(int from, int face)
 {
     int steps = (face - from + 6) % 6;
-    for (int i = 0; i < steps; i++) press(BUTTON_UP);
+    for (int i = 0; i < steps; i++) press(BUTTON_DOWN);
     press(BUTTON_ACCEPT);
 }
 
@@ -1330,12 +1331,12 @@ static void test_dice_counts_are_arithmetic(void)
 
     /* The selector is a position, not a free-typed digit: it must show which
      * face is armed before ROLL commits it. */
-    press(BUTTON_UP);
-    CHECK_SCREEN(fake_oled_contains("[2]"), "UP did not move the selector");
+    press(BUTTON_DOWN);
+    CHECK_SCREEN(fake_oled_contains("[2]"), "DOWN did not move the selector");
     CHECK_SCREEN(fake_oled_contains("roll 0/50"),
                  "moving the selector was counted as a roll");
-    press(BUTTON_DOWN);
-    CHECK_SCREEN(fake_oled_contains("[1]"), "DOWN did not move the selector back");
+    press(BUTTON_UP);
+    CHECK_SCREEN(fake_oled_contains("[1]"), "UP did not move the selector back");
 
     press(BUTTON_ACCEPT);
     char want[32];
@@ -2137,6 +2138,34 @@ static void test_the_knob_direction_survives_a_reboot(void)
           "after the reboot, clockwise is not UP");
 }
 
+/* PICKER_FORWARD: clockwise raises the PIN digit. In Normal a clockwise
+ * detent is DOWN, and DOWN now moves to the right-hand neighbour of
+ * "9 <0> 1", the digit one higher, wrapping through OK once it is offered. */
+static void test_clockwise_raises_the_pin_digit(void)
+{
+    printf("== clockwise raises the PIN digit; anticlockwise lowers it\n");
+    boot_device();
+    go(SCREEN_PIN_SETUP);
+
+    CHECK(!button_knob_reversed(), "setup: the knob is not Normal");
+    CHECK(ui__pin_option_for_test() == 0, "setup: the selector is not on 0");
+
+    press(fake_encoder_detent(+1));
+    CHECK_SCREEN(ui__pin_option_for_test() == 1,
+                 "one clockwise click gave %d, not 1", ui__pin_option_for_test());
+    press(fake_encoder_detent(+1));
+    CHECK(ui__pin_option_for_test() == 2,
+          "two clockwise clicks gave %d, not 2", ui__pin_option_for_test());
+    press(fake_encoder_detent(-1));
+    CHECK(ui__pin_option_for_test() == 1,
+          "anticlockwise gave %d, not 1", ui__pin_option_for_test());
+    press(fake_encoder_detent(-1));
+    press(fake_encoder_detent(-1));
+    CHECK(ui__pin_option_for_test() == 9,
+          "anticlockwise from 0 gave %d, not 9 (no wrap)", ui__pin_option_for_test());
+    CHECK_SCREEN(fake_oled_contains("8 <9> 0"), "the selector does not read 8 <9> 0");
+}
+
 /* A wipe erases the vault namespaces, not the settings one, so the account has
  * to be reset explicitly or the next owner's first seed comes up at the
  * previous owner's account. */
@@ -2908,6 +2937,7 @@ int main(void)
     test_a_wipe_resets_the_account();
     test_the_knob_direction_flips_the_encoder();
     test_the_knob_direction_survives_a_reboot();
+    test_clockwise_raises_the_pin_digit();
 
     test_a_tap_on_back_does_not_lock();
     test_the_hold_shows_progress();

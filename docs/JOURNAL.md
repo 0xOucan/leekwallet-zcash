@@ -1780,3 +1780,10 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   RAM 60.6% (198,704 of 327,680 bytes), Flash 80.6% (3,380,517 of
   4,194,304 bytes).
 - Not yet tried on the board.
+- Separate commit, so it can be dropped on its own: clockwise now raises
+  the PIN digit. Every "prev <cur> next" picker (PIN digits, seed letters
+  on import and verify, the passphrase and SD passphrase, the BLE name,
+  the dice face) moves forward on DOWN, which is what a clockwise click
+  sends in Normal, and back on UP. The physical DN button follows, so DN
+  now raises a digit too. The call sites are marked `PICKER_FORWARD` in
+  `src/ui.c`; the test `clockwise raises the PIN digit` covers it.

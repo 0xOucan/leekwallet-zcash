@@ -51,7 +51,9 @@ status, roadmap). This file is about the board and its firmware.
 | Four-button module | UP, DOWN, BACK, OK |
 
 Turning the knob clockwise is DOWN (the next menu item, the next page) and
-anticlockwise is UP. If you prefer it the other way round, **Settings > Knob**
+anticlockwise is UP. In the pickers (PIN digits, seed and passphrase
+letters, the device name, the dice face) clockwise and the DOWN button move
+forward, so a PIN digit goes up. If you prefer it the other way round, **Settings > Knob**
 switches between Normal and Reversed; the change applies on the next click of
 the knob, is kept across restarts, and does not affect the UP and DOWN
 buttons.

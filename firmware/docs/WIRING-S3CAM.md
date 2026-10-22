@@ -78,7 +78,8 @@ flashing). 2 is the power LED and 48 the RGB LED.
   nothing is shorted. A multimeter from DT to GND with the knob on a click
   should read open. Add the resistor when you have one; the firmware is the
   same either way.
-- Clockwise is DOWN: the next menu item, the next page. To have it the other
+- Clockwise is DOWN: the next menu item, the next page, and in the pickers
+  the next option, so a PIN digit goes up. To have it the other
   way round, choose **Settings > Knob** on the board: it toggles between
   Normal and Reversed, applies at once and is kept across restarts. It
   swaps UP and DOWN for the knob only, never for the buttons.
