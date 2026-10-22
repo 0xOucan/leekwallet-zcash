@@ -12,6 +12,17 @@ for Ethereum, turned into a Zcash-only one (firmware and every app here),
 for Zcash's shielded pools: **Ironwood** (NU6.3), **Orchard**, and transparent
 outputs.
 
+> **ZECATHON provenance.** The starting point was my own earlier
+> [LeekWallet](https://github.com/0xoucan/leekwallet) for Ethereum (this repo's
+> history up to tag `pre-zecathon`, 2026-09-23): the board's screen, buttons,
+> PIN, encrypted vault and USB/Bluetooth transport. Everything Zcash was written
+> during the hackathon window, from 2026-10-14: the PCZT signer and address
+> checks in the firmware, the network guard, the Rust libraries (zecz-core,
+> leek-device, leek-android), the Zodl fork with hardware signing, the Zcash
+> LeekWallet app (desktop and Android), the Chrome extension and the NEAR
+> swaps. The EVM code was removed. `git diff pre-zecathon..main` shows the
+> hackathon's work.
+
 > **Status: experimental.** It has signed real testnet transactions over USB,
 > Bluetooth, QR and SD card, and its first mainnet send and shield. It is not audited. Flash encryption and secure boot
 > are deliberately not enabled (no eFuses burned), so anyone holding the board
