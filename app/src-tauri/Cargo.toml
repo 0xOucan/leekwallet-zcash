@@ -1,0 +1,161 @@
+[package]
+name = "leekwallet-companion"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Zcash LeekWallet: the one app for the board (desktop and Android)"
+
+# The app's crates build in one workspace with one lock file and one target
+# directory, rooted here because `tauri build` and `tauri android` expect
+# src-tauri to be the Cargo project: the wallet layer (../zcash-wallet) and
+# NEAR Intents (../near-intents). The transports (../transport-serial,
+# ../transport-ble) stay outside it: host/ builds them too, and they carry
+# no Zcash and no Tauri, so another app can take them as they are.
+[workspace]
+members = [".", "../zcash-wallet", "../near-intents"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+default = ["zcash-wallet"]
+
+# The Zcash wallet (src/zwallet.rs): sync, balances, history, send and
+# shield, over zecz (host/zecz-core) through app/zcash-wallet, and the
+# NEAR Intents swaps (src/swaps.rs over app/near-intents). Behind a
+# feature because it is most of this binary's size (librustzcash, Halo 2,
+# SQLite) and because a build that only carries the
+# board tools (account, address check, PCZT signing) is a meaningful thing
+# to ship. Without it the Zcash section offers those and says nothing of a
+# wallet; the webview asks `zw_available`.
+zcash-wallet = ["dep:zecz-core", "dep:anyhow", "dep:leek-zcash-wallet", "dep:leek-near-intents", "dep:time"]
+
+# The USB firmware flasher (T65). Behind a feature because espflash pulls in a
+# sizeable dependency tree for something most builds do not need, and because a
+# build that CANNOT flash is a meaningful thing to ship: until secure boot is
+# burned, a flasher is a one-click way to install firmware that reads the PIN.
+flasher = ["dep:espflash", "dep:serialport"]
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# The one plugin the WEBVIEW may call, and the reason it exists: a webview
+# request for a new window is dropped by both the desktop and the Android
+# runtime, so an explorer link rendered as an anchor is a link that does
+# nothing. This opens it in the system browser instead. Its surface in
+# `capabilities/default.json` is one command, scoped to https.
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The image digest shown before flashing and re-checked before writing
+# (src/flash.rs).
+#
+# Unconditional rather than behind the `flasher` feature, because the *checking*
+# is not the part that needs a serial port: a build with no flasher can still
+# tell a user what they have downloaded, and the refusal logic is the part worth
+# having tests for on every platform.
+#
+# Both are already in the tree via other dependencies; named here because
+# src/flash.rs calls them directly and a dependency you rely on should be one
+# you declared.
+sha2 = "0.10"
+hex = "0.4"
+
+# The wallet engine. `default-features = false` drops its serial port: the
+# board is reached through the webview's session, never from here, and the
+# `serialport` crate cannot build for Android at all.
+zecz-core = { path = "../../host/zecz-core", default-features = false, optional = true }
+anyhow = { version = "1", optional = true }
+# The wallet layer over zecz (wallets, imports, sync, send for the board to
+# sign, contacts, settings, the copy from the old desktop app) and NEAR
+# Intents swaps, each its own crate with its own tests.
+leek-zcash-wallet = { path = "../zcash-wallet", optional = true }
+leek-near-intents = { path = "../near-intents", optional = true }
+# The clock 1Click's deadlines are checked against.
+time = { version = "0.3", optional = true }
+
+# Desktop speaks both USB CDC and BLE; the device serves one at a time
+# (PROTOCOL.md 3b), so which one is live is a runtime question, not a build-time
+# one.
+#
+# Since T59 that is true of the phone too. The serial crate has two backends
+# behind one API — the `serialport` crate on desktop, the Android USB Host API
+# on a phone — so the platform difference is a feature flag here rather than a
+# transport that is simply missing there.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# espflash as a library, not the CLI: `default-features = false` drops clap,
+# indicatif and the rest of the terminal front end, leaving the esptool
+# protocol. Desktop only for now -- Android needs the USB Host API and the
+# second serial backend transport-serial already models.
+espflash = { version = "4.5", default-features = false, features = ["serialport"], optional = true }
+serialport = { version = "4", optional = true }
+leek-transport-serial = { path = "../transport-serial" }
+leek-transport-ble = { path = "../transport-ble" }
+tokio = { version = "1", features = ["sync", "rt", "time"] }
+
+# Android gets the same BLE transport crate with its other backend selected:
+# `blec` swaps btleplug for `tauri-plugin-blec`, which is a Tauri mobile plugin
+# and therefore ships the Kotlin driver Android needs inside the crate, where
+# `tauri android init` picks it up on every regeneration. The framing and
+# chunking above it are the same code as on desktop.
+#
+# `default-features = false` is what makes the two mutually exclusive: with the
+# default `ble` feature still on, the crate refuses to build.
+# The Linux webview, reached directly to let the Send form's QR scanner use
+# the camera (src/lib.rs, allow_camera): WebKitGTK ships with
+# `enable-media-stream` off and denies every permission request nobody
+# answers, so getUserMedia fails with NotAllowedError. The version is the one
+# Tauri already resolves (Cargo.lock): one binding to one library.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+
+[target.'cfg(target_os = "android")'.dependencies]
+leek-transport-ble = { path = "../transport-ble", default-features = false, features = ["blec"] }
+tauri-plugin-blec = "0.12"
+tokio = { version = "1", features = ["sync", "rt", "time"] }
+
+# The same trick again for USB. `tauri-plugin-serialplugin` is a Tauri mobile
+# plugin, so the Kotlin that drives the USB Host API — enumeration, the
+# per-device permission dialog, and the file descriptor the bulk transfers run
+# on — ships inside the crate, and `tauri-build` wires its Gradle project in
+# every time `gen/android` is regenerated. The `serialport` crate cannot do any
+# of this: an unrooted Android app may not open /dev/ttyACM* at all.
+#
+# `default-features = false` is what makes the two backends mutually exclusive:
+# with the default `serialport` feature still on, the crate refuses to build.
+leek-transport-serial = { path = "../transport-serial", default-features = false, features = ["android"] }
+tauri-plugin-serialplugin = "3.0.9"
+
+# Symbols out of the shipped library.
+#
+# Android stores .so entries in the APK uncompressed so they can be mmap'd, so
+# debug symbols are not merely large in the build tree — they are carried at
+# full size in the artifact. Unstripped, this library is 220 MB and the debug
+# APK is 381 MB; stripped, the same code is a fraction of that. Nothing is lost
+# for a release build, which is not the artifact anyone debugs a native crash
+# from; `cargo build` without --release is still unstripped and still symbolic.
+[profile.release]
+strip = true
+# Size and speed for the shipped APK (`pnpm android:release:arm64`) and the
+# desktop bundle: whole-program LTO with one codegen unit is a few percent
+# faster at scanning and proving and noticeably smaller, at the cost of a
+# slow, memory-hungry link. `panic` stays `unwind` on purpose: a panic
+# inside a command or a zecz worker thread must fail that call (the webview
+# shows "the wallet worker stopped unexpectedly"), not abort the app.
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+# Scanning (trial decryption) and Halo 2 proving are unbearably slow
+# unoptimized, and a debug APK is what ANDROID.md builds. Dependencies are always optimized
+# and carry no debug info, which also keeps the debug APK's library small;
+# this crate itself stays quick to rebuild and debuggable.
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+# Tauri builds Android as a shared library loaded by the JVM, not an executable
+# with a main(). Without this the linker produces something the APK cannot load.
+[lib]
+name = "leekwallet_companion_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

@@ -380,7 +380,7 @@ The signing configuration itself lives in `app/src-tauri/gen/android`, which is
 regenerated on every release run for the reason app/ANDROID.md gives: a
 committed copy becomes the truth and silently ignores `tauri.conf.json`. A
 generated tree cannot carry a hand-made signing block, so
-`scripts/android-release-signing.sh` re-applies one: it writes
+`app/scripts/android-release-signing.sh` re-applies one: it writes
 `keystore.properties` from four environment variables and adds a `release`
 signingConfig to the generated `build.gradle.kts`, unless the template already
 has one. It never creates a keystore and never prints one.
@@ -615,10 +615,11 @@ more than once — see the header of `scripts/preflight-secure.sh`.
 The firmware has no workflow of its own. Upstream LeekWallet's `ci.yml` and
 `release.yml` came along under `firmware/.github/`, where GitHub never ran
 them, and were deleted. The repository's workflows (`.github/workflows/` at
-the top level) cover the host crates, the desktop app on three systems and
+the top level) cover the host crates, the Zcash LeekWallet app (`app.yml`: three
+desktop systems and an Android check) and
 the Chrome extension.
 
 A firmware release is cut by hand, from a tag, with
 `./scripts/release.sh <tag> esp32s3cam`, and published as a GitHub release of
 0xOucan/leekwallet-zcash. What it must carry for the Companion's flasher to
-offer it is in [app/README.md](../app/README.md#firmware-releases).
+offer it is in [app/README.md](../../app/README.md#firmware-releases).

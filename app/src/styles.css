@@ -1,0 +1,638 @@
+@import "./tokens.css";
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* `hidden` has to win, or a panel is only pretending to be gone.
+ *
+ * The attribute's UA rule is `display: none` at the lowest possible weight, so
+ * any class rule that sets a display beats it — and half the containers in this
+ * app are toggled by setting `.hidden` from script while carrying a class that
+ * does exactly that. The amount-unit selector (`.field`, display: block) and
+ * the address QR (`.addr-qr`, display: flex) were both visible while the code
+ * that drew them believed they were not. That is worse than a layout bug here:
+ * an element that is on screen but treated as absent is also in the tab order
+ * and read out by a screen reader. */
+[hidden] { display: none !important; }
+
+/* One focus ring, on everything focusable, defined once.
+ *
+ * Per-component rules had already missed the bare selects and inputs that sit
+ * outside `.field`, the `<summary>` toggles and the explorer link — a keyboard
+ * user who tabbed into one of those had no way to tell where they were. The
+ * accent measures 6.02:1 on surface and 7.86:1 in dark, comfortably past the
+ * 3:1 that a focus indicator owes (docs/ACCESSIBILITY.md). */
+:where(a, button, select, input, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* For anything that must be announced but not seen — the live region that
+ * carries "the device is waiting for you", and the skip link until it is
+ * focused. Clip rather than `display: none`, which would take it out of the
+ * accessibility tree along with everything it is there to say. */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.skiplink:focus {
+  position: fixed;
+  top: var(--space-2); left: var(--space-2);
+  z-index: 20;
+  width: auto; height: auto;
+  margin: 0; padding: var(--space-2) var(--space-3);
+  clip-path: none;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------ layout */
+
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+
+.statusbar {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  position: sticky; top: 0; z-index: 10;
+}
+
+.statusbar__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); flex: none;
+}
+.statusbar__dot[data-state="connected"] { background: var(--ok); }
+.statusbar__dot[data-state="connecting"] { background: var(--warn); }
+.statusbar__dot[data-state="error"] { background: var(--danger); }
+
+.statusbar__spacer { flex: 1; }
+
+/* Which backend is in use. Small, always visible, and never guessed: an
+ * interface that cannot tell you whether it is talking to real hardware or a
+ * simulation is the wrong interface for signing transactions. */
+.badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.badge[data-mode="hardware"] { color: var(--accent); border-color: var(--accent); }
+.badge[data-mode="mock"] { color: var(--warn); border-color: var(--warn); }
+
+main { flex: 1; width: 100%; max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4); }
+
+/* Widths, and the one rule they all serve: an address must stay comparable
+ * against the device screen, character by character, at every size. Nothing
+ * here truncates, ellipsises or re-flows an address — the chunked form wraps
+ * at the spaces between four-character groups, so groups never split.
+ *
+ * Small tablet portrait (the Galaxy Tab A7 reports roughly 800 CSS px that way
+ * once its 1200x2000 panel is divided by its device pixel ratio): a little more
+ * room, still one column. */
+@media (min-width: 768px) { main { max-width: 720px; } }
+
+/* Two columns, but only on a screen that is genuinely large in both
+ * directions. A single 640px column centred in a 1340px landscape tablet is
+ * the "narrow column stranded in a huge screen" problem; two columns on a
+ * phone held sideways (a 915x412 window, which is what the Edge Neo becomes in
+ * landscape) is a worse one. Hence the height condition: 900px of width earns
+ * a second column only if there is a tablet's worth of height behind it. */
+@media (min-width: 900px) and (min-height: 600px) {
+  main {
+    max-width: 1200px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(320px, 1fr));
+    gap: var(--space-4);
+    /* Panels are different heights; stretching them to match would put a lot
+     * of empty bordered space next to a short one. */
+    align-items: start;
+  }
+  /* The warning and the log are read straight through, so they get the width.
+   * Everything else is a form or a list and reads better in a column. */
+  .notice, #logpanel, .diagnostics, .launcher { grid-column: 1 / -1; }
+  /* Grid items ignore the panel's own bottom margin; the gap does that job. */
+  .panel, .notice { margin-bottom: 0; }
+}
+
+/* An address on one line across 1200px is technically intact and genuinely
+ * hard to scan — the eye loses its place returning across that much
+ * whitespace. Capping the measure keeps the line short without ever cutting
+ * the string: it wraps at group boundaries exactly as it does on a phone. */
+.kv dd, .addr-item .addr { max-width: 62ch; }
+
+h1 { font-size: var(--text-lg); font-weight: 500; margin: 0 0 var(--space-4); }
+h2 { font-size: var(--text-base); font-weight: 500; margin: 0 0 var(--space-3); }
+p  { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--text-sm); }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+/*
+ * Launcher (L1). One column on every
+ * platform, including the two-column grid @900px main declares below — the
+ * launcher opts itself out (see the media query at the bottom of this file)
+ * because §2e asks for "one thing per screen" everywhere, and a 640px-wide
+ * tile is still one thing even inside a wide window.
+ *
+ * Type carries the hierarchy: a bold title line and a muted description line,
+ * no icon, minimal border. The border is kept (1px, --control-border) only
+ * because a tile is a button and 1.4.11 asks 3:1 on a control's own boundary
+ * — the same reason buttons elsewhere in this file keep theirs.
+ */
+.launcher {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.launcher__tile {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  /* 44px is the floor, not the height — the two text lines plus padding
+   * clear it on their own; this just guarantees a short description never
+   * shrinks the tap target below it. */
+  min-height: 44px;
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion) ease-out, background var(--motion) ease-out;
+}
+.launcher__tile:hover { border-color: var(--accent); }
+.launcher__title { font-size: var(--text-lg); font-weight: 500; }
+.launcher__desc { font-size: var(--text-sm); color: var(--muted); }
+
+/* A destination's way back ("there is a way back").
+ * Full-width tap target, ≥44px, placed first in reading and tab order so it
+ * is found before anything else in the destination — the same reasoning
+ * .skiplink already uses for "skip to main". */
+.destination__back {
+  display: block;
+  min-height: 44px;
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) var(--space-3);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font: inherit; font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.destination__back:hover { color: var(--text); }
+
+/* Full-flash disclosure on the flasher panel (L2). Closed by default, and
+ * the summary is danger-coloured: this one gates the
+ * operation that erases every wallet, not a convenience field. */
+.flashmode-full {
+  margin: var(--space-2) 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--danger);
+  border-radius: var(--radius);
+}
+.flashmode-full > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+.flashmode-full[open] > summary { margin-bottom: var(--space-3); }
+
+/* Diagnostics (M2). Collapsed by default, one click away. The <summary>
+ * reuses .panel's own chrome so a closed diagnostics disclosure reads the
+ * same as any other panel heading. */
+.diagnostics {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-4);
+  background: var(--surface);
+}
+.diagnostics > summary {
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-base);
+  font-weight: 500;
+  list-style: none;
+}
+.diagnostics > summary::-webkit-details-marker { display: none; }
+.diagnostics > summary::before { content: "▸ "; color: var(--muted); }
+.diagnostics[open] > summary::before { content: "▾ "; }
+.diagnostics > .panel {
+  border: none; border-top: 1px solid var(--border);
+  border-radius: 0; margin-bottom: 0;
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+button {
+  font: inherit; font-size: var(--text-sm);
+  height: 36px; padding: 0 var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--control-border);
+  background: var(--surface); color: var(--text);
+  cursor: pointer;
+  transition: background var(--motion) ease-out, border-color var(--motion) ease-out;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+button.ghost { background: transparent; border-color: transparent; }
+button.danger { color: var(--danger); border-color: var(--danger); }
+
+.row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.row > input, .row > select { flex: 1 1 14rem; width: auto; }
+
+/* Placeholders were the one piece of text in the app whose colour nobody
+ * chose: the UA default is tuned for a white field, and these fields are
+ * --bg, which in dark mode is nearly black. --muted is measured against both
+ * (5.42:1 light, 6.48:1 dark), and `opacity: 1` stops Firefox dimming it back
+ * down again. */
+::placeholder { color: var(--muted); opacity: 1; }
+
+/* --------------------------------------------------------------- addresses */
+
+/* Mono, chunked and never truncated where it must be verified. Proportional
+ * fonts make l/1 and 0/O ambiguous, which matters when the string is the
+ * difference between your funds and someone else's. */
+/* `anywhere` rather than `break-all`: addresses are rendered in groups of four
+ * and must wrap *between* groups, not through them. On a phone the string no
+ * longer fits on one line, and a group split across two lines is exactly the
+ * kind of misread this chunking exists to prevent. With `anywhere` the browser
+ * uses the spaces first and only breaks inside a run when it has no choice —
+ * which is what an unchunked hash needs. */
+.addr {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  letter-spacing: 0.02em;
+}
+
+/* ------------------------------------------------------- states & notices */
+
+.muted { color: var(--muted); }
+.state { padding: var(--space-8) var(--space-4); text-align: center; color: var(--muted); }
+
+.notice {
+  border-left: 2px solid var(--warn);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+  background: var(--surface);
+}
+.notice--danger { border-left-color: var(--danger); }
+
+/* ------------------------------------------------------- the proposal */
+
+/* Visually a margin note, not a result: the send review drawn here is this
+ * app's reading of what it proposed, and the board's screen is the one that
+ * counts. Dashed border and no accent colour on purpose. */
+.preview {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  background: var(--bg);
+}
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); font-size: var(--text-sm); }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+
+.log {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  color: var(--muted); white-space: pre-wrap;
+  max-height: 160px; overflow-y: auto;
+}
+/* Each entry is its own element so a line can carry an anchor. `pre-wrap` on
+ * the parent already preserves the spacing inside a line; the rows supply the
+ * breaks that the old newline-joined text did. A long explorer URL must wrap
+ * rather than widen the panel and push the rest of the column sideways. */
+.log-line { overflow-wrap: anywhere; }
+.log-line a { color: inherit; }
+
+/* Inputs. Monospace on the address field for the same reason addresses are
+ * displayed that way: l and 1 must not look alike in a string that decides
+ * where money goes. */
+.field {
+  display: block;
+  margin-bottom: var(--space-3);
+}
+.field > span {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin-bottom: var(--space-1);
+}
+.field input, .row > input {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+}
+.field input[aria-invalid="true"] { border-color: var(--danger); }
+
+.field select, .row > select {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+/* Same treatment as the text inputs: what goes in one (a memo, a server
+ * URL) is checked character by character. */
+.field textarea {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+/* The checkbox sits beside its label rather than under it; a full-width tick
+ * box reads as a text field. */
+.field--check { display: flex; align-items: center; gap: var(--space-2); }
+.field--check input { width: auto; height: auto; }
+.field--check > span { margin-bottom: 0; }
+
+/*
+ * The Zcash home (#seczcash): the wallet is the screen once the board is
+ * unlocked. The class name is the old accordion's; the header is gone.
+ *
+ * Only opacity and transform are animated, never height; the body is shown
+ * and hidden with [hidden], and prefers-reduced-motion removes the settle.
+ */
+/* The panel sits flush in its section: the panel chrome would otherwise draw
+   a second box inside the section's own rule. */
+.acc > .panel {
+  border: none;
+  background: transparent;
+  margin-bottom: 0;
+  padding: 0 var(--space-2) var(--space-4);
+  animation: acc-open var(--motion) ease-out;
+}
+@keyframes acc-open {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .acc > .panel { animation: none; }
+}
+
+/* --------------------------------------------------------------- handheld */
+
+/* The layout was drawn for a desktop window; these rules are what it needs to
+ * survive a 360px phone. Kept in one block, and keyed on width rather than on
+ * "is Android", because a narrow desktop window has the same problem. */
+
+/* Phones with a notch or a gesture bar: the sticky header and the last panel
+ * would otherwise sit underneath them. `env()` is 0 everywhere else, so `max()`
+ * leaves desktop untouched. */
+.statusbar { padding-top: max(var(--space-3), env(safe-area-inset-top)); }
+main {
+  padding-left: max(var(--space-4), env(safe-area-inset-left));
+  padding-right: max(var(--space-4), env(safe-area-inset-right));
+  padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+}
+
+/* Fingers, not cursors. Android's guidance is 48dp and these controls are
+ * 36px; on a signing screen a mis-tap is not a cosmetic defect. Keyed on the
+ * pointer type so desktop keeps its tighter, denser controls. */
+@media (pointer: coarse) {
+  button { height: 44px; }
+  .field input, .field select { height: 44px; }
+  /* A tablet is a coarse pointer with a lot of width, so the buttons that sit
+   * in a row need a floor as well as a height or they end up 44px tall and
+   * thumb-narrow. */
+  .row > button { min-width: 44px; }
+}
+
+/* The manual-copy escape hatch. Only ever shown when every clipboard route
+ * failed, so it is styled to be usable rather than pretty: monospace, tall
+ * enough to prove there is content, and horizontally intact. */
+.copyout {
+  width: 100%; min-height: 120px;
+  margin-bottom: var(--space-3);
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--control-border); border-radius: var(--radius);
+  padding: var(--space-2);
+  white-space: pre;
+}
+
+@media (max-width: 480px) {
+  main {
+    padding: var(--space-4) max(var(--space-3), env(safe-area-inset-right))
+             max(var(--space-4), env(safe-area-inset-bottom))
+             max(var(--space-3), env(safe-area-inset-left));
+  }
+  .panel { padding: var(--space-3); }
+
+  /* Two long strings and three controls do not fit on one 360px line. Let the
+   * bar wrap instead of pushing the theme button off-screen. */
+  .statusbar { flex-wrap: wrap; gap: var(--space-2); }
+  /* A flex item will not shrink below its content by default, so without this
+   * a long wallet label alone widens the bar and scrolls the whole page
+   * sideways. */
+  #conn, #wallet { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* `max-content 1fr` gives the label whatever it asks for; at this width that
+   * leaves a hash a few characters per line. Stack instead, so the value gets
+   * the full width it needs to stay comparable against the device screen. */
+  .kv { grid-template-columns: 1fr; gap: var(--space-1); }
+  .kv dd { margin-bottom: var(--space-2); }
+
+  /* Buttons share a line and grow to fill it, as on the desktop, instead of
+   * stacking one per line: a stack of six full-width buttons pushed the
+   * Zcash wallet a screen down on a phone. A button on a line of its own
+   * still takes the width. */
+  .row > button { flex: 1 1 auto; }
+}
+
+/* A QR on white regardless of theme: a scanner needs dark-on-light, and a
+ * QR that inverts with the page is one that stops working at night. */
+.addr-path-label { margin: 0.5rem 0 0.15rem; }
+
+.addr-qr {
+  display: flex;
+  justify-content: center;
+  margin: 0.75rem 0;
+}
+.addr-qr svg {
+  background: #fff;
+  padding: 8px;
+  border-radius: 4px;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Zcash (src/zcash-view.ts). The network switch is two pressed-state buttons
+ * rather than a select so the current network shows without opening
+ * anything; mainnet is drawn in the danger colour wherever it appears. */
+.znet button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.znet #znetmain[aria-pressed="true"] { border-color: var(--danger); color: var(--danger); }
+.znet__acct { display: inline-flex; gap: var(--space-2); align-items: center; margin-left: auto; font-size: var(--text-sm); color: var(--muted); }
+.znet__acct input { width: 4rem; }
+.ztabs { display: flex; gap: var(--space-1); flex-wrap: wrap; margin: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.ztabs [role="tab"] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; }
+.ztabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); }
+.zcash progress { width: 100%; }
+.zbal { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.zbal__amount { font-size: 1.75rem; font-family: var(--font-mono); }
+.zhist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.zhist > li { border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); overflow-wrap: anywhere; }
+.zhist__head { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-sm); }
+.zhist__amt { font-family: var(--font-mono); }
+.zhist__amt[data-dir="in"] { color: var(--accent); }
+
+/* ------------------------------------------------------------ home */
+
+/* The Zcash wallet is the home screen, the full width on a large screen. */
+#seczcash { border-bottom: 0; }
+#seczcash > .panel { margin-top: 0; }
+@media (min-width: 900px) and (min-height: 600px) {
+  #seczcash { grid-column: 1 / -1; }
+}
+
+/* Once the board is unlocked and the wallet is up, the Device panel shrinks
+ * to what is still useful there (the link and Disconnect): the passkey was
+ * compared, and the wallet is what the screen is for. */
+html[data-shell="open"] #devicepanel :is(#connectback, #devicehint, #pairing, #connect, #unlock) {
+  display: none !important;
+}
+html[data-shell="open"] #devicepanel > h2 { display: none; }
+html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bottom: var(--space-3); }
+
+.connproblem p { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
+.connproblem p:last-child { margin-bottom: 0; }
+
+/* ----------------------------------------------------------- phone width */
+
+/* The Zcash screens on a ~400px phone, matching the desktop's look rather
+ * than a stack: one line of tabs that scrolls sideways inside itself (never
+ * the page), the two network buttons and the account on one line, the pools
+ * as label and value, and long strings broken anywhere instead of widening
+ * the page. */
+.zcash .addr, .zhist, .zcash .kv dd { overflow-wrap: anywhere; word-break: break-word; }
+.zcash { min-width: 0; }
+@media (max-width: 480px) {
+  .ztabs {
+    flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    margin-left: calc(-1 * var(--space-3)); margin-right: calc(-1 * var(--space-3));
+    padding: 0 var(--space-3);
+  }
+  .ztabs::-webkit-scrollbar { display: none; }
+  .ztabs [role="tab"] { flex: none; padding-left: var(--space-3); padding-right: var(--space-3); }
+  .znet > button { flex: 1 1 0; }
+  .znet__acct { flex: 1 1 100%; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+  #zwpools { grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); }
+  #zwpools dd { margin-bottom: 0; }
+  .zbal__amount { font-size: 28px; }
+  .zbal { justify-content: space-between; }
+  .acc > .panel { padding-left: var(--space-3); padding-right: var(--space-3); }
+  .zhist__head { gap: var(--space-2); }
+  /* Inputs at 16px: a smaller font makes Android's webview zoom on focus. */
+  input, select, textarea { font-size: 16px; }
+}
+@media (max-width: 480px) {
+  /* One line: the wallet label ellipsises (#conn, #wallet above) rather than
+   * pushing the theme button onto a line of its own. */
+  .statusbar { flex-wrap: nowrap; }
+  .statusbar > .badge, .statusbar > button { flex: none; }
+}
+
+/* Sync state on the home screen: a dot and one line. */
+.zsync { align-items: center; }
+.zsync__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); flex: none; }
+.zsync__dot[data-state="syncing"] { background: var(--accent); animation: zpulse 1.2s ease-in-out infinite; }
+.zsync__dot[data-state="synced"] { background: var(--accent); }
+.zsync__dot[data-state="error"] { background: var(--danger); }
+@keyframes zpulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .zsync__dot[data-state="syncing"] { animation: none; } }
+
+/* The QR scanner in Send: the camera preview, full width, never taller
+ * than half the screen. */
+.zscan { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0; }
+.zscan video { width: 100%; max-height: 50vh; object-fit: cover; border-radius: 8px; background: #000; }
+.zscan__controls { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.zscan__ctl { display: flex; align-items: center; gap: var(--space-2); flex: 1 1 12rem; }
+.zscan__ctl input[type="range"] { flex: 1; min-width: 6rem; }
+.zscan__tip { margin: 0; }
+
+.launcher__tile--primary { border-color: var(--accent); }
+
+/* From the old desktop app (desktop/src/styles.css, now in git history), so the one app keeps
+ * its look: mainnet is one solid red bar, the same in both themes, white on
+ * #A33329 (contrast 6.5:1), on screen the whole time it is mainnet. */
+#zmainbanner {
+  background: #A33329; color: #FFFFFF; border-left: none;
+  font-weight: 600; letter-spacing: 0.04em; text-align: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+}
+.badge[data-net="test"] { color: var(--warn); border-color: var(--warn); }
+.badge[data-net="main"] { color: var(--danger); border-color: var(--danger); }
+
+/* Wallets on this device (src/wallet-list.ts). */
+#wlist > li { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-start; }
+#wlist .zhist__head { width: 100%; align-items: baseline; }
+#wlist:empty { display: none; }
+
+/* NEAR Intents swaps (src/swap-view.ts). The timeline wraps, so a phone
+ * shows it on two lines rather than scrolling sideways. */
+.netpick { border: none; margin: 0 0 var(--space-3); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); font-size: var(--text-sm); }
+.netpick label { display: flex; gap: var(--space-2); align-items: center; cursor: pointer; }
+.swaps-head { margin-top: var(--space-4); }
+.swaps-head h3 { margin: 0; }
+.timeline { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: var(--space-2) 0 0; padding: 0; font-size: var(--text-xs); color: var(--muted); }
+.timeline li[data-step="done"] { color: var(--accent); }
+.timeline li[data-step="now"] { color: var(--text); font-weight: 600; }
+.timeline li[data-step="bad"] { color: var(--danger); font-weight: 600; }
+.swap__line { color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; margin-top: var(--space-1); }
+.swap__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.swap__actions button { min-height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); }
+.swap__id { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
+.swap__id code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; min-width: 0; flex: 1; }
+.swap__id button { flex: none; }

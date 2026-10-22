@@ -58,11 +58,11 @@ if [[ "$WHAT" == "all" || "$WHAT" == "app" ]]; then
     run "conformance vectors" make -C sim conformance
 
     if command -v pnpm >/dev/null 2>&1; then
-        run "app tests" pnpm --dir app test
-        run "app typecheck" pnpm --dir app typecheck
+        run "app tests" pnpm --dir ../app test
+        run "app typecheck" pnpm --dir ../app typecheck
         # Not a pnpm step: it guards hand edits in a generated tree that git
         # does not track, so nothing else can notice them going missing.
-        run "android manifest" ./scripts/check-android-manifest.sh
+        run "android manifest" ../app/scripts/check-android-manifest.sh
     else
         printf '\n\033[33m== app: skipped, pnpm not installed\033[0m\n'
     fi

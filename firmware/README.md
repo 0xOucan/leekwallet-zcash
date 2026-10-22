@@ -100,7 +100,7 @@ or the SD card. Settings → Network chooses Mainnet or Testnet.
 Releases (images, checksums, reproducible builds) are in
 [docs/RELEASE.md](docs/RELEASE.md) and [docs/SIGNING-KEYS.md](docs/SIGNING-KEYS.md);
 what a release must carry for the Companion's flasher is in
-[app/README.md](app/README.md#firmware-releases). Secure boot and flash
+[app/README.md](../app/README.md#firmware-releases). Secure boot and flash
 encryption: [docs/BURN-PROCEDURE.md](docs/BURN-PROCEDURE.md) (never done on a
 board yet).
 
@@ -115,8 +115,8 @@ state, the wallet, the account and the board's network. The specification
 is [docs/PROTOCOL.md](docs/PROTOCOL.md); the `.zsig`, `.zkv` and PCZT
 formats are in [docs/zcash/FORMATS.md](../docs/zcash/FORMATS.md).
 
-Clients: `host/leek-device` (Rust, used by `zecz`, the desktop app and
-Android), `app/packages/core` (TypeScript, the Companion) and
+Clients: `host/leek-device` (Rust, used by `zecz` and the Zodl fork on
+Android), `app/packages/core` (TypeScript, the Zcash LeekWallet app) and
 `chrome/extension/src/board` (the Chrome extension).
 
 ## Simulator and tests
@@ -145,7 +145,6 @@ without a board: [docs/QEMU.md](docs/QEMU.md).
 | `components/trezor-crypto/` | BIP39, BIP32, secp256k1 (transparent keys), SHA-2, HMAC, ChaCha20-Poly1305 |
 | `components/esp32-camera/`, `esp_jpeg/`, `quirc/` | Camera and QR decoding |
 | `sim/` | Host simulator, tests and zdev |
-| `app/` | The LeekWallet Zcash Companion (Tauri: desktop and Android), with its firmware flasher |
 | `docs/` | Protocol, vault, wiring, release and audit documents |
 
 ## Credits and license

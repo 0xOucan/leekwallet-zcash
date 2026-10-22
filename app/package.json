@@ -1,0 +1,37 @@
+{
+  "name": "leekwallet-zcash-companion",
+  "version": "0.1.0",
+  "description": "Zcash LeekWallet app workspace (Tauri v2: desktop + Android), Zcash only",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "pnpm -r test && node --experimental-strip-types --disable-warning=ExperimentalWarning test/flasher.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/companion-flow.test.ts && node --experimental-strip-types --disable-warning=ExperimentalWarning test/swap.test.ts",
+    "test:zdev": "node --experimental-strip-types --disable-warning=ExperimentalWarning test/zcash-zdev.test.ts",
+    "dev": "vite --port 1420 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "tauri": "tauri",
+    "android:dev": "tauri android dev",
+    "android:build": "CC_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang AR_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar tauri android build --debug",
+    "android:build:arm64": "CC_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang AR_aarch64_linux_android=\"$NDK_HOME\"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar tauri android build --debug --target aarch64",
+    "android:release:arm64": "bash scripts/android-release.sh",
+    "android:check": "cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^8.2.1"
+  },
+  "dependencies": {
+    "@leekwallet/core": "workspace:*",
+    "qrcode-generator": "2.0.4",
+    "zxing-wasm": "3.1.3"
+  }
+}

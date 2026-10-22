@@ -86,18 +86,18 @@ a paper copy is reasonable.
 ### 1.3 Build a signed APK locally
 
 The generated Android project is not tracked, so signing has to be re-applied
-after every `init`. That is what `scripts/android-release-signing.sh` is for —
+after every `init`. That is what `app/scripts/android-release-signing.sh` is for —
 it writes `keystore.properties` and adds a `release` signingConfig, and it
 refuses to create or print a keystore.
 
 **Run these from the repository root.** `pnpm --dir app` resolves `app/`
-relative to the current directory, and `./scripts/...` likewise — running them
+relative to the current directory, and `./app/scripts/...` likewise — running them
 from the directory where you keep your keys, or from inside `gen/android`,
 fails with `ENOENT` or `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND` rather than
 anything that names the real problem.
 
 ```bash
-cd /path/to/leekwallet                 # the repository root, not ~/keys
+cd /path/to/leekwallet-zcash           # the repository root, not ~/keys
 pnpm --dir app tauri android init      # regenerates gen/android
 
 export ANDROID_KEYSTORE_PATH=~/keys/leekwallet-release.keystore
@@ -105,7 +105,7 @@ export ANDROID_KEYSTORE_PASSWORD='...'
 export ANDROID_KEY_ALIAS=leekwallet
 export ANDROID_KEY_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}"
 
-./scripts/android-release-signing.sh
+./app/scripts/android-release-signing.sh
 pnpm --dir app tauri android build --apk
 ```
 
