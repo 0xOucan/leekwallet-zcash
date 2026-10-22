@@ -1,0 +1,162 @@
+# Builds and tests the Zcash LeekWallet app (app/): the frontend tests and
+# the companion's tests against zdev (firmware/sim), the Rust tests of
+# app/src-tauri, app/zcash-wallet and app/near-intents, a `tauri build` on
+# Linux, Windows and macOS, and a check that the Rust half compiles for
+# Android (aarch64). The host/ tests (zecz-core, zecz-cli, leek-device,
+# leek-android) run here too, since the app links them. Tests that need
+# testnet lightwalletd or 1Click are #[ignore]d and do not run here.
+name: app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "host/**"
+      - "vectors/**"
+      - "firmware/sim/**"
+      - ".github/workflows/app.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "host/**"
+      - "vectors/**"
+      - "firmware/sim/**"
+      - ".github/workflows/app.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  host-tests:
+    name: host tests (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # serialport (leek-transport-serial) links libudev.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+      - name: cargo test (host/)
+        working-directory: host
+        run: cargo test --locked
+
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # librustzcash and the Tauri tree have paths past Windows' 260-char
+      # default.
+      - name: Long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+      - uses: actions/checkout@v4
+      # libudev: the serial port (serialport); libdbus: Bluetooth through
+      # BlueZ (btleplug, leek-transport-ble).
+      - name: System packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libudev-dev libdbus-1-dev libssl-dev patchelf pkg-config
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      # app/rust-toolchain.toml pins the compiler; rustup installs it.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - name: Install frontend dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        working-directory: app
+        run: pnpm typecheck
+      - name: Frontend tests
+        working-directory: app
+        run: pnpm test
+      # The companion's flow against zdev, built with make (firmware/sim).
+      - name: Tests against zdev
+        if: runner.os == 'Linux'
+        working-directory: app
+        run: pnpm test:zdev
+      # The frontend has to exist before the backend compiles:
+      # tauri::generate_context! embeds app/dist.
+      - name: Build frontend
+        working-directory: app
+        run: pnpm build
+      - name: Rust tests (src-tauri, zcash-wallet, near-intents)
+        if: runner.os == 'Linux'
+        working-directory: app/src-tauri
+        run: cargo test --locked --workspace
+      - name: tauri build
+        working-directory: app
+        run: pnpm tauri build --ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zcash-leekwallet-${{ runner.os }}
+          path: |
+            app/src-tauri/target/release/bundle/deb/*.deb
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/msi/*.msi
+            app/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: android check (aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Android target
+        working-directory: app
+        run: rustup target add aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          key: android
+      - name: Install frontend dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend
+        working-directory: app
+        run: pnpm build
+      # The runner's NDK compiles the C parts (bundled SQLite, secp256k1).
+      # A signed APK needs the release keystore, which CI never holds; the
+      # build itself is ANDROID.md's.
+      - name: cargo check --target aarch64-linux-android
+        working-directory: app
+        run: |
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC_aarch64_linux_android="$bin/aarch64-linux-android24-clang" \
+          AR_aarch64_linux_android="$bin/llvm-ar" \
+            cargo check --locked --manifest-path src-tauri/Cargo.toml --target aarch64-linux-android
