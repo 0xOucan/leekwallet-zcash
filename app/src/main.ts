@@ -20,7 +20,8 @@ import {
   availableTransports, invoker, listPorts, TauriSerialTransport, type HardwareKind,
 } from "./tauri-transport.ts";
 import { initZcash, networkLabel, type ZcashView } from "./zcash-view.ts";
-import { initZcashWallet, type ZcashWallet } from "./zcash-wallet.ts";
+import { initZcashWallet, type Key, type ZcashWallet } from "./zcash-wallet.ts";
+import { initWalletList, type WalletList } from "./wallet-list.ts";
 import { zErrorText, zGetFeatures, type ZFeatures } from "../packages/core/src/zcash.ts";
 import { BleTransport, scanBle, BLE_NOT_FOUND } from "./ble-transport.ts";
 import qrcodegen from "qrcode-generator";
@@ -656,6 +657,30 @@ const busy = (on: boolean): void => {
   }
 };
 
+/**
+ * A wallet opened without the board, from the launcher's list
+ * (src/wallet-list.ts): the wallet screens show it until it is closed or
+ * a board is connected (its account takes over).
+ */
+function openOffline(key: Key): void {
+  if (!zcashWallet || !zcashView) return;
+  zcashView.useNetwork(key.network);
+  zcashWallet.openWithoutBoard(key);
+  preConnectDest = "offline";
+  applyPreConnectVisibility();
+  $("zoffline").hidden = false;
+  $("seczcash").hidden = false;
+}
+
+/** Close a wallet opened without the board; nothing else on screen moves. */
+function leaveOffline(): void {
+  if (zcashWallet?.offline) zcashWallet.openWithoutBoard(null);
+  $("zoffline").hidden = true;
+}
+
+/** The launcher's wallet list, when this build has the wallet. */
+let walletList: WalletList | null = null;
+
 /** The Zcash section, once initialised (src/zcash-view.ts). */
 let zcashView: ZcashView | null = null;
 /** The wallet, when this build has it (src/zcash-wallet.ts). */
@@ -679,7 +704,10 @@ function setShellVisible(visible: boolean): void {
   /* The Zcash wallet reads the board's account as soon as the home screen
    * is up: its seed fingerprint picks which wallet on this device is shown
    * (another one under a passphrase). */
-  if (visible) zcashView?.opened();
+  if (visible) {
+    leaveOffline();
+    zcashView?.opened();
+  }
   // Nothing the board said about its Zcash account outlives the session.
   else zcashView?.reset();
 }
@@ -692,7 +720,7 @@ function setShellVisible(visible: boolean): void {
  * is what follows a connected, unlocked board; this is only about what is on
  * screen before that.
  */
-type PreConnectDest = "launcher" | "connect" | "flash";
+type PreConnectDest = "launcher" | "connect" | "flash" | "wallets" | "offline";
 let preConnectDest: PreConnectDest = "launcher";
 
 /** Show exactly the launcher, or exactly the one destination chosen. */
@@ -701,6 +729,8 @@ function applyPreConnectVisibility(): void {
   renderRemembered();
   $("devicepanel").hidden = preConnectDest !== "connect";
   $("flashpanel").hidden = preConnectDest !== "flash";
+  $("walletspanel").hidden = preConnectDest !== "wallets";
+  if (preConnectDest === "wallets") void walletList?.refresh();
 }
 
 /** Flash holds no session, so leaving it is never more than
@@ -1434,6 +1464,18 @@ $("forgetboard").addEventListener("click", () => {
 $("gotoflash").addEventListener("click", () => enterDest("flash"));
 $("connectback").addEventListener("click", connectDestBack);
 $("flashback").addEventListener("click", goToLauncher);
+$("gotowallets").addEventListener("click", () => enterDest("wallets"));
+$("walletsback").addEventListener("click", goToLauncher);
+$("zofflineclose").addEventListener("click", () => {
+  leaveOffline();
+  $("seczcash").hidden = true;
+  enterDest("wallets");
+});
+$("zofflineconnect").addEventListener("click", () => {
+  leaveOffline();
+  $("seczcash").hidden = true;
+  enterDest("connect");
+});
 
 /* Zcash (src/zcash-view.ts). Its calls ride the Client like every other
  * request, and only once the session is encrypted: every z* method is in
@@ -1454,7 +1496,12 @@ void initZcashWallet({
   qr: (text) => qrSvg(text),
   invoke: invoker,
   open: (url) => void openExternal(url),
-}, zcashView).then((w) => { zcashWallet = w; });
+}, zcashView).then((w) => {
+  zcashWallet = w;
+  if (!w) return;
+  walletList = initWalletList({ invoke: invoker()!, open: openOffline, log });
+  $("gotowallets").hidden = false;
+});
 
 $("connect").addEventListener("click", () => void connect());
 $("unlock").addEventListener("click", () => void unlock());

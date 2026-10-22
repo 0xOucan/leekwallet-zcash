@@ -19,9 +19,15 @@
  *
  * One wallet per network, seed fingerprint and account. A BIP39 passphrase
  * on the board is another seed, another fingerprint, and so another wallet,
- * kept apart on disk (src-tauri/src/zwallet.rs). Every command names all
+ * kept apart on disk (app/zcash-wallet, keys.rs). Every command names all
  * three, and an answer for a wallet the user has since left (another
  * network, account or seed) is dropped rather than drawn.
+ *
+ * A wallet can also be opened without the board, from the list of wallets
+ * on this device (src/wallet-list.ts): a board account's to look at, or a
+ * viewing key imported by hand (watch-only). It shows and syncs as usual;
+ * anything that needs the board (send, shield, a swap from ZEC, verifying
+ * an address) asks for it, and a board that connects takes over.
  */
 
 import {
@@ -36,6 +42,7 @@ import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
 import { txHead } from "./tx-labels.ts";
+import { initSwapView, type Proposal } from "./swap-view.ts";
 
 interface Pool { total: number; spendable: number; pending: number }
 export interface Status {
@@ -54,12 +61,6 @@ interface Tx {
   /** zecz's kind (src/tx-labels.ts): received, sent, self, shielded, internal, or a newer one. */
   kind: string; amountZat: number; deltaZat: number;
   feeZat: number | null; memos: string[]; recipients: { address: string; valueZat: number }[];
-}
-interface Proposal {
-  id: string; kind: "send" | "shield"; targetHeight: number;
-  payments: { recipient: string; amountZat: number; pool: string; hasMemo: boolean }[];
-  change: { valueZat: number; pool: string }[]; feeZat: number; totalZat: number;
-  signerViewBytes: number; compact: boolean;
 }
 interface Contact { name: string; address: string }
 type SyncEvent =
@@ -104,8 +105,18 @@ export interface WalletDiagnostics {
   lastSync: { at: Date; text: string } | null;
 }
 
+/** Which wallet the commands are about. */
+export interface Key { network: ZNetwork; wallet: string; account: number }
+
 export interface ZcashWallet {
   diagnostics(): WalletDiagnostics;
+  /**
+   * Show the wallet `key` without the board (src/wallet-list.ts), or none
+   * (null). A board account read afterwards takes over.
+   */
+  openWithoutBoard(key: Key | null): void;
+  /** The wallet opened without the board, if any. */
+  readonly offline: Key | null;
 }
 
 export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promise<ZcashWallet | null> {
@@ -132,12 +143,16 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   const say = (id: string, text: string) => { $(id).textContent = text; };
   const zec = (zat: number) => (hide ? "•••• ZEC" : `${formatZec(zat)} ZEC`);
 
+  /** A wallet opened without the board (src/wallet-list.ts). */
+  let offline: Key | null = null;
+
   /** Which wallet is on screen: the board account's seed fingerprint and
-   * account on the current network, or none until the board was read. */
-  interface Key { network: ZNetwork; wallet: string; account: number }
+   * account on the current network, or the wallet opened without the
+   * board, or none until the board was read. */
   const keyNow = (): Key | null => {
     const a = view.boardAccount;
-    return a && a.network === net() ? { network: a.network, wallet: a.seedFingerprint, account: a.account } : null;
+    if (a && a.network === net()) return { network: a.network, wallet: a.seedFingerprint, account: a.account };
+    return offline && offline.network === net() ? offline : null;
   };
   const sameKey = (a: Key | null, b: Key | null) =>
     a !== null && b !== null && a.network === b.network && a.wallet === b.wallet && a.account === b.account;
@@ -293,10 +308,13 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     $("zwrecent").replaceChildren();
     $("zwhist").replaceChildren();
     contacts = [];
+    stopEdit();
     renderContacts();
     $("zwinfo").replaceChildren();
     say("zwstatus", view.boardAccount === null
-      ? "Reading the board's account: its seed fingerprint names the wallet on this device…"
+      ? (deps.call() === null
+        ? "Connect the board, or open a wallet on this device without it (the launcher)."
+        : "Reading the board's account: its seed fingerprint names the wallet on this device…")
       : "");
   }
 
@@ -326,7 +344,9 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
         ? `Setting up the ${networkLabel(n).toLowerCase()} wallet of the board's account ${k.account}…`
         : autoFailed !== null
           ? `The automatic set-up failed: ${autoFailed}`
-          : `No ${networkLabel(n).toLowerCase()} wallet on this device yet for the board's seed ZFP ${k.wallet.slice(0, 8)}…, account ${k.account}.`);
+          : offline
+            ? `This ${networkLabel(n).toLowerCase()} wallet is gone from this device (forgotten?).`
+            : `No ${networkLabel(n).toLowerCase()} wallet on this device yet for the board's seed ZFP ${k.wallet.slice(0, 8)}…, account ${k.account}.`);
       return;
     }
     say("zwstatus", "");
@@ -359,8 +379,12 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     };
     row("Network", networkLabel(net()));
     const k = keyNow();
-    if (k) row("Seed fingerprint", k.wallet);
-    row("Account", s.hasAccount ? `${s.accountIndex ?? "?"} (board ZFP ${s.zfp ?? "?"})` : "none");
+    if (k && !s.hasAccount) row("Wallet", k.wallet);
+    else if (s.hardware) {
+      row("Seed fingerprint", s.seedFingerprint ?? "?");
+      row("Account", `${s.accountIndex ?? "?"} (board ZFP ${s.zfp ?? "?"})`);
+    } else row("Account", "watch-only (a viewing key: it can see, never spend)");
+    if (offline && sameKey(offline, k)) row("Opened", "without the board: connect it to send, shield or verify");
     if (s.birthday !== null) row("Birthday", String(s.birthday));
     row("Data", s.dataDir);
   }
@@ -485,7 +509,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     renderSync();
   });
   void listener()?.<FinishEvent>("zw://finish", (e) => {
-    if (e.payload.network === net()) say("zwsendstatus", e.payload.message);
+    if (e.payload.network === net()) (finishLine ?? ((t: string) => say("zwsendstatus", t)))(e.payload.message);
   });
 
   /* In the background (Android, a minimised window) nothing syncs; back in
@@ -666,10 +690,52 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     }
   }
 
+  /** Where zw_finish's progress (zw://finish) is said: the screen signing. */
+  let finishLine: ((t: string) => void) | null = null;
+
+  /**
+   * Have the board sign `viewBytes` for the wallet `key` (after checking it
+   * holds that wallet's seed), then prove and broadcast it. The Send and
+   * Shield review and a swap's deposit (src/swap-view.ts) all sign here.
+   */
+  async function signView(key: Key, viewBytes: Uint8Array, mainOk: boolean, line: (t: string) => void, bar: HTMLProgressElement): Promise<string> {
+    const s = status;
+    if (!s || !sameKey(key, keyNow())) throw new Error("The wallet on screen changed; build the transaction again.");
+    if (key.network === "main" && !mainOk) throw new Error("This is mainnet: tick the confirmation above first.");
+    try {
+      const zsig = await view.busy("signing a send", async () => {
+        line("Checking that this board holds the wallet's seed…");
+        const account = await boardMatches(s);
+        bar.hidden = false;
+        bar.value = 0;
+        line("Sending the transaction to the board…");
+        const r = await zSign(requireBoard(), viewBytes, account, key.network, (p) => {
+          if (p.phase === "upload") bar.value = p.sent / p.total;
+          else {
+            bar.hidden = true;
+            line("Review the transaction on the board. ACCEPT on its last page signs; anything else sends nothing.");
+          }
+        });
+        if (r.entries.length === 0) throw new Error("the board returned no signatures");
+        deps.log(`zcash: board approved sighash ${toHex(r.sighash)}`);
+        return encodeZsig(r.sha256, r.entries);
+      });
+      line("Signed on the board. Proving (the first time loads the proving key)…");
+      finishLine = line;
+      const sent = await invoke<{ txid: string; broadcast: boolean }>("zw_finish", {
+        ...key, view: Array.from(viewBytes), zsig: Array.from(zsig), mainnetConfirmed: mainOk,
+      });
+      deps.log(`zcash: broadcast ${sent.txid} on ${key.network}`);
+      return sent.txid;
+    } finally {
+      finishLine = null;
+      bar.hidden = true;
+    }
+  }
+
   async function signAndSend(): Promise<void> {
     const prop = proposal;
-    const s = status;
-    if (!prop || !s) return;
+    if (!prop || !status) return;
     if (!sameKey(prop.key, keyNow())) { cancelProposal(); return; }
     const mainOk = ($("zwmainconfirm") as HTMLInputElement).checked;
     if (prop.network === "main" && !mainOk) {
@@ -679,32 +745,11 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const bar = $<HTMLProgressElement>("zwsendbar");
     $<HTMLButtonElement>("zwsignsend").disabled = true;
     try {
-      const zsig = await view.busy("signing a send", async () => {
-        say("zwsendstatus", "Checking that this board holds the wallet's seed…");
-        const account = await boardMatches(s);
-        bar.hidden = false;
-        bar.value = 0;
-        say("zwsendstatus", "Sending the transaction to the board…");
-        const r = await zSign(requireBoard(), prop.view, account, prop.network, (p) => {
-          if (p.phase === "upload") bar.value = p.sent / p.total;
-          else {
-            bar.hidden = true;
-            say("zwsendstatus", "Review the transaction on the board. ACCEPT on its last page signs; anything else sends nothing.");
-          }
-        });
-        if (r.entries.length === 0) throw new Error("the board returned no signatures");
-        deps.log(`zcash: board approved sighash ${toHex(r.sighash)}`);
-        return encodeZsig(r.sha256, r.entries);
-      });
-      say("zwsendstatus", "Signed on the board. Proving (the first time loads the proving key)…");
-      const sent = await invoke<{ txid: string; broadcast: boolean }>("zw_finish", {
-        ...prop.key, view: Array.from(prop.view), zsig: Array.from(zsig), mainnetConfirmed: mainOk,
-      });
+      const txid = await signView(prop.key, prop.view, mainOk, (t) => say("zwsendstatus", t), bar);
       cancelProposal();
       ($("zwamount") as HTMLInputElement).value = "";
       ($("zwmemo") as HTMLTextAreaElement).value = "";
-      say("zwsendstatus", `Sent: ${sent.txid}. It shows as pending until it is mined.`);
-      deps.log(`zcash: broadcast ${sent.txid} on ${prop.network}`);
+      say("zwsendstatus", `Sent: ${txid}. It shows as pending until it is mined.`);
       /* Right after a send or a shield: sync, so the balance and the
        * history show it. */
       void scheduler.trigger();
@@ -813,6 +858,16 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   /* --------------------------------------------------------- contacts */
 
   let contacts: Contact[] = [];
+  /** The contact being edited, by its name; null when adding. */
+  let editing: string | null = null;
+
+  function stopEdit(): void {
+    editing = null;
+    ($("zwcname") as HTMLInputElement).value = "";
+    ($("zwcaddr") as HTMLInputElement).value = "";
+    $("zwcadd").textContent = "Add";
+    $("zwccancel").hidden = true;
+  }
 
   /** A contact's name typed into "To" means its address. */
   function resolveContact(to: string): string {
@@ -854,6 +909,19 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
         payContact(c);
         selectTab("ztab-send");
       });
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "ghost";
+      edit.textContent = "Edit";
+      edit.addEventListener("click", () => {
+        editing = c.name;
+        ($("zwcname") as HTMLInputElement).value = c.name;
+        ($("zwcaddr") as HTMLInputElement).value = c.address;
+        $("zwcadd").textContent = "Save";
+        $("zwccancel").hidden = false;
+        say("zwcstatus", `Editing ${c.name}.`);
+        ($("zwcname") as HTMLInputElement).focus();
+      });
       const del = document.createElement("button");
       del.type = "button";
       del.className = "ghost";
@@ -862,7 +930,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
         void call<Contact[]>("zw_contact_remove", { name: c.name }).then((v) => { contacts = v; renderContacts(); },
           (e) => say("zwcstatus", zErrorText(e)));
       });
-      li.append(name, addr, pay, del);
+      li.append(name, addr, pay, edit, del);
       list.append(li);
       const opt = document.createElement("option");
       opt.value = c.name;
@@ -1021,15 +1089,15 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   $("zwcadd").addEventListener("click", () => {
     void call<Contact[]>("zw_contact_save", {
-      name: ($("zwcname") as HTMLInputElement).value, address: ($("zwcaddr") as HTMLInputElement).value, replacing: null,
+      name: ($("zwcname") as HTMLInputElement).value, address: ($("zwcaddr") as HTMLInputElement).value, replacing: editing,
     }).then((v) => {
       contacts = v;
       renderContacts();
-      ($("zwcname") as HTMLInputElement).value = "";
-      ($("zwcaddr") as HTMLInputElement).value = "";
+      stopEdit();
       say("zwcstatus", "Saved.");
     }, (e) => say("zwcstatus", zErrorText(e)));
   });
+  $("zwccancel").addEventListener("click", () => { stopEdit(); say("zwcstatus", ""); });
 
   const setServer = (server: string | null) => {
     say("zwsetstatus", server ? `Checking ${server}…` : "Back to the default server…");
@@ -1059,8 +1127,34 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       (e) => say("zwsetstatus", zErrorText(e)));
   });
 
+  /* ------------------------------------------------------------- swaps */
+
+  const swapView = initSwapView({
+    invoke,
+    key: keyNow,
+    canSign: () => status?.hardware ?? false,
+    async sign(key, viewBytes, mainOk, line, bar) {
+      /* No sync between the deposit's proposal and its finish: the wallet
+       * runs one command at a time. */
+      const release = scheduler.hold();
+      try {
+        if (scheduler.running) line("Waiting for the sync to finish…");
+        await scheduler.whenIdle();
+        return await signView(key, viewBytes, mainOk, line, bar);
+      } finally {
+        release();
+      }
+    },
+    changed: () => void scheduler.trigger(),
+    qr: deps.qr,
+    copy: deps.copy,
+    log: deps.log,
+  });
+  $("ztab-swap").addEventListener("click", () => swapView.opened());
+
   /** Everything of the wallet that was on screen belongs to another one now. */
   function leaveWallet(): void {
+    swapView.reset();
     scheduler.stop();
     cancelProposal();
     stopScan();
@@ -1081,7 +1175,8 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
    * screen. */
   view.onAccount((a) => {
     leaveWallet();
-    if (a) void autoOpen();
+    /* A board account takes over from a wallet opened without the board. */
+    if (a) { offline = null; void autoOpen(); }
     else void refresh();
   });
 
@@ -1090,5 +1185,16 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   return {
     diagnostics: () => ({ status, lastContact, lastSync }),
+    openWithoutBoard(key) {
+      leaveWallet();
+      offline = key;
+      void refresh().then(() => {
+        if (!offline || !sameKey(offline, keyNow()) || !status?.hasAccount) return;
+        selectTab("ztab-wallet");
+        scheduler.start();
+        deps.log(`zcash: opened the ${offline.network} wallet ${offline.wallet.slice(0, 16)}… without the board`);
+      });
+    },
+    get offline() { return offline; },
   };
 }

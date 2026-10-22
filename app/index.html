@@ -67,11 +67,48 @@
             <span class="launcher__title">Connect device</span>
             <span class="launcher__desc">USB or Bluetooth</span>
           </button>
+          <!-- The wallets already on this device (src/wallet-list.ts), to
+               look at without the board, and a viewing key to import by
+               hand (watch-only). Sending still needs the board. -->
+          <button type="button" class="launcher__tile" id="gotowallets" hidden>
+            <span class="launcher__title">Wallets on this device</span>
+            <span class="launcher__desc">View without the board, or import a viewing key</span>
+          </button>
           <button type="button" class="launcher__tile" id="gotoflash">
             <span class="launcher__title">Flash firmware</span>
             <span class="launcher__desc">Install or update from a release</span>
           </button>
         </nav>
+
+        <section class="panel" id="walletspanel" aria-labelledby="walletshead" hidden>
+          <button type="button" class="destination__back" id="walletsback"><span aria-hidden="true">← </span>Back</button>
+          <h2 id="walletshead">Wallets on this device</h2>
+          <p>Each wallet is a viewing key: it sees its account's funds and
+            history, never its spending key. Open one to look at it without
+            the board; sending, shielding and verifying addresses still ask
+            for the board that holds its seed.</p>
+          <ul class="zhist" id="wlist"></ul>
+          <p class="muted" id="wliststatus" role="status" aria-live="polite"></p>
+
+          <h3>Import a viewing key (watch-only)</h3>
+          <p class="muted">A unified full viewing key (uview1… on mainnet,
+            uviewtest1… on testnet) lets this app see an account's funds
+            without being able to spend them.</p>
+          <label class="field"><span>Network</span>
+            <select id="wnet">
+              <option value="test">Testnet (coins without value)</option>
+              <option value="main">Mainnet (real ZEC)</option>
+            </select></label>
+          <label class="field"><span>Unified full viewing key</span>
+            <textarea id="wufvk" rows="4" spellcheck="false" autocomplete="off"></textarea></label>
+          <label class="field"><span>Birthday height (the first block that can hold its funds)</span>
+            <input id="wbday" inputmode="numeric" autocomplete="off" /></label>
+          <div class="row">
+            <button type="button" class="primary" id="wimport">Import</button>
+            <button type="button" id="wtip" class="secondary">Use today's tip</button>
+          </div>
+          <p class="muted" id="wimportstatus" role="status" aria-live="polite"></p>
+        </section>
 
         <section class="panel" id="devicepanel" aria-labelledby="devicehead" hidden>
           <button type="button" class="destination__back" id="connectback"><span aria-hidden="true">← </span>Back</button>
@@ -138,6 +175,17 @@
                 <button type="button" id="zmainno" class="secondary">Stay on testnet</button>
               </div>
             </div>
+            <!-- A wallet opened from the list of wallets on this device, with
+                 no board connected (src/wallet-list.ts). -->
+            <div class="notice" id="zoffline" role="note" hidden>
+              <p id="zofflinetext">Opened without the board: you can look and
+                sync. Sending, shielding and verifying an address need the
+                board that holds this wallet's seed.</p>
+              <div class="row">
+                <button type="button" id="zofflineconnect" class="primary">Connect the board</button>
+                <button type="button" id="zofflineclose" class="secondary">Close</button>
+              </div>
+            </div>
             <p class="notice notice--danger" id="zmainbanner" hidden>
               Mainnet: real ZEC. Check every address and amount on the board's
               own screen before you accept.
@@ -157,6 +205,7 @@
               <button type="button" role="tab" id="ztab-receive" aria-controls="zpane-receive" aria-selected="false" data-wallet data-account hidden>Receive</button>
               <button type="button" role="tab" id="ztab-send" aria-controls="zpane-send" aria-selected="false" data-wallet data-account hidden>Send</button>
               <button type="button" role="tab" id="ztab-activity" aria-controls="zpane-activity" aria-selected="false" data-wallet data-account hidden>Activity</button>
+              <button type="button" role="tab" id="ztab-swap" aria-controls="zpane-swap" aria-selected="false" data-wallet data-account hidden>Swap</button>
               <button type="button" role="tab" id="ztab-contacts" aria-controls="zpane-contacts" aria-selected="false" data-wallet hidden>Contacts</button>
               <button type="button" role="tab" id="ztab-settings" aria-controls="zpane-settings" aria-selected="false" data-wallet hidden>Settings</button>
               <button type="button" role="tab" id="ztab-board" aria-controls="zpane-board" aria-selected="true">Board</button>
@@ -309,14 +358,96 @@
               <ul class="zhist" id="zwhist"></ul>
             </section>
 
+            <!-- Cross-chain swaps through NEAR Intents' 1Click API
+                 (src/swap-view.ts over src-tauri/src/swaps.rs). The quote
+                 comes from 1Click; from ZEC, the deposit is an ordinary
+                 send signed on the board. Mainnet only. -->
+            <section id="zpane-swap" role="tabpanel" aria-labelledby="ztab-swap" hidden>
+              <div class="notice notice--danger" role="note" id="swtestnote" hidden>
+                <strong>Mainnet only.</strong> NEAR Intents has no testnet: on
+                testnet this screen can only preview a price (a dry-run quote,
+                no deposit address). Switch to Mainnet to swap.
+              </div>
+              <p class="muted">Cross-chain swaps through NEAR Intents (1Click).
+                The rate, the fees and the deposit address come from 1Click;
+                the board cannot check them. It shows the amount and the
+                address it pays.</p>
+              <div id="swform">
+                <fieldset class="netpick">
+                  <legend class="visually-hidden">Direction</legend>
+                  <label><input type="radio" name="swdir" value="fromZec" id="swfrom" checked /> ZEC → another asset</label>
+                  <label><input type="radio" name="swdir" value="toZec" id="swto" /> Another asset → ZEC</label>
+                </fieldset>
+                <label class="field"><span id="swassetlabel">Receive</span>
+                  <select id="swasset"><option value="">Loading the assets…</option></select></label>
+                <label class="field"><span id="swamountlabel">Amount (ZEC)</span>
+                  <input id="swamount" inputmode="decimal" autocomplete="off" placeholder="0.01" /></label>
+                <label class="field"><span id="swaddrlabel">Recipient address</span>
+                  <textarea id="swaddr" rows="2" spellcheck="false" autocomplete="off"></textarea></label>
+                <label class="field"><span>Slippage tolerance (%)</span>
+                  <input id="swslippage" inputmode="decimal" autocomplete="off" value="1" /></label>
+                <label class="field field--check">
+                  <input type="checkbox" id="swconfidential" />
+                  <span>Confidential (NEAR Confidential Intents; needs a 1Click API key)</span></label>
+                <p class="muted" id="swprivacy"></p>
+                <div class="row">
+                  <button type="button" class="primary" id="swquotebtn">Get quote</button>
+                  <button type="button" id="swpreviewbtn" class="secondary">Preview price</button>
+                </div>
+              </div>
+
+              <section class="preview" id="swquote" hidden aria-labelledby="swquotehead">
+                <h4 id="swquotehead">Quote</h4>
+                <dl class="kv" id="swquotekv"></dl>
+                <div id="swdepositbox" hidden>
+                  <p class="muted" id="swdepositlabel"></p>
+                  <div class="addr" id="swdeposit"></div>
+                  <div class="addr-qr" id="swdepositqr" hidden></div>
+                  <div class="row"><button type="button" id="swdepositcopy" class="secondary">Copy</button></div>
+                </div>
+                <p class="muted" id="swquotenote"></p>
+                <div class="row">
+                  <button type="button" class="primary" id="swreviewbtn">Review the deposit</button>
+                  <button type="button" id="swbackbtn" class="secondary">Back</button>
+                </div>
+              </section>
+
+              <section class="preview" id="swreview" hidden aria-labelledby="swreviewhead">
+                <h4 id="swreviewhead">Review the deposit</h4>
+                <dl class="kv" id="swreviewkv"></dl>
+                <p class="muted" id="swreviewnote"></p>
+                <label class="field field--check" id="swmainconfirmrow">
+                  <input id="swmainconfirm" type="checkbox" />
+                  <span>This sends real ZEC on mainnet to a NEAR Intents deposit
+                    address. I checked the quote here and will check the address
+                    and amount on the board's screen.</span></label>
+                <div class="row">
+                  <button type="button" class="primary" id="swsignbtn">Sign on the board and send</button>
+                  <button type="button" id="swcancelbtn" class="secondary">Cancel</button>
+                </div>
+                <progress id="swbar" value="0" max="1" hidden></progress>
+              </section>
+              <p class="muted" id="swstatus" role="status" aria-live="polite"></p>
+
+              <div class="row swaps-head">
+                <h4>Swaps</h4>
+                <span class="statusbar__spacer"></span>
+                <button type="button" id="swrefresh" class="secondary">Check now</button>
+              </div>
+              <p class="muted" id="swempty">No swaps from this wallet yet.</p>
+              <ul class="zhist" id="swlist"></ul>
+              <p class="muted" id="swliststatus" role="status" aria-live="polite"></p>
+            </section>
+
             <section id="zpane-contacts" role="tabpanel" aria-labelledby="ztab-contacts" hidden>
               <p class="muted">Names for the addresses you pay, kept on this device
-                only, one book per network.</p>
+                only, one book per network and seed.</p>
               <ul class="zhist" id="zwcontacts"></ul>
               <div class="row">
                 <input id="zwcname" autocomplete="off" placeholder="Name" />
                 <input id="zwcaddr" class="addr" spellcheck="false" autocomplete="off" placeholder="Address" />
                 <button type="button" id="zwcadd" class="secondary">Add</button>
+                <button type="button" id="zwccancel" class="ghost" hidden>Cancel</button>
               </div>
               <p class="muted" id="zwcstatus" role="status" aria-live="polite"></p>
             </section>

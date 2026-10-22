@@ -77,6 +77,11 @@ export interface ZcashView {
    * the app switched.
    */
   followBoard(n: ZNetwork): boolean;
+  /**
+   * Show network `n` for a wallet opened without the board (the launcher's
+   * wallet list): the user picked that wallet, so no Mainnet question.
+   */
+  useNetwork(n: ZNetwork): void;
 }
 
 export function initZcash(deps: ZcashDeps): ZcashView {
@@ -416,6 +421,7 @@ export function initZcash(deps: ZcashDeps): ZcashView {
       setNetwork(n);
       return true;
     },
+    useNetwork(n) { setNetwork(n); },
     onAccount(f) { accountListeners.push(f); },
     opened() { autoRead(); },
     get network() { return network; },
