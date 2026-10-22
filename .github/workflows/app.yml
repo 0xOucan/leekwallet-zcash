@@ -2,7 +2,7 @@
 # the companion's tests against zdev (firmware/sim), the Rust tests of
 # app/src-tauri, app/zcash-wallet and app/near-intents, a `tauri build` on
 # Linux, Windows and macOS, and a check that the Rust half compiles for
-# Android (aarch64). The host/ tests (zecz-core, zecz-cli, leek-device,
+# Android (aarch64). Windows and macOS build only when run by hand. The host/ tests (zecz-core, zecz-cli, leek-device,
 # leek-android) run here too, since the app links them. Tests that need
 # testnet lightwalletd or 1Click are #[ignore]d and do not run here.
 name: app
@@ -51,12 +51,15 @@ jobs:
         working-directory: host
         run: cargo test --locked
 
+  # Windows minutes count double and macOS ten times against a private
+  # repo's Actions allowance, so pushes and pull requests build on Ubuntu
+  # only. Run the workflow by hand ("Run workflow") for all three systems.
   build:
     name: build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest","windows-latest","macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       # librustzcash and the Tauri tree have paths past Windows' 260-char
