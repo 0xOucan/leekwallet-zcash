@@ -602,3 +602,37 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
 .zscan__tip { margin: 0; }
 
 .launcher__tile--primary { border-color: var(--accent); }
+
+/* From the old desktop app (desktop/src/styles.css), so the one app keeps
+ * its look: mainnet is one solid red bar, the same in both themes, white on
+ * #A33329 (contrast 6.5:1), on screen the whole time it is mainnet. */
+#zmainbanner {
+  background: #A33329; color: #FFFFFF; border-left: none;
+  font-weight: 600; letter-spacing: 0.04em; text-align: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+}
+.badge[data-net="test"] { color: var(--warn); border-color: var(--warn); }
+.badge[data-net="main"] { color: var(--danger); border-color: var(--danger); }
+
+/* Wallets on this device (src/wallet-list.ts). */
+#wlist > li { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-start; }
+#wlist .zhist__head { width: 100%; align-items: baseline; }
+#wlist:empty { display: none; }
+
+/* NEAR Intents swaps (src/swap-view.ts). The timeline wraps, so a phone
+ * shows it on two lines rather than scrolling sideways. */
+.netpick { border: none; margin: 0 0 var(--space-3); padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); font-size: var(--text-sm); }
+.netpick label { display: flex; gap: var(--space-2); align-items: center; cursor: pointer; }
+.swaps-head { margin-top: var(--space-4); }
+.swaps-head h3 { margin: 0; }
+.timeline { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: var(--space-2) 0 0; padding: 0; font-size: var(--text-xs); color: var(--muted); }
+.timeline li[data-step="done"] { color: var(--accent); }
+.timeline li[data-step="now"] { color: var(--text); font-weight: 600; }
+.timeline li[data-step="bad"] { color: var(--danger); font-weight: 600; }
+.swap__line { color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; margin-top: var(--space-1); }
+.swap__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.swap__actions button { min-height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); }
+.swap__id { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
+.swap__id code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; min-width: 0; flex: 1; }
+.swap__id button { flex: none; }
