@@ -115,7 +115,10 @@ jobs:
       - name: tauri build
         working-directory: app
         run: pnpm tauri build --ci
+      # Only hand-run builds upload, and briefly: the account's free
+      # Actions storage is 0.5 GB and each Linux bundle is ~100 MB.
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: zcash-leekwallet-${{ runner.os }}
           path: |
@@ -124,7 +127,7 @@ jobs:
             app/src-tauri/target/release/bundle/msi/*.msi
             app/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
 
   android:
     name: android check (aarch64)
