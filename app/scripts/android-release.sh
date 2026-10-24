@@ -13,7 +13,14 @@
 #                                          the Android SDK's own debug key,
 #                                          created here if missing)
 #   LEEK_KEY_ALIAS     its key alias     (default: androiddebugkey)
-#   LEEK_KEYSTORE_PASS its password      (default: android, the SDK's)
+#   LEEK_KEYSTORE_PASS its password      (default: android, the SDK's; with
+#                                          LEEK_KEYSTORE set and this unset, it
+#                                          is asked for, not echoed)
+#
+# Only the default debug keystore is ever created here. A LEEK_KEYSTORE path
+# that does not exist is an error: a typo must not quietly sign a release with
+# a brand-new key. Passwords reach apksigner through the environment, not its
+# command line, so they do not show in `ps`.
 #
 # No key, keystore or password is ever committed. A debug key is fine for
 # installing on your own phone; a build for other people needs a real key,
@@ -25,11 +32,16 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 : "${NDK_HOME:?set NDK_HOME (see ANDROID.md, Environment)}"
 
 bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-keystore="${LEEK_KEYSTORE:-$HOME/.android/debug.keystore}"
+debug_ks="$HOME/.android/debug.keystore"
+keystore="${LEEK_KEYSTORE:-$debug_ks}"
 alias="${LEEK_KEY_ALIAS:-androiddebugkey}"
+if [ -n "${LEEK_KEYSTORE:-}" ] && [ -z "${LEEK_KEYSTORE_PASS:-}" ]; then
+  read -r -s -p "password for $keystore: " LEEK_KEYSTORE_PASS; echo
+fi
 pass="${LEEK_KEYSTORE_PASS:-android}"
 
 if [ ! -f "$keystore" ]; then
+  [ "$keystore" = "$debug_ks" ] || { echo "keystore not found: $keystore" >&2; exit 1; }
   echo "creating a local debug keystore at $keystore"
   mkdir -p "$(dirname "$keystore")"
   keytool -genkeypair -v -keystore "$keystore" -alias "$alias" \
@@ -54,8 +66,8 @@ signed="$out/leekwallet-companion-arm64-release.apk"
 [ -f "$unsigned" ] || { echo "no unsigned APK at $unsigned" >&2; exit 1; }
 
 "$bt/zipalign" -f -p 4 "$unsigned" "$aligned"
-"$bt/apksigner" sign --ks "$keystore" --ks-key-alias "$alias" \
-  --ks-pass "pass:$pass" --key-pass "pass:$pass" --out "$signed" "$aligned"
+LEEK_SIGN_PASS="$pass" "$bt/apksigner" sign --ks "$keystore" --ks-key-alias "$alias" \
+  --ks-pass env:LEEK_SIGN_PASS --key-pass env:LEEK_SIGN_PASS --out "$signed" "$aligned"
 "$bt/apksigner" verify "$signed"
 rm -f "$aligned"
 ls -l "$signed"

@@ -568,28 +568,25 @@ not a hazard.
 ## Release signing
 
 The debug APK is signed with the standard Android debug key and will install on
-any phone with unknown sources enabled. That is all a release build needs
-extra:
+any phone with unknown sources enabled. A build for other people is signed with
+the project's release key, which lives **outside every repository**:
 
-1. Generate a keystore **outside the repository**:
-   ```bash
-   keytool -genkey -v -keystore ~/leekwallet-release.jks -keyalg RSA \
-           -keysize 4096 -validity 10000 -alias leekwallet
-   ```
-2. Create `app/src-tauri/gen/android/keystore.properties` (already ignored by
-   the generated `.gitignore` — verify that before writing it):
-   ```properties
-   storeFile=/absolute/path/to/leekwallet-release.jks
-   keyAlias=leekwallet
-   storePassword=...
-   password=...
-   ```
-3. Wire it into `app/build.gradle.kts` per the Tauri "Android code signing"
-   guide, then `pnpm tauri android build`.
+```bash
+LEEK_KEYSTORE=~/keys/leekwallet/leekwallet-release.p12 \
+LEEK_KEY_ALIAS=leekwallet \
+  pnpm android:release:arm64      # asks for the password, never echoes it
+```
+
+`scripts/android-release.sh` creates only the SDK's debug keystore; a
+`LEEK_KEYSTORE` that does not exist is an error, so a typo cannot sign a
+release with a fresh key. The same keystore signs the Zodl fork's APKs
+(`LEEK_RELEASE_KEYSTORE` in its `scripts/leekwallet-release.sh`). How the key
+is made and backed up: [RELEASES.md](../RELEASES.md).
 
 No keystore, password, or signing key belongs in this repository. For a wallet
 the signing key is the thing that decides which binary a user's phone trusts;
-treat it like `secure_boot_signing_key.pem`.
+treat it like `secure_boot_signing_key.pem`. Losing it means users cannot
+update; they would have to uninstall and reinstall.
 
 ## Known state
 
