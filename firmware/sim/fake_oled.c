@@ -14,6 +14,9 @@ static char    qr_data[400];   /* a version 10 frame is 395 characters */
 static uint8_t qr_version, qr_scale;
 static int     flush_count;
 static uint8_t contrast = 0;
+static uint8_t panel_rows = OLED_HEIGHT;
+static const uint8_t *panel_picture;
+static int     picture_flushes;
 
 static uint8_t cursor_page;
 static uint8_t cursor_col;
@@ -41,7 +44,14 @@ void fake_oled_reset(void)
     contrast = 0;
     cursor_page = 0;
     cursor_col = 0;
+    panel_rows = OLED_HEIGHT;
+    panel_picture = NULL;
+    picture_flushes = 0;
 }
+
+void fake_oled_set_panel_rows(uint8_t rows) { panel_rows = rows; }
+const uint8_t *fake_oled_panel_picture(void) { return panel_picture; }
+int fake_oled_picture_flush_count(void) { return picture_flushes; }
 
 /* ------------------------------------------------------------ inspection */
 
@@ -116,14 +126,20 @@ esp_err_t oled_clear(void)
     memset(fb, 0, sizeof(fb));
     cursor_page = 0;
     cursor_col = 0;
+    panel_picture = NULL;
     return ESP_OK;
 }
 
 esp_err_t oled_flush(void)
 {
     flush_count++;
+    if (panel_picture) picture_flushes++;
     return ESP_OK;
 }
+
+bool oled_present(void) { return true; }
+uint8_t oled_panel_rows(void) { return panel_rows; }
+void oled_show_panel_picture(const uint8_t *picture) { panel_picture = picture; }
 
 esp_err_t oled_clear_panel_now(void) { return oled_clear(); }
 

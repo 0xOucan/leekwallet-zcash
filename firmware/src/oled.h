@@ -170,6 +170,24 @@ esp_err_t oled_draw_qrcode_at(const char *data, uint8_t version, uint8_t scale);
 esp_err_t oled_draw_qrcode_ex(const char *data, uint8_t version, uint8_t scale,
                               bool inverted);
 
+/** True once a panel answered at init; false on a headless board. */
+bool oled_present(void);
+
+/**
+ * Rows the attached panel has: 128 on the SH1107 screen kit, 64 on the
+ * SSD1306 and on the Pixie (which draws the 64-row frame scaled).
+ */
+uint8_t oled_panel_rows(void);
+
+/**
+ * Show a full-panel 128x128 picture (page format, 2048 bytes) at the next
+ * flush, instead of the frame, until the next oled_clear(). The tall
+ * panel's counterpart of the QR path (panel128.h), for the boot splash. The
+ * pointer is kept, not copied, so it must outlive the picture. Ignored on a
+ * 64-row panel: check oled_panel_rows() first.
+ */
+void oled_show_panel_picture(const uint8_t *picture);
+
 /**
  * Set a single pixel on the display
  * @param x X coordinate (0-127)

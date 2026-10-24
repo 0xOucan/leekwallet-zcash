@@ -27,9 +27,14 @@ static void set(uint8_t *out, int x, int y, bool on)
     else    *b &= (uint8_t)~(1u << (y % 8));
 }
 
-void panel128_compose(const uint8_t *frame, const QRCode *qr, bool inverted,
+void panel128_compose(const uint8_t *frame, const uint8_t *picture,
+                      const QRCode *qr, bool inverted,
                       uint8_t out[PANEL128_BYTES])
 {
+    if (picture) {
+        memcpy(out, picture, PANEL128_BYTES);
+        return;
+    }
     memset(out, 0, PANEL128_BYTES);
     const uint8_t scale = qr ? panel128_qr_scale(qr->size) : 0;
     if (!qr || scale == 0) {

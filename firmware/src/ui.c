@@ -28,6 +28,8 @@
 #include "ble-name.h"
 #include "esp_timer.h"
 #include "qr-out.h"
+#include "splash.h"
+#include "version.h"
 #include "airgap.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-sign.h"
@@ -1398,7 +1400,7 @@ static void screen_boot_render(void)
 {
     oled_clear();
     oled_draw_string_centered(1, "LeekWallet");
-    oled_draw_string_centered(3, "v0.3");
+    oled_draw_string_centered(3, "v" LEEK_FW_VERSION " " LEEK_FW_CODENAME);
     oled_draw_string_centered(6, "Press any key");
 }
 
@@ -5826,11 +5828,68 @@ static void service_sign_expiry(void)
     }
 }
 
+void ui_boot_splash(void)
+{
+    /* Nothing to show on a headless board, and no reason to make it wait. */
+    if (!oled_present()) {
+        return;
+    }
+    /* Static: the tall picture is shown by pointer until the clear below. */
+    static uint8_t tall[SPLASH_TALL_BYTES];
+    static uint8_t wide[SPLASH_WIDE_BYTES];
+    const bool full_panel = oled_panel_rows() >= 128;
+    QueueHandle_t queue = button_get_queue();
+    const unsigned n = splash_frame_count();
+    const int64_t start = esp_timer_get_time();
+    bool skipped = false;
+
+    for (unsigned f = 0; f < n && !skipped; f++) {
+        int64_t elapsed_ms = (esp_timer_get_time() - start) / 1000;
+        /* Behind schedule (a slow bus): drop the frame rather than stretch
+         * the whole splash. Never the last one, which carries the text. */
+        if (f + 1 < n && elapsed_ms >= (int64_t)splash_frame_end_ms(f)) {
+            continue;
+        }
+        oled_clear();
+        if (full_panel) {
+            splash_render_tall(f, tall);
+            oled_show_panel_picture(tall);
+        } else {
+            splash_render_wide(f, wide);
+            for (uint8_t page = 0; page < OLED_PAGES; page++) {
+                oled_blit_page(page, wide + page * OLED_WIDTH, OLED_WIDTH);
+            }
+        }
+        oled_flush();
+
+        /* Wait out the frame on the input queue: any knob turn, press or
+         * Cancel ends the splash at once. */
+        elapsed_ms = (esp_timer_get_time() - start) / 1000;
+        const int64_t left = (int64_t)splash_frame_end_ms(f) - elapsed_ms;
+        button_event_t event;
+        if (xQueueReceive(queue, &event, left > 0 ? pdMS_TO_TICKS(left) : 0) == pdTRUE) {
+            ESP_LOGI(TAG, "Splash skipped by %s", button_get_action_name(event.id));
+            skipped = true;
+        }
+    }
+
+    /* The press that skipped it, and anything behind it, is spent: it must
+     * not also answer the boot screen. */
+    button_drain();
+    oled_clear();
+    needs_render = true;
+}
+
 void ui_task(void *pvParameters)
 {
     (void)pvParameters;
     QueueHandle_t queue = button_get_queue();
     button_event_t event;
+
+    /* The logo, before anything else is drawn. Skippable, and over in
+     * under 2.5 s either way; the boot screen and the PIN come after it
+     * exactly as they did before it existed. */
+    ui_boot_splash();
 
     /* Initial render */
     ui_render();

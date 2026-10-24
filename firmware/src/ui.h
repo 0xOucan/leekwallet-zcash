@@ -198,6 +198,14 @@ bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
 void ui_task(void *pvParameters);
 
 /**
+ * The boot splash (splash.h): the logo animation, then the handle, the
+ * version and codename. Blocks for at most splash_total_ms(); any input ends
+ * it early and is consumed. Called once by ui_task() before the first
+ * render; does nothing on a board with no panel.
+ */
+void ui_boot_splash(void);
+
+/**
  * Work the UI task owes itself, run once per loop *after* the repaint.
  *
  * Two things live here, and both are the same shape: something that must not

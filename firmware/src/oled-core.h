@@ -28,6 +28,9 @@ uint8_t *oled_core_framebuffer(void);
  */
 const QRCode *oled_core_last_qr(bool *inverted);
 
+/** The picture set by oled_show_panel_picture(), or NULL since a clear. */
+const uint8_t *oled_core_panel_picture(void);
+
 /** Five columns of a 5x7 glyph, bit 0 the top row. Unprintables render blank. */
 const uint8_t *font_5x7_glyph(char c);
 

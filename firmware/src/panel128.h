@@ -13,6 +13,10 @@
  * across the full 128 rows at the largest whole scale that fits with a
  * two-module quiet zone - a UA at 2 px per module, a t-address at 3.
  *
+ * The boot splash is the other full-panel image: it draws its own 128x128
+ * picture (splash.h) and that is shown as it is, so the logo keeps its
+ * proportions rather than being stretched.
+ *
  * Pure: frame in, panel image out, in the same page format (one byte per
  * column per page, bit 0 on top). Host-tested by scanning the result.
  */
@@ -35,11 +39,16 @@
 uint8_t panel128_qr_scale(uint8_t modules);
 
 /**
- * Compose the panel image. `qr` non-NULL: the code, full panel, lit quiet
- * zone on a dark panel (or lit modules on dark when `inverted`), as oled-core
- * draws it. Otherwise the frame, each row doubled.
+ * Compose the panel image, in this order of precedence:
+ *
+ *   - `picture` non-NULL: a full-panel 128x128 image already in page format
+ *     (the boot splash, oled_show_panel_picture()), shown as it is;
+ *   - `qr` non-NULL: the code, full panel, lit quiet zone on a dark panel (or
+ *     lit modules on dark when `inverted`), as oled-core draws it;
+ *   - otherwise the frame, each row doubled.
  */
-void panel128_compose(const uint8_t *frame, const QRCode *qr, bool inverted,
+void panel128_compose(const uint8_t *frame, const uint8_t *picture,
+                      const QRCode *qr, bool inverted,
                       uint8_t out[PANEL128_BYTES]);
 
 #endif /* LEEK_PANEL128_H */
