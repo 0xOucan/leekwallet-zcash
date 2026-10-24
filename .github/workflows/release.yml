@@ -34,6 +34,10 @@ on:
         description: "Existing tag to build, e.g. v0.1.0"
         required: true
         type: string
+      codename:
+        description: "Release codename for the title, e.g. Sacbeh (CHANGELOG.md)"
+        required: false
+        type: string
 
 concurrency:
   group: release-${{ inputs.tag }}
@@ -45,6 +49,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   TAG: ${{ inputs.tag }}
+  CODENAME: ${{ inputs.codename }}
 
 jobs:
   # One job creates the draft, so the four build jobs do not race to create
@@ -90,7 +95,10 @@ jobs:
             echo "draft $TAG exists; assets will be replaced"
           else
             cat > "$RUNNER_TEMP/notes.md" <<EOF
-          Zcash LeekWallet $TAG. Draft: the firmware, the Android APK,
+          Zcash LeekWallet $TAG${CODENAME:+ "$CODENAME"}. Changes:
+          [CHANGELOG.md](https://github.com/$GH_REPO/blob/$TAG/CHANGELOG.md).
+
+          Draft: the firmware, the Android APK,
           SHA256SUMS and SHA256SUMS.sig are added by the maintainer before
           this is published.
 
@@ -99,7 +107,7 @@ jobs:
           Building it yourself is the recommended way to use this project.
           EOF
             gh release create "$TAG" --draft --verify-tag \
-              --title "Zcash LeekWallet $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+              --title "Zcash LeekWallet $TAG${CODENAME:+ $CODENAME}" --notes-file "$RUNNER_TEMP/notes.md"
           fi
 
   desktop:

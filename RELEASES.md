@@ -249,17 +249,57 @@ likely means a different compiler.
 
 ## For the maintainer: cutting a release
 
+### Once: the Android release key
+
+One keystore signs every Android APK of the project, the Zcash LeekWallet app
+and the Zodl fork's two apps. Android only installs an update signed with the
+same key as the installed app, so this key is permanent: lose it and users
+must uninstall (and lose the app's data) to move to a new one.
+
+```bash
+install -d -m 700 ~/keys/leekwallet
+keytool -genkeypair -v -storetype PKCS12 \
+  -keystore ~/keys/leekwallet/leekwallet-release.p12 -alias leekwallet \
+  -keyalg RSA -keysize 4096 -validity 10950 \
+  -dname "CN=LeekWallet Zcash, O=LeekWallet, C=MX"
+chmod 600 ~/keys/leekwallet/leekwallet-release.p12
+keytool -list -v -keystore ~/keys/leekwallet/leekwallet-release.p12 \
+  -alias leekwallet | grep SHA256
+```
+
+keytool asks for the password (a PKCS12 key uses the store password). Keep the
+password in a password manager, and at least two offline copies of the
+keystore, encrypted, e.g. `gpg -c leekwallet-release.p12` onto two USB drives
+kept apart. The `SHA256` line is the certificate digest that goes in section 3
+above and in the fork's LEEKWALLET-RELEASE.md.
+
+### Once: SSH signing for tags
+
+The tag is signed with the same SSH key as `SHA256SUMS`:
+
+```bash
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global gpg.ssh.allowedSignersFile "$PWD/allowed_signers"
+```
+
+### Each release
+
+The changes and the codename go in [CHANGELOG.md](CHANGELOG.md) first.
+
 1. Set the version in `app/src-tauri/tauri.conf.json`,
    `app/src-tauri/Cargo.toml`, `app/package.json` and
    `chrome/extension/manifest.json`; commit.
-2. `git tag -s v0.1.0 -m v0.1.0 && git push origin v0.1.0`.
-3. GitHub, Actions, **release**, *Run workflow* with the tag. It builds the
+2. `git tag -s v0.1.0 -m 'v0.1.0 "Sacbeh"' && git tag -v v0.1.0 && git push origin v0.1.0`.
+3. GitHub, Actions, **release**, *Run workflow* with the tag (and the codename, e.g. `Sacbeh`, for the
+   title). It builds the
    desktop bundles and the Chrome zip and attaches them to a **draft**
    release. It needs no secret beyond the workflow's own token.
 4. `cd firmware && ./scripts/release.sh v0.1.0 esp32s3cam`, and
    `./scripts/repro-check.sh v0.1.0` before trusting it.
 5. The APK, with the release keystore (never in this repository):
-   `cd app && LEEK_KEYSTORE=... LEEK_KEY_ALIAS=... LEEK_KEYSTORE_PASS=... pnpm android:release:arm64`.
+   `cd app && LEEK_KEYSTORE=~/keys/leekwallet/leekwallet-release.p12 LEEK_KEY_ALIAS=leekwallet pnpm android:release:arm64`
+   (it asks for the password).
 6. `scripts/release-collect.sh v0.1.0 --apk <the signed APK>`. It downloads
    the draft's files, adds the firmware and the APK, refuses a debug-signed APK
    or a firmware build from another commit, writes `SHA256SUMS`, and prints

@@ -164,6 +164,8 @@ the Android APK and the Chrome extension, with a `SHA256SUMS` signed by the
 maintainer's SSH key. [RELEASES.md](RELEASES.md) says what each file is, how
 to verify it, and how to rebuild it and compare. Prebuilt binaries from one
 place are a trust risk; building from source is the recommended way.
+What changed in each version, and its codename: [CHANGELOG.md](CHANGELOG.md).
+The first is v0.1.0 "Sacbeh".
 
 ## Build and test
 
