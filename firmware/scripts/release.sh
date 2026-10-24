@@ -53,6 +53,21 @@ fi
 # reproducing the build got a confusing failure. `^{commit}` dereferences it,
 # and is what the check above already validates.
 COMMIT=$(git -C "${ROOT}" rev-parse "${TAG}^{commit}")
+
+# A version tag must match what the firmware says it is. src/version.h is the
+# one place the version is set (getFeatures, the boot splash and the boot
+# screen all read it), so a v0.2.0 tag on a tree that still says 0.1.0 would
+# publish a binary that reports the wrong release. Read at the commit, not in
+# the working tree, for the same reason the build is.
+if [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    VERSION_H="$(git -C "${ROOT}" rev-parse --show-prefix)src/version.h"
+    FW_VERSION=$(git -C "${ROOT}" show "${COMMIT}:${VERSION_H}" 2>/dev/null |
+                 sed -n 's/^#define LEEK_FW_VERSION  *"\(.*\)"/\1/p')
+    if [[ -n "${FW_VERSION}" && "${FW_VERSION}" != "${TAG#v}" ]]; then
+        echo "release: tag ${TAG} but src/version.h says ${FW_VERSION}" >&2
+        exit 2
+    fi
+fi
 OUT="${ROOT}/release/${TAG}/${ENV_NAME}"
 
 # The firmware is a subdirectory (firmware/) of the repository, not its root,
