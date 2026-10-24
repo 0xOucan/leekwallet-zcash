@@ -46,23 +46,32 @@ status, roadmap). This file is about the board and its firmware.
 | Part | |
 |---|---|
 | ESP32-S3-N16R8 "CAM" board | 16 MB flash, 8 MB octal PSRAM, OV5640 camera, microSD slot |
-| 1.5" SH1107 OLED, 128×128, I2C | the UI is laid out for 128×64 in its middle; QR codes use the whole panel |
-| EC11 rotary encoder | turn for UP/DOWN, press for OK |
-| Four-button module | UP, DOWN, BACK, OK |
+| 1.5" SH1107 OLED, 128×128, I2C | the UI is laid out for 128×64 and stretched 2× vertically to fill the panel; QR codes and the boot logo use the whole panel at their own scale |
+| EC11 rotary encoder | turn to move (UP/DOWN), press for OK |
+| One push button, K3 on GPIO14 | Cancel (BACK); held, it locks |
+
+That is the whole input: every screen, setting and gesture works with a turn,
+a press and Cancel. The original four-button module (UP, DOWN, BACK, OK on
+GPIO1, 41, 14, 42) is optional and still works alongside or instead of the
+knob; with it left off, GPIO1 and GPIO41 stay unconnected.
 
 Turning the knob clockwise is DOWN (the next menu item, the next page) and
 anticlockwise is UP. In the pickers (PIN digits, seed and passphrase
-letters, the device name, the dice face) clockwise and the DOWN button move
-forward, so a PIN digit goes up. If you prefer it the other way round, **Settings > Knob**
-switches between Normal and Reversed; the change applies on the next click of
-the knob, is kept across restarts, and does not affect the UP and DOWN
-buttons.
+letters, the device name, the dice face) clockwise moves forward, so a PIN
+digit goes up. If you prefer it the other way round, **Settings → Knob
+direction** switches between Normal and Reversed; the change applies on the
+next click of the knob, is kept across restarts, and affects the knob only.
+
+On power-on the board plays a short logo animation (about 2.5 s; any turn,
+press or Cancel skips it) and shows the release, `v0.1.0 Sacbeh`, before
+the boot screen and the PIN. The version is set in one place,
+`src/version.h`, which `getFeatures` reports too.
 
 Everything runs at 3.3 V. Wiring: [docs/WIRING-S3CAM.md](docs/WIRING-S3CAM.md);
 the board's pins: [docs/BOARD-S3CAM-PINOUT.md](docs/BOARD-S3CAM-PINOUT.md).
 
-The `esp32s3cam` build is the Zcash board. The `esp32s3` (plain ESP32-S3,
-SSD1306, four buttons) build still has the Zcash signer but no camera or
+The `esp32s3cam` build is the Zcash board. The `esp32s3` (the upstream
+reference board: plain ESP32-S3, SSD1306, four buttons) build still has the Zcash signer but no camera or
 card slot. The `pixie` build (Firefly Pixie, ESP32-C3) boots and holds seeds
 but has no Zcash signer, which is built for Xtensa only
 ([docs/PIXIE-PORT.md](docs/PIXIE-PORT.md)).

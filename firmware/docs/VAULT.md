@@ -122,7 +122,7 @@ strictly better than N backups: fewer things to lose, and the extra wallets
 leave no trace on the device. Multiple stored seeds are for importing wallets
 that already exist elsewhere, not for organising new ones.
 
-### Passphrase input on four buttons
+### Passphrase input on a knob (or buttons)
 
 Fifty-two letters plus digits and symbols in one linear cycle would be
 unusable. Instead the selector carries *mode entries* alongside the characters,
