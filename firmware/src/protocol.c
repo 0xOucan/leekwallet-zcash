@@ -46,6 +46,11 @@
 #include "zcash-account.h"
 #include "zcash-meta.h"
 #include "zcash-sign.h"
+#else
+/* No Zcash signer on this board (the Pixie), but getStatus still reports
+ * the Settings > Network choice, whose values are zsign's: 0 is Mainnet
+ * (ui.h, ui_zcash_network). */
+#define ZCASH_NET_MAIN 0
 #endif
 
 static const char *TAG = "protocol";
