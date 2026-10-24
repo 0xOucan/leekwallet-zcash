@@ -7,8 +7,8 @@
 # hashes. Everything it does is therefore driven by the tag and nothing by the
 # working tree: it clones, checks out, builds, and writes a manifest.
 #
-#   ./scripts/release.sh v0.3.0                  default (unsigned) firmware
-#   ./scripts/release.sh v0.3.0 esp32s3-secure   the signed, shippable one
+#   ./scripts/release.sh v0.3.0                  the Zcash board (esp32s3cam), unsigned
+#   ./scripts/release.sh v0.3.0 esp32s3-secure   the signed (secure boot) one
 #
 # Output lands in release/<tag>/<env>/ and is never committed.
 #
@@ -26,14 +26,17 @@
 # docs/RELEASE.md is the procedure this script is one step of.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
 
 TAG="${1:-}"
-ENV_NAME="${2:-esp32s3}"
+# The Zcash board. The plain esp32s3 environment is the upstream reference
+# board, and its images are named leekwallet-s3-*, which the flashers do not
+# offer for the Zcash board.
+ENV_NAME="${2:-esp32s3cam}"
 
 if [[ -z "${TAG}" ]]; then
-    echo "usage: $0 <tag-or-commit> [env]  (default env: esp32s3)" >&2
+    echo "usage: $0 <tag-or-commit> [env]  (default env: esp32s3cam)" >&2
     exit 2
 fi
 if ! command -v pio >/dev/null 2>&1; then
@@ -52,6 +55,15 @@ fi
 COMMIT=$(git -C "${ROOT}" rev-parse "${TAG}^{commit}")
 OUT="${ROOT}/release/${TAG}/${ENV_NAME}"
 
+# The firmware is a subdirectory (firmware/) of the repository, not its root,
+# and `git clone` only accepts a repository's root: cloning ${ROOT} itself
+# fails with "repository does not exist". So the clone is of the top level and
+# the build runs in the same subdirectory of the clone. SUBDIR is empty when
+# the firmware is checked out on its own.
+REPO=$(git -C "${ROOT}" rev-parse --show-toplevel) || exit 2
+SUBDIR=$(git -C "${ROOT}" rev-parse --show-prefix) || exit 2
+SUBDIR="${SUBDIR%/}"
+
 # ---------------------------------------------------------------------------
 # The secure environment builds SIGNED binaries, which means it reads the
 # secure boot signing key. Every rule about that key already lives in
@@ -69,6 +81,10 @@ SIGNED=0
 echo "==> Release ${TAG} (${COMMIT}), env ${ENV_NAME}"
 [[ "${SIGNED}" -eq 1 ]] && echo "    signed build - the signing key will be read"
 
+# A random temporary path is fine here, unlike for the companion: the firmware,
+# its Rust signer (components/zsign-rust) included, was measured byte-identical
+# when built at two paths of different length (scripts/repro-check.sh,
+# esp32s3cam, 2026-10-24).
 WORK=$(mktemp -d) || exit 2
 SRC="${WORK}/src"
 trap 'rm -rf "${WORK}"' EXIT
@@ -76,11 +92,12 @@ trap 'rm -rf "${WORK}"' EXIT
 # Cloned rather than built in place: a release must not be able to contain an
 # uncommitted edit, and this is the only way to be sure of that rather than to
 # remember to check.
-if ! git clone --quiet --shared --no-checkout "${ROOT}" "${SRC}"; then
+if ! git clone --quiet --shared --no-checkout "${REPO}" "${SRC}"; then
     echo "release: clone failed" >&2
     exit 2
 fi
 git -C "${SRC}" checkout --quiet --detach "${COMMIT}" || exit 2
+FW="${SRC}${SUBDIR:+/${SUBDIR}}"
 
 # The signing key is deliberately NOT copied into the clone. The build reads it
 # at the path CONFIG_SECURE_BOOT_SIGNING_KEY names; if that is relative, it
@@ -90,13 +107,13 @@ git -C "${SRC}" checkout --quiet --detach "${COMMIT}" || exit 2
 # media instead.
 
 echo "-- building"
-if ! pio run -d "${SRC}" -e "${ENV_NAME}" >"${WORK}/build.log" 2>&1; then
+if ! pio run -d "${FW}" -e "${ENV_NAME}" >"${WORK}/build.log" 2>&1; then
     echo "release: build failed; last lines:" >&2
     tail -40 "${WORK}/build.log" >&2
     exit 1
 fi
 
-BUILD="${SRC}/.pio/build/${ENV_NAME}"
+BUILD="${FW}/.pio/build/${ENV_NAME}"
 rm -rf "${OUT}"
 mkdir -p "${OUT}"
 
@@ -107,15 +124,15 @@ for f in firmware.bin bootloader.bin partitions.bin \
          firmware-signed.bin bootloader-signed.bin partitions-signed.bin; do
     [[ -f "${BUILD}/${f}" ]] && cp "${BUILD}/${f}" "${OUT}/"
 done
-[[ -f "${SRC}/partitions.csv" ]] && cp "${SRC}/partitions.csv" "${OUT}/"
-[[ -f "${SRC}/partitions-secure.csv" ]] && cp "${SRC}/partitions-secure.csv" "${OUT}/"
+[[ -f "${FW}/partitions.csv" ]] && cp "${FW}/partitions.csv" "${OUT}/"
+[[ -f "${FW}/partitions-secure.csv" ]] && cp "${FW}/partitions-secure.csv" "${OUT}/"
 
 if [[ "${SIGNED}" -eq 1 ]]; then
     echo
     echo "-- pre-flight (signing key, signatures, bootloader fit)"
     # Run inside the clone: preflight reads the generated sdkconfig.<env> and
     # the build directory, both of which are the clone's, not the worktree's.
-    if ! (cd "${SRC}" && ./scripts/preflight-secure.sh "${ENV_NAME}"); then
+    if ! (cd "${FW}" && ./scripts/preflight-secure.sh "${ENV_NAME}"); then
         echo "release: pre-flight refused this build - not publishing it" >&2
         exit 1
     fi
@@ -165,9 +182,9 @@ fi
 # than assumed, because the failure mode of assuming is a release that silently
 # has no merged image in it. v5 renamed `merge_bin` to `merge-bin` and the
 # `--flash_*` options to `--flash-*`, but still accepts the old spellings with a
-# deprecation warning - checked, not assumed, against v5.1.0. The release
-# workflow pins the 4.x line so that the published image comes from one known
-# version rather than whichever one a runner resolved that day.
+# deprecation warning - checked, not assumed, against v5.1.0. merge_bin
+# rewrites the flash settings in the image header and its digest, so the
+# merged image depends on the esptool version as well: BUILDINFO records it.
 ESPTOOL=""
 if command -v esptool.py >/dev/null 2>&1; then
     ESPTOOL="esptool.py"
@@ -290,22 +307,29 @@ fi
     echo "tag:        ${TAG}"
     echo "commit:     ${COMMIT}"
     echo "env:        ${ENV_NAME}"
-    echo "platform:   $(grep -m1 '^platform *=' "${SRC}/platformio.ini" | cut -d= -f2- | tr -d ' ')"
+    echo "platform:   $(grep -m1 '^platform *=' "${FW}/platformio.ini" | cut -d= -f2- | tr -d ' ')"
     echo "built by:   scripts/release.sh"
     # Recorded, not implied. A verifier whose rebuild does not match needs to
     # be able to tell "you have a different compiler" apart from "these bytes
     # are not from this source", and without this line those two look the same.
     echo "pio:        $(pio --version 2>/dev/null || echo unknown)"
+    # The Zcash signer (components/zsign-rust) is a Rust staticlib built with
+    # `cargo +esp`, a toolchain platformio.ini does not pin. Recorded for the
+    # same reason as pio: a different esp rustc is a different binary.
+    echo "rustc +esp: $(rustc +esp --version 2>/dev/null || echo unknown)"
+    echo "esptool:    $( [[ -n "${ESPTOOL}" ]] && "${ESPTOOL}" version 2>/dev/null | tail -1 || echo none)"
     echo "host:       $(uname -s -m)"
     echo
     echo "Rebuild and compare:"
-    echo "    git clone <repo> && cd leekwallet && git checkout ${TAG}"
+    echo "    git clone https://github.com/0xOucan/leekwallet-zcash"
+    echo "    cd leekwallet-zcash && git checkout ${TAG} && cd firmware"
     echo "    ./scripts/release.sh ${TAG} ${ENV_NAME}"
-    echo "    sha256sum -c SHA256SUMS"
+    echo "    cd release/${TAG}/${ENV_NAME} && sha256sum -c --ignore-missing <published SHA256SUMS>"
     echo
     echo "A matching hash proves the download is intact and, if you built it"
     echo "yourself, that it came from this source. It proves nothing about any"
-    echo "device: only secure boot does that. See docs/RELEASE.md."
+    echo "device: only secure boot does that. See docs/RELEASE.md and RELEASES.md"
+    echo "at the top of the repository."
 } > "${OUT}/BUILDINFO"
 
 echo
@@ -379,5 +403,7 @@ else
 fi
 
 echo
-echo "Publish the binaries, SHA256SUMS, SHA256SUMS.asc and BUILDINFO together."
-echo "A verifier needs all four - see docs/RELEASE.md, \"Verifying a release\"."
+echo "A GitHub release of the whole project is assembled by scripts/release-collect.sh"
+echo "at the top of the repository: it takes these files, adds the apps, writes one"
+echo "SHA256SUMS over everything and prints the command that signs it (SSH)."
+echo "See RELEASES.md and docs/RELEASE.md, \"Verifying a release\"."

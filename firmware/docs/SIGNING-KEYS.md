@@ -146,6 +146,12 @@ in the job log — it has never run against a real keystore.
 
 ## 2. GPG key for `SHA256SUMS`
 
+> GitHub releases are signed with an **SSH** key instead: `SHA256SUMS.sig`,
+> checked against `allowed_signers` at the top of the repository
+> ([RELEASES.md](../../RELEASES.md)). The GPG key below is the firmware-only
+> path (`LEEK_SIGNING_KEY` in `scripts/release.sh`) and is not needed for a
+> release.
+
 Goal: a detached signature over `SHA256SUMS`, so a user who has your public key
 can tell that the hashes — and therefore the firmware — are yours.
 

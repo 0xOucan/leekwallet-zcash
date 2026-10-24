@@ -218,6 +218,16 @@ export function releasesSummary(releases: Release[]): string {
     "yourself (pio run -e esp32s3cam) and choose its .bin file below.";
 }
 
+/**
+ * The digest file itself, and not its signature. A release carries
+ * `SHA256SUMS` and `SHA256SUMS.sig` side by side (RELEASES.md); a prefix match
+ * could pick the signature, parse no digests from it, and tell the user the
+ * release has nothing to cross-check against.
+ */
+export function isShaSumsName(name: string): boolean {
+  return /^SHA256SUMS(\.txt)?$/i.test(name);
+}
+
 /** `name  digest` or `digest  name`, one per line — the shape `sha256sum` writes. */
 export function parseShaSums(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -271,7 +281,7 @@ export async function fetchReleases(): Promise<Release[]> {
     // and applied to every image asset in it, rather than trusting anything
     // an asset's own name claims.
     const sumsAsset = rawAssets.find((a) =>
-      typeof a["name"] === "string" && /^SHA256SUMS/i.test(a["name"] as string));
+      typeof a["name"] === "string" && isShaSumsName(a["name"] as string));
     let sums: Record<string, string> = {};
     if (sumsAsset && typeof sumsAsset["browser_download_url"] === "string") {
       try {

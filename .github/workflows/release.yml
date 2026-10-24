@@ -1,0 +1,279 @@
+# Builds the parts of a release that CI can build, from a tag, and attaches
+# them to a DRAFT GitHub release of that tag:
+#
+#   zcash-leekwallet-<version>-linux-x86_64.AppImage
+#   zcash-leekwallet-<version>-linux-amd64.deb
+#   zcash-leekwallet-<version>-linux-x86_64          (the bare executable)
+#   zcash-leekwallet-<version>-windows-x64.msi
+#   zcash-leekwallet-<version>-macos-aarch64.dmg
+#   zcash-leekwallet-<version>-chrome-extension.zip
+#
+# What CI does NOT build, and why (RELEASES.md, firmware/docs/RELEASE.md):
+#
+#   - the firmware: built by the maintainer with firmware/scripts/release.sh,
+#     which is the recipe a verifier rebuilds with;
+#   - the Android APK: it is signed with the release keystore, which never
+#     leaves the maintainer's machine, so no secret is needed here;
+#   - SHA256SUMS and its signature: signed by hand with an SSH key after the
+#     maintainer has looked at what is about to be published.
+#
+# scripts/release-collect.sh downloads what this workflow uploaded, adds
+# those, and prints the commands that sign and upload the rest. The draft is
+# published by hand.
+#
+# Assets go straight to the release with `gh release upload`. Nothing goes
+# through actions/upload-artifact: the account's Actions storage is 0.5 GB and
+# one Linux bundle is ~100 MB. No caches either: a release is built clean, and
+# a cache is one more input that a verifier cannot see.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, e.g. v0.1.0"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  # One job creates the draft, so the four build jobs do not race to create
+  # it, and refuses a tag whose release is already public: assets of a
+  # published release are not replaced from CI.
+  prepare:
+    name: draft release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      - name: Check the tag and the versions it carries
+        id: check
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must look like v1.2.3, got '$TAG'"
+            exit 1
+          fi
+          version="${TAG#v}"
+          app=$(jq -r .version app/src-tauri/tauri.conf.json)
+          ext=$(jq -r .version chrome/extension/manifest.json)
+          if [[ "$app" != "$version" || "$ext" != "$version" ]]; then
+            echo "::error::tag $TAG but app/src-tauri/tauri.conf.json says $app and chrome/extension/manifest.json says $ext"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Create the draft (or reuse it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$state" != "true" ]]; then
+              echo "::error::release $TAG is already published; not touching it"
+              exit 1
+            fi
+            echo "draft $TAG exists; assets will be replaced"
+          else
+            cat > "$RUNNER_TEMP/notes.md" <<EOF
+          Zcash LeekWallet $TAG. Draft: the firmware, the Android APK,
+          SHA256SUMS and SHA256SUMS.sig are added by the maintainer before
+          this is published.
+
+          What each file is, how to verify it, and how to build it yourself:
+          [RELEASES.md](https://github.com/$GH_REPO/blob/$TAG/RELEASES.md).
+          Building it yourself is the recommended way to use this project.
+          EOF
+            gh release create "$TAG" --draft --verify-tag \
+              --title "Zcash LeekWallet $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+  desktop:
+    name: desktop (${{ matrix.os }})
+    needs: prepare
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux is pinned to an image rather than -latest: the bare executable
+        # is published for comparison, and "rebuild it on Ubuntu 24.04 at
+        # /tmp/leekwallet-repro-build" is a recipe a verifier can follow.
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      # librustzcash and the Tauri tree have paths past Windows' 260-char
+      # default.
+      - name: Long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      # The companion's Rust binary depends on the directory it is built in
+      # (firmware/docs/RELEASE.md, "The one caveat"), so on Linux it is built
+      # at the path the verification recipe names.
+      - name: Build root
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            root=/tmp/leekwallet-repro-build
+            rm -rf "$root"
+            cp -a "$GITHUB_WORKSPACE" "$root"
+          else
+            root="$GITHUB_WORKSPACE"
+          fi
+          echo "BUILD_ROOT=$root" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git -C "$root" show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+      # libudev: the serial port (serialport); libdbus: Bluetooth through
+      # BlueZ (btleplug, leek-transport-ble).
+      - name: System packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libudev-dev libdbus-1-dev libssl-dev patchelf pkg-config
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # app/rust-toolchain.toml pins the compiler; rustup installs it.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Toolchain versions (for the log)
+        shell: bash
+        working-directory: ${{ env.BUILD_ROOT }}/app
+        run: |
+          node --version; pnpm --version; rustc --version; cargo --version
+      - name: Install frontend dependencies
+        working-directory: ${{ env.BUILD_ROOT }}/app
+        run: pnpm install --frozen-lockfile
+      # The bare executable first, exactly as `tauri build --no-bundle`
+      # leaves it: that is the command the verification recipe runs, and the
+      # bundling step below must not be what is compared.
+      - name: tauri build --no-bundle (Linux)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.BUILD_ROOT }}/app
+        run: |
+          pnpm tauri build --ci --no-bundle
+          mkdir -p "$RUNNER_TEMP/out"
+          cp src-tauri/target/release/leekwallet-companion \
+            "$RUNNER_TEMP/out/zcash-leekwallet-$VERSION-linux-x86_64"
+      - name: tauri build
+        working-directory: ${{ env.BUILD_ROOT }}/app
+        run: pnpm tauri build --ci
+      - name: Name the bundles
+        shell: bash
+        working-directory: ${{ env.BUILD_ROOT }}/app/src-tauri/target/release/bundle
+        run: |
+          out="$RUNNER_TEMP/out"
+          mkdir -p "$out"
+          # Exactly one file per kind, or this is not the build we think it is.
+          one() {
+            local matches=("$1"/*."$2")
+            if [[ ${#matches[@]} -ne 1 || ! -f "${matches[0]}" ]]; then
+              echo "::error::expected one .$2 in $1, found: ${matches[*]}"
+              exit 1
+            fi
+            cp "${matches[0]}" "$out/$3"
+          }
+          case "$RUNNER_OS" in
+            Linux)
+              one appimage AppImage "zcash-leekwallet-$VERSION-linux-x86_64.AppImage"
+              one deb deb "zcash-leekwallet-$VERSION-linux-amd64.deb"
+              ;;
+            Windows)
+              one msi msi "zcash-leekwallet-$VERSION-windows-x64.msi"
+              ;;
+            macOS)
+              arch=$(uname -m)
+              [[ "$arch" == "arm64" ]] && arch=aarch64
+              one dmg dmg "zcash-leekwallet-$VERSION-macos-$arch.dmg"
+              ;;
+          esac
+          ls -l "$out"
+          cd "$out" && (sha256sum -- * 2>/dev/null || shasum -a 256 -- *)
+      - name: Upload to the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP"/out/* --clobber
+
+  chrome:
+    name: chrome extension
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      # clang targets wasm32 out of the box; it builds secp256k1 and SQLite.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm zip
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - name: wasm-bindgen-cli (matches Cargo.lock)
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Toolchain versions (for the log)
+        run: |
+          rustc --version; cargo --version; clang --version | head -1; wasm-bindgen --version
+      - name: Build the engine
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+          JOBS: "4"
+        run: chrome/engine/build.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the extension
+        working-directory: chrome/extension
+        run: |
+          npm ci
+          node build.mjs
+      # A zip with fixed timestamps (the commit's), sorted entries and no
+      # extra attributes, so the archive is a function of dist/ and not of
+      # when this job ran.
+      - name: Zip dist/
+        working-directory: chrome/extension/dist
+        run: |
+          sde=$(git show -s --format=%ct HEAD)
+          mkdir -p "$RUNNER_TEMP/out"
+          zip_path="$RUNNER_TEMP/out/zcash-leekwallet-$VERSION-chrome-extension.zip"
+          find . -exec touch -h -d "@$sde" {} +
+          find . -type f | LC_ALL=C sort | TZ=UTC zip -X -D -q "$zip_path" -@
+          sha256sum "$zip_path"
+      - name: Upload to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP"/out/* --clobber
