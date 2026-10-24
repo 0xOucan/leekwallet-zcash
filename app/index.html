@@ -74,9 +74,14 @@
             <span class="launcher__title">Wallets on this device</span>
             <span class="launcher__desc">View without the board, or import a viewing key</span>
           </button>
-          <button type="button" class="launcher__tile" id="gotoflash">
+          <!-- The caution tape is the default and comes off only when the
+               backend says it can flash (applyFlasherAvailability() in
+               flasher.ts): shipped builds never can, on purpose. The tape is
+               decoration (aria-hidden); the description says it in words. -->
+          <button type="button" class="launcher__tile launcher__tile--maintenance" id="gotoflash">
             <span class="launcher__title">Flash firmware</span>
-            <span class="launcher__desc">Install or update from a release</span>
+            <span class="launcher__desc" id="flashtiledesc">Under maintenance: turned off in this app</span>
+            <span class="caution-tape caution-tape--tile" id="flashtiletape" aria-hidden="true"><span class="caution-tape__text">UNDER MAINTENANCE · DO NOT CROSS · UNDER MAINTENANCE · DO NOT CROSS · UNDER MAINTENANCE · DO NOT CROSS · UNDER MAINTENANCE · DO NOT CROSS ·</span></span>
           </button>
         </nav>
 
@@ -621,16 +626,34 @@
           </details>
         </section>
 
-        <!-- Firmware flashing (T65). Present but inert in shipped builds: the
-             backend is compiled without the `flasher` feature, so
-             flash_capability() reports false and the button stays disabled with
-             the reason on screen. That is deliberate rather than unfinished --
+        <!-- Firmware flashing (T65). Off in shipped builds: the backend is
+             compiled without the `flasher` feature, so flash_capability()
+             reports false and the panel shows the caution tape and where to
+             flash instead, with the controls hidden. That is deliberate rather than unfinished --
              until secure boot is burned, a device runs whatever it is given, so
              a one-click flasher in a wallet is a way to install firmware that
              reads the PIN. See app/src/flasher.ts and src-tauri/src/flash.rs. -->
         <div class="panel" id="flashpanel" hidden>
           <button type="button" class="destination__back" id="flashback"><span aria-hidden="true">← </span>Back</button>
           <h2>Flash firmware</h2>
+          <!-- Shown unless the build was compiled with the `flasher` feature,
+               which shipped builds are not. Everything below #flashoff stays
+               hidden with it, so no inert control suggests that it works. -->
+          <div id="flashoff">
+            <div class="caution-tape-wrap" aria-hidden="true">
+              <span class="caution-tape caution-tape--banner"><span class="caution-tape__text">UNDER MAINTENANCE · DO NOT CROSS · UNDER MAINTENANCE · DO NOT CROSS · UNDER MAINTENANCE · DO NOT CROSS · UNDER MAINTENANCE · DO NOT CROSS ·</span></span>
+            </div>
+            <p><strong>Firmware flashing is turned off in this app, on purpose.</strong>
+              Until secure boot is burned, the board runs whatever firmware it
+              is given, so a one-click flasher inside a wallet would be an easy
+              way to install firmware that reads your PIN.</p>
+            <p>To install or update the firmware, use the flasher on the
+              website, <a id="flashsitelink" href="https://zcash.leekwallet.xyz" target="_blank" rel="noreferrer">zcash.leekwallet.xyz</a>,
+              after its verify step, or flash it yourself with esptool as
+              described in <code>RELEASES.md</code> and
+              <code>firmware/docs/RELEASE.md</code> in the repository.</p>
+          </div>
+          <div id="flashcontrols" hidden>
           <!-- Two dangers, said separately because they have different
                remedies: the write destroys the seed on the device (write the
                phrase down first), and an unlocked device runs whatever it is
@@ -714,6 +737,7 @@
           </div>
           <progress id="flashbar" value="0" max="1" hidden></progress>
           <p class="muted" id="flashstatus" aria-live="polite"></p>
+          </div>
         </div>
 
 
