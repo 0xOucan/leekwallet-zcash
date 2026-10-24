@@ -76,12 +76,34 @@ fi
 #
 # lib/ is searched too. PlatformIO compiles it to a static library and links it,
 # which is precisely the archive-member shape the original bug had.
+# components/zsign-c/platform/zc_platform_{idf,host}.c define random_buffer()
+# and random32() too, as the hooks of the vendored libzcash-ironwood-c. They
+# are compiled only behind vendor/zc_vendor_prefix.h, which renames them
+# zcv_random_buffer/zcv_random32, so they cannot stand in for the wallet's RNG.
+# That exclusion holds only while the prefix really comes first, so check it:
+# every firmware build unit that pulls in a platform file must include the
+# prefix header before it, and the header must rename both symbols.
+zsign=components/zsign-c
+zsign_platform="${zsign}/platform/zc_platform_(idf|host)\\.c\$"
+for sym in random_buffer random32; do
+    grep -q "^#define ${sym}[[:space:]]\+zcv_${sym}\$" "${zsign}/vendor/zc_vendor_prefix.h" 2>/dev/null || {
+        echo "check-rng-unique: ${zsign}/vendor/zc_vendor_prefix.h no longer renames ${sym}"
+        fail=1; }
+done
+for unit in $(grep -l 'zc_platform_' "${zsign}"/idf/*.c 2>/dev/null); do
+    first=$(grep -m1 '^#include' "$unit")
+    [ "$first" = '#include "../vendor/zc_vendor_prefix.h"' ] || {
+        echo "check-rng-unique: $unit includes a platform file without the zcv_ prefix first"
+        fail=1; }
+done
+
 for sym in random_buffer random32; do
     # Only the tree this checkout builds. Agent worktrees under .claude/ are
     # whole copies of the repository, so scanning from the root reported every
     # one of them as a second definition of everything.
     hits=$(find src components lib -name '*.c' 2>/dev/null \
-             | grep -v 'components/trezor-crypto/rand\.c$' | sort \
+             | grep -v 'components/trezor-crypto/rand\.c$' \
+             | grep -Ev "$zsign_platform" | sort \
              | xargs -r awk -v sym="$sym" '
                  { line = $0
                    sub(/^[[:space:]]+/, "", line)
