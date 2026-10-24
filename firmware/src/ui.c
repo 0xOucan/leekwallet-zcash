@@ -4008,8 +4008,14 @@ static void screen_scan_on_button(button_id_t btn)
     }
     /* Bench controls for comparing combinations; orientation stays f2.
        UP brighter, DOWN darker, OK steps the capture size, and OK with UP
-       held toggles live video to the PC viewer. */
-    if (btn == BUTTON_ACCEPT) {
+       held toggles live video to the PC viewer.
+
+       A knob cannot be held on UP, so on the S3 CAM kit (knob + Cancel, no
+       K1/K2) the same toggle is press-and-turn: a turn while the knob is
+       held down. The press itself still steps the size first. */
+    if ((btn == BUTTON_UP || btn == BUTTON_DOWN) && button_is_pressed(BUTTON_ACCEPT)) {
+        camera_set_stream(!camera_streaming());
+    } else if (btn == BUTTON_ACCEPT) {
         if (button_is_pressed(BUTTON_UP)) {
             camera_set_stream(!camera_streaming());
         } else if (!camera_next_frame_size()) {

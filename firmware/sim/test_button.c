@@ -130,6 +130,9 @@ static void boot(void)
     }
     q_cap = q_head = q_count = 0;
     button_init();
+    /* The poll task's first pass, with every key up: a key only counts once
+     * it has been seen released (button.c, button_armed). */
+    button__poll_once_for_test();
 }
 
 /* Run the poll task's loop for a span of fake time without anyone reading the
@@ -307,8 +310,43 @@ static void test_knob_direction_maps_turns(void)
     button_set_knob_reversed(false);
 }
 
+/* A pin held low from power-on - a short, a module wired the wrong way, a
+ * key held at boot - is not a press, and is not "held" for the lock gesture,
+ * until it has been seen released. The keys that are not fitted on the S3
+ * CAM kit (K1, K2) read released through their pull-ups and never fire. */
+static void test_a_pin_low_from_boot_is_ignored_until_released(void)
+{
+    printf("== a key reading pressed from power-on is ignored until released\n");
+    fake_clock_reset();
+    button__reset_static_state_for_test();
+    pin_level[0] = 1; pin_level[1] = 1; pin_level[2] = 0; pin_level[3] = 1;
+    q_cap = q_head = q_count = 0;
+    button_init();
+
+    poll_for(1000 * 1000);
+    button_id_t got[8];
+    int n = drain(got, 8);
+    CHECK(n == 0, "a stuck-low K3 produced %d events", n);
+    CHECK(!button_is_pressed(BUTTON_CANCEL), "a stuck-low K3 reads as held");
+
+    /* Released, then pressed for real: now it counts. */
+    pin_level[2] = 1;
+    poll_for(TAP_HOLD_US);
+    tap(1u << 2);
+    n = drain(got, 8);
+    CHECK(n == 1 && got[0] == BUTTON_CANCEL, "a real press after release gave %d events", n);
+
+    /* Unfitted K1/K2 (pull-ups, never touched) stay silent throughout. */
+    boot();
+    poll_for(2000 * 1000);
+    n = drain(got, 8);
+    CHECK(n == 0, "idle pins produced %d events", n);
+    CHECK(!button_is_pressed(BUTTON_UP) && !button_is_pressed(BUTTON_DOWN), "idle K1/K2 read held");
+}
+
 int main(void)
 {
+    test_a_pin_low_from_boot_is_ignored_until_released();
     test_one_tap_is_one_event();
     test_queue_holds_a_full_stall();
     test_no_press_lost_across_a_stall();

@@ -293,9 +293,12 @@
 
 /*
  * The Zcash screen kit (firmware/docs/WIRING-S3CAM.md): a 1.5" 128x128 SH1107 I2C
- * OLED on the same bus as before, a four-button module on K1-K4, and an EC11
- * rotary encoder. Turning it is UP/DOWN; its push switch is wired in
- * parallel with K4, so pressing the knob is OK.
+ * OLED on the same bus as before, an EC11 rotary encoder and one Cancel
+ * button on K3. Turning the knob is UP/DOWN; its push switch is on K4's pin,
+ * so pressing it is OK. K1 and K2 are not fitted: their pins keep the
+ * internal pull-ups and read released (button.c also ignores a key that
+ * reads pressed from power-on). The original four-button module still works
+ * on K1-K4 as an option.
  *
  * Encoder on UART0's pins, free because the console is USB Serial/JTAG:
  * CLK on GPIO44 (RX, an input at boot) and DT on GPIO43 (TX). The ROM still
