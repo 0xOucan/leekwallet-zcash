@@ -2,6 +2,8 @@
 
 [![app](https://github.com/0xOucan/leekwallet-zcash/actions/workflows/app.yml/badge.svg)](https://github.com/0xOucan/leekwallet-zcash/actions/workflows/app.yml)
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 A DIY Zcash hardware wallet on an ESP32-S3 board that costs about as much as
 lunch. It holds the seed, checks every transaction against its own keys, shows
 you what you are signing, and signs it. Your phone or computer builds and proves

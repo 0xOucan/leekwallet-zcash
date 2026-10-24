@@ -1,5 +1,7 @@
 # Zcash LeekWallet
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 The app of the LeekWallet Zcash board, **Zcash only**: application id
 `io.leekwallet.zcash.companion`, shown as **Zcash LeekWallet**. One
 [Tauri v2](https://tauri.app) codebase for Linux, macOS, Windows and Android,

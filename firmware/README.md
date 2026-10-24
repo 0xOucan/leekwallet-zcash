@@ -4,6 +4,8 @@
   <img src="docs/leekwallet-logo.png" alt="LeekWallet" width="160"/>
 </p>
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 The firmware of the LeekWallet Zcash board: a DIY Zcash hardware wallet on an
 ESP32-S3. It holds the seed, checks every transaction it is asked to sign
 against its own keys, shows you what you are signing, and signs it. The

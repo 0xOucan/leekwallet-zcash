@@ -1,5 +1,7 @@
 # `zecz`: the LeekWallet Zcash command line
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 `zecz` is our command-line wallet for the LeekWallet Zcash board. It holds
 the board's viewing key only (a watch-only account), syncs from a
 lightwalletd server, builds each transaction as a PCZT (ZIP 374), lets the

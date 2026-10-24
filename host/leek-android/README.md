@@ -1,5 +1,7 @@
 # `leek-android`: the native library of the Android app
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 Our JNI library (`libleek_android.so`) for
 [LeekWallet Zcash for Android](https://github.com/0xOucan/leekwallet-zcash-android),
 our fork of Zodl (branch `leekwallet`). It gives the app two things the Zodl
