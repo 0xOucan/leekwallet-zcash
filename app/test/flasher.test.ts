@@ -23,6 +23,7 @@ import {
   digestRefusal,
   flashBlockedReason,
   imageChipId,
+  isShaSumsName,
   sha256Hex,
   type DetectedChip,
   type FlashCapability,
@@ -158,6 +159,8 @@ group("releases: what release.sh names, and a release with nothing to flash");
   check(classifyAsset("leekwallet-pixie-0.2.0-update.bin")?.board === "ESP32-C3 (Pixie)", "the Pixie image");
   check(classifyAsset("leekwallet-0.2.0-update.bin") === null, "an image naming no board is offered");
   check(classifyAsset("SHA256SUMS") === null && classifyAsset("firmware.bin") === null, "not a flasher image");
+  check(isShaSumsName("SHA256SUMS") && !isShaSumsName("SHA256SUMS.sig") && !isShaSumsName("SHA256SUMS.asc"),
+    "the digest file was confused with its signature");
 
   const rel = (assets: Release["assets"]): Release => ({ tag: "v0.1.0", publishedAt: "", htmlUrl: "", assets });
   const none = releasesSummary([]);
