@@ -138,6 +138,14 @@ if grep -qi "CN=Android Debug" <<<"${CERTS}"; then
     die "the APK is signed with the Android DEBUG key; build it with LEEK_KEYSTORE set (app/ANDROID.md)"
 fi
 CERT_SHA=$(grep -i -m1 "SHA-256 digest" <<<"${CERTS}" | sed 's/.*: *//' || true)
+# The project's one Android release key (RELEASES.md, section 3). apksigner
+# prints the digest as lowercase hex; keytool as colon-separated uppercase.
+RELEASE_CERT_SHA256="c59491e663fbb200bee06d28098a7d1f8955d5cf3dcdcd9da20c9ed2ba658eb7"
+if [[ -z "${CERT_SHA}" ]]; then
+    CERT_SHA=$(grep -m1 "SHA256:" <<<"${CERTS}" | sed 's/.*SHA256: *//' || true)
+fi
+[[ "$(tr -d ': ' <<<"${CERT_SHA}" | tr 'A-F' 'a-f')" == "${RELEASE_CERT_SHA256}" ]] || \
+    die "the APK is not signed with the release key (${CERT_SHA:-no digest found})"
 [[ -z "${CERT_SHA}" ]] && CERT_SHA=$(grep -i -m1 "SHA256:" <<<"${CERTS}" | sed 's/.*SHA256: *//' || true)
 if [[ -n "${AAPT2}" ]]; then
     BADGING=$("${AAPT2}" dump badging "${APK}" 2>/dev/null) || die "aapt2 could not read ${APK}"
