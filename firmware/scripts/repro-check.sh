@@ -26,11 +26,11 @@
 # Exit status: 0 identical, 1 divergent, 2 could not run the comparison.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
 
 REF="${1:-HEAD}"
-ENV_NAME="${2:-esp32s3}"
+ENV_NAME="${2:-esp32s3cam}"   # the Zcash board, what a release ships
 
 # The artefacts a release publishes and a device actually runs. firmware.elf is
 # deliberately absent: it carries debug info that is useful to compare while
@@ -48,6 +48,11 @@ if ! git -C "${ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 COMMIT=$(git -C "${ROOT}" rev-parse --short "${REF}") || exit 2
+# The firmware lives in a subdirectory of the repository and `git clone` takes
+# only a repository's root, so clone the top level and build the subdirectory.
+REPO=$(git -C "${ROOT}" rev-parse --show-toplevel) || exit 2
+SUBDIR=$(git -C "${ROOT}" rev-parse --show-prefix) || exit 2
+SUBDIR="${SUBDIR%/}"
 echo "==> Reproducibility check: ${COMMIT} (${REF}), env ${ENV_NAME}"
 
 if [[ -n "$(git -C "${ROOT}" status --porcelain)" ]]; then
@@ -64,7 +69,7 @@ cleanup() { rm -rf "${WORK}"; }
 trap cleanup EXIT
 
 for dir in "${A}" "${B}"; do
-    if ! git clone --quiet --shared --no-checkout "${ROOT}" "${dir}"; then
+    if ! git clone --quiet --shared --no-checkout "${REPO}" "${dir}"; then
         echo "repro-check: clone into ${dir} failed" >&2
         exit 2
     fi
@@ -79,7 +84,7 @@ done
 status=0
 for dir in "${A}" "${B}"; do
     printf '\n-- building in %s\n' "${dir}"
-    if ! pio run -d "${dir}" -e "${ENV_NAME}" >"${dir}/build.log" 2>&1; then
+    if ! pio run -d "${dir}${SUBDIR:+/${SUBDIR}}" -e "${ENV_NAME}" >"${dir}/build.log" 2>&1; then
         echo "repro-check: build failed in ${dir}; last lines:" >&2
         tail -30 "${dir}/build.log" >&2
         exit 2
@@ -88,8 +93,8 @@ done
 
 printf '\n-- comparing artefacts\n'
 for f in "${ARTEFACTS[@]}"; do
-    fa="${A}/.pio/build/${ENV_NAME}/${f}"
-    fb="${B}/.pio/build/${ENV_NAME}/${f}"
+    fa="${A}${SUBDIR:+/${SUBDIR}}/.pio/build/${ENV_NAME}/${f}"
+    fb="${B}${SUBDIR:+/${SUBDIR}}/.pio/build/${ENV_NAME}/${f}"
     if [[ ! -f "${fa}" || ! -f "${fb}" ]]; then
         printf '  \033[33mSKIP\033[0m  %s (not produced by this environment)\n' "${f}"
         continue

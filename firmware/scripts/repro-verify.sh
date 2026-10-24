@@ -72,13 +72,16 @@
 # than a paragraph that slowly becomes untrue in either direction.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
 
 WHAT="${1:-all}"
 REF="${2:-HEAD}"
 
 CANON_ROOT="${LEEK_REPRO_ROOT:-/tmp/leekwallet-repro-build}"
+# The companion is app/ at the top of the repository, and this script lives in
+# firmware/. `git clone` takes only a repository's root, so clone that.
+REPO=$(git -C "${ROOT}" rev-parse --show-toplevel 2>/dev/null) || REPO="${ROOT}"
 VARY="${LEEK_REPRO_VARY_PATH:-0}"
 
 status=0
@@ -212,7 +215,7 @@ if [[ "${WHAT}" == "all" || "${WHAT}" == "companion" ]]; then
         # would make pass 2 an incremental build, and an incremental build that
         # matches proves nothing at all.
         rm -rf "${dir}"
-        if ! git clone --quiet --shared --no-checkout "${ROOT}" "${dir}"; then
+        if ! git clone --quiet --shared --no-checkout "${REPO}" "${dir}"; then
             echo "repro-verify: clone into ${dir} failed" >&2
             exit 2
         fi
