@@ -22,6 +22,7 @@ import {
   describeProgress,
   digestRefusal,
   flashBlockedReason,
+  flasherUnderMaintenance,
   imageChipId,
   isShaSumsName,
   sha256Hex,
@@ -88,6 +89,16 @@ group("every gate in front of the flash button holds");
   // should learn that, not be sent to pick a device first.
   const wrongFile = flashBlockedReason(state({ digestRefusal: "REFUSED", port: "" }));
   check(wrongFile === "REFUSED", `the refusal was buried behind a smaller omission: ${wrongFile}`);
+}
+
+group("the caution tape stays on until the backend says it can flash");
+{
+  /* Shipped builds are compiled without the `flasher` feature. The tape and
+   * the "flash from the website" text are what they show, and they are the
+   * default: not knowing yet, or having no backend to ask, is not a yes. */
+  check(flasherUnderMaintenance(CANNOT), "a build that cannot flash lost its caution tape");
+  check(flasherUnderMaintenance(null), "the tape came off before the backend answered");
+  check(!flasherUnderMaintenance(CAN), "a dev build that can flash still shows the tape");
 }
 
 group("a digest that does not match is refused, not warned");

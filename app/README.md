@@ -570,6 +570,13 @@ identifier, so nothing carries over by itself:
 
 ## Firmware releases
 
+Released builds are compiled without the `flasher` feature, on purpose: the
+Flash firmware tile and panel carry a caution tape ("under maintenance") and
+point to the website's flasher at https://zcash.leekwallet.xyz (after its
+verify step) or to esptool ([RELEASES.md](../RELEASES.md),
+[firmware/docs/RELEASE.md](../firmware/docs/RELEASE.md)), with the controls
+hidden. The rest of this section is about dev builds.
+
 The flasher (Flash firmware, in builds with the `flasher` feature) lists the
 releases of
 [0xOucan/leekwallet-zcash](https://github.com/0xOucan/leekwallet-zcash/releases)

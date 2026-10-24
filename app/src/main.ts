@@ -1464,6 +1464,12 @@ $("forgetboard").addEventListener("click", () => {
 $("gotoflash").addEventListener("click", () => enterDest("flash"));
 $("connectback").addEventListener("click", connectDestBack);
 $("flashback").addEventListener("click", goToLauncher);
+// The website's flasher, offered while this one is off: through
+// openExternal(), because an anchor alone does nothing in the webview.
+$("flashsitelink").addEventListener("click", (e) => {
+  e.preventDefault();
+  void openExternal((e.currentTarget as HTMLAnchorElement).href);
+});
 $("gotowallets").addEventListener("click", () => enterDest("wallets"));
 $("walletsback").addEventListener("click", goToLauncher);
 $("zofflineclose").addEventListener("click", () => {

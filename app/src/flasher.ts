@@ -377,6 +377,32 @@ export function flashBlockedReason(state: {
   return "";
 }
 
+/**
+ * Whether the flasher shows as under maintenance: the caution tape on the
+ * launcher tile and the panel, the controls hidden.
+ *
+ * True until the backend has positively said it can flash. Not knowing yet,
+ * having no backend (a browser tab) and a backend that failed to answer all
+ * read the same as a build compiled without the `flasher` feature, which is
+ * what every shipped build is. A dev build loses the tape once it answers.
+ */
+export function flasherUnderMaintenance(capability: FlashCapability | null): boolean {
+  return capability?.available !== true;
+}
+
+/** Put the caution tape on, or take it off. The DOM half of the rule above. */
+export function applyFlasherAvailability(capability: FlashCapability | null): void {
+  const off = flasherUnderMaintenance(capability);
+  const tile = $("gotoflash");
+  tile.classList.toggle("launcher__tile--maintenance", off);
+  $("flashtiletape").hidden = !off;
+  $("flashtiledesc").textContent = off
+    ? "Under maintenance: turned off in this app"
+    : "Install or update from a release";
+  $("flashoff").hidden = !off;
+  $("flashcontrols").hidden = off;
+}
+
 /** Human-readable progress. Exported so a test can pin the wording. */
 export function describeProgress(p: FlashProgress): string {
   const pct = p.total > 0 ? Math.floor((p.current / p.total) * 100) : 0;
@@ -520,6 +546,8 @@ export function initFlasher(bridge: FlashBridge | null): void {
    * chosen from the launcher or entered via Back from elsewhere — see
    * applyPreConnectVisibility() in main.ts. Its default in index.html is
    * `hidden`, same as before this module ran at all. */
+  applyFlasherAvailability(null);
+
   if (!bridge) {
     warning.textContent =
       "Flashing needs the desktop app; a browser window cannot reach a USB device.";
@@ -638,14 +666,19 @@ export function initFlasher(bridge: FlashBridge | null): void {
     }
   };
 
-  releasesStatus.textContent = "Checking github.com/0xOucan/leekwallet-zcash for releases…";
-  void fetchReleases()
-    .then(renderReleases)
-    .catch((e: unknown) => {
-      // Never an empty list on failure — that reads as "no releases exist",
-      // which is not what happened.
-      releasesStatus.textContent = String((e as Error).message ?? e);
-    });
+  // Asked only once the backend says it can flash: a build that cannot has
+  // the release list hidden under the caution tape, and no reason to call
+  // GitHub for it.
+  const loadReleases = (): void => {
+    releasesStatus.textContent = "Checking github.com/0xOucan/leekwallet-zcash for releases…";
+    void fetchReleases()
+      .then(renderReleases)
+      .catch((e: unknown) => {
+        // Never an empty list on failure — that reads as "no releases exist",
+        // which is not what happened.
+        releasesStatus.textContent = String((e as Error).message ?? e);
+      });
+  };
 
   file.addEventListener("change", () => {
     const f = file.files?.[0];
@@ -746,7 +779,9 @@ export function initFlasher(bridge: FlashBridge | null): void {
        * no fuse has been burned, and "unknown" must read the same as "not
        * protected" for as long as that is true. */
       warning.dataset["secure"] = String(cap.secureBoot);
+      applyFlasherAvailability(cap);
       if (cap.available) {
+        loadReleases();
         const ports = await bridge.ports();
         portSelect.textContent = "";
         for (const p of ports) {
