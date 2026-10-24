@@ -17,3 +17,6 @@ zecz-data/
 # Transactions made while testing at the repo root.
 /*.pczt
 /*.zsig
+
+# A release assembled by scripts/release-collect.sh: copies of published files.
+/release/

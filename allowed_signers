@@ -1,0 +1,20 @@
+# The SSH key that signs SHA256SUMS of every release (RELEASES.md).
+#
+# Verify a release with:
+#
+#   ssh-keygen -Y verify -f allowed_signers -I 0xoucanxxx@gmail.com \
+#       -n file -s SHA256SUMS.sig < SHA256SUMS
+#
+# Take this file from the git repository at the release's tag, not from the
+# release page: a file published next to the signature it vouches for proves
+# nothing. Compare the key with a second channel too before trusting it, such
+# as the maintainer's SSH signing keys on GitHub:
+# https://api.github.com/users/0xOucan/ssh_signing_keys
+#
+# PLACEHOLDER: no key yet. The maintainer adds ONE line, the PUBLIC key only,
+# in this form (namespaces="file" limits it to signing files):
+#
+#   0xoucanxxx@gmail.com namespaces="file" ssh-ed25519 AAAA...
+#
+# Until that line exists, every verification fails, which is the intended
+# behaviour: no release should be published before it is added.
