@@ -268,12 +268,12 @@ One codebase for both: our app is the Zodl fork with our branding. The hardware 
 - If they decline, nothing is lost: our app carries the same code.
 
 **6.12 Release (S).**
-- A signed mainnet APK (our keystore), reproducible-build notes, and a GitHub release.
+- A signed mainnet APK (our keystore), reproducible-build notes, and a GitHub release. Tooling done (2026-10-24): one release per tag carries every product ([RELEASES.md](../../RELEASES.md)); `.github/workflows/release.yml` builds the desktop bundles and the Chrome zip into a draft, `scripts/release-collect.sh` adds the firmware and the APK and writes `SHA256SUMS`, signed by hand with SSH. No release published yet.
 - F-Droid later, since the FOSS flavor exists.
 - The board's firmware goes in a GitHub release of `0xOucan/leekwallet-zcash` too, because the Companion's flasher reads that repository's releases. Built with `firmware/scripts/release.sh <tag> esp32s3cam`, the release must carry:
   - `leekwallet-s3cam-<version>-update.bin`: the application, written at `0x10000`, keeps the wallet;
   - `leekwallet-s3cam-<version>-provision.bin`: bootloader, partition table and app merged, written at `0x0`, erases every wallet (new boards only);
-  - `SHA256SUMS` in `sha256sum` format, which the flasher checks each download against, and `SHA256SUMS.asc` signed by hand;
+  - `SHA256SUMS` in `sha256sum` format, which the flasher checks each download against, and `SHA256SUMS.sig` (SSH) signed by hand;
   - the separate `firmware.bin`, `bootloader.bin`, `partitions.bin` and `BUILDINFO`, for anyone rebuilding the tag to compare.
 - A release without a `-update.bin` or `-provision.bin` naming a board (`s3cam`) is not offered by the flasher, which says what is missing and points to building the image by hand. Details: `app/README.md`, "Firmware releases".
 

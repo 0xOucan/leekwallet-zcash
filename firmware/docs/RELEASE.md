@@ -2,8 +2,14 @@
 
 **Status: both the firmware and the companion app are reproducible and verified
 as such locally, with one documented caveat on the companion (the build path is
-part of the recipe). No release has been published, and the CI job that checks
-this has never run** — this repository has no remote. ([T37](../ROADMAP.md))
+part of the recipe). No release has been published yet.** The repository is
+[0xOucan/leekwallet-zcash](https://github.com/0xOucan/leekwallet-zcash); a
+release there is one tag carrying every product (firmware, desktop app,
+Android APK, Chrome extension) under one `SHA256SUMS` signed with SSH. What a
+user downloads and how they check it is [RELEASES.md](../../RELEASES.md); this
+document is the reasoning and the maintainer's side. No CI job checks
+reproducibility: `scripts/repro-check.sh` and `scripts/repro-verify.sh` run
+locally. ([T37](../ROADMAP.md))
 
 This document exists because of one sentence in
 [CAMERA-OPTIONS.md](CAMERA-OPTIONS.md) §9: *whoever assembles and flashes a
@@ -40,7 +46,9 @@ not assumed:
 ```
 
 It builds one commit twice from two clones with deliberately different path
-lengths and compares the artefacts. Two paths rather than two runs in one
+lengths and compares the artefacts. Last run on the Zcash board's environment
+(`esp32s3cam`, Rust signer included) on 2026-10-24 at `e996fee`: all three
+identical, and identical to a third build by `release.sh` at another path. Two paths rather than two runs in one
 directory, because an absolute path baked into a binary passes the easy version
 of that test.
 
@@ -189,12 +197,20 @@ not silently reintroduce wall-clock time first.
 
 ```bash
 git tag -s v0.3.0 -m "v0.3.0"          # signed tag; the tag is a claim too
-./scripts/release.sh v0.3.0 esp32s3cam      # the Zcash board, unsigned firmware
+./scripts/release.sh v0.3.0 esp32s3cam      # the Zcash board (the default), unsigned firmware
 ./scripts/release.sh v0.3.0 esp32s3-secure   # signed (secure boot), not yet used for Zcash
 ```
 
+The firmware is one part of a release. The whole procedure, with the desktop
+and Chrome builds from `.github/workflows/release.yml`, the locally signed APK
+and `scripts/release-collect.sh` (which assembles everything and prints the
+sign and upload commands), is in [RELEASES.md](../../RELEASES.md), "For the
+maintainer".
+
 `scripts/release.sh` clones the tag into a temporary directory and builds
-there, so a release cannot contain an uncommitted edit — that is enforced,
+there (the whole repository is cloned and `firmware/` built inside it:
+`git clone` takes only a repository's root), so a release cannot contain an
+uncommitted edit — that is enforced,
 not remembered. Output lands in `release/<tag>/<env>/` (git-ignored).
 
 For the secure environment it then runs `scripts/preflight-secure.sh`, which
@@ -208,8 +224,8 @@ definitions of "the key is safe to use" would drift.
 |---|---|
 | `firmware.bin`, `bootloader.bin`, `partitions.bin` | what gets flashed |
 | `*-signed.bin` (secure env only) | the same, with secure boot v2 signatures |
-| `SHA256SUMS` | hashes of every `.bin` above |
-| `SHA256SUMS.asc` | detached GPG signature over `SHA256SUMS`, made by hand |
+| `SHA256SUMS` | hashes of every `.bin` above (release.sh's own; the GitHub release carries one over every product instead) |
+| `SHA256SUMS.sig` | SSH signature over the release's `SHA256SUMS`, made by hand ([RELEASES.md](../../RELEASES.md)) |
 | `leekwallet-<board>-<version>-provision.bin` (`<board>`: `s3cam` for the Zcash board, `s3`, `pixie`) | the same three merged into one image, written at `0x0` — **erases every wallet** |
 | `leekwallet-<board>-<version>-update.bin` | the application alone, written at `0x10000` — keeps the wallet |
 | `manifest-fragment.json` | the entry the website's flasher manifest expects, hash included |
@@ -243,8 +259,13 @@ one element of it, so merging is inserting an array element rather than
 reshaping anything:
 
 ```json
-{"releases": [{"id": "s3-0.1.0", "board": "s3", "version": "0.1.0",
-               "file": "leekwallet-s3-0.1.0.bin", "sha256": "...", "size": 1234}]}
+{"releases": [
+  {"id": "s3cam-0.1.0-provision", "board": "s3cam", "version": "0.1.0", "kind": "provision",
+   "offset": 0, "wipesWallets": true, "file": "leekwallet-s3cam-0.1.0-provision.bin",
+   "sha256": "...", "size": 1234},
+  {"id": "s3cam-0.1.0-update", "board": "s3cam", "version": "0.1.0", "kind": "update",
+   "offset": 65536, "wipesWallets": false, "file": "leekwallet-s3cam-0.1.0-update.bin",
+   "sha256": "...", "size": 1234}]}
 ```
 
 It is written into the release output directory and merged, by hand, in the
@@ -259,6 +280,21 @@ warnings.
 Sign the manifest, not each binary. `SHA256SUMS` covers the binaries and the
 signature covers `SHA256SUMS`, so one signature is enough and there is one
 place to look — a verifier given four separate signatures runs one of them.
+
+**The GitHub release is signed with SSH**, over the one `SHA256SUMS` that
+`scripts/release-collect.sh` writes for every product:
+
+```bash
+ssh-keygen -Y sign -f ~/.ssh/<signing-key> -n file SHA256SUMS      # -> SHA256SUMS.sig
+ssh-keygen -Y verify -f allowed_signers -I 0xoucanxxx@gmail.com -n file \
+    -s SHA256SUMS.sig < SHA256SUMS
+```
+
+`allowed_signers`, at the top of the repository, holds the public key; no
+release is published before it does. What follows about GPG is the older,
+firmware-only path: `release.sh` can still sign its own manifest with GPG,
+for handing a firmware build to someone outside a GitHub release. It is not
+what the release carries.
 
 `scripts/release.sh` will do it, given a key id:
 
@@ -333,8 +369,8 @@ more than the mechanics.
 | Key | Held? | Signs | Says |
 |---|---|---|---|
 | Secure boot (RSA-3072) | offline, once burned | firmware images | which firmware a *board* will boot |
-| GPG release key | maintainer, off build machines | `SHA256SUMS` | who published a file |
-| Android release keystore | maintainer + one CI secret | the APK | this update came from the same author as the last one |
+| SSH release signing key | maintainer, off build machines | the release's `SHA256SUMS` | who published a file |
+| Android release keystore | maintainer only (the APK is built and signed locally) | the APK | this update came from the same author as the last one |
 | macOS / Windows code-signing | **no** | — | an identity paid a certificate authority |
 
 Nothing in this repository generates any of them, and no script or workflow
@@ -343,6 +379,14 @@ automation are a GPG key *id*, which is public by construction, and an Android
 keystore that a human created elsewhere and stored as an encrypted secret.
 
 ### The Android release keystore
+
+> **Current procedure:** the release APK is built and signed on the
+> maintainer's machine (`app/scripts/android-release.sh` with `LEEK_KEYSTORE`,
+> `LEEK_KEY_ALIAS`, `LEEK_KEYSTORE_PASS`), and `.github/workflows/release.yml`
+> needs no secret at all. The repository secrets and the CI signing path
+> described below are not set up and not used; they stay documented for the
+> day the APK is built in CI. `scripts/release-collect.sh` refuses an APK
+> signed with the Android debug key.
 
 Android refuses to install an unsigned APK, and it refuses to install an update
 signed by a different key than the one already on the phone. That second rule
@@ -411,9 +455,11 @@ the accident, and `preflight-secure.sh` treats a key git is *already tracking*
 as compromised rather than merely ignored. That is the check that counts, and
 a pattern list is not a substitute for it.
 
-### GPG signing of `SHA256SUMS`
+### Signing `SHA256SUMS`
 
-Covered above under "Cutting a release": `LEEK_SIGNING_KEY=<key-id>` makes
+The release is signed with SSH, by hand, after `scripts/release-collect.sh`
+has written `SHA256SUMS` (above, "Cutting a release"). The firmware-only GPG
+path: `LEEK_SIGNING_KEY=<key-id>` makes
 `scripts/release.sh` sign the manifest with `--local-user` and verify what it
 wrote before reporting success. It is opt-in because a script that signs by
 default signs a build nobody has read yet.
@@ -421,9 +467,10 @@ default signs a build nobody has read yet.
 A release workflow must **not** sign. Putting this key in a
 repository secret would place it on every runner the workflow ever schedules,
 which is the opposite of the arrangement the rest of this section describes.
-CI publishes a *draft* release; the maintainer downloads `SHA256SUMS`, checks
-it against a local build, signs it, and uploads `SHA256SUMS.asc` before making
-the release public. That is slower on purpose — it is the step where a human
+CI publishes a *draft* release (`release.yml`); the maintainer downloads its
+files with `scripts/release-collect.sh`, adds the firmware and the APK, writes
+`SHA256SUMS`, checks it against a local build, signs it, and uploads
+`SHA256SUMS.sig` before making the release public. That is slower on purpose — it is the step where a human
 looks at what is about to be published.
 
 ### macOS and Windows code signing: not done, and why
@@ -473,12 +520,13 @@ are the ones that actually establish provenance, and they need a toolchain.
 ### Level 1 — the download is intact (proves the least)
 
 ```bash
-sha256sum -c SHA256SUMS
-gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+ssh-keygen -Y verify -f allowed_signers -I 0xoucanxxx@gmail.com -n file \
+    -s SHA256SUMS.sig < SHA256SUMS
 ```
 
 This says the bytes you have are the bytes that were published, by whoever
-holds that GPG key. It says **nothing** about what is in them, and nothing
+holds that SSH key. It says **nothing** about what is in them, and nothing
 about any device.
 
 ### Level 2 — the binary came from the source (the real claim)
@@ -486,11 +534,12 @@ about any device.
 For the **firmware**:
 
 ```bash
-git clone <repo> && cd leekwallet
+git clone https://github.com/0xOucan/leekwallet-zcash && cd leekwallet-zcash
 git checkout v0.3.0
 git verify-tag v0.3.0
-./scripts/release.sh v0.3.0
-sha256sum -c /path/to/downloaded/SHA256SUMS
+cd firmware && ./scripts/release.sh v0.3.0 esp32s3cam
+cd release/v0.3.0/esp32s3cam
+sha256sum -c --ignore-missing /path/to/downloaded/SHA256SUMS
 ```
 
 For the **companion app**, the same idea with the build path pinned, because
@@ -503,12 +552,19 @@ export LEEK_REPRO_ROOT=/tmp/leekwallet-repro-build   # the published path
 rm -rf "$LEEK_REPRO_ROOT"
 git clone <repo> "$LEEK_REPRO_ROOT"
 cd "$LEEK_REPRO_ROOT" && git checkout v0.3.0
-cd app && pnpm install --frozen-lockfile && pnpm build
-cd src-tauri && cargo build --release --bin leekwallet-companion
-sha256sum target/release/leekwallet-companion
+cd app && pnpm install --frozen-lockfile
+pnpm tauri build --ci --no-bundle
+sha256sum src-tauri/target/release/leekwallet-companion
 ```
 
-Compare that against the companion's line in the published `SHA256SUMS`. If it
+Compare that against `zcash-leekwallet-<version>-linux-x86_64` in the
+published `SHA256SUMS` (built on Ubuntu 24.04 at that path by `release.yml`).
+`tauri build` rather than `cargo build`, because that is the command the
+published executable came from. `repro-verify.sh` compares two plain
+`cargo build --release` runs, which tests the property (same source, same
+path, same bytes); whether the Tauri CLI's production build adds cargo
+features that make its binary differ from a plain `cargo build` has not been
+checked, so compare like with like. If it
 differs, check `BUILDINFO` for the toolchain before concluding anything: a
 different rustc changes the bytes on its own, which is why the pin in
 `app/rust-toolchain.toml` exists and why the version is recorded rather than
@@ -616,10 +672,13 @@ The firmware has no workflow of its own. Upstream LeekWallet's `ci.yml` and
 `release.yml` came along under `firmware/.github/`, where GitHub never ran
 them, and were deleted. The repository's workflows (`.github/workflows/` at
 the top level) cover the host crates, the Zcash LeekWallet app (`app.yml`: three
-desktop systems and an Android check) and
-the Chrome extension.
+desktop systems and an Android check), the Chrome extension, and the release
+(`release.yml`, run by hand with a tag: the desktop bundles and the Chrome zip
+into a draft release with `gh release upload`, needing no secret beyond the
+workflow's own token).
 
 A firmware release is cut by hand, from a tag, with
-`./scripts/release.sh <tag> esp32s3cam`, and published as a GitHub release of
-0xOucan/leekwallet-zcash. What it must carry for the Companion's flasher to
+`./scripts/release.sh <tag> esp32s3cam`, and published in the same GitHub
+release of 0xOucan/leekwallet-zcash as the apps, by
+`scripts/release-collect.sh`. What it must carry for the Companion's flasher to
 offer it is in [app/README.md](../../app/README.md#firmware-releases).

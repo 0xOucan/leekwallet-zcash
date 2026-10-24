@@ -145,7 +145,8 @@ Everything runs at 3.3 V.
 | `app/` | The Zcash LeekWallet app (Tauri 2: desktop and Android): `src/` the screens, `packages/core` the board protocol, `transport-serial` / `transport-ble`, `zcash-wallet` the wallet over `zecz-core`, `near-intents` the 1Click swaps, `src-tauri` the shell |
 | `host/` | Rust crates ([README](host/README.md)): [`zecz-core`](host/zecz-core/README.md), [`zecz-cli`](host/zecz-cli/README.md), [`leek-device`](host/leek-device/README.md), [`leek-android`](host/leek-android/README.md) |
 | `chrome/` | The Chrome extension: `engine/` (Rust → WebAssembly), `extension/` (MV3), `engine-spike/` (the 9.1 study) |
-| `.github/workflows/` | CI: host tests, the app on the three desktop systems with an Android check, the Chrome engine and extension |
+| `.github/workflows/` | CI: host tests, the app on the three desktop systems with an Android check, the Chrome engine and extension; `release.yml` builds a tag's desktop bundles and extension into a draft release |
+| `scripts/release-collect.sh` | Assembles a release: the draft's files, the firmware and the APK, `SHA256SUMS`; prints the sign and upload commands ([RELEASES.md](RELEASES.md)) |
 | `vectors/` | Key and PCZT test vectors (valid, compact, mainnet, transparent, refused) and their generators ([README](vectors/README.md)) |
 | `docs/` | Roadmap, journal, formats, mainnet checklist, browser engine study ([index](docs/README.md)) |
 | `docs/JOURNAL.md` | What was done at each step, what broke, what was measured |
@@ -154,6 +155,15 @@ The Android app lives in its own repository,
 [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android)
 (a fork of `zodl-android`, branch `leekwallet`). Clone it into `android/`,
 which is ignored here.
+
+## Releases
+
+Each version is one GitHub release carrying every product: the firmware
+(update and provision images), the desktop app (AppImage, .deb, .msi, .dmg),
+the Android APK and the Chrome extension, with a `SHA256SUMS` signed by the
+maintainer's SSH key. [RELEASES.md](RELEASES.md) says what each file is, how
+to verify it, and how to rebuild it and compare. Prebuilt binaries from one
+place are a trust risk; building from source is the recommended way.
 
 ## Build and test
 

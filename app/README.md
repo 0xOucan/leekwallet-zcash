@@ -581,14 +581,15 @@ use carries:
 |---|---|---|
 | `leekwallet-s3cam-<version>-update.bin` | yes | Listed in the open as "ESP32-S3 CAM — update (keeps your wallet)": the application alone, written at `0x10000` |
 | `leekwallet-s3cam-<version>-provision.bin` | for new boards | Behind a disclosure, "provision (ERASES every wallet)": bootloader, partition table and app merged, written at `0x0`, which erases the vault in `nvs` at `0x9000` |
-| `SHA256SUMS` | strongly | `sha256sum` format (`<hex>  <name>`). The digest of each image is checked against it after download; without it the flasher says there is nothing to cross-check against |
-| `SHA256SUMS.asc` | optional | Not read by the flasher; for people verifying by hand ([RELEASE.md](../docs/RELEASE.md)) |
+| `SHA256SUMS` | strongly | `sha256sum` format (`<hex>  <name>`), matched by its exact name. The digest of each image is checked against it after download; without it the flasher says there is nothing to cross-check against |
+| `SHA256SUMS.sig` | optional | SSH signature over `SHA256SUMS`. Not read by the flasher; for people verifying by hand ([RELEASES.md](../RELEASES.md)) |
 
-`./scripts/release.sh <tag> esp32s3cam` writes exactly these names into
-`release/<tag>/esp32s3cam/`, plus the separate `firmware.bin`,
-`bootloader.bin`, `partitions.bin`, `BUILDINFO` and `manifest-fragment.json`,
-which the flasher ignores (upload them anyway: they are what a verifier
-rebuilds against). The board token is matched as a word: `s3cam` is the Zcash
+`firmware/scripts/release.sh <tag> esp32s3cam` (the default environment)
+writes exactly these names into `firmware/release/<tag>/esp32s3cam/`, plus the
+separate `firmware.bin`, `bootloader.bin`, `partitions.bin`, `BUILDINFO` and
+`manifest-fragment.json`, which the flasher ignores (they are uploaded anyway:
+they are what a verifier rebuilds against). `scripts/release-collect.sh`
+puts them in the same release as the apps, under one `SHA256SUMS`. The board token is matched as a word: `s3cam` is the Zcash
 board, `s3` the plain ESP32-S3 reference build and `pixie` the Pixie (which
 has no Zcash signer); a name with none of them is not offered. Each image is
 also checked for the chip it was built for (its header) against the board
