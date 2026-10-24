@@ -1,5 +1,5 @@
 # Builds the Chrome extension: the WASM engine (chrome/engine, threads) and
-# the unpacked extension (chrome/extension/dist), uploaded as an artifact.
+# the unpacked extension (chrome/extension/dist), uploaded as an artifact when run by hand.
 # The board protocol module (chrome/extension/src/board) is tested in Node
 # against zdev, the firmware's protocol on a PTY (firmware/sim). The
 # end-to-end test needs a live testnet gRPC-web endpoint, so it runs only on
@@ -104,10 +104,13 @@ jobs:
         run: |
           npm ci
           node build.mjs
+      # Only hand-run builds upload (the Actions storage allowance is small).
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: leekwallet-zcash-extension
           path: chrome/extension/dist
+          retention-days: 3
       - name: End-to-end test (live testnet)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.e2e }}
         working-directory: chrome/extension
