@@ -45,7 +45,7 @@ What the checks below prove, from least to most:
 | `zcash-leekwallet-<version>-linux-x86_64` | desktop app | The bare Linux executable, the file to compare against your own build (below) | CI |
 | `zcash-leekwallet-<version>-windows-x64.msi` | desktop app | Windows installer, **not code-signed** | CI |
 | `zcash-leekwallet-<version>-macos-aarch64.dmg` | desktop app | macOS on Apple silicon, **not notarised** | CI |
-| `zcash-leekwallet-<version>-android-arm64.apk` | Android app | `io.leekwallet.zcash.companion`, arm64, signed with the project's release key | maintainer, `app/scripts/android-release.sh` |
+| `zcash-leekwallet-<version>-android-arm64.apk` | Android app | `io.leekwallet.zcash.companion`, 64-bit (arm64) phones only, signed with the project's release key | maintainer, `app/scripts/android-release.sh` |
 | `zcash-leekwallet-<version>-chrome-extension.zip` | Chrome extension | The unpacked extension (`chrome/extension/dist`), for *Load unpacked* | CI |
 | `SHA256SUMS` | all | SHA-256 of every file above, in `sha256sum` format | maintainer |
 | `SHA256SUMS.sig` | all | SSH signature over `SHA256SUMS` | maintainer, by hand |
@@ -85,7 +85,9 @@ Get-FileHash .\zcash-leekwallet-0.1.0-windows-x64.msi -Algorithm SHA256
 git repository **at the release's tag**, not from the release page (a key
 published next to the signature it vouches for proves nothing), and if you
 can, compare it with a second channel such as the maintainer's
-[SSH signing keys on GitHub](https://api.github.com/users/0xOucan/ssh_signing_keys).
+[SSH keys on GitHub](https://github.com/0xOucan.keys). If the key ever
+changes, the change is a commit to `allowed_signers`, announced and noted in
+the changelog, and old releases stay verifiable with the file at their tag.
 
 ```bash
 git clone https://github.com/0xOucan/leekwallet-zcash

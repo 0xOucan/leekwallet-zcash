@@ -7,14 +7,11 @@
 #
 # Take this file from the git repository at the release's tag, not from the
 # release page: a file published next to the signature it vouches for proves
-# nothing. Compare the key with a second channel too before trusting it, such
-# as the maintainer's SSH signing keys on GitHub:
-# https://api.github.com/users/0xOucan/ssh_signing_keys
+# nothing. Compare the key with a second channel too before trusting it: it
+# is one of the maintainer's keys at https://github.com/0xOucan.keys.
 #
-# PLACEHOLDER: no key yet. The maintainer adds ONE line, the PUBLIC key only,
-# in this form (namespaces="file" limits it to signing files):
-#
-#   0xoucanxxx@gmail.com namespaces="file" ssh-ed25519 AAAA...
-#
-# Until that line exists, every verification fails, which is the intended
-# behaviour: no release should be published before it is added.
+# Rotating the key: the new key is added here in a commit, announced, and
+# noted in the changelog; the announcement of the new key is signed with the
+# old one. Releases already published stay verifiable with the line at their
+# own tag.
+0xoucanxxx@gmail.com namespaces="file" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAPljmoBLnjaqSUF/ThaMU5dcuolTHq4t3sG0991BZwF
