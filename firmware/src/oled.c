@@ -153,7 +153,8 @@ esp_err_t oled_i2c_init(void)
  *
  * Same I2C framing as the SSD1306 (0x00 command, 0x40 data) and the same
  * page format, so the frame goes out as it is composed (panel128.c): the UI
- * in the middle eight pages, or a QR redrawn across all sixteen. Page
+ * stretched 2x vertically over all sixteen pages, or a QR redrawn across
+ * them at its own square scale. Page
  * addressing: 0xB0+page, then the column, then 128 bytes.
  *
  * The init values are the ones Adafruit's SH110X driver uses for 128x128.

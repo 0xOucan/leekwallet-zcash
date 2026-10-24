@@ -21,8 +21,9 @@ I2C address 0x3C (set in `src/oled.c`). Some modules are strapped to 0x3D.
 If the screen stays dark and the log shows `SH1107 init cmd AE failed`,
 that is the first thing to check.
 
-The UI is laid out for 128×64 and appears in the middle of the panel. QR
-codes fill the whole panel: a unified address is drawn at 2 pixels per
+The UI is laid out for 128×64 and is stretched 2× vertically to fill the
+panel: every row is drawn twice, so text is tall and the whole glass is
+used. QR codes are not stretched; they keep their own full-panel path: a unified address is drawn at 2 pixels per
 module and a t-address at 3, so a phone can read them more easily.
 
 If the picture is upside down, build with `-DBOARD_SH1107_FLIP=1`.

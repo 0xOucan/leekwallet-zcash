@@ -33,8 +33,20 @@ void panel128_compose(const uint8_t *frame, const QRCode *qr, bool inverted,
     memset(out, 0, PANEL128_BYTES);
     const uint8_t scale = qr ? panel128_qr_scale(qr->size) : 0;
     if (!qr || scale == 0) {
-        memcpy(out + PANEL128_UI_FIRST_PAGE * PANEL128_SIZE, frame,
-               (size_t)OLED_WIDTH * OLED_PAGES);
+        /* Panel page p holds frame rows 4p..4p+3: half a frame page, each
+         * bit doubled into two adjacent rows. */
+        for (int p = 0; p < PANEL128_PAGES; p++) {
+            const uint8_t *src = frame + (size_t)(p / 2) * OLED_WIDTH;
+            const int shift = (p & 1) * 4;
+            for (int x = 0; x < PANEL128_SIZE; x++) {
+                const uint8_t n = (uint8_t)((src[x] >> shift) & 0x0F);
+                uint8_t b = 0;
+                for (int i = 0; i < 4; i++) {
+                    if (n & (1u << i)) b |= (uint8_t)(3u << (2 * i));
+                }
+                out[p * PANEL128_SIZE + x] = b;
+            }
+        }
         return;
     }
 
