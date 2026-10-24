@@ -51,6 +51,8 @@ static uint8_t oled_addr = 0x3C;
  */
 static bool panel_ready = false;
 
+bool oled_present(void) { return panel_ready; }
+
 static esp_err_t ssd1306_send_cmd(uint8_t cmd)
 {
     if (!panel_ready) { return ESP_ERR_INVALID_STATE; }
@@ -153,7 +155,8 @@ esp_err_t oled_i2c_init(void)
  *
  * Same I2C framing as the SSD1306 (0x00 command, 0x40 data) and the same
  * page format, so the frame goes out as it is composed (panel128.c): the UI
- * in the middle eight pages, or a QR redrawn across all sixteen. Page
+ * stretched 2x vertically over all sixteen pages, or a QR redrawn across
+ * them at its own square scale. Page
  * addressing: 0xB0+page, then the column, then 128 bytes.
  *
  * The init values are the ones Adafruit's SH110X driver uses for 128x128.
@@ -215,7 +218,8 @@ esp_err_t oled_flush(void)
 {
     bool inverted = false;
     const QRCode *qr = oled_core_last_qr(&inverted);
-    panel128_compose(oled_core_framebuffer(), qr, inverted, panel_image);
+    panel128_compose(oled_core_framebuffer(), oled_core_panel_picture(), qr, inverted,
+                     panel_image);
     return send_panel(panel_image);
 }
 
@@ -253,7 +257,11 @@ esp_err_t oled_draw_raw(const uint8_t *data, size_t len)
     return ssd1306_send_data(data, len);
 }
 
+uint8_t oled_panel_rows(void) { return PANEL128_SIZE; }
+
 #else /* SSD1306, 128x64 */
+
+uint8_t oled_panel_rows(void) { return OLED_HEIGHT; }
 
 esp_err_t oled_init(void)
 {

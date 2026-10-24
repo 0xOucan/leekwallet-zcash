@@ -39,6 +39,13 @@ bool fake_oled_contains(const char *needle);
 /** Row holding `needle`, or -1. Lets a test assert on placement, not just presence. */
 int fake_oled_find_row(const char *needle);
 
+/** The panel's height as oled_panel_rows() reports it (default 64; 128 is the SH1107). */
+void fake_oled_set_panel_rows(uint8_t rows);
+/** The picture oled_show_panel_picture() set, or NULL since a clear. */
+const uint8_t *fake_oled_panel_picture(void);
+/** Flushes made while a full-panel picture was up. */
+int fake_oled_picture_flush_count(void);
+
 /** Payload of the last oled_draw_qrcode(), or "" if none. */
 const char *fake_oled_qr_data(void);
 

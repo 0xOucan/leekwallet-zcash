@@ -45,6 +45,9 @@ if [[ "$WHAT" == "all" || "$WHAT" == "sim" ]]; then
     # by anyone's decision. Run before the suites, since nothing below is worth
     # much if seeds come from an unchecked source.
     run "rng is unique" ./scripts/check-rng-unique.sh
+    # The splash's frame table is generated and committed; a hand edit, or a
+    # script change without the regenerated header, fails here.
+    run "splash frames current" python3 -I tools/splash/gen_splash.py --check
     run "host suites (sim)" make -C sim test
 fi
 

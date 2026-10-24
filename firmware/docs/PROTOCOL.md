@@ -471,7 +471,7 @@ zSign's (above, "The board's network").
 
 ## 5. Passphrase entry — the "app as secure keyboard"
 
-Typing a passphrase on four buttons is punishing, so the app can act as the keyboard. This is
+Typing a passphrase with a knob (or four buttons) is punishing, so the app can act as the keyboard. This is
 worth doing, and it is what Trezor Suite does. But the security accounting has to be honest.
 
 ```

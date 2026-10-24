@@ -4,6 +4,16 @@ The `esp32s3cam` build (`pio run -e esp32s3cam`) expects this wiring. Pins
 are from [BOARD-S3CAM-PINOUT.md](BOARD-S3CAM-PINOUT.md). The camera, the
 microSD slot and the octal PSRAM are on the board and need no wiring.
 
+The kit is three parts:
+
+- a **1.5" SH1107 128×128 I2C OLED**;
+- an **EC11 rotary encoder**: turn it to move, press it for OK. Which way
+  is "down" is switchable on the board under **Settings → Knob direction**;
+- **one Cancel button**, K3, on GPIO14.
+
+Every screen, setting and gesture works with just these: turn, press, and
+Cancel.
+
 **Power every module from 3V3, never 5V.** Each module has its own pull-up
 resistors to its supply pin, and those pull the ESP32-S3's pins up to that
 voltage. The S3 is not 5 V tolerant.
@@ -21,28 +31,34 @@ I2C address 0x3C (set in `src/oled.c`). Some modules are strapped to 0x3D.
 If the screen stays dark and the log shows `SH1107 init cmd AE failed`,
 that is the first thing to check.
 
-The UI is laid out for 128×64 and appears in the middle of the panel. QR
-codes fill the whole panel: a unified address is drawn at 2 pixels per
+The UI is laid out for 128×64 and is stretched 2× vertically to fill the
+panel: every row is drawn twice, so text is tall and the whole glass is
+used. QR codes are not stretched; they keep their own full-panel path: a unified address is drawn at 2 pixels per
 module and a t-address at 3, so a phone can read them more easily.
 
 If the picture is upside down, build with `-DBOARD_SH1107_FLIP=1`.
 
-## Four-button module: V G 1 2 3 4
+## Cancel button: K3
 
-| Module | Board | Function |
+| Button | Board | Function |
 |---|---|---|
-| V | 3V3 | |
-| G | GND | |
-| 1 | GPIO1 | UP |
-| 2 | GPIO41 | DOWN |
-| 3 | GPIO14 | BACK |
-| 4 | GPIO42 | OK |
+| one side | GPIO14 | Cancel (BACK) |
+| other side | GND | |
 
-The firmware expects a pressed key to read **low** (pulled up, switch to
-GND). Check with a multimeter before connecting: with V on 3V3 and G on GND,
-a key output should read about 3.3 V released and 0 V pressed. If it reads
-0 V released and 3.3 V pressed, the module is active-high. Say so, and the
-input polarity becomes a board setting.
+Any momentary push button. The pin has the ESP32-S3's internal pull-up, so
+a pressed key reads **low**; no resistor is needed. Holding Cancel is also
+the lock gesture.
+
+GPIO1 (K1) and GPIO41 (K2) are left unconnected. Their internal pull-ups
+keep them reading "released", and the firmware ignores any key that reads
+pressed from power-on until it has been seen released, so a stray short
+there cannot type or lock.
+
+*Optional, legacy:* the original four-button module (V G 1 2 3 4: V to 3V3,
+G to GND, 1 to GPIO1 UP, 2 to GPIO41 DOWN, 3 to GPIO14 Cancel, 4 to GPIO42
+OK) still works on the same pins, alongside or instead of the knob. Its keys
+must read low when pressed (check with a multimeter: about 3.3 V released,
+0 V pressed).
 
 ## Rotary encoder: EC11 module, GND + SW DT CLK
 
@@ -52,7 +68,7 @@ input polarity becomes a board setting.
 | + | 3V3 | supply for the module's pull-ups |
 | CLK | GPIO44, the header pin labelled **RX** | encoder A |
 | DT | GPIO43, the header pin labelled **TX**, **through a 1 kΩ resistor** | encoder B |
-| SW | GPIO42 (same pin as button 4; join the wires) | press = OK |
+| SW | GPIO42 | press = OK |
 
 The board's silkscreen labels GPIO43 and GPIO44 **TX** and **RX**, not with
 their numbers. They are the top two pins on the right of the header.
@@ -62,9 +78,9 @@ Other header pins look free but are not. 4-13 and 15-18 are the camera;
 strapping pins (a module's pull-up there can stop the board booting or
 flashing). 2 is the power LED and 48 the RGB LED.
 
-- Turning the knob is UP and DOWN, one step per detent. Pressing it is OK.
-  It is wired in parallel with button 4, which works because both pull the
-  line to GND.
+- Turning the knob is UP and DOWN, one step per detent. Pressing it is OK
+  (GPIO42 is the firmware's K4, "accept"; with the optional four-button
+  module its key 4 shares the pin, in parallel).
 - GPIO43 and GPIO44 are UART0. They are free because the firmware's console
   is USB Serial/JTAG. The ROM still prints its boot banner on GPIO43 (TX) for
   a few milliseconds, though, and if the encoder contact happened to be
@@ -80,9 +96,12 @@ flashing). 2 is the power LED and 48 the RGB LED.
   same either way.
 - Clockwise is DOWN: the next menu item, the next page, and in the pickers
   the next option, so a PIN digit goes up. To have it the other
-  way round, choose **Settings > Knob** on the board: it toggles between
-  Normal and Reversed, applies at once and is kept across restarts. It
-  swaps UP and DOWN for the knob only, never for the buttons.
+  way round, choose **Settings → Knob direction** on the board (the menu
+  item reads `Knob Normal` or `Knob Reversed`): it toggles, applies at once
+  and is kept across restarts. It swaps UP and DOWN for the knob only.
+- Turning while the knob is held down (press-and-turn) is the scan
+  screen's bench toggle for live video to the PC viewer, the one gesture
+  that used to need a held UP key.
 - If clockwise scrolls up rather than down in Normal, the encoder is wired
   with A and B the other way round: build with `-DBOARD_ENC_REVERSE=1` (or
   swap CLK and DT). The setting flips on top of that, so Normal always
@@ -99,11 +118,11 @@ LeekWallet. Nothing changes.
 ## Summary
 
 ```
-GPIO47 SDA ── OLED SDA          GPIO1  ── BTN 1 (UP)
-GPIO21 SCL ── OLED SCL          GPIO41 ── BTN 2 (DOWN)
-RX(GPIO44) ── ENC CLK          GPIO14 ── BTN 3 (BACK)
-TX(GPIO43) ─1k─ ENC DT             GPIO42 ── BTN 4 (OK) + ENC SW
-3V3 ── OLED VCC, BTN V, ENC +   GND ── OLED GND, BTN G, ENC GND
+GPIO47 SDA ── OLED SDA          GPIO14 ── Cancel button (K3) ── GND
+GPIO21 SCL ── OLED SCL          GPIO42 ── ENC SW (press = OK)
+RX(GPIO44) ── ENC CLK           GPIO1, GPIO41: not connected (K1, K2)
+TX(GPIO43) ─1k─ ENC DT
+3V3 ── OLED VCC, ENC +          GND ── OLED GND, ENC GND, Cancel button
 GPIO38/39/40 microSD (on board)  GPIO4-18 camera (on board)
 ```
 

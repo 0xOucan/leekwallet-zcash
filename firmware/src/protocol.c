@@ -24,6 +24,7 @@
  */
 
 #include "protocol.h"
+#include "version.h"
 #include "board.h"
 
 #include <stdio.h>
@@ -45,6 +46,11 @@
 #include "zcash-account.h"
 #include "zcash-meta.h"
 #include "zcash-sign.h"
+#else
+/* No Zcash signer on this board (the Pixie), but getStatus still reports
+ * the Settings > Network choice, whose values are zsign's: 0 is Mainnet
+ * (ui.h, ui_zcash_network). */
+#define ZCASH_NET_MAIN 0
 #endif
 
 static const char *TAG = "protocol";
@@ -878,7 +884,7 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, "chain");
         cbor_write_text(&w, "zcash");
         cbor_write_text(&w, "firmware");
-        cbor_write_text(&w, "0.1.0");
+        cbor_write_text(&w, LEEK_FW_VERSION);   /* version.h, the one place it is set */
         cbor_write_text(&w, "model");
         /* From board.h, not a literal. A host that cannot tell which board it
            is talking to cannot warn about a capability the board lacks -- the

@@ -1,5 +1,7 @@
 # Documentation
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 | Document | What it covers |
 |---|---|
 | [zcash/ROADMAP.md](zcash/ROADMAP.md) | The plan, phase by phase, each step with a "done when" check and its status |

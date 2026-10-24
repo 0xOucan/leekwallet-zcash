@@ -1,6 +1,6 @@
 /* The 128x128 SH1107 panel image (src/panel128.c).
  *
- * The UI frame lands unchanged in the middle eight pages; every QR the
+ * The UI frame is stretched 2x vertically over all 128 rows; every QR the
  * device draws on 64 rows is redrawn across the full panel at a larger
  * scale, and still scans back to exactly what was drawn (zbarimg). */
 #include <stdio.h>
@@ -55,18 +55,46 @@ int main(void)
     have_zbar = system("command -v zbarimg >/dev/null 2>&1") == 0;
     printf("== test_panel128%s\n", have_zbar ? "" : " (zbarimg missing: scans SKIPPED)");
 
-    /* Text: the frame, unchanged, in pages 4-11. */
+    /* Text: the frame, every row drawn twice, over all 16 pages. */
     oled_clear();
     oled_draw_string(0, 0, "Menu  ZFP 57F3A27A");
     oled_draw_string(7, 0, "UP DN       SEL");
     bool inv;
     CHECK(oled_core_last_qr(&inv) == NULL, "a QR remembered after a clear");
-    panel128_compose(oled_core_framebuffer(), NULL, false, img);
-    CHECK(memcmp(img + 4 * 128, oled_core_framebuffer(), 128 * 8) == 0, "the frame moved");
-    for (int p = 0; p < 16; p++) {
-        if (p >= 4 && p < 12) continue;
-        for (int x = 0; x < 128; x++) CHECK(img[p * 128 + x] == 0, "page %d lit", p);
+    panel128_compose(oled_core_framebuffer(), NULL, NULL, false, img);
+    const uint8_t *fb = oled_core_framebuffer();
+    int wrong = 0, lit = 0;
+    for (int y = 0; y < 128; y++) {
+        for (int x = 0; x < 128; x++) {
+            const bool want = (fb[(y / 2 / 8) * 128 + x] >> ((y / 2) % 8)) & 1;
+            if (px(x, y) != want) wrong++;
+            lit += px(x, y);
+        }
     }
+    CHECK(wrong == 0, "%d panel pixels differ from the doubled frame", wrong);
+    CHECK(lit > 0, "nothing lit");
+    /* Top text row reaches the panel's top rows, bottom row its last ones. */
+    bool top = false, bottom = false;
+    for (int x = 0; x < 128; x++) {
+        top |= px(x, 0) || px(x, 2);
+        bottom |= px(x, 113) || px(x, 115) || px(x, 120);
+    }
+    CHECK(top && bottom, "the frame does not span the panel");
+
+    /* A full-panel picture (the boot splash) is shown as it is, over the
+     * frame and over a QR, until the next clear. */
+    static uint8_t picture[PANEL128_BYTES];
+    for (int i = 0; i < PANEL128_BYTES; i++) picture[i] = (uint8_t)(i * 7 + 3);
+    oled_show_panel_picture(picture);
+    CHECK(oled_core_panel_picture() == picture, "the picture was not kept");
+    panel128_compose(oled_core_framebuffer(), oled_core_panel_picture(), NULL, false, img);
+    CHECK(memcmp(img, picture, sizeof img) == 0, "the picture was not shown as it is");
+    CHECK(oled_draw_qrcode_ex("LEEK", 1, 1, false) == ESP_OK, "draw");
+    panel128_compose(oled_core_framebuffer(), oled_core_panel_picture(),
+                     oled_core_last_qr(&inv), inv, img);
+    CHECK(memcmp(img, picture, sizeof img) == 0, "a QR drawn over the picture");
+    oled_clear();
+    CHECK(oled_core_panel_picture() == NULL, "the picture outlived a clear");
 
     /* Every vector's UA and t-address, at the 64-row choice, redrawn. */
     CHECK(panel128_qr_scale(45) == 2, "a v7 UA at 2 px per module");
@@ -82,7 +110,7 @@ int main(void)
                 CHECK(oled_draw_qrcode_ex(texts[k], versions[k], scales[k], inverted) == ESP_OK, "draw");
                 const QRCode *qr = oled_core_last_qr(&inv);
                 CHECK(qr && inv == (bool)inverted, "the QR was not remembered");
-                panel128_compose(oled_core_framebuffer(), qr, inv, img);
+                panel128_compose(oled_core_framebuffer(), NULL, qr, inv, img);
                 if (!inverted) {
                     CHECK(scans_to(texts[k]), "%s does not scan", texts[k]);
                     scanned++;

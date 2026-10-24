@@ -178,3 +178,8 @@ esp_err_t oled_refresh(void)
 {
     return oled_flush();
 }
+
+bool oled_present(void) { return display != NULL; }
+
+/* The 128x64 frame, scaled; there is no tall-panel picture path here. */
+uint8_t oled_panel_rows(void) { return OLED_HEIGHT; }

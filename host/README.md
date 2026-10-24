@@ -1,5 +1,7 @@
 # Host crates
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 The Rust code that runs on the companion side: a phone or a computer. It
 syncs, builds PCZTs (ZIP 374), proves and broadcasts; the board only
 checks and signs. One Cargo workspace, with librustzcash pinned to a git

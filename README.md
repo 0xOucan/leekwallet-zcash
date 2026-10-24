@@ -2,6 +2,8 @@
 
 [![app](https://github.com/0xOucan/leekwallet-zcash/actions/workflows/app.yml/badge.svg)](https://github.com/0xOucan/leekwallet-zcash/actions/workflows/app.yml)
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 A DIY Zcash hardware wallet on an ESP32-S3 board that costs about as much as
 lunch. It holds the seed, checks every transaction against its own keys, shows
 you what you are signing, and signs it. Your phone or computer builds and proves
@@ -131,7 +133,12 @@ compact PCZT, 1,430 B instead of ~2.8 KB).
 - An **ESP32-S3-N16R8 "CAM" board** (16 MB flash, 8 MB PSRAM, OV5640 camera,
   microSD slot).
 - A **1.5" SH1107 128×128 I2C OLED**.
-- An **EC11 rotary encoder** and a small four-button module.
+- An **EC11 rotary encoder**: turn to move, press for OK. Its direction is
+  switchable on the board under Settings → Knob direction.
+- **One Cancel button** (K3, on GPIO14).
+
+That is the whole input: turn, press, Cancel. (The original four-button
+module is optional and still works on the same pins.)
 
 Wiring: [firmware/docs/WIRING-S3CAM.md](firmware/docs/WIRING-S3CAM.md).
 Everything runs at 3.3 V.

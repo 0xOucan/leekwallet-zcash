@@ -39,6 +39,10 @@ bool fake_protocol_rx_enabled(void);
 #include "zcash-account.h"
 #include "sdcard.h"
 #include "text-entry.h"
+#include "splash.h"
+#include "version.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "../../vectors/keys_vectors.h"
 #include <ctype.h>
 #include <sys/stat.h>
@@ -549,6 +553,67 @@ static void test_pin_digits_do_not_outlive_the_screen(void)
     CHECK(clean, "the typed PIN survived the screen change");
     CHECK(ui__pin_cursor_for_test() == 0, "cursor left at %d",
           ui__pin_cursor_for_test());
+}
+
+/* ============================================================================
+ * Boot splash
+ *
+ * Plays every frame when nobody touches anything, on either panel; any input
+ * ends it after the frame it arrived on and is spent there, so the boot
+ * screen and the PIN behave exactly as they did before the splash existed.
+ * ============================================================================ */
+
+static void test_boot_splash(void)
+{
+    printf("== the boot splash plays, skips on any input, and changes nothing after\n");
+    const unsigned frames = splash_frame_count();
+
+    /* 64-row panel: drawn into the frame, no picture. */
+    boot_device();
+    int before = fake_oled_flush_count();
+    ui_boot_splash();
+    CHECK(fake_oled_flush_count() - before == (int)frames,
+          "wide: %d flushes for %u frames", fake_oled_flush_count() - before, frames);
+    CHECK(fake_oled_picture_flush_count() == 0, "wide: a full-panel picture on a 64-row panel");
+    CHECK(ui_get_screen() == SCREEN_BOOT, "the splash left the boot screen");
+    ui_render();
+    CHECK(fake_oled_contains("v" LEEK_FW_VERSION " " LEEK_FW_CODENAME),
+          "the boot screen does not show the release");
+
+    /* 128-row panel: every frame through the picture path, gone afterwards. */
+    boot_device();
+    fake_oled_set_panel_rows(128);
+    ui_boot_splash();
+    CHECK(fake_oled_picture_flush_count() == (int)frames,
+          "tall: %d picture flushes for %u frames", fake_oled_picture_flush_count(), frames);
+    CHECK(fake_oled_panel_picture() == NULL, "tall: the picture outlived the splash");
+
+    /* A knob turn, a press and Cancel each skip it after one frame, and are
+     * consumed: nothing reaches the boot screen. */
+    const button_id_t skips[] = { BUTTON_DOWN, BUTTON_UP, BUTTON_ACCEPT, BUTTON_CANCEL };
+    for (size_t i = 0; i < sizeof skips / sizeof skips[0]; i++) {
+        boot_device();
+        fake_oled_set_panel_rows(128);
+        button_event_t ev = { .id = skips[i], .timestamp = 0 };
+        if (skips[i] == BUTTON_DOWN) {
+            fake_encoder_detent(+1);
+        } else {
+            xQueueSend(button_get_queue(), &ev, 0);
+        }
+        xQueueSend(button_get_queue(), &ev, 0);   /* and one more behind it */
+        ui_boot_splash();
+        CHECK(fake_oled_picture_flush_count() == 1, "%s: %d frames before the skip",
+              button_get_action_name(skips[i]), fake_oled_picture_flush_count());
+        button_event_t left;
+        CHECK(xQueueReceive(button_get_queue(), &left, 0) != pdTRUE,
+              "%s: input left queued after the skip", button_get_action_name(skips[i]));
+        CHECK(ui_get_screen() == SCREEN_BOOT, "%s: the skip moved past the boot screen",
+              button_get_action_name(skips[i]));
+    }
+
+    /* And the boot screen still wants its own press, then the PIN. */
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_PIN_SETUP, "the boot screen no longer leads to the PIN");
 }
 
 /* ============================================================================
@@ -2891,6 +2956,7 @@ int main(void)
     test_host_passphrase_confirmation();
     test_zsign_review_walks_every_page();
     test_harness_sees_the_screen();
+    test_boot_splash();
 
     test_import_word_count_prompt();
     test_import_back_from_first_character();

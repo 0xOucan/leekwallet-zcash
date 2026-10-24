@@ -1,5 +1,7 @@
 # LeekWallet Zcash in Chrome
 
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+
 The Chrome extension (roadmap Phase 9). The board signs; everything else
 (sync, PCZT, proving, extraction, broadcast) runs in the browser, on our
 own librustzcash rev compiled to WASM. Why this architecture, and the

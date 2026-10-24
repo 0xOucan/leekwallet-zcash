@@ -87,6 +87,22 @@ static uint8_t button_state[4] = {1, 1, 1, 1};      /* Current debounced state (
 static uint8_t button_last_raw[4] = {1, 1, 1, 1};   /* Last raw reading */
 static int64_t button_last_change[4] = {0, 0, 0, 0}; /* Time of last raw change */
 
+/*
+ * A key only counts once it has been seen released.
+ *
+ * Every key pin has the internal pull-up, so a key that is not fitted at all
+ * (the S3 CAM kit has no K1 or K2: the knob is UP/DOWN) reads released and
+ * stays that way. This covers the case the pull-up cannot: a pin held low
+ * from power-on, by a short, a module wired the wrong way round or a stray
+ * jumper. Without it that pin would produce one press 100 ms after boot and
+ * read as held for ever after, which on a PIN screen is an input nobody made
+ * and, for Cancel, a lock hold nobody asked for. Instead it is ignored, and
+ * logged once, until it reads high; a key held down at power-on likewise
+ * does nothing until it is let go and pressed again.
+ */
+static bool button_armed[4] = {false, false, false, false};
+static bool button_stuck_logged[4] = {false, false, false, false};
+
 /* GPIO to array index mapping */
 static const gpio_num_t buttons[] = {PIN_K1, PIN_K2, PIN_K3, PIN_K4};
 static const button_id_t button_ids[] = {BUTTON_K1, BUTTON_K2, BUTTON_K3, BUTTON_K4};
@@ -139,6 +155,19 @@ static void button_poll_once(void)
 
     for (int i = 0; i < 4; i++) {
         uint8_t raw = gpio_get_level(buttons[i]);
+
+        if (!button_armed[i]) {
+            if (raw) {
+                button_armed[i] = true;   /* seen released: from now on it counts */
+                button_last_raw[i] = raw;
+                button_last_change[i] = now;
+            } else if (!button_stuck_logged[i]) {
+                button_stuck_logged[i] = true;
+                ESP_LOGW(TAG, "%s (GPIO%d) reads pressed at start; ignored until released",
+                         button_get_name(button_ids[i]), (int)buttons[i]);
+            }
+            continue;
+        }
 
         /* If raw state changed, record the time */
         if (raw != button_last_raw[i]) {
@@ -314,6 +343,8 @@ void button__reset_static_state_for_test(void)
         button_state[i] = 1;
         button_last_raw[i] = 1;
         button_last_change[i] = 0;
+        button_armed[i] = false;
+        button_stuck_logged[i] = false;
     }
     button_overflows = 0;
     button_queue = NULL;
