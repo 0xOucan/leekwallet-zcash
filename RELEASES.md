@@ -118,7 +118,9 @@ Its `SHA-256 digest` must be the one written here, which does not change from
 release to release:
 
 ```
-Release certificate SHA-256: (published with the first release)
+Release certificate SHA-256 (apksigner): c59491e663fbb200bee06d28098a7d1f8955d5cf3dcdcd9da20c9ed2ba658eb7
+The same, as keytool prints it:          C5:94:91:E6:63:FB:B2:00:BE:E0:6D:28:09:8A:7D:1F:89:55:D5:CF:3D:CD:CD:9D:A2:0C:9E:D2:BA:65:8E:B7
+Subject: CN=LeekWallet Zcash, O=LeekWallet, C=MX
 ```
 
 ### Unsigned desktop installers
