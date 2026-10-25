@@ -23,6 +23,13 @@ LeekWallet for Ethereum (tag `pre-zecathon`), with every EVM part removed.
 - **Zcash LeekWallet**, one app for Linux, Windows, macOS and Android
   (64-bit phones only): several wallets, mainnet or testnet, contacts, memos,
   QR pay and NEAR Intents swaps, every send signed on the board.
+- **On the board**: a looping boot animation (the LeekWallet logo,
+  `@gmLeekWallet`, `v0.1.0 Sacbeh`, "the white road") until the knob is
+  pushed; an untouched PIN screen falls back to it after 30 s, and the
+  screen goes dark after 10 minutes. Menus fill the 128x128 screen (text
+  2x tall), on-screen hints speak knob and Cancel (`X:BACK TURN OK:SEL`),
+  and Settings has Knob direction. The kit is the OLED, an EC11 knob and
+  one Cancel button.
 - **Chrome extension**: the same wallet in the browser, over USB or
   Bluetooth.
 - **Releases**: `SHA256SUMS` signed with the maintainer's SSH key
