@@ -87,6 +87,43 @@ static const screen_t *screens[SCREEN_COUNT] = {NULL};
 static screen_id_t current_screen = SCREEN_BOOT;
 static bool needs_render = true;
 
+/* ----------------------------------------------------------- boot splash
+ *
+ * The boot screen is the looping splash (splash.h): logo, text, a blinking
+ * HINT_PRESS_ANY, again, until the user asks for the PIN. The unlock screen
+ * falls back to it after UI_PIN_IDLE_SPLASH_US with no input.
+ *
+ * What dismisses it: on the knob kit only the press (OK); a turn or Cancel
+ * jumps to the prompt, which says "Push the knob". On the four-button boards
+ * any key, as "Press any key" says. Either way the press that wakes a
+ * blanked panel is spent waking it. A variable rather than the macro so the
+ * host suite, built for the four-button board, can drive both. */
+static bool splash_ok_only = LEEK_HAS_ENCODER;
+static splash_loop_t boot_splash;
+static splash_view_t boot_splash_shown;   /* what the panel has now */
+
+/* The prompt shares the wide layout with the logo: 15 columns beside it. */
+_Static_assert(sizeof(HINT_PRESS_ANY) - 1 <= 15, "the splash prompt does not fit beside the logo");
+
+/* The PIN unlock screen, left alone this long with a partial PIN or none,
+ * goes back to the splash. Leaving through ui_set_screen() runs its exit hook
+ * (forget_pin_entry), which zeroes the typed digits; nothing is submitted, so
+ * the attempt counter in pin.c is neither spent nor reset. */
+#define UI_PIN_IDLE_SPLASH_US (30LL * 1000 * 1000)
+static int64_t pin_idle_since_us;
+
+static int64_t ui_now_ms(void)
+{
+    return esp_timer_get_time() / 1000;
+}
+
+/* A view nothing can equal, so the first check after a (re)start repaints. */
+static void boot_splash_restart(void)
+{
+    splash_loop_start(&boot_splash, ui_now_ms());
+    boot_splash_shown = (splash_view_t){ .blank = false, .frame = ~0u, .prompt = false };
+}
+
 /* Forward declarations for built-in screens */
 static void screen_boot_enter(void);
 static void screen_boot_render(void);
@@ -445,7 +482,7 @@ static void pin_option_label(char *out, size_t max)
 
 static void pin_entry_reset(void)
 {
-    memset(pin_entry, 0, sizeof(pin_entry));
+    memzero(pin_entry, sizeof(pin_entry));
     pin_cursor = 0;
     current_digit = 0;
 }
@@ -1394,20 +1431,47 @@ static bool get_mnemonic_word(const char *mnemonic, int index, char *word_out, s
 
 static void screen_boot_enter(void)
 {
-    ESP_LOGI(TAG, "Boot screen");
+    ESP_LOGI(TAG, "Boot screen (splash)");
+    boot_splash_restart();
 }
 
+/* The splash, as its loop says it should look right now. Static buffers: the
+ * tall picture is shown by pointer until the next clear. */
 static void screen_boot_render(void)
 {
+    static uint8_t tall[SPLASH_TALL_BYTES];
+    static uint8_t wide[SPLASH_WIDE_BYTES];
+
+    boot_splash_shown = splash_loop_view(&boot_splash, ui_now_ms());
     oled_clear();
-    oled_draw_string_centered(1, "LeekWallet");
-    oled_draw_string_centered(3, "v" LEEK_FW_VERSION " " LEEK_FW_CODENAME);
-    oled_draw_string_centered(6, HINT_PRESS_ANY);
+    if (boot_splash_shown.blank) {
+        return;   /* all black: nothing lit to burn in, next to no current */
+    }
+    const char *prompt = boot_splash_shown.prompt ? HINT_PRESS_ANY : NULL;
+    if (oled_panel_rows() >= 128) {
+        splash_render_tall(boot_splash_shown.frame, prompt, tall);
+        oled_show_panel_picture(tall);
+    } else {
+        splash_render_wide(boot_splash_shown.frame, prompt, wide);
+        for (uint8_t page = 0; page < OLED_PAGES; page++) {
+            oled_blit_page(page, wide + page * OLED_WIDTH, OLED_WIDTH);
+        }
+    }
 }
 
 static void screen_boot_on_button(button_id_t btn)
 {
-    (void)btn;
+    switch (splash_loop_input(&boot_splash, ui_now_ms(), btn == BUTTON_ACCEPT, splash_ok_only)) {
+        case SPLASH_INPUT_WOKE:
+            ESP_LOGI(TAG, "Splash woken by %s", button_get_action_name(btn));
+            ui_invalidate();
+            return;
+        case SPLASH_INPUT_PROMPT:
+            ui_invalidate();
+            return;
+        case SPLASH_INPUT_DISMISS:
+            break;
+    }
 
     /* Initialize subsystems and determine next screen */
     pin_init();
@@ -1557,6 +1621,7 @@ static void screen_pin_unlock_enter(void)
 {
     ESP_LOGI(TAG, "PIN unlock screen");
     pin_entry_reset();
+    pin_idle_since_us = esp_timer_get_time();
 }
 
 static void screen_pin_unlock_render(void)
@@ -5672,6 +5737,7 @@ void ui_init(void)
 
     current_screen = SCREEN_BOOT;
     needs_render = true;
+    boot_splash_restart();
 
     settings_load();
     oled_set_contrast(BRIGHTNESS_LEVELS[brightness_choice]);
@@ -5727,6 +5793,10 @@ void ui_handle_button(button_id_t btn)
      * it. A press that both wakes the radio and does its normal job is the
      * behaviour somebody expects from a device that went quiet. */
     ble_transport_advertise_again();
+
+    /* Any input, whatever takes it, is someone at the device: the unlock
+     * screen's idle timer starts over. */
+    pin_idle_since_us = esp_timer_get_time();
 
     /* The wrong-network notice takes the press that dismisses it: the
      * screen under it is not visible, so its buttons must not act. */
@@ -5845,56 +5915,44 @@ static void service_sign_expiry(void)
     }
 }
 
-void ui_boot_splash(void)
+/* The two screens that change with nobody touching anything, by time alone:
+ * the splash steps its loop (and blanks), and the unlock screen, left idle,
+ * falls back to the splash. Nothing else: PIN setup and change, the review
+ * screens and the rest keep waiting for the user. */
+static void service_idle_screens(void)
 {
-    /* Nothing to show on a headless board, and no reason to make it wait. */
-    if (!oled_present()) {
-        return;
+    if (wrong_network_until_us) {
+        return;   /* the notice is on top; nothing under it is visible */
     }
-    /* Static: the tall picture is shown by pointer until the clear below. */
-    static uint8_t tall[SPLASH_TALL_BYTES];
-    static uint8_t wide[SPLASH_WIDE_BYTES];
-    const bool full_panel = oled_panel_rows() >= 128;
-    QueueHandle_t queue = button_get_queue();
-    const unsigned n = splash_frame_count();
-    const int64_t start = esp_timer_get_time();
-    bool skipped = false;
-
-    for (unsigned f = 0; f < n && !skipped; f++) {
-        int64_t elapsed_ms = (esp_timer_get_time() - start) / 1000;
-        /* Behind schedule (a slow bus): drop the frame rather than stretch
-         * the whole splash. Never the last one, which carries the text. */
-        if (f + 1 < n && elapsed_ms >= (int64_t)splash_frame_end_ms(f)) {
-            continue;
+    const int64_t now_us = esp_timer_get_time();
+    if (current_screen == SCREEN_BOOT) {
+        if (!splash_view_equal(splash_loop_view(&boot_splash, now_us / 1000), boot_splash_shown)) {
+            ui_invalidate();
         }
-        oled_clear();
-        if (full_panel) {
-            splash_render_tall(f, tall);
-            oled_show_panel_picture(tall);
-        } else {
-            splash_render_wide(f, wide);
-            for (uint8_t page = 0; page < OLED_PAGES; page++) {
-                oled_blit_page(page, wide + page * OLED_WIDTH, OLED_WIDTH);
-            }
-        }
-        oled_flush();
+    } else if (current_screen == SCREEN_PIN_UNLOCK &&
+               now_us - pin_idle_since_us >= UI_PIN_IDLE_SPLASH_US) {
+        /* Through ui_set_screen, so forget_pin_entry zeroes the digits.
+         * No pin_verify(): the counter is untouched either way. */
+        ESP_LOGI(TAG, "PIN entry idle for %lld s; back to the splash",
+                 (long long)(UI_PIN_IDLE_SPLASH_US / 1000000));
+        ui_set_screen(SCREEN_BOOT);
+    }
+}
 
-        /* Wait out the frame on the input queue: any knob turn, press or
-         * Cancel ends the splash at once. */
-        elapsed_ms = (esp_timer_get_time() - start) / 1000;
-        const int64_t left = (int64_t)splash_frame_end_ms(f) - elapsed_ms;
-        button_event_t event;
-        if (xQueueReceive(queue, &event, left > 0 ? pdMS_TO_TICKS(left) : 0) == pdTRUE) {
-            ESP_LOGI(TAG, "Splash skipped by %s", button_get_action_name(event.id));
-            skipped = true;
+/* How long ui_task may sleep on the input queue: 100 ms normally, 1 ms while
+ * scanning, and on the splash no longer than its next frame or blink. */
+static TickType_t ui_wait_ticks(void)
+{
+    if (current_screen == SCREEN_SCAN) {
+        return pdMS_TO_TICKS(1);
+    }
+    if (current_screen == SCREEN_BOOT) {
+        const uint32_t ms = splash_loop_next_change_ms(&boot_splash, ui_now_ms());
+        if (ms < 100) {
+            return pdMS_TO_TICKS(ms);
         }
     }
-
-    /* The press that skipped it, and anything behind it, is spent: it must
-     * not also answer the boot screen. */
-    button_drain();
-    oled_clear();
-    needs_render = true;
+    return pdMS_TO_TICKS(100);
 }
 
 void ui_task(void *pvParameters)
@@ -5903,12 +5961,7 @@ void ui_task(void *pvParameters)
     QueueHandle_t queue = button_get_queue();
     button_event_t event;
 
-    /* The logo, before anything else is drawn. Skippable, and over in
-     * under 2.5 s either way; the boot screen and the PIN come after it
-     * exactly as they did before it existed. */
-    ui_boot_splash();
-
-    /* Initial render */
+    /* Initial render: the boot screen, which is the looping splash. */
     ui_render();
 
     ESP_LOGI(TAG, "UI task started");
@@ -5920,8 +5973,7 @@ void ui_task(void *pvParameters)
          * scanning: this wait came before every frame, so up to 100 ms of
          * each capture cycle was spent idle on top of the decode, and the
          * camera's newest frame went stale waiting for it. */
-        const TickType_t wait = (ui_get_screen() == SCREEN_SCAN)
-                                    ? pdMS_TO_TICKS(1) : pdMS_TO_TICKS(100);
+        const TickType_t wait = ui_wait_ticks();
         if (xQueueReceive(queue, &event, wait) == pdTRUE) {
             lock_note_activity();
             ui_handle_button(event.id);
@@ -5953,6 +6005,7 @@ void ui_task(void *pvParameters)
         }
 
         service_lock_hold();
+        service_idle_screens();
         service_qr_out();
         service_scan();
 
@@ -6033,6 +6086,9 @@ bool ui__check_autolock_for_test(void) { return lock_check_timeout(); }
 void ui__service_sign_expiry_for_test(void) { service_sign_expiry(); }
 void ui__service_wrong_network_for_test(void) { service_wrong_network(); }
 void ui__service_lock_hold_for_test(void) { service_lock_hold(); }
+void ui__service_idle_screens_for_test(void) { service_idle_screens(); }
+void ui__set_splash_ok_only_for_test(bool ok_only) { splash_ok_only = ok_only; }
+bool ui__splash_blank_for_test(void) { return boot_splash_shown.blank; }
 void ui__service_host_lock_for_test(void) { service_host_lock(); }
 void ui__service_qr_out_for_test(void) { service_qr_out(); }
 void ui__scan_feed_for_test(const char *ur) { scan_handle(ur, strlen(ur)); }
@@ -6144,6 +6200,8 @@ void ui__reset_static_state_for_test(void)
     memzero(master_xfp, sizeof(master_xfp));
     memzero(master_zfp, sizeof(master_zfp));
     last_activity_us = 0;
+    splash_ok_only = LEEK_HAS_ENCODER;
+    pin_idle_since_us = 0;
 }
 
 #endif /* LEEK_HOST_TEST */

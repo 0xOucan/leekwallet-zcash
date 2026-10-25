@@ -100,6 +100,14 @@ void fake_oled_dump(void)
     printf("    +---------------------+\n");
 }
 
+bool fake_oled_pixel(int x, int y)
+{
+    if (x < 0 || y < 0 || x >= OLED_WIDTH || y >= OLED_HEIGHT) {
+        return false;
+    }
+    return (fb[y / 8][x] >> (y % 8)) & 1;
+}
+
 void fake_oled_dump_pixels(void)
 {
     for (int y = 0; y < OLED_HEIGHT; y++) {

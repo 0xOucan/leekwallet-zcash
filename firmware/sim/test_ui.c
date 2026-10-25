@@ -55,6 +55,9 @@ bool        ui__check_autolock_for_test(void);
 void        ui__service_sign_expiry_for_test(void);
 void        ui__service_wrong_network_for_test(void);
 void        ui__service_lock_hold_for_test(void);
+void        ui__service_idle_screens_for_test(void);
+void        ui__set_splash_ok_only_for_test(bool ok_only);
+bool        ui__splash_blank_for_test(void);
 void        fake_button_hold(button_id_t id);
 void        fake_button_release(void);
 void        ui__service_host_lock_for_test(void);
@@ -558,62 +561,240 @@ static void test_pin_digits_do_not_outlive_the_screen(void)
 /* ============================================================================
  * Boot splash
  *
- * Plays every frame when nobody touches anything, on either panel; any input
- * ends it after the frame it arrived on and is spent there, so the boot
- * screen and the PIN behave exactly as they did before the splash existed.
+ * The boot screen is the looping splash. It runs off the fake clock through
+ * the same service ui_task() calls once per loop, so these tests see what the
+ * board would: frames advancing, the loop coming round again, the panel going
+ * black after 10 minutes, and the unlock screen falling back to it.
  * ============================================================================ */
 
-static void test_boot_splash(void)
+/* One pass of ui_task's loop after `ms` with nothing pressed. */
+static void tick_ms(int64_t ms)
 {
-    printf("== the boot splash plays, skips on any input, and changes nothing after\n");
-    const unsigned frames = splash_frame_count();
+    fake_clock_advance_us(ms * 1000);
+    ui__service_idle_screens_for_test();
+    idle_pump();
+}
 
-    /* 64-row panel: drawn into the frame, no picture. */
+/* Run the clock forward in steps no longer than a frame. */
+static void run_ms(int64_t ms)
+{
+    while (ms > 0) {
+        const int64_t step = ms < 10 ? ms : 10;
+        tick_ms(step);
+        ms -= step;
+    }
+}
+
+/* Anything lit: the 64-row frame, or the full-panel picture. */
+static bool frame_is_lit(void)
+{
+    if (fake_oled_panel_picture()) return true;
+    for (int x = 0; x < 128; x++) {
+        for (int y = 0; y < 64; y++) {
+            if (fake_oled_pixel(x, y)) return true;
+        }
+    }
+    return false;
+}
+
+static void test_boot_splash_loops(void)
+{
+    printf("== the boot splash loops until dismissed, on either panel\n");
+    const unsigned frames = splash_frame_count();
+    const uint32_t cycle = splash_loop_cycle_ms();
+
+    /* 64-row panel: drawn into the frame, no picture. Two and a half passes
+     * repaint at least every frame of both full passes, and it is still the
+     * boot screen afterwards. */
     boot_device();
     int before = fake_oled_flush_count();
-    ui_boot_splash();
-    CHECK(fake_oled_flush_count() - before == (int)frames,
-          "wide: %d flushes for %u frames", fake_oled_flush_count() - before, frames);
+    run_ms(2 * cycle + cycle / 2);
+    CHECK(fake_oled_flush_count() - before >= 2 * (int)frames,
+          "wide: %d repaints in two passes of %u frames", fake_oled_flush_count() - before, frames);
     CHECK(fake_oled_picture_flush_count() == 0, "wide: a full-panel picture on a 64-row panel");
-    CHECK(ui_get_screen() == SCREEN_BOOT, "the splash left the boot screen");
-    ui_render();
-    CHECK(fake_oled_contains("v" LEEK_FW_VERSION " " LEEK_FW_CODENAME),
-          "the boot screen does not show the release");
+    CHECK(ui_get_screen() == SCREEN_BOOT, "the splash ended by itself");
+    CHECK(frame_is_lit(), "wide: nothing on the panel");
 
-    /* 128-row panel: every frame through the picture path, gone afterwards. */
+    /* Nothing changes, nothing is repainted: the loop asks only when due. */
+    before = fake_oled_flush_count();
+    idle_pump();
+    idle_pump();
+    CHECK(fake_oled_flush_count() == before, "the splash repaints with nothing new to show");
+
+    /* 128-row panel: every frame through the picture path, and still going
+     * in the third pass. */
     boot_device();
     fake_oled_set_panel_rows(128);
-    ui_boot_splash();
-    CHECK(fake_oled_picture_flush_count() == (int)frames,
-          "tall: %d picture flushes for %u frames", fake_oled_picture_flush_count(), frames);
-    CHECK(fake_oled_panel_picture() == NULL, "tall: the picture outlived the splash");
+    ui_invalidate();
+    idle_pump();
+    run_ms(2 * cycle + 100);
+    CHECK(fake_oled_picture_flush_count() >= 2 * (int)frames,
+          "tall: %d picture flushes over two passes", fake_oled_picture_flush_count());
+    CHECK(fake_oled_panel_picture() != NULL, "tall: the splash stopped showing");
+    CHECK(ui_get_screen() == SCREEN_BOOT, "tall: the splash ended by itself");
 
-    /* A knob turn, a press and Cancel each skip it after one frame, and are
-     * consumed: nothing reaches the boot screen. */
-    const button_id_t skips[] = { BUTTON_DOWN, BUTTON_UP, BUTTON_ACCEPT, BUTTON_CANCEL };
-    for (size_t i = 0; i < sizeof skips / sizeof skips[0]; i++) {
-        boot_device();
-        fake_oled_set_panel_rows(128);
-        button_event_t ev = { .id = skips[i], .timestamp = 0 };
-        if (skips[i] == BUTTON_DOWN) {
-            fake_encoder_detent(+1);
-        } else {
-            xQueueSend(button_get_queue(), &ev, 0);
-        }
-        xQueueSend(button_get_queue(), &ev, 0);   /* and one more behind it */
-        ui_boot_splash();
-        CHECK(fake_oled_picture_flush_count() == 1, "%s: %d frames before the skip",
-              button_get_action_name(skips[i]), fake_oled_picture_flush_count());
-        button_event_t left;
-        CHECK(xQueueReceive(button_get_queue(), &left, 0) != pdTRUE,
-              "%s: input left queued after the skip", button_get_action_name(skips[i]));
-        CHECK(ui_get_screen() == SCREEN_BOOT, "%s: the skip moved past the boot screen",
-              button_get_action_name(skips[i]));
-    }
-
-    /* And the boot screen still wants its own press, then the PIN. */
+    /* The picture goes with the splash. */
     press(BUTTON_ACCEPT);
-    CHECK(ui_get_screen() == SCREEN_PIN_SETUP, "the boot screen no longer leads to the PIN");
+    CHECK(ui_get_screen() == SCREEN_PIN_SETUP, "the press did not lead to the PIN");
+    CHECK(fake_oled_panel_picture() == NULL, "tall: the picture outlived the splash");
+}
+
+static void test_boot_splash_input(void)
+{
+    printf("== knob kit: turn and Cancel do not dismiss the splash, the press does\n");
+
+    boot_device();
+    ui__set_splash_ok_only_for_test(true);
+    run_ms(300);   /* into the animation */
+
+    /* A turn either way and Cancel, a few times over: still the splash,
+     * now showing the prompt, and nothing reaches the PIN. */
+    for (int i = 0; i < 3; i++) {
+        fake_encoder_detent(+1);
+        fake_encoder_detent(-1);
+        button_event_t ev;
+        while (xQueueReceive(button_get_queue(), &ev, 0) == pdTRUE) {
+            press(ev.id);
+        }
+        press(BUTTON_CANCEL);
+        CHECK(ui_get_screen() == SCREEN_BOOT, "a turn or Cancel dismissed the splash");
+        run_ms(200);
+    }
+    CHECK(fake_oled_contains("Press any key") || frame_is_lit(), "the splash went away");
+    CHECK(ui__pin_cursor_for_test() == 0, "a turn typed into the PIN");
+
+    /* The loop carries on afterwards. */
+    run_ms(splash_loop_cycle_ms());
+    CHECK(ui_get_screen() == SCREEN_BOOT, "the splash ended after a turn");
+
+    /* The press goes straight to the PIN: no second boot screen. */
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_PIN_SETUP, "the press did not lead to the PIN");
+    CHECK(ui__pin_cursor_for_test() == 0, "the dismissing press also typed a digit");
+
+    printf("== four buttons: any key dismisses the splash\n");
+    const button_id_t keys[] = { BUTTON_UP, BUTTON_DOWN, BUTTON_CANCEL, BUTTON_ACCEPT };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        boot_device();
+        run_ms(50);
+        press(keys[i]);
+        CHECK(ui_get_screen() == SCREEN_PIN_SETUP, "%s did not dismiss the splash",
+              button_get_action_name(keys[i]));
+    }
+}
+
+static void test_boot_splash_blanks(void)
+{
+    printf("== the splash goes black after 10 minutes untouched, and wakes on input\n");
+
+    for (int kit = 0; kit < 2; kit++) {
+        const bool knob = kit == 0;
+        for (int k = 0; k < 2; k++) {
+            const button_id_t key = k ? BUTTON_ACCEPT : BUTTON_CANCEL;
+            boot_device();
+            ui__set_splash_ok_only_for_test(knob);
+
+            run_ms(1000);
+            /* A turn at 9 minutes restarts the count. */
+            fake_clock_advance_us((int64_t)9 * 60 * 1000 * 1000);
+            tick_ms(1);
+            if (knob) {
+                press(BUTTON_DOWN);
+                CHECK(!ui__splash_blank_for_test(), "blank before 10 minutes");
+                fake_clock_advance_us((int64_t)9 * 60 * 1000 * 1000);
+                tick_ms(1);
+                CHECK(!ui__splash_blank_for_test(), "a turn did not restart the blanking timer");
+            }
+            fake_clock_advance_us((int64_t)SPLASH_BLANK_AFTER_MS * 1000);
+            tick_ms(1);
+            CHECK(ui__splash_blank_for_test(), "%s: not blank after 10 minutes", knob ? "knob" : "4 keys");
+            CHECK(!frame_is_lit() && fake_oled_panel_picture() == NULL, "blank, but pixels are lit");
+            const int flushes = fake_oled_flush_count();
+            run_ms(5000);
+            CHECK(fake_oled_flush_count() == flushes, "a blank panel keeps being repainted");
+
+            /* The waking input is spent waking: even OK, even on 4 keys. */
+            press(key);
+            CHECK(ui_get_screen() == SCREEN_BOOT, "%s: waking with %s dismissed the splash",
+                  knob ? "knob" : "4 keys", button_get_action_name(key));
+            CHECK(!ui__splash_blank_for_test(), "did not wake");
+            CHECK(frame_is_lit(), "woke to a dark panel");
+            run_ms(splash_loop_cycle_ms() + 100);
+            CHECK(ui_get_screen() == SCREEN_BOOT && !ui__splash_blank_for_test(),
+                  "the loop did not carry on after waking");
+
+            press(BUTTON_ACCEPT);
+            CHECK(ui_get_screen() == SCREEN_PIN_SETUP, "after waking, the press does not lead on");
+        }
+    }
+}
+
+/* The unlock screen, left alone, goes back to the splash: the typed digits
+ * are zeroed and the attempt counter is exactly where it was. */
+static void test_pin_unlock_idles_to_splash(void)
+{
+    printf("== an idle PIN unlock screen returns to the splash, PIN wiped, tries kept\n");
+
+    boot_device();
+    CHECK(pin_set("1234"), "setup: could not set a PIN");
+    pin_lock();
+    /* One wrong attempt first, so "unchanged" is not just "still full". */
+    CHECK(!pin_verify("9999"), "setup: a wrong PIN verified");
+    const int tries = pin_get_remaining_attempts();
+    CHECK(tries == PIN_MAX_ATTEMPTS - 1, "setup: %d tries left", tries);
+
+    press(BUTTON_ACCEPT);   /* the splash, to the PIN */
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "the splash did not lead to the unlock screen");
+
+    /* Two digits typed, then input that keeps it alive just short of 30 s. */
+    press(BUTTON_DOWN);
+    press(BUTTON_ACCEPT);
+    press(BUTTON_DOWN);
+    press(BUTTON_DOWN);
+    press(BUTTON_ACCEPT);
+    CHECK(ui__pin_cursor_for_test() == 2, "setup: %d digits typed", ui__pin_cursor_for_test());
+    run_ms(29000);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "left the unlock screen before 30 s");
+    press(BUTTON_DOWN);   /* activity: the 30 s start again */
+    run_ms(29000);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "a turn did not restart the idle timer");
+    CHECK(ui__pin_cursor_for_test() == 2, "digits lost while still in use");
+
+    run_ms(1000);
+    CHECK(ui_get_screen() == SCREEN_BOOT, "the unlock screen did not return to the splash after 30 s");
+
+    const char *entry = ui__pin_entry_for_test();
+    bool clean = true;
+    for (int i = 0; i <= PIN_MAX_LENGTH; i++) {
+        if (entry[i] != 0) clean = false;
+    }
+    CHECK(clean, "the typed PIN survived the return to the splash");
+    CHECK(ui__pin_cursor_for_test() == 0, "cursor left at %d", ui__pin_cursor_for_test());
+    CHECK(pin_get_remaining_attempts() == tries, "the idle return cost or refunded a try (%d, was %d)",
+          pin_get_remaining_attempts(), tries);
+    CHECK(!pin_is_unlocked(), "the idle return unlocked the device");
+
+    /* Same after a reboot: the counter in NVS did not move either. */
+    pin__reset_static_state_for_test();
+    pin_init();
+    CHECK(pin_get_remaining_attempts() == tries, "NVS holds %d tries, was %d",
+          pin_get_remaining_attempts(), tries);
+
+    /* And back again: the press returns to the unlock screen, same tries. */
+    run_ms(500);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "the splash did not return to the unlock screen");
+    CHECK(pin_get_remaining_attempts() == tries, "tries changed on the way back");
+
+    /* Only the unlock screen does this. */
+    const screen_id_t others[] = { SCREEN_PIN_SETUP, SCREEN_PIN_CHANGE, SCREEN_MAIN_MENU };
+    for (size_t i = 0; i < sizeof others / sizeof others[0]; i++) {
+        go(others[i]);
+        run_ms(31000);
+        fake_clock_advance_us((int64_t)5 * 60 * 1000 * 1000);
+        ui__service_idle_screens_for_test();
+        CHECK(ui_get_screen() == others[i], "screen %d fell back to the splash", (int)others[i]);
+    }
 }
 
 /* ============================================================================
@@ -628,14 +809,15 @@ static void test_harness_sees_the_screen(void)
     printf("== the framebuffer tracks what was drawn\n");
     boot_device();
 
-    CHECK_SCREEN(fake_oled_contains("LeekWallet"), "the boot splash is not on screen");
-    CHECK(fake_oled_find_row("LeekWallet") == 1, "splash is on row %d, expected 1",
-          fake_oled_find_row("LeekWallet"));
+    go(SCREEN_SETTINGS);
+    CHECK_SCREEN(fake_oled_contains("Settings"), "the settings title is not on screen");
+    CHECK(fake_oled_find_row("Settings") == 0, "title is on row %d, expected 0",
+          fake_oled_find_row("Settings"));
     CHECK(fake_oled_flush_count() > 0, "nothing was ever pushed to the panel");
 
     /* Each render starts from a cleared frame; stale text must not survive. */
     go(SCREEN_MAIN_MENU);
-    CHECK_SCREEN(!fake_oled_contains("LeekWallet"),
+    CHECK_SCREEN(!fake_oled_contains("Settings"),
                  "the previous frame bled into this one");
 }
 
@@ -2956,7 +3138,10 @@ int main(void)
     test_host_passphrase_confirmation();
     test_zsign_review_walks_every_page();
     test_harness_sees_the_screen();
-    test_boot_splash();
+    test_boot_splash_loops();
+    test_boot_splash_input();
+    test_boot_splash_blanks();
+    test_pin_unlock_idles_to_splash();
 
     test_import_word_count_prompt();
     test_import_back_from_first_character();
