@@ -1812,7 +1812,8 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   screen's bench toggle (OK with UP held, live video to the PC viewer);
   press-and-turn now does it too. `button.c` ignores a key that reads
   pressed from power-on until it is released.
-- Not yet tried on the board.
+- Flashed on the board (2026-10-24): the animation plays and the 2x-tall
+  text reads well.
 
 ### The splash loops; the unlock screen falls back to it (2026-10-25)
 - The owner asked for the splash to loop until the knob is pushed, and
@@ -1828,9 +1829,10 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   the splash through `ui_set_screen`, so the exit hook zeroes the typed
   digits (`pin_entry_reset` now uses `memzero`). `pin_verify` is not
   called, so the attempt counter is neither spent nor reset; dismissing
-  the splash again re-reads it from NVS (`pin_init` is idempotent) and
-  clears any pending re-authentication such as Show Seed. PIN setup and
+  the splash again calls `pin_init`, which returns at once once it has
+  run (the counter in RAM and NVS stays as it was), and clears any pending re-authentication such as Show Seed. PIN setup and
   change, and the review screens, never time out to it.
 - `test_splash` and `test_ui` cover the loop, the inputs, the blanking and
   the idle return with the PIN wiped and the tries kept.
-- Not yet tried on the board.
+- Flashed on the board (2026-10-25): the owner confirmed the loop, the
+  push to the PIN and the fallback.
