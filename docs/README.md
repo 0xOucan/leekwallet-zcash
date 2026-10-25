@@ -1,6 +1,6 @@
 # Documentation
 
-Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute video](https://www.youtube.com/watch?v=8F6_8AhsnAA) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
 
 | Document | What it covers |
 |---|---|

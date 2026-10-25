@@ -1,6 +1,6 @@
 # `leek-android`: the native library of the Android app
 
-Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute video](https://www.youtube.com/watch?v=8F6_8AhsnAA) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
 
 Our JNI library (`libleek_android.so`) for
 [LeekWallet Zcash for Android](https://github.com/0xOucan/leekwallet-zcash-android),
