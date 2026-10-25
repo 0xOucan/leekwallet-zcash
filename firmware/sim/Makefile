@@ -185,6 +185,14 @@ $(BUILD)/test_zcash_meta: test_zcash_meta.c ../src/zcash-meta.c ../src/zcash-fp.
 $(BUILD)/test_encoder: test_encoder.c ../src/encoder.c ../src/encoder.h | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
 
+# The footer hints, once per input kit: four buttons (the default board here)
+# and the knob + Cancel of the S3CAM.
+$(BUILD)/test_hints: test_hints.c ../src/hints.h ../src/board.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^)
+
+$(BUILD)/test_hints_knob: test_hints.c ../src/hints.h ../src/board.h | $(BUILD)
+	$(CC) $(CFLAGS) -DLEEK_BOARD_S3CAM -o $@ $(filter %.c,$^)
+
 $(BUILD)/test_panel128: test_panel128.c ../src/panel128.c ../src/oled-core.c ../src/font5x7.c ../src/qrcode.c \
                         host_stubs.c ../../vectors/keys_vectors.h | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
@@ -296,8 +304,8 @@ $(BUILD)/test_zkv: test_zkv.c ../src/zkv.c ../src/zkv.h host_stubs.c ../../vecto
                    $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(filter %.c,$^)
 
-TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta test_encoder test_panel128 test_splash test_sd_sign
-all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta $(BUILD)/test_encoder $(BUILD)/test_panel128 $(BUILD)/test_splash $(BUILD)/test_sd_sign
+TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta test_encoder test_panel128 test_splash test_sd_sign test_hints test_hints_knob
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta $(BUILD)/test_encoder $(BUILD)/test_panel128 $(BUILD)/test_splash $(BUILD)/test_sd_sign $(BUILD)/test_hints $(BUILD)/test_hints_knob
 
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \

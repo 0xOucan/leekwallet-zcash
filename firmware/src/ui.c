@@ -35,6 +35,7 @@
 #include "zcash-sign.h"
 #endif
 #include "board.h"
+#include "hints.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
 #include "zcash-fp.h"
@@ -1031,7 +1032,7 @@ static void render_wrong_network(void)
     oled_draw_string_centered(3, zcash_network ? "Board: Testnet" : "Board: Mainnet");
     oled_draw_string_centered(5, "Refused. Change it");
     oled_draw_string_centered(6, "Settings > Network");
-    oled_draw_string(7, 0, "                OK");
+    oled_draw_string(7, 0, HINT_OK);
 }
 
 static void zcash_network_toggle(void)
@@ -1401,7 +1402,7 @@ static void screen_boot_render(void)
     oled_clear();
     oled_draw_string_centered(1, "LeekWallet");
     oled_draw_string_centered(3, "v" LEEK_FW_VERSION " " LEEK_FW_CODENAME);
-    oled_draw_string_centered(6, "Press any key");
+    oled_draw_string_centered(6, HINT_PRESS_ANY);
 }
 
 static void screen_boot_on_button(button_id_t btn)
@@ -1480,7 +1481,7 @@ static void screen_pin_setup_render(void)
     oled_draw_string_centered(5, progress);
 
     /* Draw instructions */
-    oled_draw_string(7, 0, "UP DN  DEL  SEL");
+    oled_draw_string(7, 0, HINT_SCROLL_DEL_SEL);
 }
 
 static void screen_pin_setup_on_button(button_id_t btn)
@@ -1594,7 +1595,7 @@ static void screen_pin_unlock_render(void)
     oled_draw_string_centered(5, attempts_str);
 
     /* Draw instructions */
-    oled_draw_string(7, 0, "UP DN  DEL  SEL");
+    oled_draw_string(7, 0, HINT_SCROLL_DEL_SEL);
 }
 
 static void screen_pin_unlock_on_button(button_id_t btn)
@@ -1755,7 +1756,7 @@ static void screen_pin_change_render(void)
         oled_draw_string_centered(5, progress);
     }
 
-    oled_draw_string(7, 0, "UP DN  DEL  SEL");
+    oled_draw_string(7, 0, HINT_SCROLL_DEL_SEL);
 }
 
 /* The whole change, once all three PINs are in hand. */
@@ -1950,7 +1951,7 @@ static void screen_main_menu_render(void)
     }
 
     /* Draw instructions */
-    oled_draw_string(7, 0, "UP DN       SEL");
+    oled_draw_string(7, 0, HINT_HOME);
 }
 
 static void screen_main_menu_on_button(button_id_t btn)
@@ -2192,7 +2193,7 @@ static void screen_wallet_info_render(void)
         draw_master_zfp(4);
     }
 
-    oled_draw_string(7, 0, "BACK");
+    oled_draw_string(7, 0, HINT_BACK);
 }
 
 static void screen_wallet_info_on_button(button_id_t btn)
@@ -2246,7 +2247,7 @@ static void screen_lock_hold_render(void)
 
     oled_clear();
     oled_draw_string_centered(0, "Lock device");
-    oled_draw_string_centered(2, "Keep holding BACK");
+    oled_draw_string_centered(2, HINT_KEEP_HOLDING);
     oled_draw_string_centered(4, bar);
     oled_draw_string_centered(6, "Let go to cancel");
 }
@@ -2323,7 +2324,7 @@ static void screen_lock_confirm_render(void)
         oled_draw_string_centered(5, "reach this wallet.");
     }
 
-    oled_draw_string(7, 0, "BACK        LOCK");
+    oled_draw_string(7, 0, HINT_LOCK_CONFIRM);
 }
 
 static void screen_lock_confirm_on_button(button_id_t btn)
@@ -2378,13 +2379,13 @@ static void screen_wallet_create_render(void)
         snprintf(words_str, sizeof(words_str), "< %d words >", create_word_count);
         oled_draw_string_centered(2, words_str);
 
-        oled_draw_string_centered(4, "UP/DN: 12/24");
+        oled_draw_string_centered(4, HINT_CREATE_LENGTH);
 
         if (create_error[0] != '\0') {
             oled_draw_string_centered(5, create_error);
         }
 
-        oled_draw_string(7, 0, "BCK         GEN");
+        oled_draw_string(7, 0, HINT_CREATE);
     } else {
         /* Show "generating" message briefly, then switch to mnemonic display */
         oled_draw_string_centered(3, "Generating...");
@@ -2518,7 +2519,7 @@ static void screen_wallet_select_render(void)
         }
     }
 
-    oled_draw_string(7, 0, "BCK  UP DN  SEL");
+    oled_draw_string(7, 0, HINT_WALLET_SELECT);
 }
 
 static void screen_wallet_select_on_button(button_id_t btn)
@@ -2595,7 +2596,7 @@ static void screen_mnemonic_display_render(void)
 
     if (mnemonic_word_count == 0) {
         oled_draw_string_centered(3, "No mnemonic");
-        oled_draw_string(7, 0, "BACK");
+        oled_draw_string(7, 0, HINT_BACK);
         return;
     }
 
@@ -2640,13 +2641,13 @@ static void screen_mnemonic_display_render(void)
     bool has_next = mnemonic_page < total_pages - 1;
 
     if (has_prev && has_next) {
-        oled_draw_string(7, 0, "DONE PREV   NEXT");
+        oled_draw_string(7, 0, HINT_SEED_MIDDLE);
     } else if (has_prev) {
-        oled_draw_string(7, 0, "DONE PREV");
+        oled_draw_string(7, 0, HINT_SEED_LAST);
     } else if (has_next) {
-        oled_draw_string(7, 0, "DONE        NEXT");
+        oled_draw_string(7, 0, HINT_SEED_FIRST);
     } else {
-        oled_draw_string(7, 0, "DONE");
+        oled_draw_string(7, 0, HINT_SEED_ONLY);
     }
 }
 
@@ -2747,7 +2748,7 @@ static void screen_mnemonic_entry_render(void)
         snprintf(line, sizeof(line), "%s 24", entry_length_choice == 24 ? ">" : " ");
         oled_draw_string(5, 0, line);
 
-        oled_draw_string(7, 0, "UP DN  BCK  SEL");
+        oled_draw_string(7, 0, HINT_IMPORT_LENGTH);
         return;
     }
 
@@ -2795,7 +2796,7 @@ static void screen_mnemonic_entry_render(void)
 
     /* With a block open, BACK closes it instead of deleting a character, so
      * the hint has to say which one the next press will do. */
-    oled_draw_string(7, 0, entry.in_group ? "UP DN  BCK  SEL" : "UP DN  DEL  SEL");
+    oled_draw_string(7, 0, entry.in_group ? HINT_WORD_GROUP : HINT_SCROLL_DEL_SEL);
 }
 
 /* Import the phrase now held in `entry`. Always clears it before returning. */
@@ -3090,7 +3091,7 @@ static void screen_settings_render(void)
         oled_draw_string(2 + i * 2, 0, line);
     }
 
-    oled_draw_string(7, 0, "UP DN       SEL");
+    oled_draw_string(7, 0, HINT_SETTINGS);
 }
 
 static void screen_settings_on_button(button_id_t btn)
@@ -3282,7 +3283,7 @@ static void screen_qr_out_render(void)
            bug rather than a state; say so instead of a blank panel. */
         oled_clear();
         oled_draw_string_centered(3, "QR unavailable");
-        oled_draw_string(7, 0, "BACK");
+        oled_draw_string(7, 0, HINT_BACK);
     }
 }
 
@@ -3355,6 +3356,18 @@ static void service_qr_out(void)
     if (qr_out_tick(esp_timer_get_time())) {
         ui_invalidate();
     }
+}
+
+/* The footer of a passphrase keyboard (SD card, device passphrase). CANCEL
+ * closes an open block, otherwise deletes (text_entry_back()); ACCEPT opens a
+ * block, otherwise picks. The four-button wording only ever said BCK, so its
+ * GROUP and SEL hints are the same string. */
+static const char *text_entry_hint(const TextEntry *e)
+{
+    if (e->in_group) {
+        return HINT_TEXT_GROUP;
+    }
+    return text_entry_on_group(e) ? HINT_TEXT_OPEN : HINT_TEXT_SEL;
 }
 
 /* ============================================================================
@@ -3577,13 +3590,13 @@ static void screen_sd_seed_render(void)
             oled_draw_string_centered(0, "SD Card");
             if (sd_count < 0) {
                 oled_draw_string_centered(3, "No SD card");
-                oled_draw_string(7, 0, "BACK        RETRY");
+                oled_draw_string(7, 0, HINT_SD_RETRY);
                 return;
             }
             const int n = sd_items();
             if (n == 0) {
                 oled_draw_string_centered(3, "No seed files");
-                oled_draw_string(7, 0, "BACK        RETRY");
+                oled_draw_string(7, 0, HINT_SD_RETRY);
                 return;
             }
             int start = sd_sel > 2 ? sd_sel - 2 : 0;
@@ -3596,7 +3609,7 @@ static void screen_sd_seed_render(void)
                          : (sd_can_sign && idx == 0) ? "Sign transaction" : "Save open seed");
                 oled_draw_string(2 + i, 0, line);
             }
-            oled_draw_string(7, 0, "BACK  UP/DN     OK");
+            oled_draw_string(7, 0, HINT_SD_LIST);
             return;
         }
         case SD_PASS_LOAD:
@@ -3622,19 +3635,18 @@ static void screen_sd_seed_render(void)
             char count[22];
             snprintf(count, sizeof count, "%u chars", (unsigned)len & 0x7F);
             oled_draw_string_centered(5, count);
-            oled_draw_string(7, 0, text_entry_on_group(&sd_entry) ? "UP DN  BCK OPEN"
-                                                                  : "UP DN  BCK  SEL");
+            oled_draw_string(7, 0, text_entry_hint(&sd_entry));
             return;
         }
         case SD_RESULT:
             for (int i = 0; i < 4; i++) oled_draw_string_centered(1 + i + (i > 0), sd_msg[i]);
-            oled_draw_string(7, 0, "                OK");
+            oled_draw_string(7, 0, HINT_OK);
             return;
     }
 #else
     oled_draw_string_centered(0, "SD Card");
     oled_draw_string_centered(3, "No card slot");
-    oled_draw_string(7, 0, "BACK");
+    oled_draw_string(7, 0, HINT_BACK);
 #endif
 }
 
@@ -3786,7 +3798,7 @@ static void screen_show_address_render(void)
         oled_draw_string_centered(0, "Receive");
         oled_draw_string_centered(3, "No address");
         oled_draw_string_centered(4, "(derivation failed)");
-        oled_draw_string(7, 0, "BACK");
+        oled_draw_string(7, 0, HINT_BACK);
         return;
     }
     if (p.kind == ZRECV_QR) {
@@ -3794,7 +3806,7 @@ static void screen_show_address_render(void)
             /* zcash-receive.c sized it for the panel; not a state. */
             oled_clear();
             oled_draw_string_centered(3, "QR unavailable");
-            oled_draw_string(7, 0, "BACK");
+            oled_draw_string(7, 0, HINT_BACK);
         }
         return;
     }
@@ -3807,7 +3819,7 @@ static void screen_show_address_render(void)
     oled_draw_string_centered(0, "Receive");
     oled_draw_string_centered(3, "No Zcash on this");
     oled_draw_string_centered(4, "board");
-    oled_draw_string(7, 0, "BACK");
+    oled_draw_string(7, 0, HINT_BACK);
 #endif
 }
 
@@ -3997,7 +4009,7 @@ static void screen_scan_render(void)
 
     oled_draw_string_centered(0, "Scan request");
     oled_draw_string_centered(3, scan_status);
-    oled_draw_string(7, 0, "BACK");
+    oled_draw_string(7, 0, HINT_BACK);
 }
 
 static void screen_scan_on_button(button_id_t btn)
@@ -4234,14 +4246,14 @@ static void screen_entropy_render_choose(void)
     snprintf(line, sizeof(line), "dice %d = %d bits",
              entropy_dice_roll_count(), entropy_dice_bits());
     oled_draw_string(1, 0, line);
-    snprintf(line, sizeof(line), "taps %d = %d bits",
+    snprintf(line, sizeof(line), HINT_ENTROPY_EVENTS " %d = %d bits",
              entropy_user_event_count(), entropy_user_bits_estimate());
     oled_draw_string(2, 0, line);
 
     bool ready = entropy_target_met();
 
     oled_draw_string(4, 0, entropy_menu_sel == 0 ? "> Roll dice" : "  Roll dice");
-    oled_draw_string(5, 0, entropy_menu_sel == 1 ? "> Tap buttons" : "  Tap buttons");
+    oled_draw_string(5, 0, entropy_menu_sel == 1 ? "> " HINT_ENTROPY_ITEM : "  " HINT_ENTROPY_ITEM);
     if (ready) {
         oled_draw_string(6, 0, entropy_menu_sel == 2 ? "> Create wallet"
                                                      : "  Create wallet");
@@ -4251,7 +4263,7 @@ static void screen_entropy_render_choose(void)
         oled_draw_string(6, 0, line);
     }
 
-    oled_draw_string(7, 0, "UP  DN  BCK SEL");
+    oled_draw_string(7, 0, HINT_ENTROPY_CHOOSE);
 }
 
 /* ------------------------------------------------------------ dice entry */
@@ -4301,7 +4313,7 @@ static void screen_entropy_render_dice(void)
         oled_draw_string_centered(6, "roll, then ROLL");
     }
 
-    oled_draw_string(7, 0, "+1  -1  BCK ROLL");
+    oled_draw_string(7, 0, HINT_DICE);
 }
 
 /* ---------------------------------------------------------- press entry */
@@ -4339,14 +4351,14 @@ static void screen_entropy_render_press(void)
      * unavailable rather than as a third way to stir the pool. */
     if (entropy_target_met()) {
         oled_draw_string_centered(5, "Ready");
-        oled_draw_string(7, 0, "MIX MIX BCK NEXT");
+        oled_draw_string(7, 0, HINT_MIX_READY);
     } else {
         char remaining[22];
         snprintf(remaining, sizeof(remaining), "%d more to go", target - events);
         oled_draw_string_centered(5, remaining);
         /* No NEXT yet - the target is required, not suggested. CANCEL still
          * backs out so nobody is stuck on this screen. */
-        oled_draw_string(7, 0, "MIX MIX BCK ----");
+        oled_draw_string(7, 0, HINT_MIX_WAIT);
     }
 }
 
@@ -4526,7 +4538,7 @@ static void screen_wipe_confirm_render(void)
     snprintf(msg, sizeof(msg), "Press OK %u more", (unsigned)(left < 0 ? 0 : left));
     oled_draw_string_centered(6, msg);
 
-    oled_draw_string(7, 0, "BACK        WIPE");
+    oled_draw_string(7, 0, HINT_WIPE);
 }
 
 static void screen_wipe_confirm_on_button(button_id_t btn)
@@ -4629,7 +4641,7 @@ static void screen_mnemonic_verify_render(void)
         oled_draw_string_centered(1, "Backup verified");
         oled_draw_string_centered(3, "Keep the phrase");
         oled_draw_string_centered(4, "somewhere safe.");
-        oled_draw_string(7, 0, "            DONE");
+        oled_draw_string(7, 0, HINT_DONE);
         return;
     }
 
@@ -4677,7 +4689,7 @@ static void screen_mnemonic_verify_render(void)
 
     /* With a block open, BACK closes it instead of deleting a character, so
      * the hint has to say which one the next press will do. */
-    oled_draw_string(7, 0, entry.in_group ? "UP DN  BCK  SEL" : "UP DN  DEL  SEL");
+    oled_draw_string(7, 0, entry.in_group ? HINT_WORD_GROUP : HINT_SCROLL_DEL_SEL);
 }
 
 static void screen_mnemonic_verify_on_button(button_id_t btn)
@@ -4823,7 +4835,7 @@ static void screen_session_confirm_render(void)
     oled_draw_string_centered(4, "Match the code");
     oled_draw_string_centered(5, "shown in the app");
 
-    oled_draw_string(7, 0, "DENY       ALLOW");
+    oled_draw_string(7, 0, HINT_SESSION);
 }
 
 static void screen_session_confirm_on_button(button_id_t btn)
@@ -4910,9 +4922,7 @@ static void screen_passphrase_render(void)
     oled_draw_string_centered(5, count);
 
     /* ACCEPT opens a block before it picks anything, so it must not say SEL. */
-    oled_draw_string(7, 0, text_entry_on_group(&passphrase_entry)
-                               ? "UP DN  BCK OPEN"
-                               : "UP DN  BCK  SEL");
+    oled_draw_string(7, 0, text_entry_hint(&passphrase_entry));
 }
 
 static void screen_passphrase_on_button(button_id_t btn)
@@ -5040,7 +5050,8 @@ static void screen_ble_name_render(void)
         oled_draw_string_centered(5, count);
     }
 
-    oled_draw_string(7, 0, "UP DN  BCK  SEL");
+    oled_draw_string(7, 0, text_entry_on_group(&ble_name_entry) ? HINT_BLE_NAME_OPEN
+                                                                : HINT_TEXT_SEL);
 }
 
 static void screen_ble_name_on_button(button_id_t btn)
@@ -5135,7 +5146,7 @@ static void screen_passphrase_confirm_render(void)
         oled_draw_string_centered(2, "Error");
         oled_draw_string_centered(4, "No fingerprint");
         oled_draw_string_centered(6, "Cannot confirm");
-        oled_draw_string(7, 0, "RETRY");
+        oled_draw_string(7, 0, HINT_RETRY);
         return;
     }
 
@@ -5145,7 +5156,7 @@ static void screen_passphrase_confirm_render(void)
     draw_master_zfp(4);
 
     oled_draw_string_centered(6, "Match your record");
-    oled_draw_string(7, 0, "RETRY         OK");
+    oled_draw_string(7, 0, HINT_RETRY_OK);
 }
 
 static void screen_passphrase_confirm_on_button(button_id_t btn)
@@ -5296,7 +5307,7 @@ static void screen_host_passphrase_render(void)
     if (strlen(host_passphrase_xfp) != 8) {
         /* Nothing to recognise means nothing to confirm. */
         oled_draw_string_centered(3, "No fingerprint");
-        oled_draw_string(7, 0, "NO");
+        oled_draw_string(7, 0, HINT_NO);
         return;
     }
 
@@ -5305,7 +5316,7 @@ static void screen_host_passphrase_render(void)
     oled_draw_string_centered(2, line);
     oled_draw_string(4, 0, "Typed on host!");
     oled_draw_string(6, 0, "Match your record");
-    oled_draw_string(7, 0, "NO           YES");
+    oled_draw_string(7, 0, HINT_NO_YES);
 }
 
 static void screen_host_passphrase_on_button(button_id_t btn)
@@ -5366,7 +5377,7 @@ static void screen_zsign_review_render(void)
     ZReviewPage page;
     if (!zsign_summary || !zreview_render(zsign_summary, zsign_network, zsign_page, &page)) {
         oled_draw_string_centered(3, "Nothing to sign");
-        oled_draw_string(7, 0, "BACK");
+        oled_draw_string(7, 0, HINT_BACK);
         return;
     }
     for (int r = 0; r < ZREVIEW_ROWS; r++) {
@@ -5475,7 +5486,7 @@ static void screen_address_check_render(void)
         for (int r = 0; r < ZRECV_ROWS - 1; r++) {
             if (p.row[r][0]) oled_draw_string(r, 0, p.row[r]);
         }
-        oled_draw_string(7, 0, "NO    UP/DN    NEXT");
+        oled_draw_string(7, 0, HINT_ADDR_PAGE);
         return;
     }
     oled_draw_string_centered(0, "Address check");
@@ -5485,7 +5496,7 @@ static void screen_address_check_render(void)
     snprintf(line, sizeof line, "acct %u  %s", (unsigned)(addr_check.account % 100000u),
              addr_check.network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
     oled_draw_string_centered(5, line);
-    oled_draw_string(7, 0, "NO               YES");
+    oled_draw_string(7, 0, HINT_ADDR_ASK);
 }
 
 static void address_check_done(SignOutcome o)
@@ -5574,13 +5585,13 @@ static void screen_temp_seed_render(void)
         oled_draw_string(3, 0, "Lock, reboot or");
         oled_draw_string(4, 0, "power loss erases");
         oled_draw_string(5, 0, "it. Keep a backup.");
-        oled_draw_string(7, 0, "DN:more BCK  SEL");
+        oled_draw_string(7, 0, HINT_TEMP_FIRST);
     } else {
         oled_draw_string(2, 0, "PIN guards nothing");
         oled_draw_string(3, 0, "at rest: nothing");
         oled_draw_string(4, 0, "is stored to guard.");
         oled_draw_string(5, 0, "Auto-lock 30 min.");
-        oled_draw_string(7, 0, "UP:back BCK  SEL");
+        oled_draw_string(7, 0, HINT_TEMP_LAST);
     }
 }
 
