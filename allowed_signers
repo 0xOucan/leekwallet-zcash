@@ -10,8 +10,10 @@
 # nothing. Compare the key with a second channel too before trusting it: it
 # is one of the maintainer's keys at https://github.com/0xOucan.keys.
 #
+# The key signs files (SHA256SUMS) and git objects (the release tags).
+#
 # Rotating the key: the new key is added here in a commit, announced, and
 # noted in the changelog; the announcement of the new key is signed with the
 # old one. Releases already published stay verifiable with the line at their
 # own tag.
-0xoucanxxx@gmail.com namespaces="file" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAPljmoBLnjaqSUF/ThaMU5dcuolTHq4t3sG0991BZwF
+0xoucanxxx@gmail.com namespaces="file,git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAPljmoBLnjaqSUF/ThaMU5dcuolTHq4t3sG0991BZwF
