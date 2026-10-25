@@ -1,6 +1,6 @@
 # `leek-device`: the board's client
 
-Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
+Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute video](https://www.youtube.com/watch?v=8F6_8AhsnAA) · X: [@gmLeekWallet](https://x.com/gmLeekWallet) · [@0xOucan](https://x.com/0xOucan)
 
 Our Rust client for the LeekWallet Zcash board: the v2 pairing handshake,
 the encrypted session, the Zcash calls, and the `.zsig` file. It does not
