@@ -12,7 +12,9 @@ The kit is three parts:
 - **one Cancel button**, K3, on GPIO14.
 
 Every screen, setting and gesture works with just these: turn, press, and
-Cancel.
+Cancel. The footer on each screen names them the same way: `X:` is the
+Cancel button, `TURN` the knob turning, `OK:` the knob pressed (for example
+`X:BACK  TURN  OK:SEL`).
 
 **Power every module from 3V3, never 5V.** Each module has its own pull-up
 resistors to its supply pin, and those pull the ESP32-S3's pins up to that

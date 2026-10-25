@@ -2,6 +2,7 @@
  * Transaction review pages. See zcash-review.h.
  */
 #include "zcash-review.h"
+#include "hints.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -285,7 +286,7 @@ bool zreview_render(const zs_summary *s, uint8_t network, int page, ZReviewPage 
     int total = zreview_page_count(s, network);
     if (page < 0 || page >= total) return false;
 
-    put(out, 7, page == total - 1 ? "REJECT           SIGN" : "REJECT   ^v      NEXT");
+    put(out, 7, page == total - 1 ? HINT_REVIEW_SIGN : HINT_REVIEW_NEXT);
     if (page == total - 1) {
         render_final(s, network, page, total, out);
         return true;

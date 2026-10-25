@@ -64,6 +64,13 @@ digit goes up. If you prefer it the other way round, **Settings → Knob
 direction** switches between Normal and Reversed; the change applies on the
 next click of the knob, is kept across restarts, and affects the knob only.
 
+The bottom line of each screen says what each input does there, in the
+knob's own words: `X:` is the Cancel button, `TURN` is turning the knob and
+`OK:` is pressing it. The PIN pad, for example, reads `X:DEL   TURN  OK:SEL`
+and a transaction page `X:REJECT TURN OK:NEXT`. The four-button boards
+(`esp32s3`, Pixie) keep their original footers (`UP DN  DEL  SEL`); the
+wording is picked at build time from the board, in `src/hints.h`.
+
 On power-on the board plays a short logo animation (about 2.5 s; any turn,
 press or Cancel skips it) and shows the release, `v0.1.0 Sacbeh`, before
 the boot screen and the PIN. The version is set in one place,

@@ -2,6 +2,7 @@
  * The receive pages and the seed fingerprint. See zcash-receive.h.
  */
 #include "zcash-receive.h"
+#include "hints.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -12,7 +13,7 @@
 #define UA_ROWS_PER_PAGE 6
 #define UA_CHARS_PER_PAGE (UA_ROWS_PER_PAGE * ZRECV_COLS)
 
-#define FOOTER "BACK    UP/DN    QR"
+#define FOOTER HINT_RECEIVE
 
 /* QR capacity in bytes at ECC_LOW, versions 1-10 (ISO/IEC 18004 table 7). */
 static const uint16_t BYTE_CAPACITY[10] = { 17, 32, 53, 78, 106, 134, 154, 192, 230, 271 };
