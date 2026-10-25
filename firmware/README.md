@@ -71,10 +71,14 @@ and a transaction page `X:REJECT TURN OK:NEXT`. The four-button boards
 (`esp32s3`, Pixie) keep their original footers (`UP DN  DEL  SEL`); the
 wording is picked at build time from the board, in `src/hints.h`.
 
-On power-on the board plays a short logo animation (about 2.5 s; any turn,
-press or Cancel skips it) and shows the release, `v0.1.0 Sacbeh`, before
-the boot screen and the PIN. The version is set in one place,
-`src/version.h`, which `getFeatures` reports too.
+On power-on the board loops a logo animation, then `@gmLeekWallet`,
+`v0.1.0 Sacbeh` and "the white road" with a blinking `Push the knob`, until the
+knob is pressed (on the four-button boards, any key); turning it or Cancel
+only jumps to the prompt. Left alone for 10 minutes the screen goes black
+against OLED burn-in, and the next input only wakes it. The PIN unlock
+screen, untouched for 30 s, falls back to the animation: the typed digits
+are wiped, nothing is submitted, and the attempt counter is unchanged. The
+version is set in one place, `src/version.h`, which `getFeatures` reports too.
 
 Everything runs at 3.3 V. Wiring: [docs/WIRING-S3CAM.md](docs/WIRING-S3CAM.md);
 the board's pins: [docs/BOARD-S3CAM-PINOUT.md](docs/BOARD-S3CAM-PINOUT.md).

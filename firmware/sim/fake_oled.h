@@ -53,6 +53,9 @@ const char *fake_oled_qr_data(void);
 uint8_t fake_oled_qr_version(void);
 uint8_t fake_oled_qr_scale(void);
 
+/** One pixel of the 128x64 frame buffer (not the full-panel picture). */
+bool fake_oled_pixel(int x, int y);
+
 /** Times the frame was pushed to the (imaginary) panel. */
 int fake_oled_flush_count(void);
 

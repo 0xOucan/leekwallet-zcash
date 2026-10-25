@@ -1813,3 +1813,24 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   press-and-turn now does it too. `button.c` ignores a key that reads
   pressed from power-on until it is released.
 - Not yet tried on the board.
+
+### The splash loops; the unlock screen falls back to it (2026-10-25)
+- The owner asked for the splash to loop until the knob is pushed, and
+  for an unattended PIN screen to go back to it.
+- The boot screen IS the splash now (`splash_loop_*` in `src/splash.c`,
+  pure and host-tested): the animation, then the text held 4 s with
+  `Push the knob` blinking every 500 ms, again. On the knob kit only the
+  press dismisses it; a turn or Cancel jumps to the prompt. On the
+  four-button boards any key dismisses it ("Press any key").
+- After 10 minutes with no input the panel goes black (burn-in, current);
+  the input that wakes it is spent waking it, never a dismissal.
+- `SCREEN_PIN_UNLOCK` idle for 30 s (`UI_PIN_IDLE_SPLASH_US`) returns to
+  the splash through `ui_set_screen`, so the exit hook zeroes the typed
+  digits (`pin_entry_reset` now uses `memzero`). `pin_verify` is not
+  called, so the attempt counter is neither spent nor reset; dismissing
+  the splash again re-reads it from NVS (`pin_init` is idempotent) and
+  clears any pending re-authentication such as Show Seed. PIN setup and
+  change, and the review screens, never time out to it.
+- `test_splash` and `test_ui` cover the loop, the inputs, the blanking and
+  the idle return with the PIN wiped and the tries kept.
+- Not yet tried on the board.
