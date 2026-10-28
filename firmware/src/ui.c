@@ -180,6 +180,8 @@ static void screen_lock_hold_on_button(button_id_t btn);
 
 static void screen_lock_confirm_render(void);
 static void screen_lock_confirm_on_button(button_id_t btn);
+static void screen_show_seed_confirm_render(void);
+static void screen_show_seed_confirm_on_button(button_id_t btn);
 
 
 static void screen_mnemonic_verify_enter(void);
@@ -337,6 +339,13 @@ static const screen_t screen_lock_confirm = {
     .enter = NULL,
     .render = screen_lock_confirm_render,
     .on_button = screen_lock_confirm_on_button,
+    .exit = NULL
+};
+
+static const screen_t screen_show_seed_confirm = {
+    .enter = NULL,
+    .render = screen_show_seed_confirm_render,
+    .on_button = screen_show_seed_confirm_on_button,
     .exit = NULL
 };
 
@@ -1659,8 +1668,8 @@ static void screen_pin_unlock_render(void)
     }
     oled_draw_string_centered(5, attempts_str);
 
-    /* Draw instructions */
-    oled_draw_string(7, 0, HINT_SCROLL_DEL_SEL);
+    /* X deletes a digit; with none typed it is the way out. */
+    oled_draw_string(7, 0, pin_cursor > 0 ? HINT_SCROLL_DEL_SEL : HINT_SCROLL_BACK_SEL);
 }
 
 static void screen_pin_unlock_on_button(button_id_t btn)
@@ -1678,8 +1687,16 @@ static void screen_pin_unlock_on_button(button_id_t btn)
             if (pin_cursor > 0) {
                 pin_entry_backspace();
                 current_digit = 0;
+                break;
             }
-            break;
+            /* Nothing to delete: leave, as the idle timeout does. The device
+             * is locked either way, so this goes to the splash, never to the
+             * menu; it also drops a pending Show Seed, which would otherwise
+             * still be waiting behind the next ordinary unlock. No
+             * pin_verify(), so the attempt counter is untouched. */
+            pending_mnemonic_display = false;
+            ui_set_screen(SCREEN_BOOT);
+            return;
 
         case BUTTON_ACCEPT:
             if (current_digit != PIN_OPTION_SUBMIT) {
@@ -2402,6 +2419,35 @@ static void screen_lock_confirm_on_button(button_id_t btn)
     }
     if (btn == BUTTON_CANCEL) {
         ui_set_screen(SCREEN_MAIN_MENU);
+    }
+}
+
+/* Settings -> Show Seed. The lock that follows is deliberate (see
+ * SET_SHOW_SEED), but it was a trap: the PIN screen had no way back, so
+ * someone who opened Show Seed by mistake, or handed the board to a friend
+ * who did, could only type the PIN or wait. This says what happens before it
+ * happens, and BACK leaves the device unlocked on Settings. */
+static void screen_show_seed_confirm_render(void)
+{
+    oled_clear();
+    oled_draw_string_centered(0, "Show seed?");
+    oled_draw_string_centered(2, "This locks the");
+    oled_draw_string_centered(3, "device. Enter your");
+    oled_draw_string_centered(4, "PIN to see words.");
+    oled_draw_string(7, 0, HINT_SHOW_SEED);
+}
+
+static void screen_show_seed_confirm_on_button(button_id_t btn)
+{
+    if (btn == BUTTON_ACCEPT) {
+        ESP_LOGI(TAG, "Show Seed: locking to re-ask the PIN");
+        lock_device();
+        pending_mnemonic_display = true;
+        ui_set_screen(SCREEN_PIN_UNLOCK);
+        return;
+    }
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_SETTINGS);
     }
 }
 
@@ -3209,9 +3255,9 @@ static void screen_settings_on_button(button_id_t btn)
                         ui_set_screen(SCREEN_TEMP_SEED);
                         break;
                     }
-                    lock_device();
-                    pending_mnemonic_display = true;
-                    ui_set_screen(SCREEN_PIN_UNLOCK);
+                    /* Said first, with a way back: past this point the only
+                     * way into the menu again is the PIN. */
+                    ui_set_screen(SCREEN_SHOW_SEED_CONFIRM);
                     break;
                 case SET_NEW_WALLET:
                     /* The same route as the main menu's New Wallet, and for
@@ -5719,6 +5765,7 @@ void ui_init(void)
     screens[SCREEN_SESSION_CONFIRM] = &screen_session_confirm;
     screens[SCREEN_LOCK_HOLD] = &screen_lock_hold;
     screens[SCREEN_LOCK_CONFIRM] = &screen_lock_confirm;
+    screens[SCREEN_SHOW_SEED_CONFIRM] = &screen_show_seed_confirm;
     screens[SCREEN_PASSPHRASE] = &screen_passphrase;
     screens[SCREEN_BLE_NAME] = &screen_ble_name;
     screens[SCREEN_TEMP_SEED] = &screen_temp_seed;

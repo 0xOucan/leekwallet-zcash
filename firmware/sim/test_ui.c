@@ -2687,12 +2687,60 @@ static void test_show_seed_relocks_the_vault_too(void)
 
     settings_goto("Show Seed");
     press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SHOW_SEED_CONFIRM, "Show Seed did not say it locks first");
+    CHECK(pin_is_unlocked(), "the confirmation screen had already locked");
+    press(BUTTON_ACCEPT);
 
     check_fully_locked("show seed");
 
     /* And the request itself survives, or the item would do nothing. */
     CHECK(pin_verify("1234"), "could not re-enter the PIN");
     press(BUTTON_ACCEPT);
+}
+
+/* A friend opened Show Seed on an unlocked board and was stuck: the PIN
+ * screen had no way back. BACK on the confirmation keeps the session; X on an
+ * empty PIN screen goes to the splash, still locked, and forgets the request. */
+static void test_show_seed_has_a_way_back(void)
+{
+    printf("== Show Seed: BACK before the lock, X on an empty PIN screen after it\n");
+    unlocked_in_a_passphrase_wallet();
+
+    settings_goto("Show Seed");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SHOW_SEED_CONFIRM, "no confirmation before the lock");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_SETTINGS, "BACK did not return to Settings");
+    CHECK(pin_is_unlocked(), "BACK locked the device");
+
+    settings_goto("Show Seed");
+    press(BUTTON_ACCEPT);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "OK did not ask for the PIN");
+    CHECK(!pin_is_unlocked(), "OK did not lock");
+    int tries = pin_get_remaining_attempts();
+
+    /* With a digit typed, X still deletes it. */
+    press(BUTTON_ACCEPT);
+    CHECK(ui__pin_cursor_for_test() == 1, "no digit was typed");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "X with a digit left the screen");
+    CHECK(ui__pin_cursor_for_test() == 0, "X did not delete the digit");
+
+    /* With none, it leaves. */
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_BOOT, "X on an empty PIN screen did not leave");
+    CHECK(!pin_is_unlocked(), "leaving unlocked the device");
+    CHECK(pin_get_remaining_attempts() == tries, "leaving cost a try");
+
+    /* The request is gone: the next unlock lands on the menu, not the words. */
+    run_ms(500);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "the splash did not return to the PIN screen");
+    CHECK(type_pin("1234"), "could not type the PIN");
+    CHECK(pin_is_unlocked(), "the PIN did not unlock");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU,
+          "a dropped Show Seed still went to screen %d, not the menu", ui_get_screen());
 }
 
 
@@ -3198,6 +3246,7 @@ int main(void)
     test_the_host_lock_actually_locks();
     test_the_autolock_timeout_locks();
     test_show_seed_relocks_the_vault_too();
+    test_show_seed_has_a_way_back();
 
     test_temp_seed_warns_before_it_is_used();
     test_temp_seed_is_visible_on_screen();
