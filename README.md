@@ -182,12 +182,13 @@ which is ignored here.
 
 ## Known issues
 
-- **Zodl fork 3.17.0-leek.1 cannot reach the board.** Its release APKs are
+- **Zodl fork 3.17.0-leek.1 cannot reach the board: use
+  [3.17.0-leek.2](https://github.com/0xOucan/leekwallet-zcash-android/releases/tag/v3.17.0-leek.2).** Its release APKs are
   minified by R8, which removed the five Kotlin methods the board library
   calls through JNI (USB `write`/`read`, Bluetooth `sendFrame`/`recvFrame`,
   the pairing passkey). Debug builds, used in the demo, are not minified and
   work. The fix keeps them (`feature-leekwallet/proguard-consumer.txt`) and
-  was tested on a phone with the board over Bluetooth; it will ship as
+  was tested with the board on mainnet and testnet; it shipped in
   3.17.0-leek.2. The Zcash LeekWallet app is not affected.
 - **"database is locked" when signing in the Zodl fork.** Building the
   transaction while the background sync writes the same wallet database
