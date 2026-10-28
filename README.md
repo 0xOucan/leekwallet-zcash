@@ -7,12 +7,29 @@ Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute
 A DIY Zcash hardware wallet on an ESP32-S3 board that costs about as much as
 lunch. It holds the seed, checks every transaction against its own keys, shows
 you what you are signing, and signs it. Your phone or computer builds and proves
-the transaction; the keys never leave the device.
+the transaction; the seed is never sent to it (see Status for what physical
+access to the board can still read).
 
 Built on [LeekWallet](https://github.com/0xoucan/leekwallet), an open-source ESP32 hardware wallet
 for Ethereum, turned into a Zcash-only one (firmware and every app here),
 for Zcash's shielded pools: **Ironwood** (NU6.3), **Orchard**, and transparent
 outputs.
+
+## ZECATHON
+
+Submitted to ZECATHON's **Wildcard** track as **one integrated project**: the
+board's firmware and every tool that talks to it, below in
+[Ecosystem](#ecosystem).
+
+| | |
+|---|---|
+| Try it without hardware | [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz): a simulated board to wire, unlock and sign with |
+| Watch it on real hardware | [2-minute demo video](https://www.youtube.com/watch?v=8F6_8AhsnAA) |
+| Flash a real board | the web flasher on the same site (Chrome or Edge), after its verify step |
+| Release | [v0.1.0 "Sacbeh"](https://github.com/0xOucan/leekwallet-zcash/releases/tag/v0.1.0): firmware (reproducible build), desktop apps, Android app, Chrome extension; `SHA256SUMS` signed with SSH |
+| Zodl fork | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), its own repository (MIT): mainnet and testnet apps with LeekWallet as a hardware signer |
+| Components | board firmware, Zcash LeekWallet app (desktop, Android), Zodl fork, Chrome extension, `zecz` CLI, Rust libraries, board simulator |
+| Known issues | [below](#known-issues) |
 
 > **ZECATHON provenance.** The starting point was my own earlier
 > [LeekWallet](https://github.com/0xoucan/leekwallet) for Ethereum (this repo's
@@ -163,6 +180,25 @@ The Android app lives in its own repository,
 (a fork of `zodl-android`, branch `leekwallet`). Clone it into `android/`,
 which is ignored here.
 
+## Known issues
+
+- **Zodl fork 3.17.0-leek.1 cannot reach the board.** Its release APKs are
+  minified by R8, which removed the five Kotlin methods the board library
+  calls through JNI (USB `write`/`read`, Bluetooth `sendFrame`/`recvFrame`,
+  the pairing passkey). Debug builds, used in the demo, are not minified and
+  work. The fix keeps them (`feature-leekwallet/proguard-consumer.txt`) and
+  was tested on a phone with the board over Bluetooth; it will ship as
+  3.17.0-leek.2. The Zcash LeekWallet app is not affected.
+- **"database is locked" when signing in the Zodl fork.** Building the
+  transaction while the background sync writes the same wallet database
+  fails at once (the database has no busy timeout). Wait until the home
+  screen no longer says "Syncing" and send again. A retry is planned.
+- **Show Seed had no way back.** Show Seed locks the board on purpose and
+  asks for the PIN again; the PIN screen offered no way out. The fix, for the
+  next firmware: a confirmation first, and Cancel on an empty PIN screen
+  returns to the splash, still locked (branch `postzecathon`, not yet
+  released).
+
 ## Releases
 
 Each version is one GitHub release carrying every product: the firmware
@@ -172,7 +208,10 @@ maintainer's SSH key. [RELEASES.md](RELEASES.md) says what each file is, how
 to verify it, and how to rebuild it and compare. Prebuilt binaries from one
 place are a trust risk; building from source is the recommended way.
 What changed in each version, and its codename: [CHANGELOG.md](CHANGELOG.md).
-The first is v0.1.0 "Sacbeh".
+The first is [v0.1.0 "Sacbeh"](https://github.com/0xOucan/leekwallet-zcash/releases/tag/v0.1.0).
+The Zodl fork has its own releases in
+[leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android/releases),
+signed with the same keys.
 
 ## Build and test
 
