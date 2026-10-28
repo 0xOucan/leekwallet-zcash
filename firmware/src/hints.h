@@ -155,10 +155,14 @@
 
 #endif
 
+/* Show Seed, before it locks the device to re-ask the PIN: the same two
+ * choices as the lock confirmation, so the same words on every board. */
+#define HINT_SHOW_SEED        HINT_LOCK_CONFIRM
+
 /* Every hint in one list, for the length check here and the host test. */
 #define HINT_FOR_EACH(X) \
     X(HINT_SCROLL_DEL_SEL) X(HINT_SCROLL_BACK_SEL) X(HINT_HOME) X(HINT_SETTINGS) \
-    X(HINT_WALLET_SELECT) X(HINT_BACK) X(HINT_LOCK_CONFIRM) X(HINT_CREATE) \
+    X(HINT_WALLET_SELECT) X(HINT_BACK) X(HINT_LOCK_CONFIRM) X(HINT_SHOW_SEED) X(HINT_CREATE) \
     X(HINT_CREATE_LENGTH) X(HINT_SEED_MIDDLE) X(HINT_SEED_LAST) X(HINT_SEED_FIRST) \
     X(HINT_SEED_ONLY) X(HINT_IMPORT_LENGTH) X(HINT_WORD_GROUP) X(HINT_TEXT_SEL) \
     X(HINT_TEXT_OPEN) X(HINT_TEXT_GROUP) X(HINT_BLE_NAME_OPEN) X(HINT_SD_RETRY) \

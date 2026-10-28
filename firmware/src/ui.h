@@ -60,6 +60,9 @@ typedef enum {
      * both that and "throw away the session". */
     SCREEN_LOCK_HOLD,
     SCREEN_LOCK_CONFIRM,
+    /* Settings -> Show Seed, before the lock: says that it locks and that the
+     * PIN comes next, with BACK as a way out while still unlocked. */
+    SCREEN_SHOW_SEED_CONFIRM,
     /* The QR return path: a UR, animated when it needs more than one frame.
      * Shows whatever ui_show_ur() was handed and nothing else; the screen
      * that decided to share it is the one that said what it is. */
