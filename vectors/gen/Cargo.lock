@@ -1818,6 +1818,7 @@ name = "vectors-gen"
 version = "0.1.0"
 dependencies = [
  "bip39",
+ "ff",
  "hex",
  "incrementalmerkletree",
  "orchard",

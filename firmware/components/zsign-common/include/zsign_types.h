@@ -49,6 +49,7 @@ typedef struct {
 #define ZS_E_NOT_CHECKED        (-21)
 #define ZS_E_SIGN               (-22)
 #define ZS_E_INTERNAL           (-23)
+#define ZS_E_DUPLICATE_RK       (-24)   /* two Orchard/Ironwood actions share an rk */
 
 #define ZS_MAX_OUTPUTS 16
 #define ZS_MAX_SIGS    32

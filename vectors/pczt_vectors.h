@@ -178,5 +178,11 @@ static const zv_pczt_vector ZV_PCZT[] = {
   { "r_test_shield_on_main", "../../vectors/pczt/r_test_shield_on_main.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, -17,
     0, 0x00000000, 0, 0, { },
     0, { } },
+  { "r_duplicate_rk", "../../vectors/pczt/r_duplicate_rk.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -24,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_duplicate_rk_cross_pool", "../../vectors/pczt/r_duplicate_rk_cross_pool.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -24,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
 };
 #define ZV_PCZT_COUNT (sizeof ZV_PCZT / sizeof ZV_PCZT[0])

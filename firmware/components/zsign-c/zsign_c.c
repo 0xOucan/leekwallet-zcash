@@ -8,7 +8,8 @@
  *
  *   1. zc_pczt_new   wire format (pczt_reader.c)               -> ZS_E_PARSE
  *   2. check()       the Rust check(): branch, network, our keys,
- *                    unsupported bundles, transparent outputs, then per
+ *                    unsupported bundles, distinct rks, transparent
+ *                    outputs, then per
  *                    Orchard-protocol pool: the field validation that
  *                    orchard::pczt parsing performs (validate_pool) and the
  *                    signer checks (check_pool), then the fee
@@ -298,6 +299,19 @@ static int verify_rk(const zc_action *a, const uint8_t ak[32])
     if (!a->alpha) return -1;
     if (zc_randomize_ak(rk, ak, a->alpha) != 0) return -1;
     return memcmp(rk, a->rk, 32) == 0 ? 0 : -1;
+}
+
+/* No two actions, Orchard and Ironwood together, may share an rk. Each
+ * spend draws its own alpha, so an honest builder never repeats one; a
+ * repeat would let a signature made for one action stand for the other.
+ * Keystone refuses it across both pools too, though their sighashes differ. */
+static int distinct_rks(const zc_pczt *z)
+{
+    /* z->actions holds both pools' actions, Orchard first. */
+    for (int i = 0; i < z->n_actions; i++)
+        for (int j = i + 1; j < z->n_actions; j++)
+            if (memcmp(z->actions[i].rk, z->actions[j].rk, 32) == 0) return 0;
+    return 1;
 }
 
 static int32_t check_pool(zc_ctx *c, int pool, acc_t *acc)
@@ -733,6 +747,7 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
 
     /* Not supported on the device: refuse rather than sign blind. */
     if (z->sapling.n_spends || z->sapling.n_outputs) { rc = ZS_E_UNSUPPORTED_BUNDLE; goto done; }
+    if (!distinct_rks(z)) { rc = ZS_E_DUPLICATE_RK; goto done; }
 
     memset(&acc, 0, sizeof acc);
     acc.fvk = &fvk;

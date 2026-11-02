@@ -8,7 +8,7 @@ reference, not against itself.
 | Path | What |
 |---|---|
 | `keys.json`, `keys_vectors.h` | Accounts derived from public test mnemonics (e.g. "abandon … art"), mainnet and testnet, with and without a passphrase: seed fingerprint, Orchard FVK and address, transparent account key and address, UFVK, UA |
-| `pczt.json`, `pczt_vectors.h`, `pczt/*.pczt` | 40 PCZTs: valid sends (Ironwood, Orchard→Ironwood, NU7, mainnet, transparent shields and mixed, compact views) with their expected summaries and sighashes, and `r_*` refusals each with the error code the device must return |
+| `pczt.json`, `pczt_vectors.h`, `pczt/*.pczt` | 42 PCZTs: valid sends (Ironwood, Orchard→Ironwood, NU7, mainnet, transparent shields and mixed, compact views) with their expected summaries and sighashes, and `r_*` refusals each with the error code the device must return |
 | `zsig/` | A `.zsig` for `iw_send_shielded.pczt` |
 | `zkv/` | A golden `.zkv` SD seed card (format v1) |
 | `gen/` | The generators |

@@ -30,6 +30,8 @@ postcard = { version = "1", features = ["alloc"] }
 # Already in the tree through zcash_transparent; the transparent vectors
 # need its key types.
 secp256k1 = "0.33"
+# Already in the tree through orchard; the duplicate-rk vector reads alpha.
+ff = "0.14"
 
 [[bin]]
 name = "vectors-gen"

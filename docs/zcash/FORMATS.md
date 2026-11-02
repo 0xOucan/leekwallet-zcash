@@ -14,6 +14,11 @@ keys and wallet metadata, and stays v1-encodable where possible.
 The host keeps its own unredacted copy for proving, and proves while the
 device signs.
 
+Every action's rk must be its own: both signer backends refuse a PCZT in
+which two actions, Orchard and Ironwood counted together, carry the same rk
+(`ZS_E_DUPLICATE_RK`), before they check any spend. An honest builder draws
+a fresh alpha per spend, so this only catches a malformed or hostile PCZT.
+
 ## Signatures: `*.zsig`
 The device returns signatures only. The host applies them with
 `Signer::apply_orchard_signature` / `apply_ironwood_signature`, which verify
