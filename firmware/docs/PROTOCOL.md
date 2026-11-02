@@ -460,9 +460,10 @@ input's ZIP 244 digest, which the host recomputes when it applies it.
 A refusal is error `0x05xx`, where the low byte is the reason: `-ZS_E_*`
 from the signers (`zsign_types.h`: 0x0A parse, 0x0B branch, 0x0C foreign
 spend, 0x0D output commitment, 0x0E user address, 0x0F value balance,
-0x10 unsupported bundle, 0x11 network, ...) or `-ZSIGN_E_*` from the
-intake (`zcash-sign.h`: 0x1E out of order, 0x1F size, 0x20 offset, 0x21
-hash, 0x22 incomplete, 0x23 backends disagree, ...). 0x11 is a PCZT for
+0x10 unsupported bundle, 0x11 network, ..., 0x18 two actions with one rk)
+or `-ZSIGN_E_*` from the intake (`zcash-sign.h`: 0x1E out of order, 0x1F
+size, 0x20 offset, 0x21 hash, 0x22 incomplete, 0x23 backends disagree,
+...). 0x11 is a PCZT for
 another network than the request names; 0x28 (`ZSIGN_E_BOARD_NETWORK`) is a
 request for another network than the board's setting, and is not only
 zSign's (above, "The board's network").

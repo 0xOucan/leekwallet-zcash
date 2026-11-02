@@ -50,6 +50,7 @@ pub const ZS_E_DUMMY_KEY: i32 = -20;
 pub const ZS_E_NOT_CHECKED: i32 = -21;
 pub const ZS_E_SIGN: i32 = -22;
 pub const ZS_E_INTERNAL: i32 = -23;
+pub const ZS_E_DUPLICATE_RK: i32 = -24;
 
 /// NU6.3 (Ironwood) and NU7. Anything else is refused: an older branch id
 /// would produce a signature for a transaction the network rejects, or one
@@ -277,6 +278,21 @@ fn check_bundle(
     Ok(())
 }
 
+/// No two actions, Orchard and Ironwood together, may share an rk. Each spend
+/// draws its own alpha, so an honest builder never repeats one; a repeat would
+/// let a signature made for one action stand for the other. Keystone refuses
+/// it across both pools too, though their sighashes differ.
+fn distinct_rks(pczt: &Pczt) -> bool {
+    let rks: Vec<&[u8; 32]> = pczt
+        .orchard()
+        .actions()
+        .iter()
+        .chain(pczt.ironwood().actions().iter())
+        .map(|a| a.spend().rk())
+        .collect();
+    rks.iter().enumerate().all(|(i, a)| rks[i + 1..].iter().all(|b| a != b))
+}
+
 fn t_address(script: &[u8], net: NetworkType) -> Option<String> {
     use zcash_address::{ToAddress, ZcashAddress};
     match script {
@@ -419,6 +435,9 @@ fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut
     // Not supported on the device: refuse rather than sign blind.
     if !pczt.sapling().spends().is_empty() || !pczt.sapling().outputs().is_empty() {
         return Err(ZS_E_UNSUPPORTED_BUNDLE);
+    }
+    if !distinct_rks(pczt) {
+        return Err(ZS_E_DUPLICATE_RK);
     }
 
     let mut acc = Acc {
