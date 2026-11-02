@@ -891,5 +891,33 @@
     "consensus_branch_id": null,
     "fee": null,
     "outputs": []
+  },
+  {
+    "name": "r_duplicate_rk",
+    "description": "Two Ironwood spends of this seed, the second's alpha and rk replaced by the first's: one rk, every commitment intact",
+    "file": "pczt/r_duplicate_rk.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "duplicate_rk",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_duplicate_rk_cross_pool",
+    "description": "Vector orchard_to_ironwood with the Orchard spend's rk copied onto an Ironwood action",
+    "file": "pczt/r_duplicate_rk_cross_pool.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "duplicate_rk",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
   }
 ]

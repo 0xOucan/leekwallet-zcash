@@ -161,8 +161,64 @@ struct Built {
     t_inputs: Vec<TInputSummary>,
 }
 
+/// Two received Ironwood notes in one two-leaf tree, as `ironwood_note`.
+fn ironwood_notes2(fvk: &FullViewingKey, values: [u64; 2], tag: u64) -> ([(orchard::Note, orchard::tree::MerklePath); 2], orchard::Anchor) {
+    let mut rng = rng(tag);
+    let recipient = fvk.address_at(0u32, Scope::External);
+    let version = orchard::bundle::BundleVersion::ironwood_v3();
+    let mut b = orchard::builder::Builder::new(
+        orchard::builder::BundleType::DEFAULT,
+        version,
+        version.default_flags(),
+        orchard::Anchor::empty_tree(),
+    )
+    .unwrap();
+    for v in values {
+        b.add_output(None, recipient, orchard::value::NoteValue::from_raw(v), Memo::Empty.encode().into_bytes())
+            .unwrap();
+    }
+    let (bundle, meta) = b.build::<i64>(&mut rng).unwrap().unwrap();
+    let ivk = fvk.to_ivk(Scope::External).prepare();
+    let notes = [0, 1].map(|i| {
+        let action = bundle.actions().get(meta.output_action_index(i).unwrap()).unwrap();
+        let domain = orchard::note_encryption::IronwoodDomain::for_action(action);
+        try_note_decryption(&domain, &ivk, action).unwrap().0
+    });
+
+    let mut tree = ShardTree::<_, 32, 16>::new(MemoryShardStore::<MerkleHashOrchard, u32>::empty(), 100);
+    let leaves = notes.map(|n| MerkleHashOrchard::from_cmx(&n.commitment().into()));
+    for leaf in leaves {
+        tree.append(leaf, Retention::Marked).unwrap();
+    }
+    tree.checkpoint(9_999_999).unwrap();
+    let path = |i: u64| tree.witness_at_checkpoint_depth(i.into(), 0).unwrap().unwrap();
+    let paths = [path(0), path(1)];
+    let anchor = paths[0].root(leaves[0]);
+    assert_eq!(anchor, paths[1].root(leaves[1]));
+    let [n0, n1] = notes;
+    let [p0, p1] = paths;
+    ([(n0, p0.into()), (n1, p1.into())], anchor.into())
+}
+
 fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, amount: u64, memo: &str, fee: u64) -> Built {
     let (note, anchor, path) = ironwood_note(&sender.fvk, input, tag);
+    build_send_from(tag, height, sender, vec![(note, path)], anchor, dest, amount, memo, fee)
+}
+
+/// `build_send` spending the given notes of `sender`, all under `anchor`.
+#[allow(clippy::too_many_arguments)]
+fn build_send_from(
+    tag: u64,
+    height: u32,
+    sender: &Account,
+    notes: Vec<(orchard::Note, orchard::tree::MerklePath)>,
+    anchor: orchard::Anchor,
+    dest: Dest,
+    amount: u64,
+    memo: &str,
+    fee: u64,
+) -> Built {
+    let input: u64 = notes.iter().map(|(n, _)| n.value().inner()).sum();
     let change = input - amount - fee;
     let change_addr = sender.fvk.address_at(0u32, Scope::Internal);
 
@@ -177,7 +233,9 @@ fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, a
             ironwood_padding: BundlePadding::DEFAULT,
         },
     );
-    builder.add_ironwood_spend::<zip317::FeeRule>(sender.fvk.clone(), note, path).unwrap();
+    for (note, path) in notes {
+        builder.add_ironwood_spend::<zip317::FeeRule>(sender.fvk.clone(), note, path).unwrap();
+    }
 
     let mut outputs = Vec::new();
     let mut external_ua: Option<(orchard::Address, String)> = None;
@@ -590,6 +648,7 @@ fn code(expect: &str) -> i32 {
         "unsupported_bundle" => -16,
         "network_mismatch" => -17,
         "missing_data" => -19,
+        "duplicate_rk" => -24,
         other => panic!("unknown expectation {other}"),
     }
 }
@@ -916,6 +975,50 @@ fn main() {
     vs.push(refuse_on(TEST, "r_main_shield_on_test", "Mainnet shield PCZT (main_t_shield) in a testnet request", &mts_bytes, SENDER, "network_mismatch"));
     vs.push(refuse_on(MAIN, "r_test_on_main", "Testnet PCZT (iw_send_shielded) in a mainnet request", &a_bytes, SENDER, "network_mismatch"));
     vs.push(refuse_on(MAIN, "r_test_shield_on_main", "Testnet shield PCZT (t_shield) in a mainnet request", &ts_bytes, SENDER, "network_mismatch"));
+
+    // Two actions with one rk. Two notes of the sender spent together, then
+    // the second spend's alpha and rk overwritten with the first's: each rk
+    // still opens to our ak under its alpha and every commitment holds, so
+    // only the duplicate refuses it (as Keystone's test does).
+    let (notes, anchor) = ironwood_notes2(&sender.fvk, [600_000, 500_000], 50);
+    let dup = build_send_from(50, H_NU6_3, &sender, notes.to_vec(), anchor, Dest::Shielded(rcpt_ua.clone(), rcpt_addr), 700_000, "", 10_000);
+    let dup_bytes = dup.pczt.clone().serialize().unwrap();
+    let spends = |p: &Pczt| {
+        let mut v = Vec::new();
+        pczt::roles::verifier::Verifier::new(p.clone())
+            .with_ironwood::<(), _>(|b| {
+                for a in b.actions() {
+                    a.spend().verify_nullifier(Some(&sender.fvk))?;
+                    a.spend().verify_rk(Some(&sender.fvk))?;
+                    use ff::PrimeField;
+                    v.push((<[u8; 32]>::from(a.spend().rk()), a.spend().alpha().unwrap().to_repr()));
+                }
+                Ok(())
+            })
+            .unwrap();
+        v
+    };
+    let s = spends(&dup.pczt);
+    assert_eq!(s.len(), 2, "two actions, both our spends");
+    let rk_dup = patch_unique(&patch_unique(&dup_bytes, &s[1].1, &s[0].1), &s[1].0, &s[0].0);
+    let s2 = spends(&Pczt::parse(&rk_dup).unwrap());
+    assert_eq!(s2[0].0, s2[1].0, "both actions now carry one rk, each valid under its alpha");
+    vs.push(refuse("r_duplicate_rk", "Two Ironwood spends of this seed, the second's alpha and rk replaced by the first's: one rk, every commitment intact", &rk_dup, SENDER, "duplicate_rk"));
+
+    // The same rk in both pools: the Orchard spend's rk copied onto an
+    // Ironwood padding action. That action arrives pre-signed and zero-valued,
+    // so no other check looks at its rk: only the duplicate refuses it.
+    let mut o_rk = None;
+    pczt::roles::verifier::Verifier::new(d.pczt.clone())
+        .with_orchard::<(), _>(|b| {
+            o_rk = b.actions().iter().find(|a| a.spend().verify_rk(Some(&sender.fvk)).is_ok()).map(|a| <[u8; 32]>::from(a.spend().rk()));
+            Ok(())
+        })
+        .unwrap();
+    let o_rk = o_rk.expect("the Orchard spend of the sender");
+    let i_rk = *d.pczt.ironwood().actions()[0].spend().rk();
+    let d_bytes = d.pczt.clone().serialize().unwrap();
+    vs.push(refuse("r_duplicate_rk_cross_pool", "Vector orchard_to_ironwood with the Orchard spend's rk copied onto an Ironwood action", &patch_unique(&d_bytes, &i_rk, &o_rk), SENDER, "duplicate_rk"));
 
     fs::write(format!("{dir}/pczt.json"), serde_json::to_string_pretty(&vs).unwrap() + "\n").unwrap();
     fs::write(format!("{dir}/pczt_vectors.h"), c_header(&vs)).unwrap();
