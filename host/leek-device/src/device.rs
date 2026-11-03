@@ -254,6 +254,11 @@ const SHORT: Duration = Duration::from_secs(10);
 /// first wait up to 10 s for its vault after the PIN; 10 s was not enough on
 /// the first board.
 const DERIVE: Duration = Duration::from_secs(90);
+/// `zGetAccount`: a derivation, then the user's answer on the board. The
+/// board asks before it shares a viewing key (once per session) and waits up
+/// to 120 s for the press, after the derivation; DERIVE alone would give up
+/// on a user still reading the question.
+const SHARE_VIEW_KEY: Duration = Duration::from_secs(90 + 120);
 /// The pause before the one retry of a first zGetAccount refused with
 /// 0x0300: about the vault's own unlock (one PBKDF2 on the S3).
 pub const NO_WALLET_RETRY: Duration = Duration::from_millis(1500);
@@ -428,6 +433,12 @@ impl Device {
 
     /// `zGetAccount`: UFVK, UA, t-address and ZIP 32 seed fingerprint.
     ///
+    /// The board asks "Share view key?" and answers only after OK on the
+    /// board; a yes holds for the rest of the session, for that account,
+    /// network and seed. Tell the user to confirm on the board before
+    /// calling. A no is [`ERR_USER_REJECTED`], no answer in the board's 120 s
+    /// window [`ERR_USER_TIMEOUT`].
+    ///
     /// The first one of a session is asked again once, after
     /// [`NO_WALLET_RETRY`], if the device answers 0x0300. Right after
     /// connecting (over Bluetooth especially, and right after the PIN) a
@@ -442,13 +453,13 @@ impl Device {
             ("account", Value::Integer(account.into())),
             ("network", Value::Text(network.into())),
         ];
-        let r = match self.call("zGetAccount", fields(), DERIVE) {
+        let r = match self.call("zGetAccount", fields(), SHARE_VIEW_KEY) {
             Err(e) if !self.account_answered && is_code(&e, ERR_NO_WALLET) => {
                 if std::env::var_os("ZECZ_DEBUG").is_some() {
                     eprintln!("[zecz] zGetAccount: {e:#}; asking again in {} ms", self.no_wallet_retry.as_millis());
                 }
                 std::thread::sleep(self.no_wallet_retry);
-                self.call("zGetAccount", fields(), DERIVE)
+                self.call("zGetAccount", fields(), SHARE_VIEW_KEY)
             }
             r => r,
         }?;

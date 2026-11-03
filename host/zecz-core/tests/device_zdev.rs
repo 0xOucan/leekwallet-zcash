@@ -258,7 +258,8 @@ fn the_user_confirms_the_address_on_the_device() {
 #[test]
 fn a_no_on_the_device_fails_the_address_check() {
     let mut z = zdev_or_skip!("show-no", false);
-    z.child.stdin.as_mut().unwrap().write_all(b"y\nn\n").unwrap();
+    // Pairing: yes. Sharing the viewing key: yes. The address: no.
+    z.child.stdin.as_mut().unwrap().write_all(b"y\ny\nn\n").unwrap();
     let mut dev = connect(&z);
     // The wallet's own address, so the question reaches the user.
     let ua = device::get_text(&dev.z_get_account(0, "test").unwrap(), "ua").unwrap();

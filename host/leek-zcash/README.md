@@ -31,7 +31,8 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 | Call | What it does |
 |---|---|
 | `get_features(&mut Device) -> Features` | `getFeatures` + `zGetFeatures`: firmware, model, spend pools, branch IDs, tx versions, max PCZT size, max transparent inputs (16) |
-| `get_account(&mut Device, index, Network) -> Account` | `zGetAccount`: UFVK (Orchard + P2PKH), UA, t-address, seed fingerprint, birthday. Import it with `KEY_SOURCE` (`"leekwallet"`) |
+| `get_account(&mut Device, index, Network) -> Account` | `zGetAccount`: UFVK (Orchard + P2PKH), UA, t-address, seed fingerprint, birthday, after the user presses OK on the board (once per session). Import it with `KEY_SOURCE` (`"leekwallet"`) |
+| `get_account_with(&mut Device, index, Network, progress) -> Account` | the same, calling `progress(AccountProgress::ConfirmOnDevice)` before the board may ask |
 | `show_address(&mut Device, index, Network, ua) -> AddressCheck` | `zShowAddress`: `Verified`, `Rejected`, `NotOurs` or `Unsupported` |
 | `to_checkable_ua(ua) -> String` | the same UA without its Sapling receiver, which the board cannot check |
 | `set_birthday(&mut Device, index, Network, height) -> bool` | `zSetAccountMeta`; true if kept in flash |
@@ -62,6 +63,20 @@ code 0x0E is `AddressNotOurs` for an address check and `OutputMismatch` for
 signing). The message is a fixed sentence per variant: it never contains an
 amount, an address, a key, PCZT bytes or the board's free-text message, so a
 wallet can forward it to logs and analytics.
+
+## The viewing key
+
+The UFVK is released only after a press on the board. It cannot spend, but
+it shows the account's whole balance and history, so the board asks "Share
+view key?" (naming the account, the network and the session's pairing code)
+and answers `get_account` only after OK. A yes holds for the rest of that
+session, for that account, network and seed; a new pairing asks again, and
+nothing is remembered across a reboot. Cancel on the board is
+`UserRejected`, no answer within its 120 s `UserTimeout`; the call waits for
+both. The board does not say whether it is asking, so show "Confirm on the
+board" for every call (`get_account_with` reports `ConfirmOnDevice` for
+that). `sign_pczt` with `verify_account` reads the account too, and asks only
+if this session has not shared it yet.
 
 ## What the host checks
 

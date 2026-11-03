@@ -4,7 +4,8 @@
 //! hardware-signer path it already has for Keystone or Ledger: a signed PCZT
 //! comes out, which the wallet combines, proves and extracts as before.
 //!
-//! - Account: [`get_account`], [`show_address`] ([`AddressCheck`]),
+//! - Account: [`get_account`] (the UFVK only after a press on the board;
+//!   [`get_account_with`] reports it), [`show_address`] ([`AddressCheck`]),
 //!   [`to_checkable_ua`], [`set_birthday`], [`get_features`].
 //! - Signing: [`preflight`] (host-side checks), [`prepare_for_signer`]
 //!   (derivations some wallets leave out), [`signer_view_bytes`] (what goes
@@ -31,7 +32,8 @@ mod sign;
 mod ua;
 
 pub use account::{
-    get_account, get_features, set_birthday, show_address, Account, AccountMeta, AddressCheck, Features, Network,
+    get_account, get_account_with, get_features, set_birthday, show_address, Account, AccountMeta, AccountProgress,
+    AddressCheck, Features, Network,
     KEY_SOURCE, KNOWN_BRANCH_IDS, MAX_PCZT_BYTES, MAX_TRANSPARENT_INPUTS,
 };
 pub use apply::{apply_zsig, Signature};

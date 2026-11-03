@@ -202,9 +202,35 @@ fn texts(v: &Value, k: &str) -> Option<Vec<String>> {
     }
 }
 
+/// Where [`get_account_with`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AccountProgress {
+    /// The request is on the board. Unless the user already agreed in this
+    /// session (same account, network and seed), the board asks "Share view
+    /// key?" and answers only after OK there, waiting up to 120 s. Tell the
+    /// user to confirm on the board. The board does not say whether it is
+    /// asking, so this comes for every call.
+    ConfirmOnDevice,
+}
+
 /// `zGetAccount`: the account's UFVK, address, t-address, seed fingerprint
-/// and birthday. Derives keys on the board (seconds on the S3).
+/// and birthday. Derives keys on the board (seconds on the S3), and the
+/// board releases the UFVK only after a press (see [`get_account_with`]).
 pub fn get_account(device: &mut Device, index: u32, network: Network) -> Result<Account, LeekError> {
+    get_account_with(device, index, network, &|_| {})
+}
+
+/// [`get_account`], telling `progress` when the board may be asking the
+/// user. A no on the board is [`LeekError::UserRejected`]; no answer in its
+/// 120 s window, [`LeekError::UserTimeout`].
+pub fn get_account_with(
+    device: &mut Device,
+    index: u32,
+    network: Network,
+    progress: &dyn Fn(AccountProgress),
+) -> Result<Account, LeekError> {
+    progress(AccountProgress::ConfirmOnDevice);
     let r = device.z_get_account(index, network.as_str()).map_err(|e| from_device(&e, Ctx::Other))?;
     if text(&r, "network")? != network.as_str() {
         return Err(LeekError::WrongNetwork);
