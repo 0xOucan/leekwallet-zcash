@@ -102,7 +102,22 @@ static uint32_t shown_passphrase_xfp;
  * user made on the device without telling the app. */
 static uint32_t stub_hd_account;
 
-uint32_t ui_hd_account(void)          { return stub_hd_account; }
+/* How a session ends behind the host's back, for the tests that check the
+ * reply to a request whose session is gone: it simply ends (the cable, a
+ * lock), or another host pairs in its place. */
+typedef enum { SESSION_STAYS, SESSION_ENDS, SESSION_REPAIRED } SessionFate;
+static void session_meets(SessionFate fate);
+
+/* getStatus reads the account through this, so it is where a plain method
+ * that never waits on the user can lose its session mid-request. */
+static SessionFate stub_session_fate_in_status = SESSION_STAYS;
+
+uint32_t ui_hd_account(void)
+{
+    session_meets(stub_session_fate_in_status);
+    stub_session_fate_in_status = SESSION_STAYS;
+    return stub_hd_account;
+}
 
 /* The board's Settings > Network, 0 mainnet / 1 testnet. Testnet after
  * fresh_device(), because most of this suite asks for testnet; a test that
@@ -138,12 +153,18 @@ void ui_request_passphrase_confirm(uint32_t fingerprint)
 /* The link dies while the user is reading the question: the cable pulled,
  * the board locked. Set by a test; acted on at the next poll, once. */
 static bool stub_session_dies_on_answer = false;
+/* Same moment, but a new host has paired by the time the answer lands. */
+static bool stub_session_repaired_on_answer = false;
 
 SignOutcome ui_sign_outcome(void)
 {
     if (stub_session_dies_on_answer) {
         stub_session_dies_on_answer = false;
         session_reset();
+    }
+    if (stub_session_repaired_on_answer) {
+        stub_session_repaired_on_answer = false;
+        session_meets(SESSION_REPAIRED);
     }
     return scripted_outcome;
 }
@@ -478,6 +499,8 @@ static void fresh_device(void)
     shown_passphrase_xfp = 0;
     stub_user_is_answering = false;
     stub_session_dies_on_answer = false;
+    stub_session_repaired_on_answer = false;
+    stub_session_fate_in_status = SESSION_STAYS;
     scripted_outcome = SIGN_APPROVED;
 
     protocol_start();
@@ -595,6 +618,24 @@ static void confirmed_session(uint8_t seed)
     handshake(seed);
     session_confirm();
     session_up = true;
+}
+
+/* The device's half of a session the test host knows nothing about: what
+ * the board sees when some other host pairs while a request is in flight.
+ * Driven through session.c directly, because the frames would go to the
+ * same stash the test is about to read the old request's answer from. */
+static void session_meets(SessionFate fate)
+{
+    if (fate == SESSION_STAYS) return;
+    session_reset();
+    if (fate == SESSION_ENDS) return;
+    uint8_t other_host[32], dev_pub[32], commit[SESSION_COMMIT_SIZE];
+    uint8_t nonce[SESSION_NONCE_SIZE], dev_nonce[SESSION_NONCE_SIZE];
+    fill(other_host, sizeof other_host, 0xA7);
+    fill(nonce, sizeof nonce, 0xA8);
+    CHECK(session_begin(other_host, dev_pub, commit) && session_reveal(nonce, dev_nonce),
+          "the other host could not pair");
+    session_confirm();
 }
 
 /* ================================================================= tests */
@@ -1672,6 +1713,88 @@ static void test_zget_account_asks_first(void)
     }
     CHECK(!leaked, "the viewing key went out in the clear");
     stub_session_dies_on_answer = false;
+}
+
+/*
+ * A request that arrived encrypted is answered under the session it came in
+ * on, or refused: never in plaintext, and never under another host's keys.
+ * Whatever the method - the check is where every reply leaves, not in each
+ * handler, so these pick one that never waits (getStatus), one that does
+ * (zSignFinish) and an error that waits (a refused zGetAccount).
+ */
+static bool reply_is_a_bare_refusal(const char *what)
+{
+    Frame f = next_frame();
+    uint32_t code = 0;
+    bool ok = f.present && f.type == T_ERROR && error_code(&f, &code) && code == E_SESSION;
+    CHECK(ok, "%s: frame 0x%02X, code 0x%04X, wanted a plaintext session refusal",
+          what, f.present ? f.type : 0, (unsigned)code);
+    expect_silence(what);
+    return ok;
+}
+
+static void test_no_plaintext_answer_once_the_session_is_gone(void)
+{
+    printf("== an encrypted request outlives its session: a refusal, whatever the method\n");
+    uint8_t payload[128];
+    fresh_device();
+    device_unlocked();
+
+    /* A plain method. getStatus is open to anyone in plaintext, but asked
+     * over the channel it is the channel's answer. */
+    confirmed_session(40);
+    stub_session_fate_in_status = SESSION_ENDS;
+    send_encrypted(payload, req(payload, sizeof payload, "getStatus"));
+    reply_is_a_bare_refusal("getStatus after the session ended");
+
+    host_tx = host_rx = 0;
+    confirmed_session(41);
+    stub_session_fate_in_status = SESSION_REPAIRED;
+    send_encrypted(payload, req(payload, sizeof payload, "getStatus"));
+    reply_is_a_bare_refusal("getStatus after another host paired");
+
+    /* The control: the same request on a session that stays answers. */
+    session_reset();
+    host_tx = host_rx = 0;
+    confirmed_session(42);
+    send_encrypted(payload, req(payload, sizeof payload, "getStatus"));
+    Frame f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "getStatus on a live session was not answered");
+
+    /* An error is a reply too: a no that lands after the session ended is
+     * the session's refusal, not the no. */
+    scripted_outcome = SIGN_REJECTED;
+    stub_session_dies_on_answer = true;
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "test"));
+    reply_is_a_bare_refusal("a refused view key after the session ended");
+
+    /* Signing. The user approves, the session goes, the signatures stay. */
+    const zv_pczt_vector *v = &ZV_PCZT[0];
+    size_t len = 0;
+    uint8_t *pczt = load_vector(v->file, &len);
+    CHECK(pczt != NULL, "cannot read %s", v->file);
+    if (!pczt) return;
+    uint8_t sha[32];
+    sha256_Raw(pczt, len, sha);
+    fake_wallet_preload(v->mnemonic);
+
+    for (int repaired = 0; repaired < 2; repaired++) {
+        session_reset();
+        host_tx = host_rx = 0;
+        confirmed_session((uint8_t)(43 + repaired));
+        CHECK(zsign_upload(pczt, len, sha), "upload failed");
+        scripted_outcome = SIGN_APPROVED;
+        if (repaired) {
+            stub_session_repaired_on_answer = true;
+        } else {
+            stub_session_dies_on_answer = true;
+        }
+        send_encrypted(payload, zsign_simple_req(payload, sizeof payload, "zSignFinish"));
+        reply_is_a_bare_refusal(repaired ? "zSignFinish after another host paired"
+                                         : "zSignFinish after the session ended");
+    }
+    free(pczt);
+    stub_session_dies_on_answer = stub_session_repaired_on_answer = false;
 }
 
 /* -------------------------------------------------------- zSetAccountMeta */
@@ -3584,6 +3707,7 @@ static int run_all_tests(void)
     test_select_wallet();
     test_zget_account();
     test_zget_account_asks_first();
+    test_no_plaintext_answer_once_the_session_is_gone();
     test_zset_account_meta();
     test_large_frames_cross_the_usb_driver();
     test_zcash_waits_for_the_wallet();

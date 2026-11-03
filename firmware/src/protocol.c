@@ -139,6 +139,31 @@ static bool rx_enabled = false;
  */
 static bool reply_encrypted = false;
 
+/**
+ * The session an encrypted request arrived on, by session_generation().
+ *
+ * reply_encrypted says the host is owed an encrypted answer; this says by
+ * whom. A request can outlive its session: a signature, a viewing key or an
+ * unlock waits up to 120 s on the user, and in that time the cable can be
+ * pulled, the board locked, or another host paired. Deciding the reply's
+ * form by "is a session up NOW" then went wrong both ways - with none up it
+ * answered in PLAINTEXT, so whatever the request earned (a viewing key,
+ * signatures) crossed the wire in the clear; with a newer one up it sealed
+ * the answer under the NEW host's keys, handing it a reply to a question it
+ * never asked and moving its counters. So the answer to an encrypted
+ * request goes out under the session it came in on or not at all: if that
+ * session is gone, the reply is a refusal (ERR_SESSION, plaintext, nothing
+ * in it), whatever the method. reply_session_intact() is that test, and the
+ * two places every reply leaves through - dispatch()'s tail and
+ * send_error_ex() - both apply it.
+ */
+static uint32_t request_generation = 0;
+
+static bool reply_session_intact(void)
+{
+    return session_state() == SESSION_ACTIVE && session_generation() == request_generation;
+}
+
 /* Reads the flag transport_apply() owns. Exists so the host suite can assert
  * the boot default is off, which is the half of the fix a behavioural test
  * cannot reach: by the time a fixture has run, the flag has been set. */
@@ -279,6 +304,16 @@ static void send_frame(uint8_t type, const uint8_t *payload, size_t len)
  */
 static void send_error_ex(uint16_t code, const char *message, bool allow_encrypt)
 {
+    /* An error is a reply too, and its message can say what the request
+     * found ("this address is not from this device's wallet"). If the
+     * session the request came in on is gone, the host gets the refusal,
+     * not the error. See request_generation. */
+    if (allow_encrypt && reply_encrypted && !reply_session_intact()) {
+        code = ERR_SESSION;
+        message = "the session ended before the answer";
+        allow_encrypt = false;
+    }
+
     /* Room for the longest message (the wrong-network one, 101 characters)
      * with the CBOR around it and the session tag. */
     uint8_t out[176];
@@ -295,7 +330,7 @@ static void send_error_ex(uint16_t code, const char *message, bool allow_encrypt
         return;
     }
 
-    if (allow_encrypt && reply_encrypted && session_state() == SESSION_ACTIVE) {
+    if (allow_encrypt && reply_encrypted) {
         int enc = session_encrypt(out, w.length, sizeof(out));
         if (enc > 0) {
             /* A distinct type. Sending an encrypted error as an encrypted
@@ -769,9 +804,9 @@ static bool share_view_key_allowed(uint32_t account, uint8_t network,
     }
     /* The yes was for the host that asked. If its session ended while the
      * question was up (the cable pulled, the board locked), there is no one
-     * to give the key to - and dispatch() answers a request whose session
-     * is gone in PLAINTEXT, so going on would put the key on the wire in
-     * the clear. */
+     * to give the key to. dispatch() would refuse the reply anyway (see
+     * request_generation); this stops the yes being noted for a session
+     * that never asked. */
     if (session_generation() != asked_in || session_state() != SESSION_ACTIVE) {
         send_session_error(ERR_SESSION, "the session ended before the answer");
         return false;
@@ -1533,7 +1568,16 @@ static void dispatch(const uint8_t *payload, size_t len)
         return;
     }
 
-    if (reply_encrypted && session_state() == SESSION_ACTIVE) {
+    if (reply_encrypted) {
+        /* Under the session the request came in on, or a refusal: never in
+         * plaintext and never under a newer host's keys. See
+         * request_generation. The answer is wiped, because `out` is static
+         * and a viewing key or a set of signatures should not sit in it. */
+        if (!reply_session_intact()) {
+            memzero(out, w.length);
+            send_session_error(ERR_SESSION, "the session ended before the answer");
+            return;
+        }
         int enc = session_encrypt(out, w.length, sizeof(out));
         if (enc < 0) {
             send_error(ERR_SESSION, "encrypt failed");
@@ -1664,6 +1708,7 @@ void protocol_handle_frame(uint8_t *frame, size_t len)
             /* From here to the end of dispatch the reply owes the host one
              * encrypted frame: the receive counter HAS moved. */
             reply_encrypted = true;
+            request_generation = session_generation();
             dispatch(payload, (size_t)plain);
             reply_encrypted = false;
         }
