@@ -33,9 +33,20 @@ getMnemonic    -> ERROR      unknown or not yet implemented
 ```
 
 The wallet, the vault, NVS, the button layer, the transport, the session layer,
-the protocol **and the display** all work on the C3. `src/oled-pixie.c` drives
-the ST7789 through `firefly-display`, drawing the same 128x64 frame the S3 uses,
-upscaled x1.875 into a 240x120 band centred on the 240x240 panel.
+the protocol **and the display** all work on the C3.
+
+> **Display update (colour-screen branch, not yet re-verified on a Pixie).**
+> The log above is from `src/oled-pixie.c`, which drove the ST7789 through the
+> vendored `firefly-display` and drew the 128x64 frame upscaled x1.875 into a
+> 240x120 band. Both are gone. The Pixie now shares the S3 CAM colour kit's
+> driver: `src/st7789.c` (pins, geometry, rotation, inversion as
+> configuration) with the Pixie's orientation, gamma and byte order kept as a
+> profile in `src/oled-st7789.c`, copied byte for byte from firefly-display.
+> The frame is drawn by `src/panel-color.c`: the eight rows spread over the
+> full 240 rows, glyphs redrawn crisply at 2x3, colour roles, QR codes at
+> native scale. The boot log line is now `oled-st7789: ST7789 Pixie: ...`.
+> Until a Pixie has been flashed with it, treat the display as **untested on
+> this board**; the older paragraphs below describe the previous driver.
 
 > **An earlier version of this page said "the display is what remains" and
 > quoted a log line reading `no panel driver yet — running headless`, naming a

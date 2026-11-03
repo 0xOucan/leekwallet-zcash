@@ -225,6 +225,7 @@ says.
 ```sh
 cd firmware
 pio run -e esp32s3cam                                   # build
+pio run -e esp32s3cam-color                             # build: colour screen kit
 pio run -e esp32s3cam -t upload --upload-port /dev/ttyACM0
 ```
 
