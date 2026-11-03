@@ -5,6 +5,12 @@ talked to. Nothing in this document has been executed.** It exists so that
 whoever does get hardware starts from the design questions already answered,
 rather than from a datasheet.
 
+> **Update 2026-11: an OPTIGA Trust M is on the bench.** The ATECC608B was
+> never obtained; an Infineon OPTIGA Trust M module was. Its read-only
+> bring-up is in `components/leek-se-optiga` and is described in
+> [OPTIGA Trust M](#optiga-trust-m--read-only-bring-up) below. The 608 text
+> is kept because the design questions are the same.
+
 Companion to [BURN-PROCEDURE.md](BURN-PROCEDURE.md), which covers the on-chip
 (eFuse / secure boot) route. The two solve overlapping problems; this one solves
 strictly more of the physical-access problem, and costs a part.
@@ -141,9 +147,124 @@ cheap place to make mistakes:
   Sourcing matters for a part whose entire value is that it behaves as
   specified.
 
+## OPTIGA Trust M — read-only bring-up
+
+**Status: code written and host-tested; not yet run against the chip.** The
+module (pins VCC GND SCL SDA RST) is wired to the S3 CAM board; the bench
+image `esp32s3cam-se-bench` is what to run first.
+
+### Wiring
+
+| Module | Board | |
+|---|---|---|
+| VCC | 3V3 | |
+| GND | GND | |
+| SDA | GPIO47 | existing I2C0, shared with the panel at `0x3C` |
+| SCL | GPIO21 | |
+| RST | 3V3 | tied high: no free GPIO. Low or floating = held in reset |
+
+The Trust M answers at `0x30` (factory default). Tying RST high has one
+consequence that shapes the driver: **an ESP32 reboot does not reset the
+chip**, so a response from before the reboot can still be waiting and both
+sides' frame counters are stale. The link opens every session with a warm
+reset through register `0x88` (volatile, equivalent to pulsing RST), drains
+leftovers and resyncs. A true cold reset needs a power cycle — or, later, a
+GPIO on RST or a MOSFET on VCC, which is worth keeping in mind if a pin frees
+up: Infineon's own host library uses both.
+
+### What the bring-up does
+
+Only volatile or read-only operations, and the component has no code path
+for anything else (no `SetDataObject`, no metadata writes, no key
+generation, no shielded-connection handshake, no arbitrary APDU):
+
+- I2C scan; ACK probe at `0x30`.
+- `OpenApplication` with a fresh context.
+- Reads, all of objects readable "Always": coprocessor UID (`0xE0C2`, 27
+  bytes; the first byte `0xCD` identifies Infineon), global and application
+  lifecycle state (`0xE0C0`, `0xF1C0`), security event counter (`0xE0C5`),
+  max comms buffer (`0xE0C6`), the factory certificate (`0xE0E0`, printed as
+  its size and SHA-256), and the **metadata** (access rules) of a few
+  objects, including the factory private key `0xE0F0` — its rules, not the
+  key, which is not readable at all.
+- Self-test: the UID read twice must agree; 256 bytes from `GetRandom` must
+  pass a stuck-bit/constant/repeat smoke test, and two further draws must
+  differ. The bytes are discarded; **the chip's TRNG is never wallet
+  entropy.**
+
+The protocol (IFX I2C v2.03 data-link and network layers, Trust M command
+APDUs) is a minimal hand-written implementation rather than Infineon's host
+library — the component README gives the reasons (audit surface, I2C-driver
+ownership, offline pinned builds) and what is verified only on hardware.
+
+### What comes next
+
+In order, and each step stays reversible until the last:
+
+1. **Run the bench.** Confirm identity, `LCS` operational, `SEC` 0, a sane
+   certificate, and the self-test, on more than one module if possible.
+2. **Verify the factory certificate** chain to Infineon's published root, on
+   the device or the host. This is the answer to "is this a genuine Trust M"
+   and it costs no writes.
+3. **Shielded connection (MCU ↔ SE pairing).** The Trust M equivalent of the
+   608's I/O protection key: a platform binding secret in `0xE140` shared
+   with the MCU, then AES-128-CCM-8 on every APDU (Trezor's driver and PQ1
+   both treat this as mandatory). Writing `0xE140` and **locking its
+   metadata is the first irreversible step** in this whole plan, so it waits
+   until the MCU side can keep that secret: with flash encryption and secure
+   boot (BURN-PROCEDURE.md), or the secret is readable from a flash dump and
+   the binding protects nothing.
+4. **PIN attempt counter in silicon.** Trust M's model differs from the
+   608's slot locks: a monotonic counter object (`0xE120..0xE123`, with a
+   threshold) referenced by an access condition `Luc(counter)` on a secret,
+   so every use of the secret increments the counter and the chip refuses at
+   the threshold. Trezor Safe 3/5 run exactly this design on this chip; their
+   [`docs/core/misc/optiga.md`](https://github.com/trezor/trezor-firmware/blob/main/docs/core/misc/optiga.md)
+   documents the object layout and the stretching pattern and is the best
+   reference available.
+5. **Argon2id + SE.** The vault key becomes
+   `KDF(Argon2id(PIN, salt), SE-stretch(...))`, where each SE step is
+   `hmac(stretched, SE_op(hmac(stretched, "")))` as in Trezor's design:
+   the chip only ever sees a one-way digest, so a sniffed bus or a malicious
+   chip reduces security to the Argon2id step alone, never below it. The
+   expensive memory-hard step stays on the ESP32, where it is auditable.
+6. **Only then** decide the counter threshold (see the 608's open question
+   on N), test the brick-and-restore path on a sacrificial module, and
+   consider moving the application lifecycle state forward.
+
+### Risks
+
+- **Irreversible operations.** Lifecycle-state changes (`LcsO` → operational
+  / termination) are one-way; metadata written with a `Never` change rule is
+  permanent; a counter that reaches its threshold stays there; the
+  platform binding secret, once locked, ties that module to that MCU
+  forever. None of these are in this component. Anything that adds them
+  wants its own review, and a stack of spare modules.
+- **Supply chain.** These are cheap breakout modules from marketplaces, not
+  parts from a distributor. A re-marked or emulating part could answer the
+  same commands. The UID's `0xCD` byte is a weak signal; the certificate
+  chain to Infineon's root (step 2) is the real one, and even that only
+  proves the die, not the board around it.
+- **Security event counter.** Failed authorisations raise `SEC`; above a
+  threshold the chip throttles every protected command (up to ~5 s each).
+  The bench reads it so a module with a history is noticed. Experiments that
+  deliberately fail authorisation should expect it.
+- **The bus is shared and in the clear** until step 3. Anything this
+  bring-up reads is public anyway (identity, certificate); nothing secret
+  may cross the bus before the shielded connection exists.
+- **No hardware reset.** If the chip wedges in a way the warm reset does not
+  clear, only a power cycle helps. Acceptable for a bench; for a product, a
+  GPIO on RST is worth its pin.
+
 ## Sources
 
 - Microchip ATECC608B datasheet (`SlotConfig`, `Lock`, monotonic counters,
   I/O protection key)
 - PQ1, for the encrypted-MCU↔SE-channel requirement:
   <https://github.com/EthereumPhone/PQ1>
+- Infineon, IFX I2C Protocol Specification v2.03, and the OPTIGA Trust M
+  Solution Reference Manual (commands, data objects, error codes, lifecycle):
+  <https://github.com/Infineon/optiga-trust-m>
+- Trezor firmware's OPTIGA object layout and PIN design (reference only; the
+  code is GPL-3.0 and was not copied):
+  <https://github.com/trezor/trezor-firmware/blob/main/docs/core/misc/optiga.md>
