@@ -313,8 +313,9 @@ Keystore, the Apple Secure Enclave and WebAuthn PRF are in
 
 **No software PIN.** There is no software wrapper, and an app must not write
 one: a key derived on the host from a 4- to 6-digit PIN is at most a million
-guesses, which a copy of the app's files exhausts offline in seconds. The
-attempt limits that make a short PIN safe exist only in hardware. On a host
+guesses, which a copy of the app's files exhausts offline: in seconds with a
+fast hash, in hours to days even with a slow, memory-hard one. The attempt
+limits that make a short PIN safe exist only in hardware. On a host
 without a hardware-backed, user-authenticated key (an old phone, a desktop
 without a TPM or Secure Enclave, a browser without passkey PRF), do not offer
 quick unlock; offer the board, remember-on-this-device, or (documented as

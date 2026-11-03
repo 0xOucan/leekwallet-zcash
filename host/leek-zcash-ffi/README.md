@@ -120,7 +120,8 @@ Reference implementations, to copy and review, not built with the SDK:
 | `examples/quick-unlock/webauthn-prf.js` | a passkey's PRF output through HKDF into AES-256-GCM (Chrome wallet; there is no WebAssembly build of the SDK yet) | no |
 
 Never implement `KeyWrapper` with a key derived from a short PIN in
-software: offline, a six-digit PIN falls in seconds. Without a suitable
+software: offline, a six-digit PIN falls in hours to days even behind a
+slow, memory-hard function. Without a suitable
 platform key, do not offer quick unlock
 ([leek-zcash: Stored app data](../leek-zcash/README.md#stored-app-data-three-tiers)).
 

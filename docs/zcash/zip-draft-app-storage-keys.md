@@ -553,7 +553,8 @@ Local quick unlock
   the Signer to the platform's secure hardware and its attempt limits. Apps
   MUST NOT protect a Storage Key with a key derived only from a short PIN: a
   six-digit PIN is $10^6$ guesses, which a stolen copy of the App's storage
-  exhausts offline in seconds, so such a scheme would look like protection
+  exhausts offline (in hours to days even when each guess costs a second of
+  a memory-hard function, and faster in parallel), so such a scheme would look like protection
   and give none. This is a MUST NOT rather than a SHOULD NOT because no
   deployment makes that trade acceptable; a host without suitable hardware
   has the Signer path and remembered mode, whose limits are stated plainly.
