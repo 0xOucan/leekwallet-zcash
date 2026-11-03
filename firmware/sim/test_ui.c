@@ -684,6 +684,32 @@ static void test_boot_splash_input(void)
     }
 }
 
+/* docs/AUDIT-SD-WRITES.md N1: a vault the firmware cannot read is shown as
+ * that, not as a PIN prompt (which would spend attempts on a PIN nobody can
+ * check) and not as setup (which would write a new vault over the seeds). */
+static void test_unreadable_vault_stops_at_a_fault_screen(void)
+{
+    printf("== an unreadable vault: a fault screen, no PIN prompt, no setup\n");
+    boot_device();
+    fake_wallet_unreadable();
+    run_ms(50);
+    press(BUTTON_ACCEPT);   /* dismiss the splash */
+    CHECK_SCREEN(ui_get_screen() == SCREEN_STORAGE_FAULT, "not the fault screen: %d", ui_get_screen());
+    CHECK_SCREEN(fake_oled_contains("Storage unreadable") && fake_oled_contains("Nothing was erased"),
+                 "the fault is not said");
+    uint8_t attempts = pin_get_remaining_attempts();
+    const button_id_t keys[] = { BUTTON_UP, BUTTON_DOWN, BUTTON_CANCEL, BUTTON_ACCEPT };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        press(keys[i]);
+        CHECK(ui_get_screen() == SCREEN_STORAGE_FAULT, "%s left the fault screen",
+              button_get_action_name(keys[i]));
+    }
+    /* Any other way to the PIN prompt ends up here too. */
+    go(SCREEN_PIN_UNLOCK);
+    CHECK(ui_get_screen() == SCREEN_STORAGE_FAULT, "the PIN prompt opened on an unreadable vault");
+    CHECK(pin_get_remaining_attempts() == attempts, "an attempt was spent");
+}
+
 static void test_boot_splash_blanks(void)
 {
     printf("== the splash goes black after 10 minutes untouched, and wakes on input\n");
@@ -3238,6 +3264,7 @@ int main(void)
     test_harness_sees_the_screen();
     test_boot_splash_loops();
     test_boot_splash_input();
+    test_unreadable_vault_stops_at_a_fault_screen();
     test_boot_splash_blanks();
     test_pin_unlock_idles_to_splash();
 

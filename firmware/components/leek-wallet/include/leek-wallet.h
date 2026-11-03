@@ -63,6 +63,17 @@ WalletError wallet_init(void);
  */
 WalletStatus wallet_get_status(void);
 
+/**
+ * True when the vault holds something this firmware cannot read: NVS would
+ * not mount, the vault record is of an unknown version or damaged, or there
+ * are mnemonics with no verifier for them. Such a vault reports a password
+ * (so nothing offers PIN setup over it), refuses set_password, unlock and
+ * change_password with WALLET_ERROR_STORAGE_FAILED, and is never swept or
+ * erased except by wallet_wipe(). The UI shows it as a fault, not as a PIN
+ * prompt, so no attempt is spent on a PIN that cannot be checked.
+ */
+bool wallet_storage_unreadable(void);
+
 // ========== Password Management ========== //
 
 /**

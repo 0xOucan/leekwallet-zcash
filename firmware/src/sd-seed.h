@@ -29,7 +29,7 @@ typedef enum {
     SDSEED_E_AUTH,      /* wrong passphrase, or the file was altered */
     SDSEED_E_PASS,      /* passphrase not 8-64 printable ASCII */
     SDSEED_E_WALLET,    /* no seed open to save, or the vault refused the load */
-    SDSEED_E_VERIFY,    /* the file written did not read back */
+    SDSEED_E_VERIFY,    /* the file written did not read back; it was removed */
 } SdSeedResult;
 
 /** Mount if needed and list the .zkv files. Count, or -1 with no card. */

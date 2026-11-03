@@ -137,6 +137,9 @@ static void screen_pin_unlock_enter(void);
 static void screen_pin_unlock_render(void);
 static void screen_pin_unlock_on_button(button_id_t btn);
 
+static void screen_storage_fault_render(void);
+static void screen_storage_fault_on_button(button_id_t btn);
+
 static void screen_main_menu_enter(void);
 static void screen_main_menu_render(void);
 static void screen_main_menu_on_button(button_id_t btn);
@@ -236,6 +239,13 @@ static const screen_t screen_boot = {
     .enter = screen_boot_enter,
     .render = screen_boot_render,
     .on_button = screen_boot_on_button,
+    .exit = NULL
+};
+
+static const screen_t screen_storage_fault = {
+    .enter = NULL,
+    .render = screen_storage_fault_render,
+    .on_button = screen_storage_fault_on_button,
     .exit = NULL
 };
 
@@ -1499,10 +1509,43 @@ static void screen_boot_on_button(button_id_t btn)
         device_wipe();
         wallet_init();
         ui_set_screen(SCREEN_PIN_SETUP);
+    } else if (wallet_storage_unreadable()) {
+        /* After the wipe check, not before: a wipe the owner's own wrong
+         * guesses already decided is still theirs to finish. This is the
+         * opposite case - nothing decided, storage just did not answer. */
+        ui_set_screen(SCREEN_STORAGE_FAULT);
     } else {
         /* PIN is set - need to unlock */
         ui_set_screen(SCREEN_PIN_UNLOCK);
     }
+}
+
+/* ============================================================================
+ * Storage Fault Screen
+ *
+ * The vault is there and this firmware cannot read it: NVS would not mount,
+ * its record is from a newer firmware or damaged, or there are seeds and no
+ * verifier (wallet_storage_unreadable(), docs/AUDIT-SD-WRITES.md N1). Every
+ * screen that could follow is wrong: PIN entry spends attempts on a PIN that
+ * cannot be checked, setup writes a new vault over the old one. So it stops
+ * here and says what to do. A newer firmware reads a newer record; a damaged
+ * vault is the owner's to erase deliberately, and their backup to restore.
+ * ============================================================================ */
+
+static void screen_storage_fault_render(void)
+{
+    oled_clear();
+    oled_draw_string_centered(0, "Storage unreadable");
+    oled_draw_string_centered(2, "Nothing was erased.");
+    oled_draw_string_centered(3, "Your seeds may still");
+    oled_draw_string_centered(4, "be there: flash the");
+    oled_draw_string_centered(5, "newest firmware.");
+    oled_draw_string_centered(7, "No PIN is asked.");
+}
+
+static void screen_storage_fault_on_button(button_id_t btn)
+{
+    (void)btn;   /* nothing to choose: see above */
 }
 
 /* ============================================================================
@@ -1630,6 +1673,12 @@ static void screen_pin_setup_on_button(button_id_t btn)
 
 static void screen_pin_unlock_enter(void)
 {
+    /* Every way here (boot, lock, a host's request) meets the same answer
+     * when the vault cannot check a PIN. */
+    if (wallet_storage_unreadable()) {
+        ui_set_screen(SCREEN_STORAGE_FAULT);
+        return;
+    }
     ESP_LOGI(TAG, "PIN unlock screen");
     pin_entry_reset();
     pin_idle_since_us = esp_timer_get_time();
@@ -5912,6 +5961,7 @@ void ui_init(void)
     screens[SCREEN_SHARE_VIEW_KEY] = &screen_share_view_key;
 #endif
     screens[SCREEN_SCAN] = &screen_scan;
+    screens[SCREEN_STORAGE_FAULT] = &screen_storage_fault;
 
     current_screen = SCREEN_BOOT;
     needs_render = true;
