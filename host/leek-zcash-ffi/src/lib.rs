@@ -21,6 +21,7 @@ use leek_transport_serial::{encode_frame, FrameDecoder, TransportError};
 use leek_zcash as lz;
 use leek_zcash::leek_device::device::{Device, FramePort};
 use leek_zcash::pczt::Pczt;
+use zeroize::Zeroizing;
 
 uniffi::setup_scaffolding!();
 
@@ -69,7 +70,8 @@ pub enum LeekError {
     /// 6xx: the signatures (`.zsig` for other bytes, a bad signature, ...).
     Signature { code: u16, recovery: Recovery, reason: String },
     /// 7xx: stored app data (an invalid app identifier, data sealed for
-    /// another key, damaged data, a forgotten Storage Key).
+    /// another key, damaged data, a forgotten Storage Key) and quick unlock
+    /// (an insecure platform key, an invalidated one, a cancelled prompt).
     Storage { code: u16, recovery: Recovery, reason: String },
     /// 9xx: a firmware error code this version does not know.
     Device { code: u16, recovery: Recovery, reason: String, device_code: u16 },
@@ -551,6 +553,173 @@ pub fn validate_app_id(app_id: String) -> Result<()> {
 #[uniffi::export]
 pub fn storage_zip_number() -> u16 {
     lz::STORAGE_ZIP_NUMBER
+}
+
+// ---------------------------------------------------------------- quick unlock
+
+/// What a [`KeyWrapper`] says about its platform key (`leek_zcash::WrapperInfo`).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct KeyWrapperInfo {
+    /// Generated in and never leaving secure hardware (StrongBox or a TEE,
+    /// the Secure Enclave, a TPM, a security key).
+    pub hardware_backed: bool,
+    /// Usable only after the user's biometric or device PIN, with the
+    /// hardware's own attempt limits.
+    pub user_auth_required: bool,
+    /// Shown on the unlock screen ("Fingerprint (StrongBox)"), up to 64 bytes.
+    pub label: String,
+}
+
+/// Why the app's [`KeyWrapper`] failed.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Error)]
+pub enum KeyWrapperFailure {
+    /// The user cancelled or failed the prompt: code 708.
+    Cancelled,
+    /// The platform key is gone or invalidated (new biometric enrolled,
+    /// device PIN removed), or the blob does not decrypt: code 707.
+    Invalidated,
+    /// Anything else: code 709.
+    Failed,
+    /// The callback threw something else: code 709.
+    Unexpected,
+}
+
+impl fmt::Display for KeyWrapperFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+impl std::error::Error for KeyWrapperFailure {}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for KeyWrapperFailure {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        KeyWrapperFailure::Unexpected
+    }
+}
+
+/// The app's platform key for quick unlock, implemented in Kotlin or Swift
+/// (reference implementations in `examples/`): encrypts the 32-byte Storage
+/// Key under a key held in secure hardware that requires the user.
+///
+/// Calls come from the thread that called [`QuickUnlock`]; `wrap` and
+/// `unwrap` may block it while the platform's prompt is up. `info` must not
+/// throw. Overwrite the `ByteArray` / `Data` you receive or return with
+/// zeros once used: Rust cannot wipe the JVM's or Swift's copies.
+#[uniffi::export(with_foreign)]
+pub trait KeyWrapper: Send + Sync {
+    fn info(&self) -> KeyWrapperInfo;
+    /// Encrypts `key` under the platform key (creating it if needed); the
+    /// blob may carry an IV or an ephemeral key and must be authenticated.
+    fn wrap(&self, key: Vec<u8>) -> Result<Vec<u8>, KeyWrapperFailure>;
+    /// Decrypts what `wrap` returned, after the user's biometric or PIN.
+    fn unwrap(&self, blob: Vec<u8>) -> Result<Vec<u8>, KeyWrapperFailure>;
+    /// Deletes the platform key; already gone is not an error.
+    fn delete_key(&self) -> Result<(), KeyWrapperFailure>;
+}
+
+/// The foreign wrapper as the SDK's.
+struct ForeignWrapper<'a>(&'a dyn KeyWrapper);
+
+fn wrap_failure(f: KeyWrapperFailure) -> lz::WrapFailure {
+    match f {
+        KeyWrapperFailure::Cancelled => lz::WrapFailure::Cancelled,
+        KeyWrapperFailure::Invalidated => lz::WrapFailure::Invalidated,
+        KeyWrapperFailure::Failed | KeyWrapperFailure::Unexpected => lz::WrapFailure::Failed,
+    }
+}
+
+impl lz::KeyWrapper for ForeignWrapper<'_> {
+    fn info(&self) -> lz::WrapperInfo {
+        let i = self.0.info();
+        lz::WrapperInfo { hardware_backed: i.hardware_backed, user_auth_required: i.user_auth_required, label: i.label }
+    }
+
+    fn wrap(&self, key: &[u8]) -> Result<Vec<u8>, lz::WrapFailure> {
+        self.0.wrap(key.to_vec()).map_err(wrap_failure)
+    }
+
+    fn unwrap(&self, blob: &[u8]) -> Result<Zeroizing<Vec<u8>>, lz::WrapFailure> {
+        self.0.unwrap(blob.to_vec()).map(Zeroizing::new).map_err(wrap_failure)
+    }
+
+    fn delete_key(&self) -> Result<(), lz::WrapFailure> {
+        self.0.delete_key().map_err(wrap_failure)
+    }
+}
+
+/// Quick unlock: the Storage Key kept wrapped by the app's [`KeyWrapper`],
+/// so the app opens with the user's biometric or device PIN instead of the
+/// board (`leek_zcash::QuickUnlock`; the record format is in its docs).
+/// Offer it only where the platform has a hardware-backed, user-authenticated
+/// key; never wrap with a key derived from a short PIN.
+#[derive(uniffi::Object)]
+pub struct QuickUnlock {
+    inner: lz::QuickUnlock,
+}
+
+#[uniffi::export]
+impl QuickUnlock {
+    /// Wraps `key` (from the board) with `wrapper`; store `to_bytes()`.
+    /// Code 706 unless the wrapper reports a hardware-backed key that
+    /// requires the user, before `wrap` is called.
+    #[uniffi::constructor]
+    pub fn create(key: Arc<StorageKey>, wrapper: Arc<dyn KeyWrapper>) -> Result<Arc<Self>> {
+        // A copy, so no lock is held while the platform's prompt is up.
+        let copy = {
+            let k = lock(&key.inner);
+            if k.app_id().is_empty() {
+                return Err(lz::LeekError::StorageKeyForgotten.into());
+            }
+            lz::StorageKey::from_bytes(*k.to_bytes(), k.app_id(), k.account(), k.network())?
+        };
+        let inner = lz::QuickUnlock::create(&copy, &ForeignWrapper(wrapper.as_ref()))?;
+        Ok(Arc::new(QuickUnlock { inner }))
+    }
+
+    /// A stored record; code 703 if it is not one.
+    #[uniffi::constructor]
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Arc<Self>> {
+        Ok(Arc::new(QuickUnlock { inner: lz::QuickUnlock::from_bytes(&bytes)? }))
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.inner.to_bytes().to_vec()
+    }
+
+    pub fn app_id(&self) -> String {
+        self.inner.app_id().into()
+    }
+
+    pub fn account(&self) -> u32 {
+        self.inner.account()
+    }
+
+    pub fn network(&self) -> Network {
+        self.inner.network().into()
+    }
+
+    /// The wrapper's label when the record was made.
+    pub fn label(&self) -> String {
+        self.inner.label().into()
+    }
+
+    /// The Storage Key after the platform's prompt: 702 for another app,
+    /// account or network (no prompt), 706 for an insecure wrapper, 708 if
+    /// the user cancelled, 707 if the platform key is gone or gives another
+    /// key, 709 if it failed, 703 if the record was changed. On anything but
+    /// 708, offer the board.
+    pub fn open(&self, app_id: String, account: u32, network: Network, wrapper: Arc<dyn KeyWrapper>) -> Result<Arc<StorageKey>> {
+        let k = self.inner.open(&app_id, account, network.into(), &ForeignWrapper(wrapper.as_ref()))?;
+        Ok(StorageKey::wrap(k))
+    }
+}
+
+/// Turns quick unlock off: deletes the wrapper's platform key. Delete the
+/// stored record as well.
+#[uniffi::export]
+pub fn disable_quick_unlock(wrapper: Arc<dyn KeyWrapper>) -> Result<()> {
+    Ok(lz::QuickUnlock::disable(&ForeignWrapper(wrapper.as_ref()))?)
 }
 
 /// **Experimental.** The file the board signs from the SD card.

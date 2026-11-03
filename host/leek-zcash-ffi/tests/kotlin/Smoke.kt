@@ -1,6 +1,7 @@
 // Smoke test of the generated Kotlin bindings on the JVM (JNA loads
 // libleek_zcash_ffi from jna.library.path). No board: the byte API, the
-// error mapping, the account record, and a Kotlin FrameTransport whose
+// error mapping, the account record, quick unlock through a Kotlin
+// KeyWrapper, and a Kotlin FrameTransport whose
 // failures and a cancel from another thread come back typed.
 // Run with scripts/kotlin-smoke.sh.
 
@@ -26,6 +27,22 @@ class Silent : FrameTransport {
     override fun recv(timeoutMs: UInt): ByteArray {
         Thread.sleep(timeoutMs.toLong())
         return ByteArray(0)
+    }
+}
+
+// A stand-in platform key (XOR with a pad): only the contract is tested.
+class FakeWrapper(private val hardware: Boolean) : KeyWrapper {
+    var cancel = false
+    var deleted = false
+    override fun info() = KeyWrapperInfo(hardware, true, "Fingerprint (smoke)")
+    override fun wrap(key: ByteArray) = ByteArray(key.size) { (key[it].toInt() xor 0x5a).toByte() }
+    override fun unwrap(blob: ByteArray): ByteArray {
+        if (cancel) throw KeyWrapperFailure.Cancelled()
+        if (deleted) throw KeyWrapperFailure.Invalidated()
+        return ByteArray(blob.size) { (blob[it].toInt() xor 0x5a).toByte() }
+    }
+    override fun deleteKey() {
+        deleted = true
     }
 }
 
@@ -80,6 +97,38 @@ fun main(args: Array<String>) {
     )
     check(sk.dbKey().contentEquals(hex("abd9811ecdfd468b538e7f11714bdacca99e354ea622d31f0ee3b2cee3f85973")), "db subkey")
     check(sk.openUfvk(sk.sealUfvk("uview1example")) == "uview1example", "ufvk round trip")
+
+    // Quick unlock through a Kotlin KeyWrapper.
+    val sealedDb = sk.sealDb("wallet".toByteArray())
+    val wrapper = FakeWrapper(true)
+    val record = QuickUnlock.create(sk, wrapper).toBytes()
+    val qu = QuickUnlock.fromBytes(record)
+    check(qu.appId() == "xyz.leekwallet.zcash" && qu.label() == "Fingerprint (smoke)", "record fields")
+    val opened = qu.open("xyz.leekwallet.zcash", 0u, Network.MAIN, wrapper)
+    check(String(opened.openDb(sealedDb)) == "wallet", "quick unlock opens the data")
+    opened.forget()
+    try {
+        QuickUnlock.create(sk, FakeWrapper(false))
+        check(false, "a software key is refused")
+    } catch (e: LeekException.Storage) {
+        check(e.code.toInt() == 706, "insecure wrapper: $e")
+    }
+    wrapper.cancel = true
+    try {
+        qu.open("xyz.leekwallet.zcash", 0u, Network.MAIN, wrapper)
+        check(false, "cancelled")
+    } catch (e: LeekException.Storage) {
+        check(e.code.toInt() == 708 && e.recovery == Recovery.RETRY_SAME_LINK, "cancel: $e")
+    }
+    wrapper.cancel = false
+    disableQuickUnlock(wrapper)
+    try {
+        qu.open("xyz.leekwallet.zcash", 0u, Network.MAIN, wrapper)
+        check(false, "disabled")
+    } catch (e: LeekException.Storage) {
+        check(e.code.toInt() == 707, "disabled: $e")
+    }
+    qu.close()
     sk.forget()
     try {
         sk.openDb(ByteArray(0))

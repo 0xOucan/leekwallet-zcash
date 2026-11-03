@@ -660,6 +660,18 @@ internal interface UniffiCallbackInterfaceFrameTransportMethod0 : com.sun.jna.Ca
 internal interface UniffiCallbackInterfaceFrameTransportMethod1 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`timeoutMs`: Int,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
 }
+internal interface UniffiCallbackInterfaceKeyWrapperMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceKeyWrapperMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`key`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceKeyWrapperMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`blob`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceKeyWrapperMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfacePairingListenerMethod0 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`code`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
@@ -681,6 +693,31 @@ internal open class UniffiVTableCallbackInterfaceFrameTransport(
    internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceFrameTransport) {
         `send` = other.`send`
         `recv` = other.`recv`
+        `uniffiFree` = other.`uniffiFree`
+    }
+
+}
+@Structure.FieldOrder("info", "wrap", "unwrap", "deleteKey", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceKeyWrapper(
+    @JvmField internal var `info`: UniffiCallbackInterfaceKeyWrapperMethod0? = null,
+    @JvmField internal var `wrap`: UniffiCallbackInterfaceKeyWrapperMethod1? = null,
+    @JvmField internal var `unwrap`: UniffiCallbackInterfaceKeyWrapperMethod2? = null,
+    @JvmField internal var `deleteKey`: UniffiCallbackInterfaceKeyWrapperMethod3? = null,
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+) : Structure() {
+    class UniffiByValue(
+        `info`: UniffiCallbackInterfaceKeyWrapperMethod0? = null,
+        `wrap`: UniffiCallbackInterfaceKeyWrapperMethod1? = null,
+        `unwrap`: UniffiCallbackInterfaceKeyWrapperMethod2? = null,
+        `deleteKey`: UniffiCallbackInterfaceKeyWrapperMethod3? = null,
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    ): UniffiVTableCallbackInterfaceKeyWrapper(`info`,`wrap`,`unwrap`,`deleteKey`,`uniffiFree`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceKeyWrapper) {
+        `info` = other.`info`
+        `wrap` = other.`wrap`
+        `unwrap` = other.`unwrap`
+        `deleteKey` = other.`deleteKey`
         `uniffiFree` = other.`uniffiFree`
     }
 
@@ -876,6 +913,37 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -898,6 +966,8 @@ fun uniffi_leek_zcash_ffi_checksum_func_apply_zsig(
 fun uniffi_leek_zcash_ffi_checksum_func_check_mined(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_decode_account_record(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_disable_quick_unlock(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_encode_account_record(
 ): Short
@@ -925,6 +995,14 @@ fun uniffi_leek_zcash_ffi_checksum_method_frametransport_send(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_frametransport_recv(
 ): Short
+fun uniffi_leek_zcash_ffi_checksum_method_keywrapper_info(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_keywrapper_wrap(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_keywrapper_unwrap(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_keywrapper_delete_key(
+): Short
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_cancel(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_ensure_unlocked(
@@ -946,6 +1024,18 @@ fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_show_address(
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_sign_pczt(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_account(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_app_id(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_label(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_network(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_open(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_to_bytes(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_signlistener_on_progress(
 ): Short
@@ -976,6 +1066,10 @@ fun uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_ufvk(
 fun uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_create(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_from_bytes(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_constructor_storagekey_from_bytes(
 ): Short
@@ -1018,6 +1112,7 @@ internal interface UniffiLib : Library {
             // No need to check the contract version and checksums, since 
             // we already did that with `IntegrityCheckingUniffiLib` above.
             uniffiCallbackInterfaceFrameTransport.register(lib)
+            uniffiCallbackInterfaceKeyWrapper.register(lib)
             uniffiCallbackInterfacePairingListener.register(lib)
             uniffiCallbackInterfaceSignListener.register(lib)
             // Loading of library with integrity check done.
@@ -1041,6 +1136,20 @@ fun uniffi_leek_zcash_ffi_fn_method_frametransport_send(`ptr`: Pointer,`bytes`: 
 ): Unit
 fun uniffi_leek_zcash_ffi_fn_method_frametransport_recv(`ptr`: Pointer,`timeoutMs`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_clone_keywrapper(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_free_keywrapper(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_leek_zcash_ffi_fn_init_callback_vtable_keywrapper(`vtable`: UniffiVTableCallbackInterfaceKeyWrapper,
+): Unit
+fun uniffi_leek_zcash_ffi_fn_method_keywrapper_info(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_keywrapper_wrap(`ptr`: Pointer,`key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_keywrapper_unwrap(`ptr`: Pointer,`blob`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_keywrapper_delete_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 fun uniffi_leek_zcash_ffi_fn_clone_leekdevice(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): Pointer
 fun uniffi_leek_zcash_ffi_fn_free_leekdevice(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -1075,6 +1184,26 @@ fun uniffi_leek_zcash_ffi_fn_init_callback_vtable_pairinglistener(`vtable`: Unif
 ): Unit
 fun uniffi_leek_zcash_ffi_fn_method_pairinglistener_on_pairing_code(`ptr`: Pointer,`code`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+fun uniffi_leek_zcash_ffi_fn_clone_quickunlock(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_free_quickunlock(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_leek_zcash_ffi_fn_constructor_quickunlock_create(`key`: Pointer,`wrapper`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_constructor_quickunlock_from_bytes(`bytes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_method_quickunlock_account(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+fun uniffi_leek_zcash_ffi_fn_method_quickunlock_app_id(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_quickunlock_label(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_quickunlock_network(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_quickunlock_open(`ptr`: Pointer,`appId`: RustBuffer.ByValue,`account`: Int,`network`: RustBuffer.ByValue,`wrapper`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_method_quickunlock_to_bytes(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_clone_signlistener(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): Pointer
 fun uniffi_leek_zcash_ffi_fn_free_signlistener(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -1123,6 +1252,8 @@ fun uniffi_leek_zcash_ffi_fn_func_check_mined(`signedTx`: RustBuffer.ByValue,`mi
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_decode_account_record(`bytes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_disable_quick_unlock(`wrapper`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 fun uniffi_leek_zcash_ffi_fn_func_encode_account_record(`record`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_finish_sd_sign(`pczt`: RustBuffer.ByValue,`sent`: RustBuffer.ByValue,`zsig`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1283,6 +1414,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_func_decode_account_record() != 20047.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_disable_quick_unlock() != 9343.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_encode_account_record() != 8489.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1322,6 +1456,18 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_method_frametransport_recv() != 13466.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_keywrapper_info() != 56262.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_keywrapper_wrap() != 56770.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_keywrapper_unwrap() != 59360.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_keywrapper_delete_key() != 24150.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_cancel() != 36527.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1353,6 +1499,24 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code() != 41350.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_quickunlock_account() != 47227.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_quickunlock_app_id() != 28314.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_quickunlock_label() != 755.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_quickunlock_network() != 45412.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_quickunlock_open() != 37434.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_quickunlock_to_bytes() != 9842.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_signlistener_on_progress() != 63101.toShort()) {
@@ -1398,6 +1562,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new() != 20437.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_create() != 45728.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_from_bytes() != 14578.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_constructor_storagekey_from_bytes() != 55411.toShort()) {
@@ -2178,6 +2348,413 @@ public object FfiConverterTypeFrameTransport: FfiConverter<FrameTransport, Point
 
 
 /**
+ * The app's platform key for quick unlock, implemented in Kotlin or Swift
+ * (reference implementations in `examples/`): encrypts the 32-byte Storage
+ * Key under a key held in secure hardware that requires the user.
+ *
+ * Calls come from the thread that called [`QuickUnlock`]; `wrap` and
+ * `unwrap` may block it while the platform's prompt is up. `info` must not
+ * throw. Overwrite the `ByteArray` / `Data` you receive or return with
+ * zeros once used: Rust cannot wipe the JVM's or Swift's copies.
+ */
+public interface KeyWrapper {
+    
+    fun `info`(): KeyWrapperInfo
+    
+    /**
+     * Encrypts `key` under the platform key (creating it if needed); the
+     * blob may carry an IV or an ephemeral key and must be authenticated.
+     */
+    fun `wrap`(`key`: kotlin.ByteArray): kotlin.ByteArray
+    
+    /**
+     * Decrypts what `wrap` returned, after the user's biometric or PIN.
+     */
+    fun `unwrap`(`blob`: kotlin.ByteArray): kotlin.ByteArray
+    
+    /**
+     * Deletes the platform key; already gone is not an error.
+     */
+    fun `deleteKey`()
+    
+    companion object
+}
+
+/**
+ * The app's platform key for quick unlock, implemented in Kotlin or Swift
+ * (reference implementations in `examples/`): encrypts the 32-byte Storage
+ * Key under a key held in secure hardware that requires the user.
+ *
+ * Calls come from the thread that called [`QuickUnlock`]; `wrap` and
+ * `unwrap` may block it while the platform's prompt is up. `info` must not
+ * throw. Overwrite the `ByteArray` / `Data` you receive or return with
+ * zeros once used: Rust cannot wipe the JVM's or Swift's copies.
+ */
+open class KeyWrapperImpl: Disposable, AutoCloseable, KeyWrapper
+{
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_free_keywrapper(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_clone_keywrapper(pointer!!, status)
+        }
+    }
+
+    override fun `info`(): KeyWrapperInfo {
+            return FfiConverterTypeKeyWrapperInfo.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_keywrapper_info(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encrypts `key` under the platform key (creating it if needed); the
+     * blob may carry an IV or an ephemeral key and must be authenticated.
+     */
+    @Throws(KeyWrapperFailure::class)override fun `wrap`(`key`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(KeyWrapperFailure) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_keywrapper_wrap(
+        it, FfiConverterByteArray.lower(`key`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decrypts what `wrap` returned, after the user's biometric or PIN.
+     */
+    @Throws(KeyWrapperFailure::class)override fun `unwrap`(`blob`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(KeyWrapperFailure) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_keywrapper_unwrap(
+        it, FfiConverterByteArray.lower(`blob`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Deletes the platform key; already gone is not an error.
+     */
+    @Throws(KeyWrapperFailure::class)override fun `deleteKey`()
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(KeyWrapperFailure) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_keywrapper_delete_key(
+        it, _status)
+}
+    }
+    
+    
+
+    
+
+    
+    
+    companion object
+    
+}
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceKeyWrapper {
+    internal object `info`: UniffiCallbackInterfaceKeyWrapperMethod0 {
+        override fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeKeyWrapper.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`info`(
+                )
+            }
+            val writeReturn = { value: KeyWrapperInfo -> uniffiOutReturn.setValue(FfiConverterTypeKeyWrapperInfo.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `wrap`: UniffiCallbackInterfaceKeyWrapperMethod1 {
+        override fun callback(`uniffiHandle`: Long,`key`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeKeyWrapper.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`wrap`(
+                    FfiConverterByteArray.lift(`key`),
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray -> uniffiOutReturn.setValue(FfiConverterByteArray.lower(value)) }
+            uniffiTraitInterfaceCallWithError(
+                uniffiCallStatus,
+                makeCall,
+                writeReturn,
+                { e: KeyWrapperFailure -> FfiConverterTypeKeyWrapperFailure.lower(e) }
+            )
+        }
+    }
+    internal object `unwrap`: UniffiCallbackInterfaceKeyWrapperMethod2 {
+        override fun callback(`uniffiHandle`: Long,`blob`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeKeyWrapper.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`unwrap`(
+                    FfiConverterByteArray.lift(`blob`),
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray -> uniffiOutReturn.setValue(FfiConverterByteArray.lower(value)) }
+            uniffiTraitInterfaceCallWithError(
+                uniffiCallStatus,
+                makeCall,
+                writeReturn,
+                { e: KeyWrapperFailure -> FfiConverterTypeKeyWrapperFailure.lower(e) }
+            )
+        }
+    }
+    internal object `deleteKey`: UniffiCallbackInterfaceKeyWrapperMethod3 {
+        override fun callback(`uniffiHandle`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeKeyWrapper.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`deleteKey`(
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCallWithError(
+                uniffiCallStatus,
+                makeCall,
+                writeReturn,
+                { e: KeyWrapperFailure -> FfiConverterTypeKeyWrapperFailure.lower(e) }
+            )
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeKeyWrapper.handleMap.remove(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceKeyWrapper.UniffiByValue(
+        `info`,
+        `wrap`,
+        `unwrap`,
+        `deleteKey`,
+        uniffiFree,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_leek_zcash_ffi_fn_init_callback_vtable_keywrapper(vtable)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeKeyWrapper: FfiConverter<KeyWrapper, Pointer> {
+    internal val handleMap = UniffiHandleMap<KeyWrapper>()
+
+    override fun lower(value: KeyWrapper): Pointer {
+        return Pointer(handleMap.insert(value))
+    }
+
+    override fun lift(value: Pointer): KeyWrapper {
+        return KeyWrapperImpl(value)
+    }
+
+    override fun read(buf: ByteBuffer): KeyWrapper {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: KeyWrapper) = 8UL
+
+    override fun write(value: KeyWrapper, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
  * A LeekWallet board over the host's [`FrameTransport`].
  *
  * Calls are serialized (one at a time); each blocks until the board
@@ -2793,6 +3370,378 @@ public object FfiConverterTypePairingListener: FfiConverter<PairingListener, Poi
     override fun allocationSize(value: PairingListener) = 8UL
 
     override fun write(value: PairingListener, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * Quick unlock: the Storage Key kept wrapped by the app's [`KeyWrapper`],
+ * so the app opens with the user's biometric or device PIN instead of the
+ * board (`leek_zcash::QuickUnlock`; the record format is in its docs).
+ * Offer it only where the platform has a hardware-backed, user-authenticated
+ * key; never wrap with a key derived from a short PIN.
+ */
+public interface QuickUnlockInterface {
+    
+    fun `account`(): kotlin.UInt
+    
+    fun `appId`(): kotlin.String
+    
+    /**
+     * The wrapper's label when the record was made.
+     */
+    fun `label`(): kotlin.String
+    
+    fun `network`(): Network
+    
+    /**
+     * The Storage Key after the platform's prompt: 702 for another app,
+     * account or network (no prompt), 706 for an insecure wrapper, 708 if
+     * the user cancelled, 707 if the platform key is gone or gives another
+     * key, 709 if it failed, 703 if the record was changed. On anything but
+     * 708, offer the board.
+     */
+    fun `open`(`appId`: kotlin.String, `account`: kotlin.UInt, `network`: Network, `wrapper`: KeyWrapper): StorageKey
+    
+    fun `toBytes`(): kotlin.ByteArray
+    
+    companion object
+}
+
+/**
+ * Quick unlock: the Storage Key kept wrapped by the app's [`KeyWrapper`],
+ * so the app opens with the user's biometric or device PIN instead of the
+ * board (`leek_zcash::QuickUnlock`; the record format is in its docs).
+ * Offer it only where the platform has a hardware-backed, user-authenticated
+ * key; never wrap with a key derived from a short PIN.
+ */
+open class QuickUnlock: Disposable, AutoCloseable, QuickUnlockInterface
+{
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_free_quickunlock(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_clone_quickunlock(pointer!!, status)
+        }
+    }
+
+    override fun `account`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_quickunlock_account(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `appId`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_quickunlock_app_id(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The wrapper's label when the record was made.
+     */override fun `label`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_quickunlock_label(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `network`(): Network {
+            return FfiConverterTypeNetwork.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_quickunlock_network(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The Storage Key after the platform's prompt: 702 for another app,
+     * account or network (no prompt), 706 for an insecure wrapper, 708 if
+     * the user cancelled, 707 if the platform key is gone or gives another
+     * key, 709 if it failed, 703 if the record was changed. On anything but
+     * 708, offer the board.
+     */
+    @Throws(LeekException::class)override fun `open`(`appId`: kotlin.String, `account`: kotlin.UInt, `network`: Network, `wrapper`: KeyWrapper): StorageKey {
+            return FfiConverterTypeStorageKey.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_quickunlock_open(
+        it, FfiConverterString.lower(`appId`),FfiConverterUInt.lower(`account`),FfiConverterTypeNetwork.lower(`network`),FfiConverterTypeKeyWrapper.lower(`wrapper`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `toBytes`(): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_quickunlock_to_bytes(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+    companion object {
+        
+    /**
+     * Wraps `key` (from the board) with `wrapper`; store `to_bytes()`.
+     * Code 706 unless the wrapper reports a hardware-backed key that
+     * requires the user, before `wrap` is called.
+     */
+    @Throws(LeekException::class) fun `create`(`key`: StorageKey, `wrapper`: KeyWrapper): QuickUnlock {
+            return FfiConverterTypeQuickUnlock.lift(
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_constructor_quickunlock_create(
+        FfiConverterTypeStorageKey.lower(`key`),FfiConverterTypeKeyWrapper.lower(`wrapper`),_status)
+}
+    )
+    }
+    
+
+        
+    /**
+     * A stored record; code 703 if it is not one.
+     */
+    @Throws(LeekException::class) fun `fromBytes`(`bytes`: kotlin.ByteArray): QuickUnlock {
+            return FfiConverterTypeQuickUnlock.lift(
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_constructor_quickunlock_from_bytes(
+        FfiConverterByteArray.lower(`bytes`),_status)
+}
+    )
+    }
+    
+
+        
+    }
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQuickUnlock: FfiConverter<QuickUnlock, Pointer> {
+
+    override fun lower(value: QuickUnlock): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): QuickUnlock {
+        return QuickUnlock(value)
+    }
+
+    override fun read(buf: ByteBuffer): QuickUnlock {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: QuickUnlock) = 8UL
+
+    override fun write(value: QuickUnlock, buf: ByteBuffer) {
         // The Rust code always expects pointers written as 8 bytes,
         // and will fail to compile if they don't fit.
         buf.putLong(Pointer.nativeValue(lower(value)))
@@ -3818,6 +4767,56 @@ public object FfiConverterTypeFeatures: FfiConverterRustBuffer<Features> {
 
 
 /**
+ * What a [`KeyWrapper`] says about its platform key (`leek_zcash::WrapperInfo`).
+ */
+data class KeyWrapperInfo (
+    /**
+     * Generated in and never leaving secure hardware (StrongBox or a TEE,
+     * the Secure Enclave, a TPM, a security key).
+     */
+    var `hardwareBacked`: kotlin.Boolean, 
+    /**
+     * Usable only after the user's biometric or device PIN, with the
+     * hardware's own attempt limits.
+     */
+    var `userAuthRequired`: kotlin.Boolean, 
+    /**
+     * Shown on the unlock screen ("Fingerprint (StrongBox)"), up to 64 bytes.
+     */
+    var `label`: kotlin.String
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeKeyWrapperInfo: FfiConverterRustBuffer<KeyWrapperInfo> {
+    override fun read(buf: ByteBuffer): KeyWrapperInfo {
+        return KeyWrapperInfo(
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: KeyWrapperInfo) = (
+            FfiConverterBoolean.allocationSize(value.`hardwareBacked`) +
+            FfiConverterBoolean.allocationSize(value.`userAuthRequired`) +
+            FfiConverterString.allocationSize(value.`label`)
+    )
+
+    override fun write(value: KeyWrapperInfo, buf: ByteBuffer) {
+            FfiConverterBoolean.write(value.`hardwareBacked`, buf)
+            FfiConverterBoolean.write(value.`userAuthRequired`, buf)
+            FfiConverterString.write(value.`label`, buf)
+    }
+}
+
+
+
+/**
  * **Experimental.** What to write to the SD card (`prepare_sd_sign`).
  */
 data class SdRequest (
@@ -4002,6 +5001,120 @@ public object FfiConverterTypeAddressCheck: FfiConverterRustBuffer<AddressCheck>
 
 
 /**
+ * Why the app's [`KeyWrapper`] failed.
+ */
+sealed class KeyWrapperFailure: kotlin.Exception() {
+    
+    /**
+     * The user cancelled or failed the prompt: code 708.
+     */
+    class Cancelled(
+        ) : KeyWrapperFailure() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The platform key is gone or invalidated (new biometric enrolled,
+     * device PIN removed), or the blob does not decrypt: code 707.
+     */
+    class Invalidated(
+        ) : KeyWrapperFailure() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * Anything else: code 709.
+     */
+    class Failed(
+        ) : KeyWrapperFailure() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The callback threw something else: code 709.
+     */
+    class Unexpected(
+        ) : KeyWrapperFailure() {
+        override val message
+            get() = ""
+    }
+    
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<KeyWrapperFailure> {
+        override fun lift(error_buf: RustBuffer.ByValue): KeyWrapperFailure = FfiConverterTypeKeyWrapperFailure.lift(error_buf)
+    }
+
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeKeyWrapperFailure : FfiConverterRustBuffer<KeyWrapperFailure> {
+    override fun read(buf: ByteBuffer): KeyWrapperFailure {
+        
+
+        return when(buf.getInt()) {
+            1 -> KeyWrapperFailure.Cancelled()
+            2 -> KeyWrapperFailure.Invalidated()
+            3 -> KeyWrapperFailure.Failed()
+            4 -> KeyWrapperFailure.Unexpected()
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: KeyWrapperFailure): ULong {
+        return when(value) {
+            is KeyWrapperFailure.Cancelled -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is KeyWrapperFailure.Invalidated -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is KeyWrapperFailure.Failed -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is KeyWrapperFailure.Unexpected -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: KeyWrapperFailure, buf: ByteBuffer) {
+        when(value) {
+            is KeyWrapperFailure.Cancelled -> {
+                buf.putInt(1)
+                Unit
+            }
+            is KeyWrapperFailure.Invalidated -> {
+                buf.putInt(2)
+                Unit
+            }
+            is KeyWrapperFailure.Failed -> {
+                buf.putInt(3)
+                Unit
+            }
+            is KeyWrapperFailure.Unexpected -> {
+                buf.putInt(4)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
+
+
+/**
  * Every error, by the hundreds digit of its stable `code`.
  *
  * `code` is `leek_zcash::LeekError::code` (the README lists them),
@@ -4104,7 +5217,8 @@ sealed class LeekException: kotlin.Exception() {
     
     /**
      * 7xx: stored app data (an invalid app identifier, data sealed for
-     * another key, damaged data, a forgotten Storage Key).
+     * another key, damaged data, a forgotten Storage Key) and quick unlock
+     * (an insecure platform key, an invalidated one, a cancelled prompt).
      */
     class Storage(
         
@@ -5046,6 +6160,19 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
 }
     )
     }
+    
+
+        /**
+         * Turns quick unlock off: deletes the wrapper's platform key. Delete the
+         * stored record as well.
+         */
+    @Throws(LeekException::class) fun `disableQuickUnlock`(`wrapper`: KeyWrapper)
+        = 
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_disable_quick_unlock(
+        FfiConverterTypeKeyWrapper.lower(`wrapper`),_status)
+}
+    
     
 
         /**

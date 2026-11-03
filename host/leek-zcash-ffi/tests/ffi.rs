@@ -355,3 +355,67 @@ fn stored_app_data_seals_and_refuses() {
     assert!(StorageKey::from_bytes(vec![0; 31], "a.b".into(), 0, Network::Main).is_err());
     assert_eq!(storage_zip_number(), 65535);
 }
+
+/// A foreign KeyWrapper as Kotlin or Swift would implement it: XOR with a
+/// pad and a trailing check byte stand in for the platform key.
+struct FakeWrapper {
+    hardware_backed: bool,
+    deleted: Mutex<bool>,
+    cancel: Mutex<bool>,
+}
+
+impl KeyWrapper for FakeWrapper {
+    fn info(&self) -> KeyWrapperInfo {
+        KeyWrapperInfo { hardware_backed: self.hardware_backed, user_auth_required: true, label: "Face (test)".into() }
+    }
+
+    fn wrap(&self, key: Vec<u8>) -> Result<Vec<u8>, KeyWrapperFailure> {
+        let mut b: Vec<u8> = key.iter().map(|x| x ^ 0xA5).collect();
+        b.push(b.iter().fold(0, |a, x| a ^ x));
+        Ok(b)
+    }
+
+    fn unwrap(&self, blob: Vec<u8>) -> Result<Vec<u8>, KeyWrapperFailure> {
+        if *self.cancel.lock().unwrap() {
+            return Err(KeyWrapperFailure::Cancelled);
+        }
+        let (body, check) = blob.split_at(blob.len() - 1);
+        if *self.deleted.lock().unwrap() || body.iter().fold(0, |a, x| a ^ x) != check[0] {
+            return Err(KeyWrapperFailure::Invalidated);
+        }
+        Ok(body.iter().map(|x| x ^ 0xA5).collect())
+    }
+
+    fn delete_key(&self) -> Result<(), KeyWrapperFailure> {
+        *self.deleted.lock().unwrap() = true;
+        Ok(())
+    }
+}
+
+#[test]
+fn quick_unlock_through_a_foreign_wrapper() {
+    let key = hex::decode("f43c678ee392cc4552daa3bde21c3cb15b416811dfdacf64e7aceca6114bd0d0").unwrap();
+    let k = StorageKey::from_bytes(key.clone(), "xyz.leekwallet.zcash".into(), 0, Network::Main).unwrap();
+    let db = k.seal_db(b"wallet.db".to_vec()).unwrap();
+    let w = Arc::new(FakeWrapper { hardware_backed: true, deleted: Mutex::new(false), cancel: Mutex::new(false) });
+    let q = QuickUnlock::create(k.clone(), w.clone()).unwrap();
+    let q = QuickUnlock::from_bytes(q.to_bytes()).unwrap();
+    assert_eq!((q.app_id(), q.account(), q.network(), q.label()), ("xyz.leekwallet.zcash".into(), 0, Network::Main, "Face (test)".into()));
+    let back = q.open("xyz.leekwallet.zcash".into(), 0, Network::Main, w.clone()).unwrap();
+    assert_eq!(back.key_bytes(), key);
+    assert_eq!(back.open_db(db).unwrap(), b"wallet.db");
+    // Another account: 702, before any prompt.
+    assert!(matches!(q.open("xyz.leekwallet.zcash".into(), 1, Network::Main, w.clone()).err().unwrap(), LeekError::Storage { code: 702, .. }));
+    *w.cancel.lock().unwrap() = true;
+    let e = q.open("xyz.leekwallet.zcash".into(), 0, Network::Main, w.clone()).err().unwrap();
+    assert!(matches!(e, LeekError::Storage { code: 708, recovery: Recovery::RetrySameLink, .. }));
+    *w.cancel.lock().unwrap() = false;
+    // A software key is refused (706).
+    let soft = Arc::new(FakeWrapper { hardware_backed: false, deleted: Mutex::new(false), cancel: Mutex::new(false) });
+    assert_eq!(QuickUnlock::create(k.clone(), soft).err().unwrap().code(), 706);
+    disable_quick_unlock(w.clone()).unwrap();
+    assert_eq!(q.open("xyz.leekwallet.zcash".into(), 0, Network::Main, w.clone()).err().unwrap().code(), 707);
+    assert_eq!(QuickUnlock::from_bytes(b"ZAQU".to_vec()).err().unwrap().code(), 703);
+    k.forget();
+    assert_eq!(QuickUnlock::create(k, w).err().unwrap().code(), 704);
+}
