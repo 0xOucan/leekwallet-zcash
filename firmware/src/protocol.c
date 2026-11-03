@@ -47,6 +47,7 @@
 #include "zcash-account.h"
 #include "zcash-meta.h"
 #include "zcash-sign.h"
+#include "zcash-storage.h"
 #else
 /* No Zcash signer on this board (the Pixie), but getStatus still reports
  * the Settings > Network choice, whose values are zsign's: 0 is Mainnet
@@ -780,6 +781,123 @@ static bool share_view_key_allowed(uint32_t account, uint8_t network,
     return true;
 }
 
+/*
+ * zGetStorageKey: the key an app encrypts its stored wallet data under
+ * (docs/zcash/zip-draft-app-storage-keys.md), one per app identifier,
+ * network and account, derived from the seed with ZIP 32 Registered key
+ * derivation. An app that keeps only ciphertext asks for it each time it
+ * opens, so a stolen host or a backup of it reads nothing without the board.
+ *
+ * The draft's Signer rules, and how they are met here:
+ *   - the app identifier is checked, never corrected: anything but the
+ *     draft's lower-case reverse-DNS is refused before a screen goes up,
+ *     so the bytes shown are the bytes derived from;
+ *   - the user approves EVERY release on the board, with the identifier in
+ *     full, the account, the network and the pairing code of the host that
+ *     asked. Unlike the view key, no yes is remembered, not even for the
+ *     session: the draft forbids it, and an app asks once per opening;
+ *   - derived only after the yes, and only over the paired session: the
+ *     answer is sealed here rather than by dispatch(), whose tail answers in
+ *     plaintext when the session is gone, and a key that cannot go out
+ *     encrypted does not go out at all.
+ *
+ * Answers everything itself, error or result. `out` is dispatch()'s buffer.
+ */
+static void handle_storage_key(const uint8_t *payload, size_t len, uint8_t *out, size_t out_size)
+{
+    CborItem item;
+    if (!request_is_authenticated()) {
+        send_session_error(ERR_SESSION, "session required");
+        return;
+    }
+    if (!pin_is_unlocked()) {
+        send_error(ERR_NOT_UNLOCKED, "device is locked");
+        return;
+    }
+    uint32_t account = 0;
+    if (cbor_map_find(payload, len, "account", &item)) {
+        if (item.type != CBOR_UINT || item.value >= 0x80000000u) {
+            send_error(ERR_MALFORMED, "account out of range");
+            return;
+        }
+        account = item.value;
+    }
+    char net_name[8];
+    if (!cbor_map_find(payload, len, "network", &item) ||
+        !cbor_text_copy(&item, net_name, sizeof(net_name)) ||
+        (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+        send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+        return;
+    }
+    const uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+    /* The identifier's own length, not strlen: an embedded NUL is a byte the
+     * grammar refuses, not the end of the string. */
+    char app_id[ZCASH_APP_ID_MAX + 1];
+    if (!cbor_map_find(payload, len, "appId", &item) || item.type != CBOR_TEXT ||
+        !zcash_app_id_valid((const char *)item.data, item.value)) {
+        send_error(ERR_MALFORMED,
+                   "appId must be lower-case reverse-DNS: a-z 0-9 - _ and dots, 3 to 64 bytes");
+        return;
+    }
+    const size_t app_id_len = item.value;
+    memcpy(app_id, item.data, app_id_len);
+    app_id[app_id_len] = '\0';
+    if (!network_is_the_boards(network)) {
+        return;
+    }
+    /* A board with no seed says so before asking a question nobody could
+     * usefully answer. Nothing is derived until the yes. */
+    WalletError werr = wait_for_wallet();
+    if (werr != WALLET_OK) {
+        send_wallet_error(werr);
+        return;
+    }
+
+    const uint32_t asked_in = session_generation();
+    ui_request_storage_key(app_id, account, network, session_passkey(),
+                           transport_get() == TRANSPORT_BLE);
+    SignOutcome outcome = wait_for_user();
+    if (outcome != SIGN_APPROVED) {
+        send_error(outcome == SIGN_PENDING ? ERR_USER_TIMEOUT : ERR_USER_REJECTED,
+                   outcome == SIGN_PENDING ? "no answer on the device"
+                                           : "storage key not released: refused on the device");
+        return;
+    }
+    if (session_generation() != asked_in || session_state() != SESSION_ACTIVE) {
+        send_session_error(ERR_SESSION, "the session ended before the answer");
+        return;
+    }
+
+    uint8_t key[32];
+    werr = zcash_storage_key(app_id, app_id_len, account, network, key);
+    if (werr != WALLET_OK) {
+        memzero(key, sizeof key);
+        send_wallet_error(werr);
+        return;
+    }
+    CborWriter w;
+    cbor_writer_init(&w, out, out_size);
+    cbor_write_map(&w, 1);
+    cbor_write_text(&w, "result");
+    cbor_write_map(&w, 4);
+    cbor_write_text(&w, "appId");
+    cbor_write_text(&w, app_id);
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, account);
+    cbor_write_text(&w, "network");
+    cbor_write_text(&w, net_name);
+    cbor_write_text(&w, "storageKey");
+    cbor_write_bytes(&w, key, sizeof key);
+    memzero(key, sizeof key);
+    const int enc = cbor_writer_ok(&w) ? session_encrypt(out, w.length, out_size) : -1;
+    if (enc < 0) {
+        memzero(out, out_size);
+        send_session_error(ERR_SESSION, "the session ended before the answer");
+        return;
+    }
+    send_frame(FRAME_ENC_RESPONSE, out, (size_t)enc);
+}
+
 /* zSignBegin / zSignChunk / zSignFinish. Writes the result into `w` and
  * returns true, or sends an error and returns false. */
 static bool handle_zsign(const char *method, const uint8_t *payload, size_t len, CborWriter *w)
@@ -1306,7 +1424,7 @@ static void dispatch(const uint8_t *payload, size_t len)
          * before a session, like getFeatures. */
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 8);
+        cbor_write_map(&w, 9);
         cbor_write_text(&w, "backend");
         cbor_write_text(&w, zcash_sign_backend_name(zcash_sign_backend()));
         cbor_write_text(&w, "branchIds");
@@ -1334,6 +1452,11 @@ static void dispatch(const uint8_t *payload, size_t len)
         if (LEEK_HAS_SDCARD) cbor_write_text(&w, "sd");
         cbor_write_text(&w, "showAddress");
         cbor_write_uint(&w, 1);
+        /* zGetStorageKey, and the draft's ZIP number placeholder it derives
+         * under: an app can offer "unlock with the board" only if this is
+         * here, and must not mix keys from two ZIP numbers. */
+        cbor_write_text(&w, "storageKey");
+        cbor_write_uint(&w, ZC_STORAGE_ZIP_NUMBER);
 
     } else if (strcmp(method, "zShowAddress") == 0) {
         /* The app shows an address; the device derives its own and pages it
@@ -1502,6 +1625,11 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "stored");
         cbor_write_uint(&w, r == ZMETA_OK_STORED ? 1 : 0);
+
+    } else if (strcmp(method, "zGetStorageKey") == 0) {
+        /* Answers on its own, encrypted or not at all. */
+        handle_storage_key(payload, len, out, sizeof(out));
+        return;
 
     } else if (strcmp(method, "zSignBegin") == 0 || strcmp(method, "zSignChunk") == 0 ||
                strcmp(method, "zSignFinish") == 0) {

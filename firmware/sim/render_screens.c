@@ -210,5 +210,18 @@ int main(int argc, char **argv)
     snap("14-share-view-key");
     press(BUTTON_CANCEL);
     ui_sign_clear();
+
+    /* zGetStorageKey's question: a short app identifier, then the longest. */
+    ui_request_storage_key("xyz.leekwallet.zcash", 0, ZS_NET_MAIN, "482913", false);
+    go(SCREEN_STORAGE_KEY);
+    snap("15-storage-key");
+    press(BUTTON_CANCEL);
+    ui_sign_clear();
+    ui_request_storage_key("com.example.wallet.desktop-edition.beta.channel.nightly-build", 3,
+                           ZS_NET_TEST, "482913", true);
+    go(SCREEN_STORAGE_KEY);
+    snap("16-storage-key-long");
+    press(BUTTON_CANCEL);
+    ui_sign_clear();
     return 0;
 }

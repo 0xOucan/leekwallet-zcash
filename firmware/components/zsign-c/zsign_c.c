@@ -1070,6 +1070,83 @@ int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t 
     return rc;
 }
 
+/* ---- App Storage Keys ---------------------------------------------------
+ *
+ * docs/zcash/zip-draft-app-storage-keys.md: ZIP 32 Registered key derivation
+ * under the context string "AppStorageKeys", path
+ * m_storage / ZIP_NUMBER' / coin_type' / account' / (0', AppIdTag), the key
+ * being the first half of the full-width cryptovalue at the leaf. */
+
+int32_t zc_app_id_valid(const char *app_id, size_t len)
+{
+    size_t label = 0, labels = 1;
+    if (!app_id || len < ZC_APP_ID_MIN || len > ZC_APP_ID_MAX) return 0;
+    for (size_t i = 0; i < len; i++) {
+        const char c = app_id[i];
+        const int lead = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (c == '.') {
+            if (label == 0) return 0;               /* empty label */
+            label = 0;
+            labels++;
+        } else if (label == 0 ? lead : (lead || c == '-' || c == '_')) {
+            if (++label > 63) return 0;             /* lead *62(...) */
+        } else {
+            return 0;
+        }
+    }
+    return label > 0 && labels >= 2;
+}
+
+int32_t zc_storage_key(const uint8_t *seed, size_t seed_len, uint8_t net, uint32_t account,
+                       const char *app_id, size_t app_id_len, uint8_t out[32])
+{
+    static const char ctx_string[] = "AppStorageKeys";
+    const uint8_t ctx_len = sizeof ctx_string - 1, seed_len8 = (uint8_t)seed_len;
+    const uint8_t ckd = 0xAC;                       /* PrfExpand REGISTERED_ZIP32_CHILD */
+    uint8_t w[64], sk[32], c[32], tail[4 + 1 + 1 + ZC_APP_ID_MAX];
+    blake2b_state s;
+    if (!seed || !out || seed_len < 32 || seed_len > 252) return ZS_ERR_ARG;
+    if (net != ZS_NET_MAIN && net != ZS_NET_TEST) return ZS_ERR_ARG;
+    if (account >= 0x80000000u) return ZS_ERR_ARG;
+    if (!zc_app_id_valid(app_id, app_id_len)) return ZS_E_PARSE;
+
+    /* Master: I = BLAKE2b-512("ZIPRegistered_KD", [len] || ctx || [len(S)] || S). */
+    blake2b_InitPersonal(&s, 64, "ZIPRegistered_KD", 16);
+    blake2b_Update(&s, &ctx_len, 1);
+    blake2b_Update(&s, ctx_string, ctx_len);
+    blake2b_Update(&s, &seed_len8, 1);
+    blake2b_Update(&s, seed, seed_len);
+    blake2b_Final(&s, w, 64);
+    memzero(&s, sizeof s);
+
+    /* ZIP_NUMBER', coin_type', account', untagged: PRF(c, [0xAC] || sk || i). */
+    const uint32_t path[3] = { 0x80000000u | ZC_STORAGE_ZIP_NUMBER,
+                               0x80000000u | (net == ZS_NET_MAIN ? 133u : 1u),
+                               0x80000000u | account };
+    for (int d = 0; d < 3; d++) {
+        const uint8_t i_le[4] = { (uint8_t)path[d], (uint8_t)(path[d] >> 8),
+                                  (uint8_t)(path[d] >> 16), (uint8_t)(path[d] >> 24) };
+        memcpy(sk, w, 32);
+        memcpy(c, w + 32, 32);
+        zc_prf_expand(c, &ckd, 1, sk, 32, i_le, 4, w);
+    }
+    memcpy(sk, w, 32);
+    memcpy(c, w + 32, 32);
+
+    /* The leaf, 0' with lead byte 1 (cryptovalue) and AppIdTag = [len] || id. */
+    tail[0] = 0x00; tail[1] = 0x00; tail[2] = 0x00; tail[3] = 0x80;
+    tail[4] = 0x01;
+    tail[5] = (uint8_t)app_id_len;
+    memcpy(tail + 6, app_id, app_id_len);
+    zc_prf_expand(c, &ckd, 1, sk, 32, tail, 6 + app_id_len, w);
+    memcpy(out, w, 32);                             /* the second half is never released */
+
+    memzero(w, sizeof w);
+    memzero(sk, sizeof sk);
+    memzero(c, sizeof c);
+    return ZS_OK;
+}
+
 int32_t zc_selftest(void)
 {
     return zc_crypto_selftest() == 0 ? 0 : ZS_E_INTERNAL;

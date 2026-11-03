@@ -269,6 +269,12 @@ $(BUILD)/test_zcash_pczt_c: test_zcash_pczt_c.c ../../vectors/pczt_vectors.h ../
                             $(ZC_TEST_DEPS) $(BUILD)/libzsign_c.a | $(BUILD)
 	$(CC) $(CFLAGS) -I$(ZSIGNC)/include -o $@ $(filter %.c,$^) $(BUILD)/libzsign_c.a
 
+# App Storage Keys: the draft's vectors and App identifier rules (zsign-c).
+TESTS += test_storage_key
+all: $(BUILD)/test_storage_key
+$(BUILD)/test_storage_key: test_storage_key.c $(ZC_TEST_DEPS) $(BUILD)/libzsign_c.a | $(BUILD)
+	$(CC) $(CFLAGS) -I$(ZSIGNC)/include -o $@ $(filter %.c,$^) $(BUILD)/libzsign_c.a
+
 # Both backends on every vector and on deterministic single-byte mutations.
 $(BUILD)/test_zsign_diff: test_zsign_diff.c ../../vectors/pczt_vectors.h $(ZC_TEST_DEPS) \
                           $(ZSIGN)/platform/zsign_platform_host.c \
@@ -509,7 +515,7 @@ $(BUILD)/test_vault_migrate: test_vault_migrate.c esp_stubs.c host_stubs.c \
 # the mock has to match; see test_protocol.c.
 PROTOCOL_SRC := test_protocol.c esp_stubs.c host_stubs.c fake_usb.c fake_wallet.c fake_zcash.c \
                 ../src/zcash-sign.c ../src/zcash-worker.c $(ZSIGN)/platform/zsign_platform_host.c \
-                ../src/zcash-meta.c ../src/zcash-fp.c $(CRYPTO)/blake2b.c \
+                ../src/zcash-meta.c ../src/zcash-fp.c ../src/zcash-storage.c $(CRYPTO)/blake2b.c \
                 ../src/sd-sign.c ../src/sdcard.c \
                 ../src/protocol.c ../src/cbor.c ../src/session.c ../src/pin.c \
                 ../src/ble-chunk.c ../src/ble.c ../src/ble-name.c ../src/transport.c ../src/entropy.c \

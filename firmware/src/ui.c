@@ -42,6 +42,7 @@
 #include "zcash-meta.h"
 #include "zcash-receive.h"
 #include "zcash-review.h"
+#include "zcash-storage.h"
 #endif
 #if LEEK_HAS_SDCARD && LEEK_HAS_ZCASH
 #include "sd-seed.h"
@@ -5376,6 +5377,8 @@ static volatile bool zsign_review_pending = false;
 static volatile bool addr_check_pending = false;
 /* zGetAccount: the share-view-key question is wanted (SCREEN_SHARE_VIEW_KEY). */
 static volatile bool share_key_pending = false;
+/* zGetStorageKey: the unlock-app-data question is wanted (SCREEN_STORAGE_KEY). */
+static volatile bool storage_key_pending = false;
 #endif
 
 /* Raised when the approval window closed with nobody answering, so the UI
@@ -5459,7 +5462,8 @@ bool ui_user_is_answering(void)
         return true;
     }
 #if LEEK_HAS_ZCASH
-    if (zsign_review_pending || addr_check_pending || share_key_pending) {
+    if (zsign_review_pending || addr_check_pending || share_key_pending ||
+        storage_key_pending) {
         return true;
     }
 #endif
@@ -5469,6 +5473,7 @@ bool ui_user_is_answering(void)
         case SCREEN_ZSIGN_REVIEW:
         case SCREEN_ADDRESS_CHECK:
         case SCREEN_SHARE_VIEW_KEY:
+        case SCREEN_STORAGE_KEY:
         case SCREEN_PASSPHRASE_CONFIRM:
         case SCREEN_WIPE_CONFIRM:
         /* Not questions, but a seed is on the glass and the user is working
@@ -5830,6 +5835,144 @@ static const screen_t screen_share_view_key = {
     .on_button = screen_share_key_on_button,
     .exit = NULL,
 };
+
+/* ============================================================================
+ * Unlock app data? (zGetStorageKey)
+ *
+ * An app that keeps its wallet data encrypted asks for its Storage Key each
+ * time it opens (docs/zcash/zip-draft-app-storage-keys.md). Any app can
+ * claim any name, so what the user approves is what the screen says: the app
+ * identifier IN FULL, never cut (the draft forbids it, and a name that ends
+ * where the panel does is how one app passes for another), the account and
+ * network, and the host's pairing code as on "Share view key?".
+ *
+ * The identifier is at most 64 bytes: four 21-column rows. It breaks after a
+ * dot in the second half of a row when that fits in four, and every 21
+ * characters otherwise; no character is added at a break. Short ones leave
+ * room to say what a yes does. Asked every time; nothing is remembered.
+ * ============================================================================ */
+
+#define STORAGE_KEY_ROWS 4
+
+static char     storage_key_app[ZCASH_APP_ID_MAX + 1];
+static uint32_t storage_key_account;
+static uint8_t  storage_key_network;
+static bool     storage_key_ble;
+static char     storage_key_code[SESSION_PASSKEY_LEN + 1];
+
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble)
+{
+    snprintf(storage_key_app, sizeof storage_key_app, "%s", app_id ? app_id : "");
+    storage_key_account = account;
+    storage_key_network = network;
+    storage_key_ble = over_ble;
+    snprintf(storage_key_code, sizeof storage_key_code, "%s", pairing_code ? pairing_code : "");
+    sign_outcome = SIGN_PENDING;
+    storage_key_pending = true;
+}
+
+/* `id` in rows of at most OLED_CHARS_PER_LINE, broken after a dot past the
+ * middle of a row (or at the row's end when there is none) if that takes no
+ * more than STORAGE_KEY_ROWS, else every OLED_CHARS_PER_LINE.
+ * Returns the number of rows; every character lands in exactly one. */
+static int storage_key_wrap(const char *id, char rows[STORAGE_KEY_ROWS][OLED_CHARS_PER_LINE + 1])
+{
+    const size_t len = strlen(id);
+    int n = 0;
+    size_t at = 0;
+    while (at < len && n < STORAGE_KEY_ROWS) {
+        size_t take = len - at;
+        if (take > OLED_CHARS_PER_LINE) {
+            take = OLED_CHARS_PER_LINE;
+            for (size_t k = OLED_CHARS_PER_LINE; k > OLED_CHARS_PER_LINE / 2; k--) {
+                if (id[at + k - 1] == '.') {
+                    take = k;
+                    break;
+                }
+            }
+        }
+        snprintf(rows[n++], OLED_CHARS_PER_LINE + 1, "%.*s", (int)take, id + at);
+        at += take;
+    }
+    if (at == len) {
+        return n;
+    }
+    n = 0;
+    for (at = 0; at < len; at += OLED_CHARS_PER_LINE) {
+        snprintf(rows[n++], OLED_CHARS_PER_LINE + 1, "%.*s", OLED_CHARS_PER_LINE, id + at);
+    }
+    return n;
+}
+
+static void screen_storage_key_enter(void)
+{
+    ESP_LOGI(TAG, "Storage key: account %u", (unsigned)storage_key_account);
+}
+
+static void screen_storage_key_render(void)
+{
+    char rows[STORAGE_KEY_ROWS][OLED_CHARS_PER_LINE + 1];
+    const int n = storage_key_wrap(storage_key_app, rows);
+
+    oled_clear();
+    oled_set_role(OLED_ROLE_ACCENT);
+    oled_draw_string_centered(0, "Unlock app data?");
+    oled_set_role(OLED_ROLE_AUTO);
+    for (int i = 0; i < n; i++) {
+        oled_draw_string_centered(1 + i, rows[i]);
+    }
+    if (n <= 2) {
+        oled_set_role(OLED_ROLE_WARN);
+        oled_draw_string(3, 0, "Lets this app open");
+        oled_draw_string(4, 0, "its saved wallet data");
+        oled_set_role(OLED_ROLE_AUTO);
+    }
+
+    char line[OLED_CHARS_PER_LINE + 1];
+    snprintf(line, sizeof line, "acct %u  %s", (unsigned)(storage_key_account % 100000u),
+             storage_key_network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
+    oled_draw_string_centered(5, line);
+    const char *link = storage_key_ble ? "BLE" : "USB";
+    if (strlen(storage_key_code) == SESSION_PASSKEY_LEN) {
+        snprintf(line, sizeof line, "%s, code %.3s %.3s", link, storage_key_code,
+                 storage_key_code + 3);
+    } else {
+        snprintf(line, sizeof line, "%s device", link);
+    }
+    oled_draw_string_centered(6, line);
+    oled_draw_string(7, 0, HINT_NO_YES);
+}
+
+static void storage_key_forget(void)
+{
+    memzero(storage_key_app, sizeof storage_key_app);
+    memzero(storage_key_code, sizeof storage_key_code);
+}
+
+static void screen_storage_key_on_button(button_id_t btn)
+{
+    switch (btn) {
+        case BUTTON_ACCEPT:
+            sign_outcome = SIGN_APPROVED;
+            break;
+        case BUTTON_CANCEL:
+            sign_outcome = SIGN_REJECTED;
+            break;
+        default:
+            /* The knob has nothing to scroll: everything is on one page. */
+            return;
+    }
+    storage_key_forget();
+    ui_set_screen(SCREEN_MAIN_MENU);
+}
+
+static const screen_t screen_storage_key = {
+    .enter = screen_storage_key_enter,
+    .render = screen_storage_key_render,
+    .on_button = screen_storage_key_on_button,
+    .exit = NULL,
+};
 #endif /* LEEK_HAS_ZCASH */
 
 /* ============================================================================
@@ -5959,6 +6102,7 @@ void ui_init(void)
 #if LEEK_HAS_ZCASH
     screens[SCREEN_ADDRESS_CHECK] = &screen_address_check;
     screens[SCREEN_SHARE_VIEW_KEY] = &screen_share_view_key;
+    screens[SCREEN_STORAGE_KEY] = &screen_storage_key;
 #endif
     screens[SCREEN_SCAN] = &screen_scan;
     screens[SCREEN_STORAGE_FAULT] = &screen_storage_fault;
@@ -6141,6 +6285,12 @@ static void service_sign_expiry(void)
         ui_set_screen(SCREEN_MAIN_MENU);
         return;
     }
+    if (ui_get_screen() == SCREEN_STORAGE_KEY) {
+        /* The host was already told "no answer"; nothing was released. */
+        storage_key_forget();
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
 #endif
     if (ui_get_screen() == SCREEN_HOST_PASSPHRASE_CONFIRM) {
         /* The wallet is the honest place to land: whatever was proposed has
@@ -6270,6 +6420,10 @@ void ui_task(void *pvParameters)
         if (share_key_pending) {
             share_key_pending = false;
             ui_set_screen(SCREEN_SHARE_VIEW_KEY);
+        }
+        if (storage_key_pending) {
+            storage_key_pending = false;
+            ui_set_screen(SCREEN_STORAGE_KEY);
         }
 #endif
 

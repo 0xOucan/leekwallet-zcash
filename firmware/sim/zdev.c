@@ -215,6 +215,17 @@ void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pa
     outcome = SIGN_PENDING;
 }
 
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble)
+{
+    printf("\n[device] Unlock app data? Lets this app open its saved wallet data.\n"
+           "  %s\n  account %u, %s; %s, pairing code %s\n", app_id,
+           (unsigned)account, network == ZS_NET_MAIN ? "mainnet" : "testnet",
+           over_ble ? "BLE" : "USB", pairing_code && *pairing_code ? pairing_code : "none");
+    question_pending = true;
+    outcome = SIGN_PENDING;
+}
+
 /* Polled by protocol.c's wait_for_user(); the first poll asks. */
 SignOutcome ui_sign_outcome(void)
 {

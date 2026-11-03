@@ -1114,6 +1114,78 @@ static void test_share_view_key(void)
     CHECK(ui_sign_outcome() == SIGN_PENDING, "an expired question answered");
 }
 
+/* zGetStorageKey: "unlock app data?", the app identifier in full however
+ * long, the press releases and X refuses. Every row whole on 21 columns. */
+static void test_storage_key_question(void)
+{
+    printf("== zGetStorageKey: the board names the app in full before it unlocks it\n");
+    boot_unlocked_with_seed();
+
+    ui_request_storage_key("xyz.leekwallet.zcash", 0, ZS_NET_TEST, "123456", false);
+    CHECK(ui_user_is_answering(), "a pending question did not hold off a new pairing");
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(0, "Unlock app data?") &&
+                 fake_oled_row_contains(1, "xyz.leekwallet.zcash") &&
+                 fake_oled_contains("Lets this app open") &&
+                 fake_oled_contains("its saved wallet data") &&
+                 fake_oled_row_contains(5, "acct 0  TEST") &&
+                 fake_oled_row_contains(6, "USB, code 123 456") &&
+                 fake_oled_row_contains(7, HINT_NO_YES),
+                 "the question does not name the app, the account or the host");
+    CHECK(ui_user_is_answering(), "the question on screen did not hold off a new pairing");
+    press(BUTTON_DOWN);
+    press(BUTTON_UP);
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "turning the knob answered");
+    CHECK(ui_get_screen() == SCREEN_STORAGE_KEY, "turning the knob left the question");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_sign_outcome() == SIGN_APPROVED, "OK did not release");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "did not go home after the answer");
+    ui_sign_clear();
+
+    /* Two rows, broken after a dot. */
+    ui_request_storage_key("com.example.wallet.desktop-edition", 2, ZS_NET_MAIN, "654321", true);
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(1, "com.example.wallet.") &&
+                 fake_oled_row_contains(2, "desktop-edition") &&
+                 fake_oled_contains("Lets this app open") &&
+                 fake_oled_contains("acct 2  MAIN") && fake_oled_contains("BLE, code 654 321"),
+                 "a two-row name is not broken after its dot");
+    press(BUTTON_CANCEL);
+    CHECK(ui_sign_outcome() == SIGN_REJECTED, "X did not refuse");
+    ui_sign_clear();
+
+    /* 64 bytes with dots too far apart for four rows: every 21 characters,
+     * and nothing cut. */
+    static const char *longest =
+        "abcdefghijklmnopqrstuvwxy.abcdefghijklmnopqrstuvwxy.abcdefghijkl";
+    ui_request_storage_key(longest, 0, ZS_NET_TEST, "123456", false);
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(1, "abcdefghijklmnopqrstu") &&
+                 fake_oled_row_contains(2, "vwxy.abcdefghijklmnop") &&
+                 fake_oled_row_contains(3, "qrstuvwxy.abcdefghijk") &&
+                 fake_oled_row_contains(4, "l") &&
+                 fake_oled_row_contains(5, "acct 0  TEST"),
+                 "a 64-byte name was cut or overlaps the account");
+    press(BUTTON_CANCEL);
+    ui_sign_clear();
+
+    /* Five dotted labels: broken after dots they would take five rows. */
+    static const char *dotted = "abcdefghijk.abcdefghijk.abcdefghijk.abcdefghijk.abcdefghijk";
+    ui_request_storage_key(dotted, 0, ZS_NET_TEST, NULL, false);
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(1, "abcdefghijk.abcdefghi") &&
+                 fake_oled_row_contains(2, "jk.abcdefghijk.abcdef") &&
+                 fake_oled_row_contains(3, "ghijk.abcdefghijk") &&
+                 !fake_oled_contains("Lets this app open") && fake_oled_contains("USB device"),
+                 "five labels were not shown whole");
+
+    /* The host gave up: the question comes off the screen. */
+    ui_sign_expire();
+    ui__service_sign_expiry_for_test();
+    CHECK(ui_get_screen() != SCREEN_STORAGE_KEY, "an expired question stayed up");
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "an expired question answered");
+}
+
 /* A companion asked for the other network and was refused (protocol.c): the
  * board says so over whatever is on screen, for a few seconds or until a
  * press, and that press does nothing else. */
@@ -3252,6 +3324,7 @@ int main(void)
     test_sd_card_save_and_load();
     test_address_check();
     test_share_view_key();
+    test_storage_key_question();
     test_wrong_network_notice();
     test_sd_card_signing();
     test_qr_airgap_signing();

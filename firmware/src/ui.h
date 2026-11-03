@@ -90,6 +90,10 @@ typedef enum {
      * A dead end on purpose: no PIN is asked, because none can be checked,
      * and nothing offers setup, because that would write over the seeds. */
     SCREEN_STORAGE_FAULT,
+    /* A host asked for an app's Storage Key (zGetStorageKey): "unlock app
+     * data?", with the app identifier in full, the account and the pairing
+     * code. Answered through the sign-outcome channel. */
+    SCREEN_STORAGE_KEY,
     SCREEN_COUNT
 } screen_id_t;
 
@@ -345,6 +349,18 @@ void ui_request_show_address(const char *ua, const char *t_address, uint32_t acc
  */
 void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
                                bool over_ble);
+
+/**
+ * A host asked for the Storage Key of `app_id` (zGetStorageKey), the key the
+ * app's stored wallet data is encrypted under. Asked every time, never
+ * remembered: an app asks once each time it opens.
+ *
+ * `app_id` is already valid (zcash_app_id_valid), at most 64 bytes, and is
+ * shown in full. `pairing_code` and `over_ble` as for the view key. The
+ * answer arrives through ui_sign_outcome(). Both strings are copied.
+ */
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble);
 #endif
 
 typedef enum {
