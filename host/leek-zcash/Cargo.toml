@@ -1,0 +1,34 @@
+[package]
+name = "leek-zcash"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+description = "The LeekWallet SDK's Zcash kit (L3): host-side preflight, signer views, signing a PCZT on the board, and applying its .zsig as a signed PCZT a wallet combines and extracts as it does Keystone's. Transport-free: it drives leek-device over any FramePort."
+
+# The same librustzcash commit as zecz-core and leek-android, so the PCZT
+# encoding, the redaction and the Signer role are the ones the board checks.
+[dependencies]
+pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer"] }
+# redact_pczt_for_signer (SignerView::Full | Compact).
+zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["orchard", "pczt"] }
+zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs"] }
+zcash_address = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
+orchard = { version = "0.16", default-features = false, features = ["std"] }
+secp256k1 = "0.33"
+anyhow = "1"
+# The device client: session, z* calls, .zsig. No transport of its own.
+leek-device = { path = "../leek-device", default-features = false }
+leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
+
+[dev-dependencies]
+# The soft signer (the vectors' seed) and the prover, to check that what
+# apply_zsig returns proves and extracts.
+zecz-core = { path = "../zecz-core" }
+# zdev's PTY, for the end-to-end tests.
+leek-device = { path = "../leek-device", features = ["serial"] }
+rand = { version = "0.10", features = ["sys_rng"] }
+serde_json = "1"
+hex = "0.4"
