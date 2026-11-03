@@ -6,8 +6,9 @@
  * only one wired for it.
  */
 
-#ifndef LEEK_BOARDS_S3_H
-#define LEEK_BOARDS_S3_H
+/* Read twice by board.h: first the identity and the kit it can carry, then,
+   with the components chosen, the pins. */
+#ifndef LEEK_BOARD_PINS
 
 #define BOARD_NAME              "ESP32-S3"
 #define BOARD_MODEL             "LeekWallet-S3"
@@ -16,6 +17,8 @@
 #define BOARD_DEFAULT_INPUT     LEEK_INPUT_BUTTONS4
 #define BOARD_SUPPORTS_DISPLAY(d)  ((d) == LEEK_DISPLAY_SSD1306 || (d) == LEEK_DISPLAY_SH1107)
 #define BOARD_SUPPORTS_INPUT(i)    ((i) == LEEK_INPUT_BUTTONS4)
+
+#else /* LEEK_BOARD_PINS */
 
 /* GPIO4 was unusable on the reference board - stuck low - which is why K1 is
    on GPIO10 and not where a datasheet would put it. */
@@ -52,4 +55,4 @@
 #define LEEK_HAS_USB            1
 #define LEEK_VAULT_ON_SD        0
 
-#endif /* LEEK_BOARDS_S3_H */
+#endif /* LEEK_BOARD_PINS */

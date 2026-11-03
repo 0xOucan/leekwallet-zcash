@@ -11,8 +11,9 @@
  * encoder (below).
  */
 
-#ifndef LEEK_BOARDS_S3CAM_H
-#define LEEK_BOARDS_S3CAM_H
+/* Read twice by board.h: first the identity and the kit it can carry, then,
+   with the components chosen, the pins. */
+#ifndef LEEK_BOARD_PINS
 
 #define BOARD_NAME              "ESP32-S3 CAM"
 #define BOARD_MODEL             "LeekWallet-S3CAM"
@@ -21,11 +22,21 @@
  * The Zcash screen kit (docs/WIRING-S3CAM.md) is the default: a 1.5" 128x128
  * SH1107 I2C OLED, an EC11 rotary encoder and one Cancel button. The original
  * 128x64 SSD1306 and the four-button module still work on the same pins.
+ *
+ * The colour kit (docs/WIRING-S3CAM-COLOR.md) is a 240x240 ST7789 module with
+ * the encoder and Cancel built in. Its SPI takes K1's and K2's pins, so it
+ * goes with the knob only.
  */
 #define BOARD_DEFAULT_DISPLAY   LEEK_DISPLAY_SH1107
 #define BOARD_DEFAULT_INPUT     LEEK_INPUT_KNOB
-#define BOARD_SUPPORTS_DISPLAY(d)  ((d) == LEEK_DISPLAY_SSD1306 || (d) == LEEK_DISPLAY_SH1107)
-#define BOARD_SUPPORTS_INPUT(i)    ((i) == LEEK_INPUT_KNOB || (i) == LEEK_INPUT_BUTTONS4)
+#define BOARD_SUPPORTS_DISPLAY(d)  ((d) == LEEK_DISPLAY_SSD1306 || \
+                                    (d) == LEEK_DISPLAY_SH1107 ||  \
+                                    (d) == LEEK_DISPLAY_ST7789)
+#define BOARD_SUPPORTS_INPUT(i)    ((i) == LEEK_INPUT_KNOB ||      \
+                                    ((i) == LEEK_INPUT_BUTTONS4 && \
+                                     LEEK_DISPLAY != LEEK_DISPLAY_ST7789))
+
+#else /* LEEK_BOARD_PINS */
 
 /*
  * GPIO14 is the one pin in the 4-18 block the camera does not claim. GPIO41 is
@@ -47,10 +58,28 @@
  * from power-on). Turning the knob is UP/DOWN; its push switch is on K4's pin,
  * so pressing it is OK.
  */
+#if LEEK_DISPLAY == LEEK_DISPLAY_ST7789
+/*
+ * The colour kit. K1's and K2's pins carry the panel's SPI, so those keys do
+ * not exist: GPIO_NUM_NC, which button.c leaves unconfigured. GPIO2 is D/C:
+ * an output, where the onboard LED that ruled it out as an input above only
+ * flickers with the traffic. CS is grounded on the module and RES is tied to
+ * 3V3 through 10k, so neither takes a pin; st7789.c resets the controller
+ * with SWRESET instead. BLK goes to 3V3: always on.
+ */
+#define PIN_BUTTON_UP           GPIO_NUM_NC
+#define PIN_BUTTON_DOWN         GPIO_NUM_NC
+#define PIN_DISPLAY_SCLK        GPIO_NUM_1    /* module SCL, was K1 */
+#define PIN_DISPLAY_MOSI        GPIO_NUM_41   /* module SDA, was K2 - MTDI */
+#define PIN_DISPLAY_DC          GPIO_NUM_2
+#define PIN_DISPLAY_CS          GPIO_NUM_NC
+#define PIN_DISPLAY_RESET       GPIO_NUM_NC
+#else
 #define PIN_BUTTON_UP           GPIO_NUM_1    /* K1 */
 #define PIN_BUTTON_DOWN         GPIO_NUM_41   /* K2 - MTDI */
-#define PIN_BUTTON_CANCEL       GPIO_NUM_14   /* K3 */
-#define PIN_BUTTON_ACCEPT       GPIO_NUM_42   /* K4 - MTMS, and the knob's push */
+#endif
+#define PIN_BUTTON_CANCEL       GPIO_NUM_14   /* K3; the module's K0 on the colour kit */
+#define PIN_BUTTON_ACCEPT       GPIO_NUM_42   /* K4 - MTMS, and the knob's push (PSH) */
 
 /*
  * Encoder on UART0's pins, free because the console is USB Serial/JTAG:
@@ -63,7 +92,8 @@
 #define PIN_ENC_CLK             GPIO_NUM_44
 #define PIN_ENC_DT              GPIO_NUM_43
 
-/* The I2C bus: the OLED at 0x3C, and the secure element when one is fitted. */
+/* The I2C bus: the OLED at 0x3C, and the secure element when one is fitted.
+   On the colour kit the bus is the secure element's alone. */
 #define PIN_I2C_SDA             GPIO_NUM_47
 #define PIN_I2C_SCL             GPIO_NUM_21
 
@@ -105,4 +135,4 @@
 #define LEEK_HAS_USB            1   /* likewise */
 #define LEEK_VAULT_ON_SD        1
 
-#endif /* LEEK_BOARDS_S3CAM_H */
+#endif /* LEEK_BOARD_PINS */

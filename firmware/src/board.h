@@ -129,18 +129,21 @@
 #define LEEK_SE_OPTIGA          1   /* Infineon OPTIGA Trust M, on the I2C bus */
 
 /*
- * The pin map. A board file defines its pins, its own peripherals and
- * BOARD_DEFAULT_DISPLAY / _INPUT / BOARD_SUPPORTS_*; nothing else.
+ * The board file, first pass: its name, its usual kit, and which components
+ * it has pins for (BOARD_DEFAULT_* / BOARD_SUPPORTS_*). The pins come in the
+ * second pass below, once the components are chosen, because which GPIO is
+ * a key and which is a panel's clock can depend on what is fitted.
  */
 #if LEEK_BOARD_PIXIE
-#  include "boards/pixie.h"
+#  define LEEK_BOARD_FILE "boards/pixie.h"
 #elif LEEK_BOARD_S3
-#  include "boards/s3.h"
+#  define LEEK_BOARD_FILE "boards/s3.h"
 #elif LEEK_BOARD_S3CAM
-#  include "boards/s3cam.h"
+#  define LEEK_BOARD_FILE "boards/s3cam.h"
 #else
 #  error "No board matched; see the LEEK_BOARD_* guard above"
 #endif
+#include LEEK_BOARD_FILE
 
 /*
  * The panel, named by the build or the board. `-DBOARD_PANEL_SH1107=0` is the
@@ -166,6 +169,10 @@
 #if !BOARD_SUPPORTS_INPUT(LEEK_INPUT)
 #  error "This board has no pins for the selected LEEK_INPUT; see boards/<board>.h"
 #endif
+
+/* The board file, second pass: the pins, for the components just chosen. */
+#define LEEK_BOARD_PINS 1
+#include LEEK_BOARD_FILE
 
 /*
  * ---------------------------------------------------------------------------

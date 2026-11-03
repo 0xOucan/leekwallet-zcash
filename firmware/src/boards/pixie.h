@@ -10,8 +10,9 @@
  * in board.h.
  */
 
-#ifndef LEEK_BOARDS_PIXIE_H
-#define LEEK_BOARDS_PIXIE_H
+/* Read twice by board.h: first the identity and the kit it can carry, then,
+   with the components chosen, the pins. */
+#ifndef LEEK_BOARD_PINS
 
 #define BOARD_NAME              "Firefly Pixie"
 #define BOARD_MODEL             "LeekWallet-Pixie"
@@ -20,6 +21,8 @@
 #define BOARD_DEFAULT_INPUT     LEEK_INPUT_BUTTONS4
 #define BOARD_SUPPORTS_DISPLAY(d)  ((d) == LEEK_DISPLAY_ST7789)
 #define BOARD_SUPPORTS_INPUT(i)    ((i) == LEEK_INPUT_BUTTONS4)
+
+#else /* LEEK_BOARD_PINS */
 
 /*
  * Buttons, in PHYSICAL order - SW1..SW4 left to right - not in Firefly's
@@ -77,4 +80,4 @@
 #define LEEK_HAS_USB            0   /* USB Serial/JTAG only; no wallet transport */
 #define LEEK_VAULT_ON_SD        0
 
-#endif /* LEEK_BOARDS_PIXIE_H */
+#endif /* LEEK_BOARD_PINS */
