@@ -1620,6 +1620,7 @@ name = "leek-zcash"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ciborium",
  "hex",
  "leek-device",
  "leek-transport-serial",

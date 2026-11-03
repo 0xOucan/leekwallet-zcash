@@ -11,6 +11,7 @@
 //!   to the board), [`sign_pczt`] (all of it over a link), and
 //!   [`apply_zsig`] (a `.zsig` from any transport, such as an SD card, back
 //!   into the wallet's PCZT, every signature verified).
+//! - Records: [`AccountRecord`] (the import record as CBOR).
 //! - Errors: one [`LeekError`] with stable codes and a [`Recovery`] hint;
 //!   messages never contain amounts, addresses, keys or PCZT bytes.
 //!
@@ -26,6 +27,7 @@ mod apply;
 mod error;
 mod preflight;
 mod prepare;
+mod record;
 mod redact;
 mod sign;
 mod ua;
@@ -38,6 +40,7 @@ pub use apply::{apply_zsig, Signature};
 pub use error::{classify, LeekError, Recovery, Unsupported};
 pub use preflight::preflight;
 pub use prepare::{prepare_for_signer, TRANSPARENT_SEARCH_LIMIT};
+pub use record::{AccountEntry, AccountRecord, ACCOUNT_RECORD_UR_TYPE};
 pub use redact::{signer_view_bytes, SignerView};
 pub use sign::{sign_pczt, CancelToken, CancellablePort, SignOptions, SignProgress, SignResult};
 pub use ua::to_checkable_ua;

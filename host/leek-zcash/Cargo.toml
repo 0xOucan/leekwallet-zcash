@@ -19,6 +19,8 @@ zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0
 orchard = { version = "0.16", default-features = false, features = ["std"] }
 secp256k1 = "0.33"
 anyhow = "1"
+# The account record's CBOR body.
+ciborium = "=0.2.2"
 # The device client: session, z* calls, .zsig. No transport of its own.
 leek-device = { path = "../leek-device", default-features = false }
 leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
