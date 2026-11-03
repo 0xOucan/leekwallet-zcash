@@ -125,6 +125,10 @@ pub enum LeekError {
     OutputMismatch,
     /// The PCZT lacks data the board needs to check it.
     MissingData,
+    /// Two Orchard or Ironwood actions share one randomized verification
+    /// key (`rk`): a malformed or hostile PCZT, since one signature could
+    /// then stand for two actions.
+    DuplicateRk,
 
     // ---- signatures (6xx)
     /// The `.zsig` names other bytes than the PCZT that was sent.
@@ -190,6 +194,7 @@ impl LeekError {
             ValueBalance => 514,
             OutputMismatch => 515,
             MissingData => 516,
+            DuplicateRk => 517,
             ZsigHashMismatch => 600,
             ZsigMalformed => 601,
             SignatureInvalid => 602,
@@ -251,6 +256,7 @@ impl LeekError {
             ValueBalance => "the transaction's values do not balance",
             OutputMismatch => "an output does not match its commitment or its displayed address",
             MissingData => "the transaction lacks data the board needs to check it",
+            DuplicateRk => "two spends in the transaction share one verification key",
             ZsigHashMismatch => "the signatures were made for a different PCZT",
             ZsigMalformed => "the signature file is malformed",
             SignatureInvalid => "a signature from the board does not verify",
@@ -312,10 +318,8 @@ pub(crate) fn from_code(code: u64, ctx: Ctx) -> LeekError {
             // A dummy spending key in the PCZT: Signers must refuse it.
             20 => Parse,
             21..=23 => DeviceInternal,
-            // TODO: map ZS_E_DUPLICATE_RK (two actions share one rk; -24,
-            // 0x0518, on zecathon since this branch was cut) once this branch
-            // is rebased onto it, and add the same check to preflight with
-            // its r_duplicate_rk vectors. Until then it is Device { code }.
+            // ZS_E_DUPLICATE_RK: two actions, both pools together, share an rk.
+            24 => DuplicateRk,
             // ZSIGN_E_* (zcash-sign.h)
             30 => Protocol,
             31 => TooLarge,
@@ -377,7 +381,7 @@ mod tests {
             NotFound, PermissionDenied, Disconnected, Timeout, Cancelled, PairingCodeMismatch, SessionExpired, Busy,
             Locked, NoWallet, FirmwareTooOld, Protocol, TransferCorrupted, DeviceInternal, UserRejected, UserTimeout,
             WrongNetwork, WrongAccount, SpendNotOurs, AddressNotOurs, AddressUncheckable, MissingDerivation, TooMany,
-            TooLarge, Parse, PcztVersion, ValueBalance, OutputMismatch, MissingData, ZsigHashMismatch, ZsigMalformed,
+            TooLarge, Parse, PcztVersion, ValueBalance, OutputMismatch, MissingData, DuplicateRk, ZsigHashMismatch, ZsigMalformed,
             SignatureInvalid, SignatureMissing, SighashMismatch, Device { code: 0x0599 },
         ];
         use super::Unsupported as U;
@@ -421,6 +425,9 @@ mod tests {
         assert_eq!(from_code(0x0511, Ctx::Sign), LeekError::WrongNetwork);
         assert_eq!(from_code(0x0512, Ctx::Sign), LeekError::TooMany);
         assert_eq!(from_code(0x0521, Ctx::Sign), LeekError::TransferCorrupted);
+        assert_eq!(from_code(0x0518, Ctx::Sign), LeekError::DuplicateRk);
+        assert_eq!(LeekError::DuplicateRk.code(), 517);
+        assert_eq!(LeekError::DuplicateRk.recovery(), Recovery::DoNotRetry);
         assert_eq!(from_code(0x05FE, Ctx::Sign), LeekError::Device { code: 0x05FE });
         assert_eq!(LeekError::Busy.recovery(), Recovery::RetrySameLink);
         assert_eq!(LeekError::SessionExpired.recovery(), Recovery::Reconnect);

@@ -71,6 +71,8 @@ pub(crate) fn spend_is_ours(spend: &orchard::pczt::Spend, fvk: &FullViewingKey) 
 /// - the transaction version and consensus branch are ones the board signs
 ///   ([`Unsupported::Version`], [`Unsupported::Branch`]);
 /// - no Sapling spend or output ([`Unsupported::Sapling`]);
+/// - no two Orchard or Ironwood actions, both pools together, share an `rk`
+///   ([`LeekError::DuplicateRk`]);
 /// - at most [`Features::max_transparent_inputs`] transparent inputs
 ///   ([`LeekError::TooMany`]), each plain P2PKH with SIGHASH_ALL
 ///   ([`Unsupported::Pool`]) and exactly one BIP 32 derivation that names
@@ -103,6 +105,12 @@ pub fn preflight(pczt: &Pczt, account: &AccountMeta, features: &Features) -> Res
     }
     if !pczt.sapling().spends().is_empty() || !pczt.sapling().outputs().is_empty() {
         return Err(LeekError::Unsupported(Unsupported::Sapling));
+    }
+    // Structural, like the board's ZS_E_DUPLICATE_RK and Keystone's rule:
+    // raw rk bytes of every action, both pools together, signed or not.
+    let mut rks = std::collections::HashSet::new();
+    if !pczt.orchard().actions().iter().chain(pczt.ironwood().actions()).all(|a| rks.insert(*a.spend().rk())) {
+        return Err(LeekError::DuplicateRk);
     }
     let n_t = pczt.transparent().inputs().len();
     if n_t > features.max_transparent_inputs {

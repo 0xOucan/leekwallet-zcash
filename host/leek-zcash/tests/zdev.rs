@@ -151,6 +151,15 @@ fn refusals_are_typed() {
     let tampered = parse(&v("r_output_value_tampered"));
     preflight(&tampered, &test0(), &leek_zcash::Features::default()).expect("not a host-side check");
     assert_eq!(sign_pczt(&mut dev, &tampered, &test0(), SignOptions::default()).unwrap_err(), LeekError::OutputMismatch);
+
+    // A repeated rk: preflight refuses it, and so does the board (0x0518)
+    // when a host skips preflight; both come back as DuplicateRk.
+    for name in ["r_duplicate_rk", "r_duplicate_rk_cross_pool"] {
+        let p = parse(&v(name));
+        assert_eq!(sign_pczt(&mut dev, &p, &test0(), SignOptions::default()).unwrap_err(), LeekError::DuplicateRk);
+        let e = dev.z_sign(&v(name), 0, "test", |_, _| {}).expect_err("the board refuses it");
+        assert_eq!(leek_zcash::classify(&e), LeekError::DuplicateRk, "{name}");
+    }
 }
 
 #[test]
