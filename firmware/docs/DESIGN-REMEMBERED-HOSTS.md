@@ -1,7 +1,12 @@
 # Design: remembered hosts
 
-Status: **proposal, not implemented.** Nothing in the firmware or the hosts
-changes until the owner decides on the questions in §8.
+Status: **decided 2026-11-03: not building on-board remembered hosts.**
+The board pairs every host from scratch, with the six-digit code, every
+time (option 1 below). Remembering moves to the host side instead: the
+SDK gives wallets a "remember the viewing key on this device" choice that
+app vendors can offer or hide (see `host/leek-zcash/README.md`). The rest
+of this document stays as the record of why, and as the starting point if
+a "NEW device" warning is ever wanted for hostile environments.
 
 ## 0. The rule this design starts from
 
