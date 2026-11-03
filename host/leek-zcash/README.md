@@ -27,6 +27,7 @@ src/sd.rs         prepare_sd_sign, finish_sd_sign: the SD-card air gap (experime
 src/record.rs     AccountRecord: the import record as CBOR
 src/persist.rs    SignResult::to_bytes / from_bytes, txid, check_mined
 src/storage.rs    get_storage_key, StorageKey: App Storage Keys, subkeys, seal / open
+src/quick.rs      QuickUnlock, KeyWrapper: the Storage Key behind the platform's biometric or PIN
 src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 ```
 
@@ -55,6 +56,7 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 | `get_storage_key_with(.., progress) -> StorageKey` | the same, calling `progress(AccountProgress::ConfirmOnDevice)` first |
 | `StorageKey::{seal, open, seal_db, open_db, seal_ufvk, open_ufvk}` | XChaCha20-Poly1305 under the label's subkey, with a key check; `open` tells a wrong key (`StorageKeyMismatch`) from damage (`StorageCorrupted`) |
 | `StorageKey::{subkey, to_bytes, from_bytes, from_seed, forget}` | a subkey (`db` for SQLCipher), the key for secure storage and back, the key from a seed (tests and emergency recovery only), wipe now |
+| `QuickUnlock::{create, from_bytes, to_bytes, open, disable}` | quick unlock: the Storage Key wrapped by the app's `KeyWrapper` (hardware-backed, user-authenticated platform key); `app_id`, `account`, `network`, `label` read the record (below) |
 | `validate_app_id(app_id)` | the board's App identifier rules, checked on the host first |
 | `classify(&anyhow::Error) -> LeekError` | maps `leek-device` errors (for example from `Device::pair`) |
 
@@ -71,7 +73,7 @@ seed before anything is uploaded.
 
 One `LeekError` for everything, `#[non_exhaustive]`. `code()` is stable (1xx
 link, 2xx session and board, 3xx user, 4xx account and network, 5xx PCZT,
-6xx signatures, 7xx stored app data, 900 an unknown firmware code; `DuplicateRk`, the board's
+6xx signatures, 7xx stored app data and quick unlock (706 to 709, see "Stored app data"), 900 an unknown firmware code; `DuplicateRk`, the board's
 `ZS_E_DUPLICATE_RK` (0x0518), is 517). `recovery()` says
 `RetrySameLink`, `Reconnect` or `DoNotRetry`. Every firmware code in
 `docs/PROTOCOL.md` §6, `ZS_E_*` and `ZSIGN_E_*` is mapped (a few by call:
@@ -260,16 +262,17 @@ wallet's history, and both deserve protection:
 This crate and its bindings never write a UFVK anywhere; there is no API
 that persists one in plaintext.
 
-## Stored app data: two modes
+## Stored app data: three tiers
 
-An app can protect what it stores in one of two ways. The app vendor chooses
-which to offer: one, the other, or both with a setting (and may hide the
-setting). Both encrypt the database; they differ in where the key lives.
+An app can protect what it stores in one of three ways. The app vendor
+chooses which to offer (any subset, with a setting, which it may hide). All
+three encrypt the database; they differ in what opens it.
 
-**Remember viewing key on this device.** The rule above: the app keeps the
-UFVK (or a database key) in the platform's secure storage and opens without
-the board. The data is as safe as the phone's or computer's lock screen and
-secure storage.
+| Tier | Opens with | Protects a stolen device with |
+|---|---|---|
+| **Unlock with the board** | the board: pair, "Unlock app data?", OK, every time | the board, its PIN and a press on it; the host holds ciphertext only |
+| **Quick unlock** | the user's fingerprint, face or device PIN, after one unlock with the board | the platform's secure hardware (StrongBox or TEE, Secure Enclave, TPM, a passkey) and its attempt limits |
+| **Remember on this device** | nothing beyond the host's lock screen | the host's lock screen and secure storage |
 
 **Unlock with the board.** The app keeps nothing readable. Its database and
 its copy of the UFVK are sealed under the app's **Storage Key**
@@ -286,6 +289,70 @@ its copy of the UFVK are sealed under the app's **Storage Key**
 3. A new phone or a new board: the same seed (and passphrase) on any board
    gives the same key, so a copy of the sealed files opens again.
 
+**Quick unlock.** The same sealed data, but the Storage Key is also kept
+wrapped by a platform key that lives in secure hardware and works only after
+the user's biometric or device PIN. The user sees balances and syncs without
+the board; spending still needs it.
+
+1. Turn it on (after an unlock with the board, holding the `StorageKey`):
+   `QuickUnlock::create(&key, &wrapper)` with the app's `KeyWrapper`, and
+   store `to_bytes()` in the app's private storage.
+2. Every later opening: `QuickUnlock::from_bytes(stored)?.open(app_id,
+   account, network, &wrapper)` shows the platform's prompt and returns the
+   `StorageKey`; then `open_ufvk` / `open_db` as above.
+3. Turn it off: `QuickUnlock::disable(&wrapper)` (deletes the platform key)
+   and delete the stored record. The board path is untouched.
+
+A `KeyWrapper` is the app's: `info()` (`hardware_backed`,
+`user_auth_required`, a `label` for the unlock screen), `wrap(key)`,
+`unwrap(blob)` and `delete_key()`. Reference implementations for Android
+Keystore, the Apple Secure Enclave and WebAuthn PRF are in
+[`leek-zcash-ffi/examples/quick-unlock`](../leek-zcash-ffi/examples/quick-unlock).
+`create` refuses a wrapper that does not report **both** flags
+(`QuickUnlockNotSecure`, 706) before it is called, and so does `open`.
+
+**No software PIN.** There is no software wrapper, and an app must not write
+one: a key derived on the host from a 4- to 6-digit PIN is at most a million
+guesses, which a copy of the app's files exhausts offline in seconds. The
+attempt limits that make a short PIN safe exist only in hardware. On a host
+without a hardware-backed, user-authenticated key (an old phone, a desktop
+without a TPM or Secure Enclave, a browser without passkey PRF), do not offer
+quick unlock; offer the board, remember-on-this-device, or (documented as
+weaker) a long passphrase stretched with a memory-hard KDF.
+
+What `open` returns, in order: `StorageKeyMismatch` (702) for a record of
+another app, account or network, before any prompt; `QuickUnlockNotSecure`
+(706); the wrapper's failure, `QuickUnlockCancelled` (708, the user closed
+the prompt: stay locked, offer it again or the board), `QuickUnlockInvalidated`
+(707, the platform key is gone: a new fingerprint enrolled, the device PIN
+removed, the app reinstalled) or `QuickUnlockFailed` (709); then
+`QuickUnlockInvalidated` if the unwrapped key fails the key check, and
+`StorageCorrupted` (703) if any byte of the record changed. After anything
+but a cancel, offer "Unlock with the board" and set quick unlock up again
+once it succeeds.
+
+The record (`QuickUnlock::to_bytes`):
+
+```
+"ZAQU" || 0x01 (version) || 0x03 (flags: hardware-backed, user auth)
+       || coin_type (LE32) || account (LE32) || [len] app_id || [len] label
+       || salt (32) || check (32) || wrapped_len (LE16) || wrapped || tag (32)
+```
+
+`check = HMAC-SHA256(SubKey("commit"), salt)`, the draft's key check (a
+wrong unwrap fails it); `tag = HMAC-SHA256(SubKey("commit"),
+"Zcash_AppStorage_QuickUnlock_v1" || every byte before it)`, so the record
+cannot be moved to another app, account or network or changed in any byte.
+`wrapped` is the platform's own authenticated encryption (at most 4096
+bytes). The record is not secret without the platform key, but keep it in
+the app's private storage, out of cloud backups (it is useless on another
+device anyway).
+
+**Remember on this device.** The rule above: the app keeps the UFVK (or the
+Storage Key, `StorageKey::to_bytes` / `from_bytes`) in the platform's secure
+storage and opens without the board or a prompt. The data is as safe as the
+phone's or computer's lock screen and secure storage.
+
 The Storage Key is per app identifier, network and account, unrelated to
 every spending and viewing key and to other apps' keys. The app identifier is
 lower-case ASCII reverse-DNS (`com.example.wallet`), the same on every
@@ -295,29 +362,32 @@ shows it in full; `validate_app_id` applies its rules on the host first.
 ZIP number: 65535, a placeholder, until the draft is assigned one; every key
 changes with it).
 
-What each mode protects, said plainly:
+What each tier protects, said plainly:
 
-| | Remember on this device | Unlock with the board |
-|---|---|---|
-| Host lost or stolen, locked | protected by the host's lock screen and secure storage | protected: ciphertext only |
-| Disk image or cloud backup | protected if the secure storage is not in the backup | protected: ciphertext only |
-| Someone who knows the host's PIN or password | can open the app and read everything | needs the board, its PIN and a press on it |
-| A malicious app, or malware on the host while the app is open | **not protected** | **not protected**: an open app holds the key, the UFVK and the data |
-| The board's seed | unaffected | unaffected: the key reveals nothing about it |
+| | Unlock with the board | Quick unlock | Remember on this device |
+|---|---|---|---|
+| Host lost or stolen, locked | protected: ciphertext only | protected by the secure hardware and its attempt limits | protected by the host's lock screen and secure storage |
+| Disk image or cloud backup | protected: ciphertext only | protected: the platform key does not leave the device | protected if the secure storage is not in the backup |
+| Someone who knows the host's PIN or password | needs the board, its PIN and a press on it | **can open the app** (the device PIN unlocks it) | can open the app and read everything |
+| A malicious app, or malware on the host while the app is open | **not protected**: an open app holds the key, the UFVK and the data | **not protected** | **not protected** |
+| The board's seed | unaffected: the key reveals nothing about it | unaffected | unaffected |
 
-Neither mode protects against the app itself or against malware running as
-the user while the app is open, and neither can take back a viewing key that
-was shared: whoever saw the UFVK can watch the account for good. A user who
+No tier protects against the app itself or against malware running as the
+user while the app is open, and none can take back a viewing key that was
+shared: whoever saw the UFVK can watch the account for good. A user who
 thinks the account is being watched should move the funds to a new seed (a
 new wallet on the board, a fresh backup) and set the app up again on it.
 That is the only remedy.
 
-How to present the choice: name the modes by what the user does, not by
-keys. For example "Open with the board each time (most private)" and
-"Remember on this phone (opens without the board)". Say what the second
-trades away, make it the user's explicit choice, and let them switch back,
-which deletes what was remembered. Ask the board for the Storage Key only
-right after the user opened the app: the board cannot tell which app is
+How to present the choice: name the tiers by what the user does, not by
+keys. For example "Open with the board each time (most private)", "Open with
+fingerprint or PIN (after the board once)" and "Remember on this phone
+(opens without the board)". Say what each trades away, make every tier but
+the first an explicit choice, and let the user switch back, which deletes
+what was remembered (`QuickUnlock::disable` and the record). Offer quick
+unlock only where `info()` reports a hardware-backed, user-authenticated key,
+and keep "Use the board" on its prompt. Ask the board for the Storage Key
+only right after the user opened the app: the board cannot tell which app is
 asking, and the user's press is the protection. In "unlock with the board"
 mode show "Confirm on the board" for every open (`get_storage_key_with`
 reports `ConfirmOnDevice`), and handle `UserRejected` as "stay locked".
@@ -363,6 +433,14 @@ cargo test -p leek-zcash
   made; `SignResult` round-trips through bytes and refuses damage;
   `check_mined` tells identical, re-extracted and different transactions
   apart.
+- `src/quick.rs` unit tests, with a fake platform key: round trip through
+  the stored bytes (the key opens what it sealed), refusal of wrappers that
+  are not both hardware-backed and user-authenticated (before `wrap`, and on
+  `open`), another app, account or network refused before any prompt, a
+  record rewritten for another app, account or network refused by its tag,
+  every single-bit change refused, a wrapper returning another or a short
+  key, a cancelled prompt, another platform key, `disable`, a forgotten key,
+  and a pinned record layout.
 - `src/storage.rs` unit tests: the draft's four Storage Key vectors and their
   `db` / `ufvk` / `commit` subkeys, the draft's ZIP 32 expansion written out
   by hand, App identifier rules, seal / open round trips, a pinned sealed

@@ -159,6 +159,18 @@ pub enum LeekError {
     StorageKeyForgotten,
     /// A seed outside ZIP 32's 32 to 252 bytes.
     InvalidSeed,
+    /// Quick unlock was refused: the platform key is not hardware-backed and
+    /// user-authenticated (a software key, or one usable without the user's
+    /// biometric or device PIN). Do not offer quick unlock on this host.
+    QuickUnlockNotSecure,
+    /// The quick-unlock key on this host is gone, was invalidated (a new
+    /// biometric enrolled, the device PIN removed) or gives another key.
+    /// Unlock with the board, then set quick unlock up again.
+    QuickUnlockInvalidated,
+    /// The user cancelled (or failed) the platform's biometric or PIN prompt.
+    QuickUnlockCancelled,
+    /// The platform's secure hardware failed. Unlock with the board.
+    QuickUnlockFailed,
 
     /// A firmware error code this crate does not know yet.
     Device {
@@ -223,6 +235,10 @@ impl LeekError {
             StorageCorrupted => 703,
             StorageKeyForgotten => 704,
             InvalidSeed => 705,
+            QuickUnlockNotSecure => 706,
+            QuickUnlockInvalidated => 707,
+            QuickUnlockCancelled => 708,
+            QuickUnlockFailed => 709,
             Device { .. } => 900,
         }
     }
@@ -232,7 +248,8 @@ impl LeekError {
         use LeekError::*;
         use Recovery::*;
         match self {
-            Busy | Locked | NoWallet | UserRejected | UserTimeout | WrongNetwork | TransferCorrupted => RetrySameLink,
+            Busy | Locked | NoWallet | UserRejected | UserTimeout | WrongNetwork | TransferCorrupted
+            | QuickUnlockCancelled => RetrySameLink,
             NotFound | PermissionDenied | Disconnected | Timeout | Cancelled | PairingCodeMismatch | SessionExpired
             | Protocol => Reconnect,
             _ => DoNotRetry,
@@ -291,6 +308,10 @@ impl LeekError {
             StorageCorrupted => "the stored data is damaged or was changed",
             StorageKeyForgotten => "the storage key was already forgotten; ask the board again",
             InvalidSeed => "the seed is too short or too long",
+            QuickUnlockNotSecure => "quick unlock needs a hardware-backed key that asks for the user's biometric or device PIN",
+            QuickUnlockInvalidated => "quick unlock no longer works on this device; unlock with the board",
+            QuickUnlockCancelled => "the biometric or device PIN prompt was cancelled",
+            QuickUnlockFailed => "the device's secure hardware failed; unlock with the board",
             Device { .. } => "the board refused the request",
         }
     }
@@ -412,7 +433,8 @@ mod tests {
             WrongNetwork, WrongAccount, SpendNotOurs, AddressNotOurs, AddressUncheckable, MissingDerivation, TooMany,
             TooLarge, Parse, PcztVersion, ValueBalance, OutputMismatch, MissingData, DuplicateRk, ZsigHashMismatch, ZsigMalformed,
             SignatureInvalid, SignatureMissing, SighashMismatch, InvalidAppId, InvalidStorageLabel,
-            StorageKeyMismatch, StorageCorrupted, StorageKeyForgotten, InvalidSeed, Device { code: 0x0599 },
+            StorageKeyMismatch, StorageCorrupted, StorageKeyForgotten, InvalidSeed, QuickUnlockNotSecure,
+            QuickUnlockInvalidated, QuickUnlockCancelled, QuickUnlockFailed, Device { code: 0x0599 },
         ];
         use super::Unsupported as U;
         for u in [U::Pool, U::Version, U::Sapling, U::Multistep, U::Branch, U::Network] {
