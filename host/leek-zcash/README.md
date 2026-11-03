@@ -16,7 +16,7 @@ librustzcash commit as the rest of `host/`.
 
 ```
 src/lib.rs        the public API (re-exports) and crate docs
-src/account.rs    get_account, show_address, set_birthday, get_features; Network, Account, Features
+src/account.rs    seed_fingerprint, get_account, show_address, set_birthday, get_features; Network, Account, Features
 src/preflight.rs  preflight: host-side checks before anything is sent
 src/prepare.rs    prepare_for_signer: ZIP 32 / BIP 32 derivations some wallets leave out
 src/redact.rs     signer_view_bytes: upstream redact_pczt_for_signer
@@ -34,6 +34,7 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 | Call | What it does |
 |---|---|
 | `get_features(&mut Device) -> Features` | `getFeatures` + `zGetFeatures`: firmware, model, spend pools, branch IDs, tx versions, max PCZT size, max transparent inputs (16) |
+| `seed_fingerprint(&mut Device, Option<Network>) -> [u8; 32]` | `zGetSeedFingerprint`: the ZIP 32 seed fingerprint of the seed open on the board, with **no question on the board**. Use it on every connect to recognise the board (see "Recognising the board"); `FirmwareTooOld` on firmware without it |
 | `get_account(&mut Device, index, Network) -> Account` | `zGetAccount`: UFVK (Orchard + P2PKH), UA, t-address, seed fingerprint, birthday, after the user presses OK on the board (once per session). Import it with `KEY_SOURCE` (`"leekwallet"`) |
 | `get_account_with(&mut Device, index, Network, progress) -> Account` | the same, calling `progress(AccountProgress::ConfirmOnDevice)` before the board may ask |
 | `show_address(&mut Device, index, Network, ua) -> AddressCheck` | `zShowAddress`: `Verified`, `Rejected`, `NotOurs` or `Unsupported` |
@@ -56,8 +57,9 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 `ReviewOnDevice`, `Applying`. `cancel` is a `CancelToken` checked between
 steps; wrap the port in `CancellablePort` with the same token to interrupt an
 upload or a wait too (the session must then be re-paired). During the review
-the user cancels on the board itself. `verify_account` asks the board for the
-account first and refuses a different seed before anything is uploaded.
+the user cancels on the board itself. `verify_account` asks the board which
+seed it holds first (`seed_fingerprint`, no question) and refuses a different
+seed before anything is uploaded.
 
 ### Errors
 
@@ -83,8 +85,29 @@ nothing is remembered across a reboot. Cancel on the board is
 `UserRejected`, no answer within its 120 s `UserTimeout`; the call waits for
 both. The board does not say whether it is asking, so show "Confirm on the
 board" for every call (`get_account_with` reports `ConfirmOnDevice` for
-that). `sign_pczt` with `verify_account` reads the account too, and asks only
-if this session has not shared it yet.
+that). `sign_pczt` with `verify_account` reads only the seed fingerprint, so
+it does not ask (on firmware without `zGetSeedFingerprint` it reads the
+account, and asks only if this session has not shared it yet).
+
+## Recognising the board
+
+A wallet that has imported the account already has its UFVK; on the next
+connect it only needs to know which seed the board has open (the same board,
+another one, or a passphrase wallet on it). Call `seed_fingerprint` for
+that, and compare it with the `seed_fingerprint` stored at import: the board
+answers it after pairing and unlock with no question, where `get_account`
+would put "Share view key?" up on every connect. Call `get_account` when the
+UFVK is actually needed (the first import, or a new account). With a
+network, `seed_fingerprint` also gets `WrongNetwork` from a board set to the
+other one; the fingerprint itself does not depend on the network or the
+account.
+
+The fingerprint is a **stable identifier of the seed that every paired host
+can read**: the same 32 bytes in every app, session and network, for as long
+as the seed exists. It reveals no key or address (and the board shows its
+first four bytes, "ZFP 1A2B3C4D", on its own screen), but two hosts that
+compare notes can tell they saw the same wallet. Treat it as you would an
+account identifier, not as a secret and not as an anonymous one.
 
 ## What the host checks
 
@@ -134,9 +157,15 @@ let mut dev = leek_device::device::Device::with_port(Box::new(port));
 dev.pair(|code| show_pairing_code(code)).map_err(|e| classify(&e))?;
 dev.ensure_unlocked().map_err(|e| classify(&e))?;
 
-// Import once: the same account record a Keystone import makes.
+// Import once: the same account record a Keystone import makes. The board
+// asks "Share view key?" here.
 let account = get_account(&mut dev, 0, Network::Main)?;
 wallet.import_account_ufvk(&account.ufvk, account.seed_fingerprint, account.index, KEY_SOURCE, account.birthday);
+
+// Every later connect: which seed, with no question on the board.
+if seed_fingerprint(&mut dev, Some(Network::Main))? != account.seed_fingerprint {
+    tell_user_another_seed_is_open();
+}
 
 // Receive: let the user confirm the address on the board.
 match show_address(&mut dev, 0, Network::Main, &to_checkable_ua(&shown_ua)?)? {

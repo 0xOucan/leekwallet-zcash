@@ -801,6 +801,14 @@ public protocol LeekDeviceProtocol: AnyObject, Sendable {
     func pair(listener: PairingListener) throws 
     
     /**
+     * The ZIP 32 seed fingerprint (32 bytes) of the seed open on the board,
+     * with no question on the board: how to recognise the board on every
+     * connect. A stable identifier of the seed that every paired host can
+     * read. `get_account` is for when the UFVK is needed.
+     */
+    func seedFingerprint(network: Network?) throws  -> Data
+    
+    /**
      * True if the board keeps it in flash.
      */
     func setBirthday(index: UInt32, network: Network, height: UInt32) throws  -> Bool
@@ -925,6 +933,20 @@ open func pair(listener: PairingListener)throws   {try rustCallWithError(FfiConv
         FfiConverterTypePairingListener_lower(listener),$0
     )
 }
+}
+    
+    /**
+     * The ZIP 32 seed fingerprint (32 bytes) of the seed open on the board,
+     * with no question on the board: how to recognise the board on every
+     * connect. A stable identifier of the seed that every paired host can
+     * read. `get_account` is for when the UFVK is needed.
+     */
+open func seedFingerprint(network: Network?)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_leekdevice_seed_fingerprint(self.uniffiClonePointer(),
+        FfiConverterOptionTypeNetwork.lower(network),$0
+    )
+})
 }
     
     /**
@@ -3187,6 +3209,30 @@ fileprivate struct FfiConverterOptionTypeFeatures: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeNetwork: FfiConverterRustBuffer {
+    typealias SwiftType = Network?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNetwork.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNetwork.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
     typealias SwiftType = [UInt32]
 
@@ -3473,6 +3519,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair() != 405) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_leekdevice_seed_fingerprint() != 40299) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_method_leekdevice_set_birthday() != 34839) {

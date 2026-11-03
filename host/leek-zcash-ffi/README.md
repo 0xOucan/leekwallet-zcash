@@ -36,6 +36,7 @@ Swift use camelCase.
 | `encode_account_record(AccountRecord)`, `decode_account_record(bytes)`, `account_record_type()` | the `leek-zcash-accounts` record |
 | `LeekDevice(FrameTransport, LinkKind)` | a board over the app's link |
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
+| `.seed_fingerprint(network?)` | which seed the board holds (32 bytes), with no question on the board: call it on every connect, `get_account` only when the UFVK is needed. A stable identifier of the seed that every paired host can read |
 | `.get_features()`, `.get_account(index, network)`, `.show_address(..)`, `.set_birthday(..)` | |
 | `.sign_pczt(pczt, AccountMeta, SignerView, verify_account, SignListener?) -> SignResult` | progress: `Checking`, `Uploading{sent,total}`, `ReviewOnDevice`, `Applying` |
 | `.cancel()` | from any thread; the running call ends with code 104 |

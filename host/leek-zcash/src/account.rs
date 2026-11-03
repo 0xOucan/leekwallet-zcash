@@ -1,5 +1,5 @@
 //! Typed wrappers over the board's account calls: `zGetAccount`,
-//! `zShowAddress`, `zSetAccountMeta`, `getFeatures` + `zGetFeatures`.
+//! `zGetSeedFingerprint`, `zShowAddress`, `zSetAccountMeta`, `getFeatures` + `zGetFeatures`.
 
 use std::time::Duration;
 
@@ -255,6 +255,25 @@ pub fn get_account_with(
         ua: text(&r, "ua")?,
         t_address: text(&r, "tAddress")?,
         birthday,
+    })
+}
+
+/// `zGetSeedFingerprint`: the ZIP 32 seed fingerprint of the seed open on
+/// the board (passphrase applied), with no question on the board. What a
+/// wallet uses to recognise the board on every connect (the same 32 bytes
+/// as [`Account::seed_fingerprint`]); [`get_account`] is for when the UFVK
+/// is needed, the first import, and asks "Share view key?".
+///
+/// The fingerprint is a stable identifier of the seed: every paired host
+/// reads the same bytes, across accounts, networks and sessions. `network`,
+/// when given, is checked against the board's setting
+/// ([`LeekError::WrongNetwork`]) and does not change the answer. Firmware
+/// without the call is [`LeekError::FirmwareTooOld`]; fall back to
+/// [`get_account`] there.
+pub fn seed_fingerprint(device: &mut Device, network: Option<Network>) -> Result<[u8; 32], LeekError> {
+    device.z_get_seed_fingerprint(network.map(Network::as_str)).map_err(|e| {
+        let unknown = e.downcast_ref::<device::DeviceError>().is_some_and(|d| d.code == 0x0001);
+        if unknown { LeekError::FirmwareTooOld } else { from_device(&e, Ctx::Other) }
     })
 }
 

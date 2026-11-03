@@ -217,8 +217,10 @@ fn a_host_reads_the_account_over_a_stream_link() {
         .open()
         .expect("open zdev");
     let dev = paired(Arc::new(StreamHost(Mutex::new(port))), LinkKind::Stream);
+    let fp = dev.seed_fingerprint(Some(Network::Test)).unwrap();
     let a = dev.get_account(0, Network::Test).unwrap();
     assert_eq!(a.ufvk, json("keys.json", "test/abandon-art/pp0/acct0")["ufvk"].as_str().unwrap());
+    assert_eq!(fp, a.seed_fingerprint);
     // A host-side refusal through the device: another network's PCZT.
     let e = dev.sign_pczt(v("r_main_on_test"), test0(), SignerView::Compact, false, None).unwrap_err();
     assert!(matches!(e, LeekError::Account { code: 400, recovery: Recovery::RetrySameLink, .. }), "{e:?}");

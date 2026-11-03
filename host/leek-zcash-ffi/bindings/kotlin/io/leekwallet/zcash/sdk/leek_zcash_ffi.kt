@@ -838,6 +838,8 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -892,6 +894,8 @@ fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_account(
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_features(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_seed_fingerprint(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_set_birthday(
 ): Short
@@ -983,6 +987,8 @@ fun uniffi_leek_zcash_ffi_fn_method_leekdevice_get_features(`ptr`: Pointer,uniff
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_method_leekdevice_pair(`ptr`: Pointer,`listener`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+fun uniffi_leek_zcash_ffi_fn_method_leekdevice_seed_fingerprint(`ptr`: Pointer,`network`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_method_leekdevice_set_birthday(`ptr`: Pointer,`index`: Int,`network`: RustBuffer.ByValue,`height`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
 fun uniffi_leek_zcash_ffi_fn_method_leekdevice_show_address(`ptr`: Pointer,`index`: Int,`network`: RustBuffer.ByValue,`ua`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1215,6 +1221,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair() != 405.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_seed_fingerprint() != 40299.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_set_birthday() != 34839.toShort()) {
@@ -2040,6 +2049,14 @@ public interface LeekDeviceInterface {
     fun `pair`(`listener`: PairingListener)
     
     /**
+     * The ZIP 32 seed fingerprint (32 bytes) of the seed open on the board,
+     * with no question on the board: how to recognise the board on every
+     * connect. A stable identifier of the seed that every paired host can
+     * read. `get_account` is for when the UFVK is needed.
+     */
+    fun `seedFingerprint`(`network`: Network?): kotlin.ByteArray
+    
+    /**
      * True if the board keeps it in flash.
      */
     fun `setBirthday`(`index`: kotlin.UInt, `network`: Network, `height`: kotlin.UInt): kotlin.Boolean
@@ -2220,6 +2237,25 @@ open class LeekDevice: Disposable, AutoCloseable, LeekDeviceInterface
 }
     }
     
+    
+
+    
+    /**
+     * The ZIP 32 seed fingerprint (32 bytes) of the seed open on the board,
+     * with no question on the board: how to recognise the board on every
+     * connect. A stable identifier of the seed that every paired host can
+     * read. `get_account` is for when the UFVK is needed.
+     */
+    @Throws(LeekException::class)override fun `seedFingerprint`(`network`: Network?): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_leekdevice_seed_fingerprint(
+        it, FfiConverterOptionalTypeNetwork.lower(`network`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -4112,6 +4148,38 @@ public object FfiConverterOptionalTypeFeatures: FfiConverterRustBuffer<Features?
         } else {
             buf.put(1)
             FfiConverterTypeFeatures.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeNetwork: FfiConverterRustBuffer<Network?> {
+    override fun read(buf: ByteBuffer): Network? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeNetwork.read(buf)
+    }
+
+    override fun allocationSize(value: Network?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeNetwork.allocationSize(value)
+        }
+    }
+
+    override fun write(value: Network?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeNetwork.write(value, buf)
         }
     }
 }

@@ -10,7 +10,7 @@ use leek_device::FramePort;
 use leek_transport_serial::TransportError;
 use pczt::Pczt;
 
-use crate::account::{get_account, get_features, AccountMeta, Features};
+use crate::account::{get_account, get_features, seed_fingerprint, AccountMeta, Features};
 use crate::apply::{apply_entries, shielded_sighash, Signature};
 use crate::error::{from_device, Ctx, LeekError};
 use crate::preflight::preflight;
@@ -110,9 +110,11 @@ pub struct SignOptions<'a> {
     pub cancel: Option<CancelToken>,
     /// The board's features, if already read; otherwise they are asked for.
     pub features: Option<Features>,
-    /// Ask the board for the account first (seconds: it derives keys) and
-    /// refuse with [`LeekError::WrongAccount`] if its seed fingerprint is not
-    /// the one recorded for the account, before uploading anything.
+    /// Ask the board which seed it holds first ([`seed_fingerprint`], no
+    /// question on the board) and refuse with [`LeekError::WrongAccount`] if
+    /// it is not the one recorded for the account, before uploading
+    /// anything. Firmware without that call is asked for the account, which
+    /// the board answers only after "Share view key?".
     pub verify_account: bool,
 }
 
@@ -187,9 +189,12 @@ pub fn sign_pczt(
     preflight(pczt, account, &features)?;
     check()?;
     if opts.verify_account {
-        let a = get_account(device, account.index, account.network)
-            .map_err(|e| if cancelled() { LeekError::Cancelled } else { e })?;
-        if a.seed_fingerprint != account.seed_fingerprint {
+        let fp = match seed_fingerprint(device, Some(account.network)) {
+            Err(LeekError::FirmwareTooOld) => get_account(device, account.index, account.network).map(|a| a.seed_fingerprint),
+            r => r,
+        }
+        .map_err(|e| if cancelled() { LeekError::Cancelled } else { e })?;
+        if fp != account.seed_fingerprint {
             return Err(LeekError::WrongAccount);
         }
         check()?;

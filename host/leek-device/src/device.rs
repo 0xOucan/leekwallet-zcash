@@ -239,8 +239,9 @@ impl FramePort for leek_transport_serial::SerialTransport {
 pub struct Device {
     port: Box<dyn FramePort>,
     session: Option<Session>,
-    /// Whether a zGetAccount has been answered in this session; until then
-    /// a 0x0300 is retried once (see [`Device::z_get_account`]).
+    /// Whether a zGetAccount or zGetSeedFingerprint has been answered in
+    /// this session; until then a 0x0300 is retried once (see
+    /// [`Device::z_get_account`]).
     account_answered: bool,
     /// The pause before that retry.
     no_wallet_retry: Duration,
@@ -465,6 +466,30 @@ impl Device {
         }?;
         self.account_answered = true;
         Ok(r)
+    }
+
+    /// `zGetSeedFingerprint`: the ZIP 32 seed fingerprint of the board's open
+    /// seed, and nothing else. No question on the board, so a companion can
+    /// tell which seed it is talking to on every connect without raising
+    /// "Share view key?". `network`, when given, is checked against the
+    /// board's setting (0x0528) but does not change the answer. Firmware
+    /// without it answers 0x0001.
+    ///
+    /// Retried once after [`NO_WALLET_RETRY`] on a first 0x0300 of the
+    /// session, as [`Device::z_get_account`] is and for the same reason.
+    pub fn z_get_seed_fingerprint(&mut self, network: Option<&str>) -> Result<[u8; 32]> {
+        let fields = || network.map(|n| vec![("network", Value::Text(n.into()))]).unwrap_or_default();
+        let r = match self.call("zGetSeedFingerprint", fields(), DERIVE) {
+            Err(e) if !self.account_answered && is_code(&e, ERR_NO_WALLET) => {
+                std::thread::sleep(self.no_wallet_retry);
+                self.call("zGetSeedFingerprint", fields(), DERIVE)
+            }
+            r => r,
+        }?;
+        self.account_answered = true;
+        get_bytes(&r, "seedFingerprint")?
+            .try_into()
+            .map_err(|_| anyhow!("seedFingerprint is not 32 bytes"))
     }
 
     /// `zShowAddress`: the device shows its own unified address for the user
