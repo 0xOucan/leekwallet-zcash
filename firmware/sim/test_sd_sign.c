@@ -238,6 +238,153 @@ static void test_shield_from_card(void)
     free(pczt);
 }
 
+/* What the card holds as signed.zsig: 0 none, 1 a whole .zsig for the PCZT
+ * whose hash is `h`, -1 anything else (short, for another file, garbage). */
+static int zsig_state(const uint8_t h[32])
+{
+    char p[256];
+    snprintf(p, sizeof p, "%s/%s", card, SDSIGN_OUT);
+    size_t zl;
+    uint8_t *z = load(p, &zl);
+    if (!z) return 0;
+    int st = -1;
+    if (zl >= 39 && memcmp(z, "ZSIG", 4) == 0 && z[4] == 1 && memcmp(z + 5, h, 32) == 0) {
+        uint32_t n = (uint32_t)(z[37] | z[38] << 8);
+        if (n >= 1 && zl == 39 + n * 69) st = 1;
+    }
+    free(z);
+    return st;
+}
+
+/* docs/AUDIT-SD-WRITES.md: every step of a load and a signing, broken every
+ * way the fake card knows. Afterwards the card holds this PCZT's whole
+ * .zsig or none - never a short one, never another file's - and a success
+ * is only reported for a .zsig that is really there. */
+static void test_sign_broken_at_every_step(void)
+{
+    printf("== signing broken at any step: a whole .zsig for this PCZT, or none\n");
+    const zv_pczt_vector *v = vec("iw_send_shielded");
+    ctx = "every step";
+    size_t len;
+    uint8_t *pczt = load(v->file, &len);
+    uint8_t h[32];
+    sha256_Raw(pczt, len, h);
+    device_with(v->mnemonic);
+    card_rm(SDSIGN_OUT);
+    card_file(SDSIGN_IN, pczt, len);
+
+    /* Count the steps of a clean load and finish, over an earlier answer for
+     * the same file (the case with the most steps: it is kept at load, then
+     * replaced). */
+    const zs_summary *s = NULL;
+    uint32_t n = 0;
+    CHECK(sdsign_load(v->account, v->network, &s) == 0 && sdsign_finish(&n) == 0, "first signing");
+    sdcard__set_root_for_test(card);
+    sdcard__fault_at_step_for_test(0, SDCARD_FAULT_NONE);
+    CHECK(sdsign_load(v->account, v->network, &s) == 0 && sdsign_finish(&n) == 0, "counting");
+    int steps = sdcard__steps_for_test();
+    CHECK(steps >= 7, "a signing is only %d steps", steps);
+
+    static const struct { SdcardFault kind; const char *name; } kinds[] = {
+        { SDCARD_FAULT_FAIL, "fail" }, { SDCARD_FAULT_CUT, "cut" },
+        { SDCARD_FAULT_TEAR, "tear" }, { SDCARD_FAULT_FLIP, "flip" },
+    };
+    int tried = 0;
+    for (size_t k = 0; k < sizeof kinds / sizeof *kinds; k++) {
+        for (int step = 1; step <= steps; step++) {
+            char what[48];
+            snprintf(what, sizeof what, "%s at step %d", kinds[k].name, step);
+            sdcard__set_root_for_test(card);
+            sdcard__fault_at_step_for_test(step, kinds[k].kind);
+            int rc = sdsign_load(v->account, v->network, &s);
+            if (rc == 0) rc = sdsign_finish(&n);
+            else sdsign_cancel();
+            sdcard__set_root_for_test(card);   /* rebooted */
+            int st = zsig_state(h);
+            CHECK(st >= 0, "%s: signed.zsig is not a whole .zsig for this file", what);
+            if (rc == 0) CHECK(st == 1, "%s: success reported, no signed.zsig", what);
+            /* Whatever a cut left, the next load starts clean. */
+            CHECK(sdsign_load(v->account, v->network, &s) == 0, "%s: reload", what);
+            CHECK(!card_has("LEEKZ/signed.zsig.tmp"), "%s: a temporary survived the next load", what);
+            sdsign_cancel();
+            tried++;
+        }
+    }
+
+    /* A full card at every size short of the file: the old answer stands. */
+    for (long room = 0; room < 39 + 69; room += 13) {
+        char what[48];
+        snprintf(what, sizeof what, "full card at %ld bytes", room);
+        sdcard__set_root_for_test(card);
+        CHECK(sdsign_load(v->account, v->network, &s) == 0, "%s: load", what);
+        sdcard__card_space_for_test(room);
+        CHECK(sdsign_finish(&n) == SDSIGN_E_IO, "%s: reported written", what);
+        CHECK(zsig_state(h) == 1, "%s: the earlier .zsig was lost or damaged", what);
+        tried++;
+    }
+    printf("  %d broken signings, %d steps each\n", tried, steps);
+    free(pczt);
+}
+
+/* An earlier request's signed.zsig is gone before the review, so a rejected
+ * or failed signing never leaves another file's answer next to this one. */
+static void test_stale_zsig_is_dropped(void)
+{
+    printf("== a signed.zsig for another file is removed before the review\n");
+    const zv_pczt_vector *v = vec("iw_send_shielded");
+    ctx = "stale";
+    size_t len;
+    uint8_t *pczt = load(v->file, &len);
+    uint8_t h[32];
+    sha256_Raw(pczt, len, h);
+    device_with(v->mnemonic);
+    card_file(SDSIGN_IN, pczt, len);
+
+    uint8_t other[39 + 69];
+    memset(other, 0x11, sizeof other);
+    memcpy(other, "ZSIG", 4);
+    other[4] = 1;
+    other[37] = 1;
+    other[38] = 0;
+    static const struct { size_t len; const char *name; } stale[] = {
+        { sizeof other, "another file's .zsig" }, { 0, "an empty file" },
+        { 20, "a short file" },
+    };
+    for (size_t i = 0; i < sizeof stale / sizeof *stale; i++) {
+        ctx = stale[i].name;
+        card_file(SDSIGN_OUT, other, stale[i].len);
+        card_file("LEEKZ/signed.zsig.tmp", other, sizeof other);
+        const zs_summary *s = NULL;
+        CHECK(sdsign_load(v->account, v->network, &s) == 0 && s, "load");
+        CHECK(!card_has(SDSIGN_OUT), "still on the card during the review");
+        CHECK(!card_has("LEEKZ/signed.zsig.tmp"), "a temporary is still on the card");
+        sdsign_cancel();
+        CHECK(!card_has(SDSIGN_OUT), "back after a rejection");
+    }
+
+    /* This file's own answer survives a review that is then rejected. */
+    ctx = "own answer";
+    const zs_summary *s = NULL;
+    uint32_t n = 0;
+    CHECK(sdsign_load(v->account, v->network, &s) == 0 && sdsign_finish(&n) == 0, "sign");
+    CHECK(sdsign_load(v->account, v->network, &s) == 0, "load again");
+    sdsign_cancel();
+    CHECK(zsig_state(h) == 1, "this file's .zsig was removed");
+
+    /* A card that will not let the old answer go is refused before the
+     * review, not after it. */
+    ctx = "stuck";
+    card_file(SDSIGN_OUT, other, sizeof other);
+    sdcard__set_root_for_test(card);
+    sdcard__fault_at_step_for_test(2, SDCARD_FAULT_FAIL);   /* the .zsig's unlink */
+    s = (const zs_summary *)1;
+    CHECK(sdsign_load(v->account, v->network, &s) == SDSIGN_E_IO && s == NULL, "reviewed anyway");
+    CHECK(sdsign_finish(&n) == SDSIGN_E_STATE, "signable after a refusal");
+    sdcard__set_root_for_test(card);
+    card_rm(SDSIGN_OUT);
+    free(pczt);
+}
+
 int main(void)
 {
     printf("== test_sd_sign\n");
@@ -245,6 +392,8 @@ int main(void)
     test_sign_from_card();
     test_shield_from_card();
     test_changed_file_is_not_signed();
+    test_sign_broken_at_every_step();
+    test_stale_zsig_is_dropped();
     test_refusals();
     char cmd[128];
     snprintf(cmd, sizeof cmd, "rm -rf %s", card);
