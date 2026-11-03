@@ -68,6 +68,9 @@ pub enum LeekError {
     Pczt { code: u16, recovery: Recovery, reason: String },
     /// 6xx: the signatures (`.zsig` for other bytes, a bad signature, ...).
     Signature { code: u16, recovery: Recovery, reason: String },
+    /// 7xx: stored app data (an invalid app identifier, data sealed for
+    /// another key, damaged data, a forgotten Storage Key).
+    Storage { code: u16, recovery: Recovery, reason: String },
     /// 9xx: a firmware error code this version does not know.
     Device { code: u16, recovery: Recovery, reason: String, device_code: u16 },
 }
@@ -81,6 +84,7 @@ impl LeekError {
             | LeekError::Account { code, .. }
             | LeekError::Pczt { code, .. }
             | LeekError::Signature { code, .. }
+            | LeekError::Storage { code, .. }
             | LeekError::Device { code, .. } => *code,
         }
     }
@@ -93,6 +97,7 @@ impl LeekError {
             | LeekError::Account { recovery, .. }
             | LeekError::Pczt { recovery, .. }
             | LeekError::Signature { recovery, .. }
+            | LeekError::Storage { recovery, .. }
             | LeekError::Device { recovery, .. } => *recovery,
         }
     }
@@ -105,6 +110,7 @@ impl LeekError {
             | LeekError::Account { reason, .. }
             | LeekError::Pczt { reason, .. }
             | LeekError::Signature { reason, .. }
+            | LeekError::Storage { reason, .. }
             | LeekError::Device { reason, .. } => reason,
         }
     }
@@ -132,6 +138,7 @@ impl From<lz::LeekError> for LeekError {
             (3, _) => LeekError::User { code, recovery, reason },
             (4, _) => LeekError::Account { code, recovery, reason },
             (6, _) => LeekError::Signature { code, recovery, reason },
+            (7, _) => LeekError::Storage { code, recovery, reason },
             _ => LeekError::Pczt { code, recovery, reason },
         }
     }
@@ -267,6 +274,10 @@ pub struct Features {
     pub max_pczt_bytes: u64,
     pub max_transparent_inputs: u64,
     pub show_address: bool,
+    /// The ZIP number of the board's App Storage Keys, or `None` without
+    /// `zGetStorageKey`; offer "unlock with the board" only when it equals
+    /// `storage_zip_number()`.
+    pub storage_key: Option<u16>,
 }
 
 impl From<lz::Features> for Features {
@@ -281,6 +292,7 @@ impl From<lz::Features> for Features {
             max_pczt_bytes: f.max_pczt_bytes as u64,
             max_transparent_inputs: f.max_transparent_inputs as u64,
             show_address: f.show_address,
+            storage_key: f.storage_key,
         }
     }
 }
@@ -297,6 +309,7 @@ impl From<Features> for lz::Features {
             max_pczt_bytes: usize::try_from(f.max_pczt_bytes).unwrap_or(usize::MAX),
             max_transparent_inputs: usize::try_from(f.max_transparent_inputs).unwrap_or(usize::MAX),
             show_address: f.show_address,
+            storage_key: f.storage_key,
         }
     }
 }
@@ -435,6 +448,109 @@ pub fn apply_zsig(pczt: Vec<u8>, sent: Vec<u8>, zsig: Vec<u8>) -> Result<Vec<u8>
 #[uniffi::export]
 pub fn to_checkable_ua(ua: String) -> Result<String> {
     Ok(lz::to_checkable_ua(&ua)?)
+}
+
+// ---------------------------------------------------------------- stored app data
+
+/// An app's Storage Key (docs/zcash/zip-draft-app-storage-keys.md), from
+/// [`LeekDevice::get_storage_key`] or, for an app that remembers it in the
+/// platform's secure storage, [`StorageKey::from_bytes`].
+///
+/// Seal the wallet database and the UFVK with it, keep only the sealed
+/// bytes, and call [`forget`](Self::forget) when the app closes or locks:
+/// the JVM does not promise when an object is collected, and the key is
+/// wiped only then or on `forget`.
+#[derive(uniffi::Object)]
+pub struct StorageKey {
+    inner: Mutex<lz::StorageKey>,
+}
+
+impl StorageKey {
+    fn wrap(k: lz::StorageKey) -> Arc<Self> {
+        Arc::new(StorageKey { inner: Mutex::new(k) })
+    }
+}
+
+#[uniffi::export]
+impl StorageKey {
+    /// A key the app kept from an earlier release (remembered mode).
+    #[uniffi::constructor]
+    pub fn from_bytes(key: Vec<u8>, app_id: String, account: u32, network: Network) -> Result<Arc<Self>> {
+        let mut k = bytes32(&key)?;
+        let r = lz::StorageKey::from_bytes(k, &app_id, account, network.into());
+        k.fill(0);
+        Ok(Self::wrap(r?))
+    }
+
+    pub fn app_id(&self) -> String {
+        lock(&self.inner).app_id().to_string()
+    }
+
+    pub fn account(&self) -> u32 {
+        lock(&self.inner).account()
+    }
+
+    pub fn network(&self) -> Network {
+        lock(&self.inner).network().into()
+    }
+
+    /// The 32 key bytes, for the platform's secure storage only (Android
+    /// Keystore-wrapped, Apple Keychain). Never anywhere else.
+    pub fn key_bytes(&self) -> Vec<u8> {
+        lock(&self.inner).to_bytes().to_vec()
+    }
+
+    /// The `db` subkey, for a page-level database cipher such as SQLCipher.
+    pub fn db_key(&self) -> Result<Vec<u8>> {
+        Ok(lock(&self.inner).subkey(lz::LABEL_DB)?.to_vec())
+    }
+
+    /// The subkey for `label` (`db`, `ufvk`, `commit` or `x-...`).
+    pub fn subkey(&self, label: String) -> Result<Vec<u8>> {
+        Ok(lock(&self.inner).subkey(&label)?.to_vec())
+    }
+
+    pub fn seal(&self, label: String, plaintext: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(lock(&self.inner).seal(&label, &plaintext)?)
+    }
+
+    pub fn open(&self, label: String, sealed: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(lock(&self.inner).open(&label, &sealed)?.to_vec())
+    }
+
+    pub fn seal_db(&self, db: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(lock(&self.inner).seal_db(&db)?)
+    }
+
+    pub fn open_db(&self, sealed: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(lock(&self.inner).open_db(&sealed)?.to_vec())
+    }
+
+    pub fn seal_ufvk(&self, ufvk: String) -> Result<Vec<u8>> {
+        Ok(lock(&self.inner).seal_ufvk(&ufvk)?)
+    }
+
+    pub fn open_ufvk(&self, sealed: Vec<u8>) -> Result<String> {
+        Ok(lock(&self.inner).open_ufvk(&sealed)?.to_string())
+    }
+
+    /// Wipes the key now. Every later call fails with code 704.
+    pub fn forget(&self) {
+        lock(&self.inner).forget();
+    }
+}
+
+/// Whether `app_id` is an App identifier the board accepts.
+#[uniffi::export]
+pub fn validate_app_id(app_id: String) -> Result<()> {
+    Ok(lz::validate_app_id(&app_id)?)
+}
+
+/// The ZIP number this SDK derives Storage Keys under (a placeholder until
+/// the draft is assigned one); compare with `Features.storage_key`.
+#[uniffi::export]
+pub fn storage_zip_number() -> u16 {
+    lz::STORAGE_ZIP_NUMBER
 }
 
 /// **Experimental.** The file the board signs from the SD card.
@@ -760,6 +876,14 @@ impl LeekDevice {
     pub fn show_address(&self, index: u32, network: Network, ua: String) -> Result<AddressCheck> {
         let (mut d, _) = self.begin();
         lz::show_address(&mut d, index, network.into(), &ua).map(Into::into).map_err(|e| self.err(e))
+    }
+
+    /// The app's Storage Key: the board shows `app_id`, the account, the
+    /// network and the pairing code, and releases it only after OK there,
+    /// every time. Tell the user to confirm on the board before calling.
+    pub fn get_storage_key(&self, app_id: String, index: u32, network: Network) -> Result<Arc<StorageKey>> {
+        let (mut d, _) = self.begin();
+        lz::get_storage_key(&mut d, &app_id, index, network.into()).map(StorageKey::wrap).map_err(|e| self.err(e))
     }
 
     /// True if the board keeps it in flash.

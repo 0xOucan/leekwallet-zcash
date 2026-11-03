@@ -796,6 +796,13 @@ public protocol LeekDeviceProtocol: AnyObject, Sendable {
     func getFeatures() throws  -> Features
     
     /**
+     * The app's Storage Key: the board shows `app_id`, the account, the
+     * network and the pairing code, and releases it only after OK there,
+     * every time. Tell the user to confirm on the board before calling.
+     */
+    func getStorageKey(appId: String, index: UInt32, network: Network) throws  -> StorageKey
+    
+    /**
      * The pairing handshake; `listener` gets the code to compare.
      */
     func pair(listener: PairingListener) throws 
@@ -913,6 +920,21 @@ open func getAccount(index: UInt32, network: Network)throws  -> Account  {
 open func getFeatures()throws  -> Features  {
     return try  FfiConverterTypeFeatures_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
     uniffi_leek_zcash_ffi_fn_method_leekdevice_get_features(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * The app's Storage Key: the board shows `app_id`, the account, the
+     * network and the pairing code, and releases it only after OK there,
+     * every time. Tell the user to confirm on the board before calling.
+     */
+open func getStorageKey(appId: String, index: UInt32, network: Network)throws  -> StorageKey  {
+    return try  FfiConverterTypeStorageKey_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_leekdevice_get_storage_key(self.uniffiClonePointer(),
+        FfiConverterString.lower(appId),
+        FfiConverterUInt32.lower(index),
+        FfiConverterTypeNetwork_lower(network),$0
     )
 })
 }
@@ -1379,6 +1401,304 @@ public func FfiConverterTypeSignListener_lower(_ value: SignListener) -> UnsafeM
 
 
 
+
+
+/**
+ * An app's Storage Key (docs/zcash/zip-draft-app-storage-keys.md), from
+ * [`LeekDevice::get_storage_key`] or, for an app that remembers it in the
+ * platform's secure storage, [`StorageKey::from_bytes`].
+ *
+ * Seal the wallet database and the UFVK with it, keep only the sealed
+ * bytes, and call [`forget`](Self::forget) when the app closes or locks:
+ * the JVM does not promise when an object is collected, and the key is
+ * wiped only then or on `forget`.
+ */
+public protocol StorageKeyProtocol: AnyObject, Sendable {
+    
+    func account()  -> UInt32
+    
+    func appId()  -> String
+    
+    /**
+     * The `db` subkey, for a page-level database cipher such as SQLCipher.
+     */
+    func dbKey() throws  -> Data
+    
+    /**
+     * Wipes the key now. Every later call fails with code 704.
+     */
+    func forget() 
+    
+    /**
+     * The 32 key bytes, for the platform's secure storage only (Android
+     * Keystore-wrapped, Apple Keychain). Never anywhere else.
+     */
+    func keyBytes()  -> Data
+    
+    func network()  -> Network
+    
+    func `open`(label: String, sealed: Data) throws  -> Data
+    
+    func openDb(sealed: Data) throws  -> Data
+    
+    func openUfvk(sealed: Data) throws  -> String
+    
+    func seal(label: String, plaintext: Data) throws  -> Data
+    
+    func sealDb(db: Data) throws  -> Data
+    
+    func sealUfvk(ufvk: String) throws  -> Data
+    
+    /**
+     * The subkey for `label` (`db`, `ufvk`, `commit` or `x-...`).
+     */
+    func subkey(label: String) throws  -> Data
+    
+}
+/**
+ * An app's Storage Key (docs/zcash/zip-draft-app-storage-keys.md), from
+ * [`LeekDevice::get_storage_key`] or, for an app that remembers it in the
+ * platform's secure storage, [`StorageKey::from_bytes`].
+ *
+ * Seal the wallet database and the UFVK with it, keep only the sealed
+ * bytes, and call [`forget`](Self::forget) when the app closes or locks:
+ * the JVM does not promise when an object is collected, and the key is
+ * wiped only then or on `forget`.
+ */
+open class StorageKey: StorageKeyProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_leek_zcash_ffi_fn_clone_storagekey(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_leek_zcash_ffi_fn_free_storagekey(pointer, $0) }
+    }
+
+    
+    /**
+     * A key the app kept from an earlier release (remembered mode).
+     */
+public static func fromBytes(key: Data, appId: String, account: UInt32, network: Network)throws  -> StorageKey  {
+    return try  FfiConverterTypeStorageKey_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_constructor_storagekey_from_bytes(
+        FfiConverterData.lower(key),
+        FfiConverterString.lower(appId),
+        FfiConverterUInt32.lower(account),
+        FfiConverterTypeNetwork_lower(network),$0
+    )
+})
+}
+    
+
+    
+open func account() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_account(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func appId() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_app_id(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * The `db` subkey, for a page-level database cipher such as SQLCipher.
+     */
+open func dbKey()throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_db_key(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Wipes the key now. Every later call fails with code 704.
+     */
+open func forget()  {try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_forget(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * The 32 key bytes, for the platform's secure storage only (Android
+     * Keystore-wrapped, Apple Keychain). Never anywhere else.
+     */
+open func keyBytes() -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_key_bytes(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func network() -> Network  {
+    return try!  FfiConverterTypeNetwork_lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_network(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func `open`(label: String, sealed: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_open(self.uniffiClonePointer(),
+        FfiConverterString.lower(label),
+        FfiConverterData.lower(sealed),$0
+    )
+})
+}
+    
+open func openDb(sealed: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_open_db(self.uniffiClonePointer(),
+        FfiConverterData.lower(sealed),$0
+    )
+})
+}
+    
+open func openUfvk(sealed: Data)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_open_ufvk(self.uniffiClonePointer(),
+        FfiConverterData.lower(sealed),$0
+    )
+})
+}
+    
+open func seal(label: String, plaintext: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_seal(self.uniffiClonePointer(),
+        FfiConverterString.lower(label),
+        FfiConverterData.lower(plaintext),$0
+    )
+})
+}
+    
+open func sealDb(db: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_seal_db(self.uniffiClonePointer(),
+        FfiConverterData.lower(db),$0
+    )
+})
+}
+    
+open func sealUfvk(ufvk: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_seal_ufvk(self.uniffiClonePointer(),
+        FfiConverterString.lower(ufvk),$0
+    )
+})
+}
+    
+    /**
+     * The subkey for `label` (`db`, `ufvk`, `commit` or `x-...`).
+     */
+open func subkey(label: String)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_storagekey_subkey(self.uniffiClonePointer(),
+        FfiConverterString.lower(label),$0
+    )
+})
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStorageKey: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = StorageKey
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> StorageKey {
+        return StorageKey(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: StorageKey) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StorageKey {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: StorageKey, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStorageKey_lift(_ pointer: UnsafeMutableRawPointer) throws -> StorageKey {
+    return try FfiConverterTypeStorageKey.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStorageKey_lower(_ value: StorageKey) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeStorageKey.lower(value)
+}
+
+
+
+
 /**
  * A board account, as `zGetAccount` exports it.
  */
@@ -1795,10 +2115,21 @@ public struct Features {
     public var maxPcztBytes: UInt64
     public var maxTransparentInputs: UInt64
     public var showAddress: Bool
+    /**
+     * The ZIP number of the board's App Storage Keys, or `None` without
+     * `zGetStorageKey`; offer "unlock with the board" only when it equals
+     * `storage_zip_number()`.
+     */
+    public var storageKey: UInt16?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(`protocol`: UInt64, firmware: String?, model: String?, spendPools: [String], branchIds: [UInt32], txVersions: [UInt32], maxPcztBytes: UInt64, maxTransparentInputs: UInt64, showAddress: Bool) {
+    public init(`protocol`: UInt64, firmware: String?, model: String?, spendPools: [String], branchIds: [UInt32], txVersions: [UInt32], maxPcztBytes: UInt64, maxTransparentInputs: UInt64, showAddress: Bool, 
+        /**
+         * The ZIP number of the board's App Storage Keys, or `None` without
+         * `zGetStorageKey`; offer "unlock with the board" only when it equals
+         * `storage_zip_number()`.
+         */storageKey: UInt16?) {
         self.`protocol` = `protocol`
         self.firmware = firmware
         self.model = model
@@ -1808,6 +2139,7 @@ public struct Features {
         self.maxPcztBytes = maxPcztBytes
         self.maxTransparentInputs = maxTransparentInputs
         self.showAddress = showAddress
+        self.storageKey = storageKey
     }
 }
 
@@ -1845,6 +2177,9 @@ extension Features: Equatable, Hashable {
         if lhs.showAddress != rhs.showAddress {
             return false
         }
+        if lhs.storageKey != rhs.storageKey {
+            return false
+        }
         return true
     }
 
@@ -1858,6 +2193,7 @@ extension Features: Equatable, Hashable {
         hasher.combine(maxPcztBytes)
         hasher.combine(maxTransparentInputs)
         hasher.combine(showAddress)
+        hasher.combine(storageKey)
     }
 }
 
@@ -1878,7 +2214,8 @@ public struct FfiConverterTypeFeatures: FfiConverterRustBuffer {
                 txVersions: FfiConverterSequenceUInt32.read(from: &buf), 
                 maxPcztBytes: FfiConverterUInt64.read(from: &buf), 
                 maxTransparentInputs: FfiConverterUInt64.read(from: &buf), 
-                showAddress: FfiConverterBool.read(from: &buf)
+                showAddress: FfiConverterBool.read(from: &buf), 
+                storageKey: FfiConverterOptionUInt16.read(from: &buf)
         )
     }
 
@@ -1892,6 +2229,7 @@ public struct FfiConverterTypeFeatures: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.maxPcztBytes, into: &buf)
         FfiConverterUInt64.write(value.maxTransparentInputs, into: &buf)
         FfiConverterBool.write(value.showAddress, into: &buf)
+        FfiConverterOptionUInt16.write(value.storageKey, into: &buf)
     }
 }
 
@@ -2339,6 +2677,12 @@ public enum LeekError: Swift.Error {
     case Signature(code: UInt16, recovery: Recovery, reason: String
     )
     /**
+     * 7xx: stored app data (an invalid app identifier, data sealed for
+     * another key, damaged data, a forgotten Storage Key).
+     */
+    case Storage(code: UInt16, recovery: Recovery, reason: String
+    )
+    /**
      * 9xx: a firmware error code this version does not know.
      */
     case Device(code: UInt16, recovery: Recovery, reason: String, deviceCode: UInt16
@@ -2389,7 +2733,12 @@ public struct FfiConverterTypeLeekError: FfiConverterRustBuffer {
             recovery: try FfiConverterTypeRecovery.read(from: &buf), 
             reason: try FfiConverterString.read(from: &buf)
             )
-        case 7: return .Device(
+        case 7: return .Storage(
+            code: try FfiConverterUInt16.read(from: &buf), 
+            recovery: try FfiConverterTypeRecovery.read(from: &buf), 
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 8: return .Device(
             code: try FfiConverterUInt16.read(from: &buf), 
             recovery: try FfiConverterTypeRecovery.read(from: &buf), 
             reason: try FfiConverterString.read(from: &buf), 
@@ -2449,8 +2798,15 @@ public struct FfiConverterTypeLeekError: FfiConverterRustBuffer {
             FfiConverterString.write(reason, into: &buf)
             
         
-        case let .Device(code,recovery,reason,deviceCode):
+        case let .Storage(code,recovery,reason):
             writeInt(&buf, Int32(7))
+            FfiConverterUInt16.write(code, into: &buf)
+            FfiConverterTypeRecovery.write(recovery, into: &buf)
+            FfiConverterString.write(reason, into: &buf)
+            
+        
+        case let .Device(code,recovery,reason,deviceCode):
+            writeInt(&buf, Int32(8))
             FfiConverterUInt16.write(code, into: &buf)
             FfiConverterTypeRecovery.write(recovery, into: &buf)
             FfiConverterString.write(reason, into: &buf)
@@ -3091,6 +3447,30 @@ extension TransportFailure: Foundation.LocalizedError {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt16: FfiConverterRustBuffer {
+    typealias SwiftType = UInt16?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt16.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
     typealias SwiftType = UInt32?
 
@@ -3380,6 +3760,16 @@ public func signerViewBytes(pczt: Data, view: SignerView)throws  -> Data  {
 })
 }
 /**
+ * The ZIP number this SDK derives Storage Keys under (a placeholder until
+ * the draft is assigned one); compare with `Features.storage_key`.
+ */
+public func storageZipNumber() -> UInt16  {
+    return try!  FfiConverterUInt16.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_func_storage_zip_number($0
+    )
+})
+}
+/**
  * The same UA without the Sapling receiver the board cannot check.
  */
 public func toCheckableUa(ua: String)throws  -> String  {
@@ -3398,6 +3788,15 @@ public func txTxid(tx: Data)throws  -> Data  {
         FfiConverterData.lower(tx),$0
     )
 })
+}
+/**
+ * Whether `app_id` is an App identifier the board accepts.
+ */
+public func validateAppId(appId: String)throws   {try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_func_validate_app_id(
+        FfiConverterString.lower(appId),$0
+    )
+}
 }
 
 private enum InitializationResult {
@@ -3448,10 +3847,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_func_signer_view_bytes() != 45306) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_func_storage_zip_number() != 36570) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_func_to_checkable_ua() != 61827) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_tx_txid() != 11196) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_func_validate_app_id() != 45564) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_method_frametransport_send() != 63790) {
@@ -3472,6 +3877,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_features() != 47232) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_storage_key() != 38104) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair() != 405) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3490,7 +3898,49 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_method_signlistener_on_progress() != 63101) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_account() != 25949) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_app_id() != 52367) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_db_key() != 59940) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_forget() != 20516) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_key_bytes() != 40929) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_network() != 41262) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_open() != 31058) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_open_db() != 9187) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_open_ufvk() != 37550) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_seal() != 12853) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_db() != 42403) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_ufvk() != 56274) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey() != 58607) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new() != 20437) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_constructor_storagekey_from_bytes() != 55411) {
         return InitializationResult.apiChecksumMismatch
     }
 

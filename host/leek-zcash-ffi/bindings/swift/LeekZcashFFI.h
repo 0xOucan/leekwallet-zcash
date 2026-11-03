@@ -364,6 +364,11 @@ RustBuffer uniffi_leek_zcash_ffi_fn_method_leekdevice_get_account(void*_Nonnull 
 RustBuffer uniffi_leek_zcash_ffi_fn_method_leekdevice_get_features(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_GET_STORAGE_KEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_GET_STORAGE_KEY
+void*_Nonnull uniffi_leek_zcash_ffi_fn_method_leekdevice_get_storage_key(void*_Nonnull ptr, RustBuffer app_id, uint32_t index, RustBuffer network, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_PAIR
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_PAIR
 void uniffi_leek_zcash_ffi_fn_method_leekdevice_pair(void*_Nonnull ptr, void*_Nonnull listener, RustCallStatus *_Nonnull out_status
@@ -424,6 +429,86 @@ void uniffi_leek_zcash_ffi_fn_init_callback_vtable_signlistener(const UniffiVTab
 void uniffi_leek_zcash_ffi_fn_method_signlistener_on_progress(void*_Nonnull ptr, RustBuffer progress, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_STORAGEKEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_STORAGEKEY
+void*_Nonnull uniffi_leek_zcash_ffi_fn_clone_storagekey(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_STORAGEKEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_STORAGEKEY
+void uniffi_leek_zcash_ffi_fn_free_storagekey(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_STORAGEKEY_FROM_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_STORAGEKEY_FROM_BYTES
+void*_Nonnull uniffi_leek_zcash_ffi_fn_constructor_storagekey_from_bytes(RustBuffer key, RustBuffer app_id, uint32_t account, RustBuffer network, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_ACCOUNT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_ACCOUNT
+uint32_t uniffi_leek_zcash_ffi_fn_method_storagekey_account(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_APP_ID
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_APP_ID
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_app_id(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_DB_KEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_DB_KEY
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_db_key(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_FORGET
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_FORGET
+void uniffi_leek_zcash_ffi_fn_method_storagekey_forget(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_KEY_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_KEY_BYTES
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_key_bytes(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_NETWORK
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_network(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_OPEN
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_open(void*_Nonnull ptr, RustBuffer label, RustBuffer sealed, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_OPEN_DB
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_OPEN_DB
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_open_db(void*_Nonnull ptr, RustBuffer sealed, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_OPEN_UFVK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_OPEN_UFVK
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_open_ufvk(void*_Nonnull ptr, RustBuffer sealed, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SEAL
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SEAL
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_seal(void*_Nonnull ptr, RustBuffer label, RustBuffer plaintext, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SEAL_DB
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SEAL_DB
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_seal_db(void*_Nonnull ptr, RustBuffer db, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SEAL_UFVK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SEAL_UFVK
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_seal_ufvk(void*_Nonnull ptr, RustBuffer ufvk, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SUBKEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_STORAGEKEY_SUBKEY
+RustBuffer uniffi_leek_zcash_ffi_fn_method_storagekey_subkey(void*_Nonnull ptr, RustBuffer label, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_ACCOUNT_RECORD_TYPE
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_ACCOUNT_RECORD_TYPE
 RustBuffer uniffi_leek_zcash_ffi_fn_func_account_record_type(RustCallStatus *_Nonnull out_status
@@ -480,6 +565,12 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_sign_result_from_bytes(RustBuffer recor
 RustBuffer uniffi_leek_zcash_ffi_fn_func_signer_view_bytes(RustBuffer pczt, RustBuffer view, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_STORAGE_ZIP_NUMBER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_STORAGE_ZIP_NUMBER
+uint16_t uniffi_leek_zcash_ffi_fn_func_storage_zip_number(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_TO_CHECKABLE_UA
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_TO_CHECKABLE_UA
 RustBuffer uniffi_leek_zcash_ffi_fn_func_to_checkable_ua(RustBuffer ua, RustCallStatus *_Nonnull out_status
@@ -488,6 +579,11 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_to_checkable_ua(RustBuffer ua, RustCall
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_TX_TXID
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_TX_TXID
 RustBuffer uniffi_leek_zcash_ffi_fn_func_tx_txid(RustBuffer tx, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_VALIDATE_APP_ID
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_VALIDATE_APP_ID
+void uniffi_leek_zcash_ffi_fn_func_validate_app_id(RustBuffer app_id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_LEEK_ZCASH_FFI_RUSTBUFFER_ALLOC
@@ -836,6 +932,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_signer_view_bytes(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_STORAGE_ZIP_NUMBER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_STORAGE_ZIP_NUMBER
+uint16_t uniffi_leek_zcash_ffi_checksum_func_storage_zip_number(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_TO_CHECKABLE_UA
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_TO_CHECKABLE_UA
 uint16_t uniffi_leek_zcash_ffi_checksum_func_to_checkable_ua(void
@@ -845,6 +947,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_to_checkable_ua(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_TX_TXID
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_TX_TXID
 uint16_t uniffi_leek_zcash_ffi_checksum_func_tx_txid(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_VALIDATE_APP_ID
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_VALIDATE_APP_ID
+uint16_t uniffi_leek_zcash_ffi_checksum_func_validate_app_id(void
     
 );
 #endif
@@ -884,6 +992,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_features(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_GET_STORAGE_KEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_GET_STORAGE_KEY
+uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_storage_key(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_PAIR
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_PAIR
 uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair(void
@@ -920,9 +1034,93 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_signlistener_on_progress(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_ACCOUNT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_ACCOUNT
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_account(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_APP_ID
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_APP_ID
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_app_id(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_DB_KEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_DB_KEY
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_db_key(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_FORGET
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_FORGET
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_forget(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_KEY_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_KEY_BYTES
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_key_bytes(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_NETWORK
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_network(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_OPEN
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_open(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_OPEN_DB
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_OPEN_DB
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_open_db(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_OPEN_UFVK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_OPEN_UFVK
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_open_ufvk(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SEAL
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SEAL
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_seal(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SEAL_DB
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SEAL_DB
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_db(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SEAL_UFVK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SEAL_UFVK
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_ufvk(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SUBKEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_STORAGEKEY_SUBKEY
+uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_LEEKDEVICE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_LEEKDEVICE_NEW
 uint16_t uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_STORAGEKEY_FROM_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_STORAGEKEY_FROM_BYTES
+uint16_t uniffi_leek_zcash_ffi_checksum_constructor_storagekey_from_bytes(void
     
 );
 #endif

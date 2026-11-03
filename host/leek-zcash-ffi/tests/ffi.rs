@@ -326,3 +326,30 @@ fn the_account_record_round_trips() {
     assert_eq!(decode_account_record(bytes).unwrap(), r);
     assert_eq!(account_record_type(), "leek-zcash-accounts");
 }
+
+#[test]
+fn stored_app_data_seals_and_refuses() {
+    // The draft's vector 1 key, as an app that remembered it would hold it.
+    let key = hex::decode("f43c678ee392cc4552daa3bde21c3cb15b416811dfdacf64e7aceca6114bd0d0").unwrap();
+    let k = StorageKey::from_bytes(key.clone(), "xyz.leekwallet.zcash".into(), 0, Network::Main).unwrap();
+    assert_eq!(k.db_key().unwrap(), hex::decode("abd9811ecdfd468b538e7f11714bdacca99e354ea622d31f0ee3b2cee3f85973").unwrap());
+    assert_eq!(k.key_bytes(), key);
+    let sealed = k.seal_ufvk("uview1example".into()).unwrap();
+    assert_eq!(k.open_ufvk(sealed.clone()).unwrap(), "uview1example");
+    let db = k.seal_db(b"wallet.db".to_vec()).unwrap();
+    assert_eq!(k.open_db(db.clone()).unwrap(), b"wallet.db");
+    let mut bad = db.clone();
+    *bad.last_mut().unwrap() ^= 1;
+    assert!(matches!(k.open_db(bad).unwrap_err(), LeekError::Storage { code: 703, recovery: Recovery::DoNotRetry, .. }));
+    // Another key: the key check refuses it (702). The same key bytes under
+    // another app: the check passes, the associated data does not (703).
+    let other = StorageKey::from_bytes(vec![7; 32], "xyz.leekwallet.zcash".into(), 0, Network::Main).unwrap();
+    assert!(matches!(other.open_db(db.clone()).unwrap_err(), LeekError::Storage { code: 702, .. }));
+    let moved = StorageKey::from_bytes(key, "com.example.wallet".into(), 0, Network::Main).unwrap();
+    assert!(matches!(moved.open_db(db.clone()).unwrap_err(), LeekError::Storage { code: 703, .. }));
+    k.forget();
+    assert_eq!(k.open_db(db).unwrap_err().code(), 704);
+    assert!(matches!(validate_app_id("Not Valid".into()).unwrap_err(), LeekError::Storage { code: 700, .. }));
+    assert!(StorageKey::from_bytes(vec![0; 31], "a.b".into(), 0, Network::Main).is_err());
+    assert_eq!(storage_zip_number(), 65535);
+}

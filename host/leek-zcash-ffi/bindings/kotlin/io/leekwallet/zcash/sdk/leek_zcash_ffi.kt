@@ -838,6 +838,42 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -875,9 +911,13 @@ fun uniffi_leek_zcash_ffi_checksum_func_sign_result_from_bytes(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_signer_view_bytes(
 ): Short
+fun uniffi_leek_zcash_ffi_checksum_func_storage_zip_number(
+): Short
 fun uniffi_leek_zcash_ffi_checksum_func_to_checkable_ua(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_tx_txid(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_validate_app_id(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_frametransport_send(
 ): Short
@@ -891,6 +931,8 @@ fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_account(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_features(
 ): Short
+fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_storage_key(
+): Short
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_set_birthday(
@@ -903,7 +945,35 @@ fun uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_signlistener_on_progress(
 ): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_account(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_app_id(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_db_key(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_forget(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_key_bytes(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_network(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_open(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_open_db(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_open_ufvk(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_seal(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_db(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_ufvk(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey(
+): Short
 fun uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_constructor_storagekey_from_bytes(
 ): Short
 fun ffi_leek_zcash_ffi_uniffi_contract_version(
 ): Int
@@ -981,6 +1051,8 @@ fun uniffi_leek_zcash_ffi_fn_method_leekdevice_get_account(`ptr`: Pointer,`index
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_method_leekdevice_get_features(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_leekdevice_get_storage_key(`ptr`: Pointer,`appId`: RustBuffer.ByValue,`index`: Int,`network`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
 fun uniffi_leek_zcash_ffi_fn_method_leekdevice_pair(`ptr`: Pointer,`listener`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 fun uniffi_leek_zcash_ffi_fn_method_leekdevice_set_birthday(`ptr`: Pointer,`index`: Int,`network`: RustBuffer.ByValue,`height`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -1005,6 +1077,38 @@ fun uniffi_leek_zcash_ffi_fn_init_callback_vtable_signlistener(`vtable`: UniffiV
 ): Unit
 fun uniffi_leek_zcash_ffi_fn_method_signlistener_on_progress(`ptr`: Pointer,`progress`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+fun uniffi_leek_zcash_ffi_fn_clone_storagekey(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_free_storagekey(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_leek_zcash_ffi_fn_constructor_storagekey_from_bytes(`key`: RustBuffer.ByValue,`appId`: RustBuffer.ByValue,`account`: Int,`network`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_account(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_app_id(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_db_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_forget(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_key_bytes(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_network(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_open(`ptr`: Pointer,`label`: RustBuffer.ByValue,`sealed`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_open_db(`ptr`: Pointer,`sealed`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_open_ufvk(`ptr`: Pointer,`sealed`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_seal(`ptr`: Pointer,`label`: RustBuffer.ByValue,`plaintext`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_seal_db(`ptr`: Pointer,`db`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_seal_ufvk(`ptr`: Pointer,`ufvk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_storagekey_subkey(`ptr`: Pointer,`label`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_account_record_type(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_apply_zsig(`pczt`: RustBuffer.ByValue,`sent`: RustBuffer.ByValue,`zsig`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1027,10 +1131,14 @@ fun uniffi_leek_zcash_ffi_fn_func_sign_result_from_bytes(`record`: RustBuffer.By
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_signer_view_bytes(`pczt`: RustBuffer.ByValue,`view`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_storage_zip_number(uniffi_out_err: UniffiRustCallStatus, 
+): Short
 fun uniffi_leek_zcash_ffi_fn_func_to_checkable_ua(`ua`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_tx_txid(`tx`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_validate_app_id(`appId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 fun ffi_leek_zcash_ffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun ffi_leek_zcash_ffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1190,10 +1298,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_func_signer_view_bytes() != 45306.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_storage_zip_number() != 36570.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_to_checkable_ua() != 61827.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_tx_txid() != 11196.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_validate_app_id() != 45564.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_frametransport_send() != 63790.toShort()) {
@@ -1214,6 +1328,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_features() != 47232.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_storage_key() != 38104.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair() != 405.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1232,7 +1349,49 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_method_signlistener_on_progress() != 63101.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_account() != 25949.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_app_id() != 52367.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_db_key() != 59940.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_forget() != 20516.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_key_bytes() != 40929.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_network() != 41262.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_open() != 31058.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_open_db() != 9187.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_open_ufvk() != 37550.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_seal() != 12853.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_db() != 42403.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_ufvk() != 56274.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey() != 58607.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new() != 20437.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_constructor_storagekey_from_bytes() != 55411.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -2035,6 +2194,13 @@ public interface LeekDeviceInterface {
     fun `getFeatures`(): Features
     
     /**
+     * The app's Storage Key: the board shows `app_id`, the account, the
+     * network and the pairing code, and releases it only after OK there,
+     * every time. Tell the user to confirm on the board before calling.
+     */
+    fun `getStorageKey`(`appId`: kotlin.String, `index`: kotlin.UInt, `network`: Network): StorageKey
+    
+    /**
      * The pairing handshake; `listener` gets the code to compare.
      */
     fun `pair`(`listener`: PairingListener)
@@ -2201,6 +2367,24 @@ open class LeekDevice: Disposable, AutoCloseable, LeekDeviceInterface
     uniffiRustCallWithError(LeekException) { _status ->
     UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_leekdevice_get_features(
         it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The app's Storage Key: the board shows `app_id`, the account, the
+     * network and the pairing code, and releases it only after OK there,
+     * every time. Tell the user to confirm on the board before calling.
+     */
+    @Throws(LeekException::class)override fun `getStorageKey`(`appId`: kotlin.String, `index`: kotlin.UInt, `network`: Network): StorageKey {
+            return FfiConverterTypeStorageKey.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_leekdevice_get_storage_key(
+        it, FfiConverterString.lower(`appId`),FfiConverterUInt.lower(`index`),FfiConverterTypeNetwork.lower(`network`),_status)
 }
     }
     )
@@ -2856,6 +3040,478 @@ public object FfiConverterTypeSignListener: FfiConverter<SignListener, Pointer> 
 }
 
 
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * An app's Storage Key (docs/zcash/zip-draft-app-storage-keys.md), from
+ * [`LeekDevice::get_storage_key`] or, for an app that remembers it in the
+ * platform's secure storage, [`StorageKey::from_bytes`].
+ *
+ * Seal the wallet database and the UFVK with it, keep only the sealed
+ * bytes, and call [`forget`](Self::forget) when the app closes or locks:
+ * the JVM does not promise when an object is collected, and the key is
+ * wiped only then or on `forget`.
+ */
+public interface StorageKeyInterface {
+    
+    fun `account`(): kotlin.UInt
+    
+    fun `appId`(): kotlin.String
+    
+    /**
+     * The `db` subkey, for a page-level database cipher such as SQLCipher.
+     */
+    fun `dbKey`(): kotlin.ByteArray
+    
+    /**
+     * Wipes the key now. Every later call fails with code 704.
+     */
+    fun `forget`()
+    
+    /**
+     * The 32 key bytes, for the platform's secure storage only (Android
+     * Keystore-wrapped, Apple Keychain). Never anywhere else.
+     */
+    fun `keyBytes`(): kotlin.ByteArray
+    
+    fun `network`(): Network
+    
+    fun `open`(`label`: kotlin.String, `sealed`: kotlin.ByteArray): kotlin.ByteArray
+    
+    fun `openDb`(`sealed`: kotlin.ByteArray): kotlin.ByteArray
+    
+    fun `openUfvk`(`sealed`: kotlin.ByteArray): kotlin.String
+    
+    fun `seal`(`label`: kotlin.String, `plaintext`: kotlin.ByteArray): kotlin.ByteArray
+    
+    fun `sealDb`(`db`: kotlin.ByteArray): kotlin.ByteArray
+    
+    fun `sealUfvk`(`ufvk`: kotlin.String): kotlin.ByteArray
+    
+    /**
+     * The subkey for `label` (`db`, `ufvk`, `commit` or `x-...`).
+     */
+    fun `subkey`(`label`: kotlin.String): kotlin.ByteArray
+    
+    companion object
+}
+
+/**
+ * An app's Storage Key (docs/zcash/zip-draft-app-storage-keys.md), from
+ * [`LeekDevice::get_storage_key`] or, for an app that remembers it in the
+ * platform's secure storage, [`StorageKey::from_bytes`].
+ *
+ * Seal the wallet database and the UFVK with it, keep only the sealed
+ * bytes, and call [`forget`](Self::forget) when the app closes or locks:
+ * the JVM does not promise when an object is collected, and the key is
+ * wiped only then or on `forget`.
+ */
+open class StorageKey: Disposable, AutoCloseable, StorageKeyInterface
+{
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_free_storagekey(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_clone_storagekey(pointer!!, status)
+        }
+    }
+
+    override fun `account`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_account(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `appId`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_app_id(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The `db` subkey, for a page-level database cipher such as SQLCipher.
+     */
+    @Throws(LeekException::class)override fun `dbKey`(): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_db_key(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Wipes the key now. Every later call fails with code 704.
+     */override fun `forget`()
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_forget(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * The 32 key bytes, for the platform's secure storage only (Android
+     * Keystore-wrapped, Apple Keychain). Never anywhere else.
+     */override fun `keyBytes`(): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_key_bytes(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `network`(): Network {
+            return FfiConverterTypeNetwork.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_network(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(LeekException::class)override fun `open`(`label`: kotlin.String, `sealed`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_open(
+        it, FfiConverterString.lower(`label`),FfiConverterByteArray.lower(`sealed`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(LeekException::class)override fun `openDb`(`sealed`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_open_db(
+        it, FfiConverterByteArray.lower(`sealed`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(LeekException::class)override fun `openUfvk`(`sealed`: kotlin.ByteArray): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_open_ufvk(
+        it, FfiConverterByteArray.lower(`sealed`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(LeekException::class)override fun `seal`(`label`: kotlin.String, `plaintext`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_seal(
+        it, FfiConverterString.lower(`label`),FfiConverterByteArray.lower(`plaintext`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(LeekException::class)override fun `sealDb`(`db`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_seal_db(
+        it, FfiConverterByteArray.lower(`db`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(LeekException::class)override fun `sealUfvk`(`ufvk`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_seal_ufvk(
+        it, FfiConverterString.lower(`ufvk`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The subkey for `label` (`db`, `ufvk`, `commit` or `x-...`).
+     */
+    @Throws(LeekException::class)override fun `subkey`(`label`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_storagekey_subkey(
+        it, FfiConverterString.lower(`label`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+    companion object {
+        
+    /**
+     * A key the app kept from an earlier release (remembered mode).
+     */
+    @Throws(LeekException::class) fun `fromBytes`(`key`: kotlin.ByteArray, `appId`: kotlin.String, `account`: kotlin.UInt, `network`: Network): StorageKey {
+            return FfiConverterTypeStorageKey.lift(
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_constructor_storagekey_from_bytes(
+        FfiConverterByteArray.lower(`key`),FfiConverterString.lower(`appId`),FfiConverterUInt.lower(`account`),FfiConverterTypeNetwork.lower(`network`),_status)
+}
+    )
+    }
+    
+
+        
+    }
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeStorageKey: FfiConverter<StorageKey, Pointer> {
+
+    override fun lower(value: StorageKey): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): StorageKey {
+        return StorageKey(value)
+    }
+
+    override fun read(buf: ByteBuffer): StorageKey {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: StorageKey) = 8UL
+
+    override fun write(value: StorageKey, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
 
 /**
  * A board account, as `zGetAccount` exports it.
@@ -3065,7 +3721,13 @@ data class Features (
     var `txVersions`: List<kotlin.UInt>, 
     var `maxPcztBytes`: kotlin.ULong, 
     var `maxTransparentInputs`: kotlin.ULong, 
-    var `showAddress`: kotlin.Boolean
+    var `showAddress`: kotlin.Boolean, 
+    /**
+     * The ZIP number of the board's App Storage Keys, or `None` without
+     * `zGetStorageKey`; offer "unlock with the board" only when it equals
+     * `storage_zip_number()`.
+     */
+    var `storageKey`: kotlin.UShort?
 ) {
     
     companion object
@@ -3086,6 +3748,7 @@ public object FfiConverterTypeFeatures: FfiConverterRustBuffer<Features> {
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterOptionalUShort.read(buf),
         )
     }
 
@@ -3098,7 +3761,8 @@ public object FfiConverterTypeFeatures: FfiConverterRustBuffer<Features> {
             FfiConverterSequenceUInt.allocationSize(value.`txVersions`) +
             FfiConverterULong.allocationSize(value.`maxPcztBytes`) +
             FfiConverterULong.allocationSize(value.`maxTransparentInputs`) +
-            FfiConverterBoolean.allocationSize(value.`showAddress`)
+            FfiConverterBoolean.allocationSize(value.`showAddress`) +
+            FfiConverterOptionalUShort.allocationSize(value.`storageKey`)
     )
 
     override fun write(value: Features, buf: ByteBuffer) {
@@ -3111,6 +3775,7 @@ public object FfiConverterTypeFeatures: FfiConverterRustBuffer<Features> {
             FfiConverterULong.write(value.`maxPcztBytes`, buf)
             FfiConverterULong.write(value.`maxTransparentInputs`, buf)
             FfiConverterBoolean.write(value.`showAddress`, buf)
+            FfiConverterOptionalUShort.write(value.`storageKey`, buf)
     }
 }
 
@@ -3402,6 +4067,22 @@ sealed class LeekException: kotlin.Exception() {
     }
     
     /**
+     * 7xx: stored app data (an invalid app identifier, data sealed for
+     * another key, damaged data, a forgotten Storage Key).
+     */
+    class Storage(
+        
+        val `code`: kotlin.UShort, 
+        
+        val `recovery`: Recovery, 
+        
+        val `reason`: kotlin.String
+        ) : LeekException() {
+        override val message
+            get() = "code=${ `code` }, recovery=${ `recovery` }, reason=${ `reason` }"
+    }
+    
+    /**
      * 9xx: a firmware error code this version does not know.
      */
     class Device(
@@ -3464,7 +4145,12 @@ public object FfiConverterTypeLeekError : FfiConverterRustBuffer<LeekException> 
                 FfiConverterTypeRecovery.read(buf),
                 FfiConverterString.read(buf),
                 )
-            7 -> LeekException.Device(
+            7 -> LeekException.Storage(
+                FfiConverterUShort.read(buf),
+                FfiConverterTypeRecovery.read(buf),
+                FfiConverterString.read(buf),
+                )
+            8 -> LeekException.Device(
                 FfiConverterUShort.read(buf),
                 FfiConverterTypeRecovery.read(buf),
                 FfiConverterString.read(buf),
@@ -3512,6 +4198,13 @@ public object FfiConverterTypeLeekError : FfiConverterRustBuffer<LeekException> 
                 + FfiConverterString.allocationSize(value.`reason`)
             )
             is LeekException.Signature -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterUShort.allocationSize(value.`code`)
+                + FfiConverterTypeRecovery.allocationSize(value.`recovery`)
+                + FfiConverterString.allocationSize(value.`reason`)
+            )
+            is LeekException.Storage -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
                 + FfiConverterUShort.allocationSize(value.`code`)
@@ -3573,8 +4266,15 @@ public object FfiConverterTypeLeekError : FfiConverterRustBuffer<LeekException> 
                 FfiConverterString.write(value.`reason`, buf)
                 Unit
             }
-            is LeekException.Device -> {
+            is LeekException.Storage -> {
                 buf.putInt(7)
+                FfiConverterUShort.write(value.`code`, buf)
+                FfiConverterTypeRecovery.write(value.`recovery`, buf)
+                FfiConverterString.write(value.`reason`, buf)
+                Unit
+            }
+            is LeekException.Device -> {
+                buf.putInt(8)
                 FfiConverterUShort.write(value.`code`, buf)
                 FfiConverterTypeRecovery.write(value.`recovery`, buf)
                 FfiConverterString.write(value.`reason`, buf)
@@ -3994,6 +4694,38 @@ public object FfiConverterTypeTransportFailure : FfiConverterRustBuffer<Transpor
 /**
  * @suppress
  */
+public object FfiConverterOptionalUShort: FfiConverterRustBuffer<kotlin.UShort?> {
+    override fun read(buf: ByteBuffer): kotlin.UShort? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUShort.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UShort?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUShort.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UShort?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUShort.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
     override fun read(buf: ByteBuffer): kotlin.UInt? {
         if (buf.get().toInt() == 0) {
@@ -4341,6 +5073,19 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
     
 
         /**
+         * The ZIP number this SDK derives Storage Keys under (a placeholder until
+         * the draft is assigned one); compare with `Features.storage_key`.
+         */ fun `storageZipNumber`(): kotlin.UShort {
+            return FfiConverterUShort.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_storage_zip_number(
+        _status)
+}
+    )
+    }
+    
+
+        /**
          * The same UA without the Sapling receiver the board cannot check.
          */
     @Throws(LeekException::class) fun `toCheckableUa`(`ua`: kotlin.String): kotlin.String {
@@ -4364,6 +5109,18 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
 }
     )
     }
+    
+
+        /**
+         * Whether `app_id` is an App identifier the board accepts.
+         */
+    @Throws(LeekException::class) fun `validateAppId`(`appId`: kotlin.String)
+        = 
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_validate_app_id(
+        FfiConverterString.lower(`appId`),_status)
+}
+    
     
 
 
