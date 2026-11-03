@@ -61,10 +61,13 @@ static void test_every_frame_fits_and_decodes(void)
                 const char *frame = qr_out_frame();
                 uint8_t grid[512];
                 QRCode qr;
-                CHECK(frame != NULL && qrcode_initText(&qr, grid, m->version, ECC_LOW, frame) == 0,
+                const uint8_t version = qr_out_current_version();
+                CHECK(m->version == 0 || version == m->version, "mode %s drew at v%u",
+                      m->name, version);
+                CHECK(frame != NULL && qrcode_initText(&qr, grid, version, ECC_LOW, frame) == 0,
                       "mode %s, %zu bytes, part %u (%zu chars) does not fit version %u",
                       m->name, len, qr_out_seq_num(), frame ? strlen(frame) : 0,
-                      m->version);
+                      version);
                 if (frame != NULL && !complete) {
                     const UrPartResult r = ur_decoder_receive(&dec, frame, strlen(frame));
                     CHECK(r != UR_PART_REJECTED, "the decoder refused part %u",
@@ -143,9 +146,32 @@ static void test_refusals_and_modes(void)
     CHECK(qr_out_frame() == NULL, "stop left a frame up");
 }
 
+/* QR_OUT_MODE_STILL: one part at the smallest version that holds it. A
+ * .zsig reply for one transparent input is 108 bytes (qr-out.h). */
+static void test_still(void)
+{
+    printf("== still: one code, smallest version\n");
+    uint8_t msg[QR_OUT_MAX_MESSAGE] = {0};
+    for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)(i * 13 + 7);
+
+    CHECK(qr_out_start("leek-zsig", msg, 108, QR_OUT_MODE_STILL, 0), "108 bytes did not start");
+    const uint8_t v = qr_out_current_version();
+    printf("    108-byte reply: one v%u code (%zu chars)\n", v, strlen(qr_out_frame()));
+    CHECK(qr_out_seq_len() == 1, "a still code has %u parts", qr_out_seq_len());
+    CHECK(v >= 1 && v <= 8, "108 bytes needed v%u", v);
+    CHECK(qr_out_alnum_capacity(v - 1) < strlen(qr_out_frame()), "v%u was not the smallest", v);
+    CHECK(!qr_out_tick(100000000), "a still code advanced");
+
+    CHECK(!qr_out_start("leek-zsig", msg, 400, QR_OUT_MODE_STILL, 0),
+          "400 bytes claimed to fit one code");
+    CHECK(qr_out_frame() == NULL, "a refused still start left a frame up");
+    qr_out_stop();
+}
+
 int main(void)
 {
     test_every_frame_fits_and_decodes();
+    test_still();
     test_the_wrap();
     test_refusals_and_modes();
 

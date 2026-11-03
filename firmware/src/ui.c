@@ -3370,16 +3370,25 @@ static void screen_settings_on_button(button_id_t btn)
 
 static screen_id_t qr_out_back = SCREEN_MAIN_MENU;
 
+/* A panel big enough to show a whole message as one still code at a size a
+ * camera reads (qr-out.h, QR_OUT_MODE_STILL): the 240-row colour TFT. The
+ * OLEDs keep their animated modes and never cycle into this one. */
+static bool qr_out_still_first(void)
+{
+    return oled_panel_rows() > 128;
+}
+
 bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
                 screen_id_t back)
 {
     const int64_t now = esp_timer_get_time();
     /* Most readable first. v3 x2 cannot carry everything, so a message that
        does not fit there falls back to the next most readable mode, and one
-       that fits nowhere is refused rather than half shown. */
-    static const uint8_t ORDER[] = { QR_OUT_MODE_DEFAULT, 0, 1 };
+       that fits nowhere is refused rather than half shown. A colour panel
+       (qr_out_still_first) tries one still code before any of them. */
+    static const uint8_t ORDER[] = { QR_OUT_MODE_STILL, QR_OUT_MODE_DEFAULT, 0, 1 };
     bool started = false;
-    for (size_t i = 0; i < sizeof ORDER && !started; i++) {
+    for (size_t i = qr_out_still_first() ? 0 : 1; i < sizeof ORDER && !started; i++) {
         started = qr_out_start(type, cbor, len, ORDER[i], now);
     }
     if (!started) {
@@ -3395,7 +3404,8 @@ static void screen_qr_out_render(void)
     const char *frame = qr_out_frame();
     const QrOutMode *m = qr_out_mode_info(qr_out_current_mode());
     if (frame == NULL || m == NULL ||
-        oled_draw_qrcode_ex(frame, m->version, m->scale, m->inverted) != ESP_OK) {
+        oled_draw_qrcode_ex(frame, qr_out_current_version(), m->scale,
+                            m->inverted) != ESP_OK) {
         /* qr-out.c measured every frame before showing one, so this is a
            bug rather than a state; say so instead of a blank panel. */
         oled_clear();
@@ -3416,6 +3426,9 @@ static void screen_qr_out_on_button(button_id_t btn)
             uint8_t mode = qr_out_current_mode();
             for (int i = 0; i < QR_OUT_MODE_COUNT - 1; i++) {
                 mode = (uint8_t)((mode + step) % QR_OUT_MODE_COUNT);
+                if (mode == QR_OUT_MODE_STILL && !qr_out_still_first()) {
+                    continue;
+                }
                 if (qr_out_set_mode(mode, now)) {
                     break;
                 }
