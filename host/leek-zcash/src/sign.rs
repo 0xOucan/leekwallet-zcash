@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use leek_device::device::Device;
-use leek_device::zsig::Zsig;
+use leek_device::zsig::{Entry, Zsig};
 use leek_device::FramePort;
 use leek_transport_serial::TransportError;
 use pczt::Pczt;
@@ -136,6 +136,23 @@ pub struct SignResult {
     /// The same signatures as a `.zsig` file, bound to the bytes sent (for
     /// audit, or to apply again with [`apply_zsig`](crate::apply_zsig)).
     pub zsig: Vec<u8>,
+    /// The transaction's ID (ZIP 244: it commits to the effects, not to
+    /// proofs or signatures), so it is final already, before the wallet
+    /// proves and extracts. In internal byte order; [`txid_hex`](Self::txid_hex)
+    /// is the form explorers and RPCs show.
+    pub txid: [u8; 32],
+}
+
+impl SignResult {
+    pub(crate) fn new(signed_pczt: Pczt, entries: &[Entry], sighash: [u8; 32], zsig: Vec<u8>) -> Result<Self, LeekError> {
+        Ok(SignResult {
+            txid: crate::persist::pczt_txid(&signed_pczt)?,
+            signatures: entries.iter().map(Signature::from_entry).collect(),
+            signed_pczt,
+            sighash,
+            zsig,
+        })
+    }
 }
 
 /// Signs `pczt` on the board for `account`: [`preflight`], the signer view
@@ -202,10 +219,5 @@ pub fn sign_pczt(
     }
     let signed_pczt = apply_entries(pczt, &sent, &entries)?;
     let zsig = Zsig::new(&sent, entries.clone()).to_bytes().map_err(|_| LeekError::TooMany)?;
-    Ok(SignResult {
-        signed_pczt,
-        signatures: entries.iter().map(Signature::from_entry).collect(),
-        sighash,
-        zsig,
-    })
+    SignResult::new(signed_pczt, &entries, sighash, zsig)
 }

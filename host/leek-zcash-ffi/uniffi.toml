@@ -1,0 +1,8 @@
+[bindings.kotlin]
+package_name = "io.leekwallet.zcash.sdk"
+cdylib_name = "leek_zcash_ffi"
+
+[bindings.swift]
+module_name = "LeekZcash"
+ffi_module_name = "LeekZcashFFI"
+ffi_module_filename = "LeekZcashFFI"

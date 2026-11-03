@@ -15,10 +15,14 @@ zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "1
 zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs"] }
 zcash_address = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
 zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+# The txid of a signed PCZT, and reading mined transactions (check_mined).
+zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["std"] }
 zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
 orchard = { version = "0.16", default-features = false, features = ["std"] }
 secp256k1 = "0.33"
 anyhow = "1"
+# The account record's CBOR body.
+ciborium = "=0.2.2"
 # The device client: session, z* calls, .zsig. No transport of its own.
 leek-device = { path = "../leek-device", default-features = false }
 leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
