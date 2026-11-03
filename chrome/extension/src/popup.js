@@ -305,9 +305,10 @@ function useBoard(b) {
   onBoardChanged();
 }
 
-/* Reading which wallet the board holds is a zGetAccount, and the board
- * answers it only after OK on "Share view key?" (once per session). It does
- * not say whether it is asking, so the line says "if". */
+/* Importing an account is a zGetAccount, and the board answers it only
+ * after OK on "Share view key?" (once per session). It does not say
+ * whether it is asking, so the line says "if". Reading which wallet the
+ * board holds asks nothing (zGetSeedFingerprint), so that has no hint. */
 const SHARE_KEY_HINT = 'If the board asks “Share view key?”, press OK on it.';
 
 function signLine(t) {
@@ -532,7 +533,7 @@ async function forgetBoard() {
 }
 
 async function importFromBoard(birthday = null) {
-  await guarded('Reading the account from the board…', async () => {
+  await guarded(`Reading the account from the board… ${SHARE_KEY_HINT}`, async () => {
     try {
       const hidden = hiddenWallet();
       const r = await ui.board.run('importAccount', { network: net(), accountIndex: 0, birthday, name: hidden ? 'LeekWallet #0 (passphrase)' : null });
@@ -651,7 +652,7 @@ function boardSection() {
       h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'),
     );
   } else if (s.phase === 'unlocking') {
-    const line = s.waiting === 'pin' ? 'Enter your PIN on the board.' : s.waiting === 'wallet' ? `Unlocked. Reading which wallet the board holds… ${SHARE_KEY_HINT}` : 'Paired. Checking that the board is unlocked…';
+    const line = s.waiting === 'pin' ? 'Enter your PIN on the board.' : s.waiting === 'wallet' ? 'Unlocked. Reading which wallet the board holds…' : 'Paired. Checking that the board is unlocked…';
     lines.push(h('p', { id: 'board-pin' }, line), h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'));
   } else if (s.phase === 'ready') {
     const fp = boardFingerprint();
@@ -670,7 +671,7 @@ function boardSection() {
       s.locked
         ? h('p', { class: 'notice', id: 'board-locked' }, 'The board locked, and dropped any passphrase. Unlock it with your PIN on the board to see its wallet.')
         : s.waiting === 'wallet'
-          ? h('p', { class: 'muted', id: 'board-reading' }, `The board's wallet changed. Reading which wallet it holds now… ${SHARE_KEY_HINT}`)
+          ? h('p', { class: 'muted', id: 'board-reading' }, "The board's wallet changed. Reading which wallet it holds now…")
           : fp
             ? null
             : h('p', { class: 'notice bad', id: 'board-account-error' }, s.accountError ?? 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),

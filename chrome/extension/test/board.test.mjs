@@ -161,6 +161,18 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
     assert.ok(f.spendPools.includes('transparent'));
   });
 
+  test('zGetSeedFingerprint: the seed, on either network, with no question', async () => {
+    const asked = (z.out.match(/Share view key\?/g) ?? []).length;
+    for (const network of ['test', 'main']) {
+      await z.switchNetwork(network);
+      assert.equal(await dev.zGetSeedFingerprint(network), key(`${network}/abandon-art/pp0/acct0`).seed_fingerprint, network);
+      assert.equal(await dev.zGetSeedFingerprint(), key('test/abandon-art/pp0/acct0').seed_fingerprint, 'without a network');
+    }
+    await assert.rejects(dev.zGetSeedFingerprint('test'), (e) => e instanceof DeviceError && e.code === ERR.BOARD_NETWORK);
+    await z.switchNetwork('test');
+    assert.equal((z.out.match(/Share view key\?/g) ?? []).length, asked, 'the board asked');
+  });
+
   test('zGetAccount: the testnet and mainnet accounts of the vectors', async () => {
     for (const network of ['test', 'main']) {
       await z.switchNetwork(network);
@@ -338,6 +350,8 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
       // Which wallet: the popup shows a device account only to its board.
       assert.equal(host.state.seedFingerprint, key('test/abandon-art/pp0/acct0').seed_fingerprint);
       assert.ok(states.some((s) => s.phase === 'unlocking' && s.waiting === 'wallet'));
+      // ...read with no question on the board: only the import asks.
+      assert.doesNotMatch(z.out, /Share view key\?/, 'connecting asked to share the viewing key');
 
       await assert.rejects(host.run('importAccount', { network: 'test' }), (e) => e instanceof BoardNeeds && e.need === 'birthday' && e.tip === 4_600_000);
       const k = key('test/abandon-art/pp0/acct0');
@@ -433,8 +447,7 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
     const z = await startZdev({ yes: false });
     const host = new BoardHost({ engine: fakeEngine('test').engine, openLink: async () => new PtyLink(z.link), watchMs: 0 });
     try {
-      z.answer('y'); // pairing
-      z.answer('y'); // sharing the viewing key (connect reads which wallet the board holds)
+      z.answer('y'); // pairing; reading which wallet the board holds asks nothing
       await host.run('connect', { kind: 'usb', network: 'test' });
       const fp = host.state.seedFingerprint;
       z.answer('n'); // the XFP screen

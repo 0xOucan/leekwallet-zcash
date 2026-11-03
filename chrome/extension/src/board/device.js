@@ -11,6 +11,8 @@ import { PROTOCOL_VERSION, NONCE_BYTES, Session, commitment, deriveKeys, generat
 import { POOL } from './zsig.js';
 
 export const ERR = {
+  /** Malformed, or a method this firmware does not know. */
+  UNKNOWN_METHOD: 0x0001,
   NOT_UNLOCKED: 0x0100,
   USER_REJECTED: 0x0200,
   USER_TIMEOUT: 0x0201,
@@ -287,6 +289,20 @@ export class Device {
 
   zGetFeatures() {
     return this.call('zGetFeatures', {});
+  }
+
+  /**
+   * The ZIP 32 seed fingerprint (hex) of the seed open on the board, with
+   * no question on the board: how to tell which board, and which seed or
+   * passphrase wallet on it, is connected. A stable identifier of the
+   * seed that every paired host can read. `network`, when given, is
+   * checked against the board's setting (0x0528). Firmware without the
+   * call answers 0x0001 (ERR.UNKNOWN_METHOD).
+   */
+  async zGetSeedFingerprint(network) {
+    if (network !== undefined) checkNetwork(network);
+    const a = await this.call('zGetSeedFingerprint', network === undefined ? {} : { network }, DERIVE);
+    return toHex(bytesField(a, 'seedFingerprint', 32));
   }
 
   /**
