@@ -414,7 +414,9 @@ $(BUILD)/test_ui: CFLAGS += -DAES_VAR
 # The reference board has no encoder, so its build hides Settings > Knob; the
 # suite asks for the item so the setting can be driven through the menu.
 $(BUILD)/test_ui: CFLAGS += -DUI_HAS_KNOB_SETTING=1
-$(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
+# Everything the UI links against except the panel, shared by test_ui (the
+# text-grid fake panel) and render_screens (the real core and colour panel).
+UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
                   fake_input.c fake_protocol.c ../src/transport.c ../src/ble.c \
                   ../src/ble-name.c ../src/ble-chunk.c \
                   ../src/ui.c ../src/splash.c ../src/font5x7.c ../src/zcash-review.c ../src/zcash-receive.c ../src/zcash-fp.c \
@@ -438,10 +440,27 @@ $(BUILD)/test_ui: test_ui.c esp_stubs.c host_stubs.c fake_oled.c fake_wallet.c \
                   $(CRYPTO)/chacha20poly1305/chacha20poly1305.c \
                   $(CRYPTO)/chacha20poly1305/chacha_merged.c \
                   $(CRYPTO)/chacha20poly1305/poly1305-donna.c \
-                  $(CRYPTO)/chacha20poly1305/rfc7539.c \
-                  $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a | $(BUILD)
+                  $(CRYPTO)/chacha20poly1305/rfc7539.c
+UI_LIBS := $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a
+
+$(BUILD)/test_ui: test_ui.c fake_oled.c $(UI_SRC) $(UI_LIBS) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -DLEEK_HOST_TEST -o $@ \
-	    $(filter %.c,$^) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+	    $(filter %.c,$^) $(UI_LIBS) -lpthread -ldl -lm
+
+# Screens of the real ui.c on the S3 CAM colour kit, through the real oled-core
+# and panel-color, written as PNGs (and the SH1107's view of the same frame,
+# for comparison) so a layout change can be looked at without a board:
+#
+#   make screens          # -> build/screens/*.png (needs ImageMagick)
+#
+# Not part of `make test`: it asserts nothing a suite does not already.
+$(BUILD)/render_screens: CFLAGS += -DAES_VAR -DLEEK_BOARD_S3CAM -DLEEK_DISPLAY=LEEK_DISPLAY_ST7789
+$(BUILD)/render_screens: render_screens.c ../src/oled-core.c ../src/panel-color.c ../src/panel128.c \
+                         ../src/qrcode.c $(UI_SRC) $(UI_LIBS) $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(UI_LIBS) -lpthread -ldl -lm
+screens: $(BUILD)/render_screens
+	mkdir -p $(BUILD)/screens && ./$(BUILD)/render_screens $(BUILD)/screens
 
 # The only suite that links the real components/leek-wallet.c. It has to: the
 # crash-safety of a PIN change is entirely a property of that file's write
@@ -618,4 +637,4 @@ conformance: $(BUILD)/test_protocol
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test asan fuzz conformance clean zdev splash-frames
+.PHONY: all test asan fuzz conformance clean zdev splash-frames screens
