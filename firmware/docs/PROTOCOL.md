@@ -301,9 +301,10 @@ against it.
 | `selectWallet` | unlocked | — | implemented |
 | `setPassphrase` | unlocked | **yes — fingerprint confirm (§5)** | implemented |
 | `clearPassphrase` | unlocked | — | **not implemented** — `setPassphrase` with an empty string is refused, and locking is the way back to the base wallet |
-| `getFingerprint` | keys | — | **not implemented** — the fingerprint is shown on the device's own screen |
+| `getFingerprint` | keys | — | **not implemented** — a BIP32 master fingerprint; `zGetSeedFingerprint` gives the ZIP 32 seed fingerprint |
 | `getAddress`, `signMessage`, `signTypedData`, `signTransaction` | — | — | **removed** in the Zcash fork (roadmap 1.1): an unknown method |
 | `zGetAccount` | keys | **yes — "Share view key?", once per session per account, network and seed** | implemented |
+| `zGetSeedFingerprint` | keys | — (the seed's ZIP 32 fingerprint only; no key) | implemented |
 | `zGetFeatures` | always | — (describes the firmware, not the wallet) | implemented |
 | `zSetAccountMeta` | keys | — (birthday and label; not secret, not needed to sign) | implemented |
 | `zShowAddress` | keys | **yes — the user compares the address and answers on the device** | implemented |
@@ -352,8 +353,8 @@ and `zGetFeatures` the signer (below); neither says anything about the wallet.
 
 The board answers for one Zcash network: the one its owner chose under
 Settings → Network on the board (persisted; Mainnet out of the box). Every
-request that names a `network` (`zGetAccount`, `zShowAddress`,
-`zSetAccountMeta`, `zSignBegin`) is refused when it names the other one,
+request that names a `network` (`zGetAccount`, `zGetSeedFingerprint`,
+`zShowAddress`, `zSetAccountMeta`, `zSignBegin`) is refused when it names the other one,
 before anything is derived, with error `0x0528` and a message naming both:
 
 ```
@@ -411,11 +412,43 @@ A yes holds for the rest of that session, for that account, that network and
 that seed (the same index under another passphrase is another wallet and is
 asked about again). Any end of the session — a disconnect, a new handshake, a
 transport switch, a frame that failed to authenticate, a lock — forgets it;
-so does a reboot. Nothing about it is written to flash: a host the user wants
-trusted across sessions is a separate design. A board with no seed refuses
+so does a reboot. Nothing about it is written to flash, and the board
+remembers no host across sessions (see "Open questions"): a companion that
+only needs to know which seed it is talking to asks `zGetSeedFingerprint`
+(below), which takes no press. A board with no seed refuses
 with `0x0300` before it asks. While the question is up, a new `hello` is
 refused as for any other question (§3, "A handshake does not interrupt a
 question the device is asking").
+
+### Which seed is on the board
+
+```
+zGetSeedFingerprint { network?: "main"|"test" }
+                 -> { seedFingerprint: h'32' }
+```
+
+The ZIP 32 seed fingerprint of the open seed (passphrase applied), the same
+32 bytes `zGetAccount` returns, and nothing else. It is how a companion
+recognises the board it is connected to, or notices that the board opened
+another seed or a passphrase wallet, without asking for the viewing key: no
+question on the board, so a connect does not raise "Share view key?" every
+time. Ask `zGetAccount` when the UFVK is actually needed (the first import).
+
+Same tier as `zGetAccount`: a paired, encrypted session and an unlocked
+board, and it waits for the vault as the other `z*` calls do (`0x0300` with
+no seed). `network` is optional and does not change the answer — the
+fingerprint is the seed's, not an account's — but when given it is checked
+like any other (`0x0528` on the other network), so a companion can learn both
+facts in one call.
+
+**The fingerprint is a stable identifier of the seed, and every paired host
+can read it.** It does not change across accounts, networks, sessions,
+companions or reboots; any host the user pairs with sees the same 32 bytes
+for the same seed, and two hosts can tell they saw the same wallet. It reveals
+no key and no address, and the board shows its first four bytes on its own
+screen ("ZFP 1A2B3C4D"), so it is not a secret — but it is a correlator.
+Firmware without the method answers `0x0001` ("unknown or not yet
+implemented"); a companion falls back to `zGetAccount` there.
 
 `birthday` is present in `zGetAccount` only when the device has one for that
 account and network of the open seed (records are per network: the same
@@ -641,6 +674,17 @@ A plaintext frame still proves nothing about who sent it, so every permission
 tier above `getStatus` refuses it with `0x0400` regardless of whether a session
 exists.
 
+**An encrypted request is answered under the session it came in on, or
+refused.** A request can outlive its session — a signature, a viewing key or
+an address check waits up to 120 s on the user, and meanwhile the cable can be
+pulled, the board locked or another host paired. Whatever the method, and for
+an error as for a result, if the session the request arrived on is gone (or
+replaced by a newer one) when the answer is ready, the reply is a plaintext
+`0x0400` "the session ended before the answer" with nothing else in it: never
+the answer in plaintext, and never the answer sealed under the newer session's
+keys. The check sits where every reply leaves `src/protocol.c`, not in each
+handler.
+
 ### Every complete request is answered
 
 No transport may reply to a complete, well-formed frame with silence. A host
@@ -758,7 +802,9 @@ and it is one an added field would quietly break.
 
 - **Does the passkey confirm survive BLE re-pairing**, or is it re-run per connection? Per
   connection is safer and costs the user one screen glance.
-- **Remembered hosts.** `zGetAccount` asks once per session (§4, "Zcash account metadata"), so
-  a companion that reconnects asks again. Whether the board should remember a host it shared a
-  viewing key with across sessions and reboots — and by what identity, since the host key is
-  ephemeral today — is open.
+- ~~**Remembered hosts.**~~ Decided 2026-11-03: the board remembers no host. Every
+  connection is paired from scratch and the six-digit code is compared every time; nothing a
+  host was granted (a shared viewing key, say) outlives its session. A remembered permission
+  is one a malicious host, or a Bluetooth attacker posing as a known one, would inherit.
+  Remembering the viewing key is the host's business (`host/leek-zcash/README.md`); the
+  reasoning is in `DESIGN-REMEMBERED-HOSTS.md`.
