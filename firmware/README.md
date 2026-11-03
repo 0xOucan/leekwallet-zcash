@@ -164,7 +164,9 @@ length-prefixed CBOR frames, an X25519 session with commit-then-reveal and a
 passkey compared on both screens, then ChaCha20-Poly1305. The Zcash calls are
 `zGetFeatures`, `zGetAccount`, `zShowAddress`, `zSetAccountMeta` and
 `zSignBegin` / `zSignChunk` / `zSignFinish`; `getStatus` reports the lock
-state, the wallet, the account and the board's network. The specification
+state, the wallet, the account and the board's network. The board asks
+before it shares a viewing key ("Share view key?", once per session), shows
+an address, or signs. The specification
 is [docs/PROTOCOL.md](docs/PROTOCOL.md); the `.zsig`, `.zkv` and PCZT
 formats are in [docs/zcash/FORMATS.md](../docs/zcash/FORMATS.md).
 

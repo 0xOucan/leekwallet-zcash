@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use common::*;
 use leek_device::device::Device;
 use leek_zcash::{
-    apply_zsig, get_account, get_features, preflight, set_birthday, show_address, sign_pczt, AddressCheck,
-    CancelToken, CancellablePort, LeekError, Network, SignOptions, SignProgress, SignerView,
+    apply_zsig, get_account, get_account_with, get_features, preflight, set_birthday, show_address, sign_pczt, AddressCheck,
+    AccountProgress, CancelToken, CancellablePort, LeekError, Network, SignOptions, SignProgress, SignerView,
 };
 
 fn zdev_binary() -> Option<PathBuf> {
@@ -160,6 +160,23 @@ fn refusals_are_typed() {
         let e = dev.z_sign(&v(name), 0, "test", |_, _| {}).expect_err("the board refuses it");
         assert_eq!(leek_zcash::classify(&e), LeekError::DuplicateRk, "{name}");
     }
+}
+
+#[test]
+fn the_viewing_key_takes_a_press() {
+    let mut z = zdev_or_skip!("view-key", false);
+    // Pairing: yes. Account 0: no, then yes. Account 1: no. Account 0 again
+    // must not ask: if it did, it would take account 1's "no".
+    z.child.stdin.as_mut().unwrap().write_all(b"y\nn\ny\nn\n").unwrap();
+    let mut dev = connect(&z);
+    let steps = Mutex::new(Vec::new());
+    let record = |p: AccountProgress| steps.lock().unwrap().push(p);
+    assert_eq!(get_account_with(&mut dev, 0, Network::Test, &record).unwrap_err(), LeekError::UserRejected);
+    assert_eq!(steps.lock().unwrap().as_slice(), &[AccountProgress::ConfirmOnDevice]);
+    let a = get_account(&mut dev, 0, Network::Test).expect("shared after a yes");
+    assert_eq!(a.ufvk, key("test/abandon-art/pp0/acct0")["ufvk"].as_str().unwrap());
+    get_account(&mut dev, 0, Network::Test).expect("asked again in the same session");
+    assert_eq!(get_account(&mut dev, 1, Network::Test).unwrap_err(), LeekError::UserRejected);
 }
 
 #[test]

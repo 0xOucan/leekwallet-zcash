@@ -40,6 +40,7 @@ bool fake_protocol_rx_enabled(void);
 #include "sdcard.h"
 #include "text-entry.h"
 #include "splash.h"
+#include "hints.h"
 #include "version.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -1037,6 +1038,54 @@ static void test_address_check(void)
     ui_sign_expire();
     ui__service_sign_expiry_for_test();
     CHECK(ui_get_screen() != SCREEN_ADDRESS_CHECK, "an expired question stayed up");
+}
+
+/* zGetAccount: "share view key?", one page, the press shares and X refuses.
+ * Every line whole on a 21-column row: the fake clips as the panel does. */
+static void test_share_view_key(void)
+{
+    printf("== zGetAccount: the board asks before it shares a viewing key\n");
+    boot_unlocked_with_seed();
+
+    ui_request_share_view_key(0, ZS_NET_TEST, "123456", false);
+    CHECK(ui_user_is_answering(), "a pending question did not hold off a new pairing");
+    go(SCREEN_SHARE_VIEW_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(0, "Share view key?") &&
+                 fake_oled_contains("The app will see your") &&
+                 fake_oled_contains("balance and history.") &&
+                 fake_oled_contains("acct 0  TEST") &&
+                 fake_oled_contains("USB, code 123 456") &&
+                 fake_oled_row_contains(7, HINT_NO_YES),
+                 "the question does not say what it shares, or to whom");
+    CHECK(ui_user_is_answering(), "the question on screen did not hold off a new pairing");
+    /* The knob has nothing to page, and turning it must not answer. */
+    press(BUTTON_DOWN);
+    press(BUTTON_UP);
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "turning the knob answered");
+    CHECK(ui_get_screen() == SCREEN_SHARE_VIEW_KEY, "turning the knob left the question");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_sign_outcome() == SIGN_APPROVED, "OK did not share");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "did not go home after the answer");
+    ui_sign_clear();
+
+    ui_request_share_view_key(7, ZS_NET_MAIN, "654321", true);
+    go(SCREEN_SHARE_VIEW_KEY);
+    CHECK_SCREEN(fake_oled_contains("acct 7  MAIN") && fake_oled_contains("BLE, code 654 321"),
+                 "the second request shows the first one's account or host");
+    press(BUTTON_CANCEL);
+    CHECK(ui_sign_outcome() == SIGN_REJECTED, "X did not refuse");
+    ui_sign_clear();
+
+    /* No pairing code to show: the link alone. */
+    ui_request_share_view_key(0, ZS_NET_TEST, NULL, false);
+    go(SCREEN_SHARE_VIEW_KEY);
+    CHECK_SCREEN(fake_oled_contains("USB device"), "no code, and no name for the host");
+
+    /* The host gave up: the question comes off the screen. */
+    ui_sign_expire();
+    ui__service_sign_expiry_for_test();
+    CHECK(ui_get_screen() != SCREEN_SHARE_VIEW_KEY, "an expired question stayed up");
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "an expired question answered");
 }
 
 /* A companion asked for the other network and was refused (protocol.c): the
@@ -3176,6 +3225,7 @@ int main(void)
     test_receive_shows_the_whole_address();
     test_sd_card_save_and_load();
     test_address_check();
+    test_share_view_key();
     test_wrong_network_notice();
     test_sd_card_signing();
     test_qr_airgap_signing();

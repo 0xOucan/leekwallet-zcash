@@ -278,6 +278,25 @@ describe('against zdev, answering on the "device"', { skip: !zdevOk && 'zdev cou
     }
   });
 
+  test('the viewing key only after a yes on the board, asked once per session', async () => {
+    const z = await startZdev({ yes: false });
+    const dev = new Device(new PtyLink(z.link));
+    try {
+      z.answer('y'); // pairing
+      await dev.pair();
+      z.answer('n'); // sharing the viewing key
+      await assert.rejects(dev.zGetAccount(0, 'test'), (e) => e.code === ERR.USER_REJECTED);
+      z.answer('y');
+      assert.equal((await dev.zGetAccount(0, 'test')).ufvk, key('test/abandon-art/pp0/acct0').ufvk);
+      z.answer('n'); // account 1's question, queued first: a second one for account 0 would take it
+      assert.equal((await dev.zGetAccount(0, 'test')).ufvk, key('test/abandon-art/pp0/acct0').ufvk);
+      await assert.rejects(dev.zGetAccount(1, 'test'), (e) => e.code === ERR.USER_REJECTED);
+    } finally {
+      await dev.link.close();
+      z.stop();
+    }
+  });
+
   test('pairing refused on the board never completes', async () => {
     const z = await startZdev({ yes: false });
     const dev = new Device(new PtyLink(z.link));
@@ -415,6 +434,7 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
     const host = new BoardHost({ engine: fakeEngine('test').engine, openLink: async () => new PtyLink(z.link), watchMs: 0 });
     try {
       z.answer('y'); // pairing
+      z.answer('y'); // sharing the viewing key (connect reads which wallet the board holds)
       await host.run('connect', { kind: 'usb', network: 'test' });
       const fp = host.state.seedFingerprint;
       z.answer('n'); // the XFP screen

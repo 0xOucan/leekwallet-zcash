@@ -68,6 +68,11 @@ void ui_request_show_address(const char *ua, const char *t_address, uint32_t acc
 {
     (void)ua; (void)t_address; (void)account; (void)network;
 }
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble)
+{
+    (void)account; (void)network; (void)pairing_code; (void)over_ble;
+}
 void ui_sign_clear(void) { }
 void ui_sign_expire(void) { }
 

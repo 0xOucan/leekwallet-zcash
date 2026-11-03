@@ -5325,6 +5325,8 @@ static volatile SignOutcome sign_outcome = SIGN_PENDING;
 static volatile bool zsign_review_pending = false;
 /* zShowAddress: the address-check screen is wanted (see SCREEN_ADDRESS_CHECK). */
 static volatile bool addr_check_pending = false;
+/* zGetAccount: the share-view-key question is wanted (SCREEN_SHARE_VIEW_KEY). */
+static volatile bool share_key_pending = false;
 #endif
 
 /* Raised when the approval window closed with nobody answering, so the UI
@@ -5408,7 +5410,7 @@ bool ui_user_is_answering(void)
         return true;
     }
 #if LEEK_HAS_ZCASH
-    if (zsign_review_pending || addr_check_pending) {
+    if (zsign_review_pending || addr_check_pending || share_key_pending) {
         return true;
     }
 #endif
@@ -5417,6 +5419,7 @@ bool ui_user_is_answering(void)
         case SCREEN_HOST_PASSPHRASE_CONFIRM:
         case SCREEN_ZSIGN_REVIEW:
         case SCREEN_ADDRESS_CHECK:
+        case SCREEN_SHARE_VIEW_KEY:
         case SCREEN_PASSPHRASE_CONFIRM:
         case SCREEN_WIPE_CONFIRM:
         /* Not questions, but a seed is on the glass and the user is working
@@ -5680,6 +5683,104 @@ static const screen_t screen_address_check = {
     .on_button = screen_address_check_on_button,
     .exit = NULL,
 };
+
+/* ============================================================================
+ * Share View Key (zGetAccount)
+ *
+ * A host asked for an account's unified full viewing key. It cannot spend,
+ * but it reads every note the account ever received and every one it spent:
+ * the balance and the whole history, for good, with no way to take it back.
+ * Keystone and Ledger both ask before they hand one over, and so does this.
+ *
+ * The question names three things. What sharing costs, in words rather than
+ * "UFVK". Which account, on which network, because a companion asking for an
+ * account nobody chose is the thing to notice. And which host: the six digits
+ * the user compared when this session was paired (PROTOCOL.md 3), the one
+ * name for a host the user has ever seen, and the link it came in on. A
+ * second app paired since then shows other digits.
+ *
+ * One press answers, as on the last page of a review. The protocol task
+ * remembers a yes for the rest of the session, so a companion re-reading the
+ * account does not ask again; see share_view_key_allowed() in protocol.c.
+ * ============================================================================ */
+
+static uint32_t share_key_account;
+static uint8_t  share_key_network;
+static bool     share_key_ble;
+/* The pairing code, six digits and a NUL, or "" when there is none. */
+static char     share_key_code[SESSION_PASSKEY_LEN + 1];
+
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble)
+{
+    share_key_account = account;
+    share_key_network = network;
+    share_key_ble = over_ble;
+    snprintf(share_key_code, sizeof share_key_code, "%s", pairing_code ? pairing_code : "");
+    sign_outcome = SIGN_PENDING;
+    share_key_pending = true;
+}
+
+static void screen_share_key_enter(void)
+{
+    ESP_LOGI(TAG, "Share view key: account %u", (unsigned)share_key_account);
+}
+
+static void screen_share_key_render(void)
+{
+    oled_clear();
+    oled_set_role(OLED_ROLE_ACCENT);
+    oled_draw_string_centered(0, "Share view key?");
+    oled_set_role(OLED_ROLE_WARN);
+    /* 21 columns: the longest line is exactly a row on a 128-pixel panel. */
+    oled_draw_string(2, 0, "The app will see your");
+    oled_draw_string(3, 0, "balance and history.");
+    oled_set_role(OLED_ROLE_AUTO);
+
+    char line[22];
+    snprintf(line, sizeof line, "acct %u  %s", (unsigned)(share_key_account % 100000u),
+             share_key_network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
+    oled_draw_string_centered(5, line);
+    const char *link = share_key_ble ? "BLE" : "USB";
+    if (strlen(share_key_code) == SESSION_PASSKEY_LEN) {
+        /* Grouped 3+3, as the Connect? screen showed it. */
+        snprintf(line, sizeof line, "%s, code %.3s %.3s", link, share_key_code,
+                 share_key_code + 3);
+    } else {
+        snprintf(line, sizeof line, "%s device", link);
+    }
+    oled_draw_string_centered(6, line);
+    oled_draw_string(7, 0, HINT_NO_YES);
+}
+
+static void share_key_done(SignOutcome o)
+{
+    sign_outcome = o;
+    memzero(share_key_code, sizeof share_key_code);
+    ui_set_screen(SCREEN_MAIN_MENU);
+}
+
+static void screen_share_key_on_button(button_id_t btn)
+{
+    switch (btn) {
+        case BUTTON_ACCEPT:
+            share_key_done(SIGN_APPROVED);
+            return;
+        case BUTTON_CANCEL:
+            share_key_done(SIGN_REJECTED);
+            return;
+        default:
+            /* The knob has nothing to scroll: everything is on one page. */
+            return;
+    }
+}
+
+static const screen_t screen_share_view_key = {
+    .enter = screen_share_key_enter,
+    .render = screen_share_key_render,
+    .on_button = screen_share_key_on_button,
+    .exit = NULL,
+};
 #endif /* LEEK_HAS_ZCASH */
 
 /* ============================================================================
@@ -5808,6 +5909,7 @@ void ui_init(void)
     screens[SCREEN_SD_SEED] = &screen_sd_seed;
 #if LEEK_HAS_ZCASH
     screens[SCREEN_ADDRESS_CHECK] = &screen_address_check;
+    screens[SCREEN_SHARE_VIEW_KEY] = &screen_share_view_key;
 #endif
     screens[SCREEN_SCAN] = &screen_scan;
 
@@ -5983,6 +6085,12 @@ static void service_sign_expiry(void)
         ui_set_screen(SCREEN_MAIN_MENU);
         return;
     }
+    if (ui_get_screen() == SCREEN_SHARE_VIEW_KEY) {
+        /* The host was already told "no answer"; nothing was shared. */
+        memzero(share_key_code, sizeof share_key_code);
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
 #endif
     if (ui_get_screen() == SCREEN_HOST_PASSPHRASE_CONFIRM) {
         /* The wallet is the honest place to land: whatever was proposed has
@@ -6108,6 +6216,10 @@ void ui_task(void *pvParameters)
         if (addr_check_pending) {
             addr_check_pending = false;
             ui_set_screen(SCREEN_ADDRESS_CHECK);
+        }
+        if (share_key_pending) {
+            share_key_pending = false;
+            ui_set_screen(SCREEN_SHARE_VIEW_KEY);
         }
 #endif
 
@@ -6263,6 +6375,8 @@ void ui__reset_static_state_for_test(void)
     zsign_page = 0;
     addr_check_pending = false;
     memzero(&addr_check, sizeof addr_check);
+    share_key_pending = false;
+    memzero(share_key_code, sizeof share_key_code);
     zsign_from_sd = false;
     zsign_from_qr = false;
 #endif

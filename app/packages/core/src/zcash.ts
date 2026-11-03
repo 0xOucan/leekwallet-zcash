@@ -36,8 +36,17 @@ export type ZCall = (
  * client's rule: a transport that gives up first leaves the counters apart).
  * Deriving an Orchard account takes seconds at 160 MHz; anything the user
  * answers on the board gets as long as a person reading review pages.
+ * zGetAccount does both: it derives, then asks "Share view key?" and waits
+ * up to 120 s for the press.
  */
-export const Z_TIMEOUT = { short: 10_000, derive: 90_000, user: 150_000 } as const;
+export const Z_TIMEOUT = { short: 10_000, derive: 90_000, user: 150_000, shareKey: 210_000 } as const;
+
+/**
+ * What to tell the user around a zGetAccount. The board shares the viewing
+ * key only after OK on it, once per session; it does not say whether it is
+ * asking, so the hint is "if".
+ */
+export const Z_SHARE_KEY_HINT = "If the board asks “Share view key?”, press OK on it.";
 
 /** Error codes of the Zcash calls (PROTOCOL.md §6). */
 export const ZErr = {
@@ -154,6 +163,10 @@ export async function zGetFeatures(call: ZCall): Promise<ZFeatures> {
  * UFVK, unified and transparent address, seed fingerprint and birthday of
  * one account on one network.
  *
+ * The board answers only after the user presses OK on its "Share view
+ * key?" (once per session; show Z_SHARE_KEY_HINT): a no is 0x0200, no
+ * answer in its 120 s 0x0201.
+ *
  * The reply is checked against what was asked: a board that answered for
  * the other network (or an account other than the one asked for) is a
  * board this side must not show, because an address of the wrong network
@@ -161,7 +174,7 @@ export async function zGetFeatures(call: ZCall): Promise<ZFeatures> {
  */
 export async function zGetAccount(call: ZCall, account: number, network: ZNetwork): Promise<ZAccount> {
   checkNetwork(network);
-  const a = await call("zGetAccount", { account, network }, Z_TIMEOUT.derive);
+  const a = await call("zGetAccount", { account, network }, Z_TIMEOUT.shareKey);
   const out: ZAccount = {
     account: uintField(a, "account"),
     network: textField(a, "network") as ZNetwork,

@@ -64,7 +64,7 @@ PIN never crosses the wire.
 
 | Method | Board call | What |
 |---|---|---|
-| `z_get_account(account, network)` | `zGetAccount` | UFVK, unified address, t-address, seed fingerprint, and the birthday if the board knows one |
+| `z_get_account(account, network)` | `zGetAccount` | UFVK, unified address, t-address, seed fingerprint, and the birthday if the board knows one. Only after the user presses OK on the board's "Share view key?" (once per session) |
 | `z_show_address(account, network, ua)` | `zShowAddress` | The board proves `ua` is its own (even a rotated diversified address), shows it, and the user confirms |
 | `z_set_birthday(account, network, height)` | `zSetAccountMeta` | Record the birthday on the board, one per network. True if stored in flash, false if held until the board locks |
 | `z_sign(pczt, account, network, progress)` | `zSignBegin`, `zSignChunk`…, `zSignFinish` | Upload the PCZT in chunks, let the user review it, return the sighash they approved and the signatures |
@@ -72,8 +72,16 @@ PIN never crosses the wire.
 
 `network` is `"test"` or `"main"`. Results are CBOR maps; `get_text`,
 `get_bytes`, `get_uint` read their fields. Calls that derive keys wait up to
-90 s, calls that wait for the user up to 150 s. `ZECZ_DEBUG=1` prints each
-request and reply frame.
+90 s, calls that wait for the user up to 150 s, and `z_get_account`, which
+does both, 210 s. `ZECZ_DEBUG=1` prints each request and reply frame.
+
+**The viewing key takes a press.** A UFVK cannot spend, but it shows the
+account's whole balance and history, so the board asks "Share view key?"
+(with the account, the network and this session's pairing code) and answers
+only after OK. Tell the user to confirm on the board before calling
+`z_get_account`. A yes holds for the rest of that session, for that account,
+network and seed; a new pairing asks again. Cancel is `ERR_USER_REJECTED`,
+no answer in the board's 120 s `ERR_USER_TIMEOUT`.
 
 ### Errors
 

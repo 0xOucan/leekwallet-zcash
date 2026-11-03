@@ -202,5 +202,13 @@ int main(int argc, char **argv)
 
     go(SCREEN_WIPE_CONFIRM);
     snap("13-wipe");
+    press(BUTTON_CANCEL);
+
+    /* zGetAccount's question, as a companion paired over USB asks it. */
+    ui_request_share_view_key(0, ZS_NET_MAIN, "482913", false);
+    go(SCREEN_SHARE_VIEW_KEY);
+    snap("14-share-view-key");
+    press(BUTTON_CANCEL);
+    ui_sign_clear();
     return 0;
 }

@@ -303,7 +303,7 @@ against it.
 | `clearPassphrase` | unlocked | — | **not implemented** — `setPassphrase` with an empty string is refused, and locking is the way back to the base wallet |
 | `getFingerprint` | keys | — | **not implemented** — the fingerprint is shown on the device's own screen |
 | `getAddress`, `signMessage`, `signTypedData`, `signTransaction` | — | — | **removed** in the Zcash fork (roadmap 1.1): an unknown method |
-| `zGetAccount` | keys | — (viewing key, not spend authority) | implemented |
+| `zGetAccount` | keys | **yes — "Share view key?", once per session per account, network and seed** | implemented |
 | `zGetFeatures` | always | — (describes the firmware, not the wallet) | implemented |
 | `zSetAccountMeta` | keys | — (birthday and label; not secret, not needed to sign) | implemented |
 | `zShowAddress` | keys | **yes — the user compares the address and answers on the device** | implemented |
@@ -380,6 +380,42 @@ zGetAccount     { account?: uint, network: "main"|"test" }
 zSetAccountMeta { account?: uint, network?: "main"|"test", birthday?: uint, label?: text }
              -> { stored: 0|1 }
 ```
+
+**The viewing key takes a press.** A UFVK is not spend authority, but it
+reads every note the account received and every one it spent: the whole
+balance and history, for good. So, like Keystone and Ledger, the board asks
+before it answers `zGetAccount`. After the session, unlock and network checks
+and the derivation, it shows:
+
+```
+    Share view key?          (title)
+The app will see your        (warning)
+balance and history.         (warning)
+
+     acct 0  MAIN
+  USB, code 123 456          (the link, and this session's pairing code)
+X:NO          OK:YES
+```
+
+The pairing code is the six digits the user compared when this session was
+paired (§3), grouped as the Connect? screen grouped them: the one name for a
+host the user has ever seen, so a second app paired since shows other digits.
+With no code to show the line reads "USB device" or "BLE device". OK shares;
+Cancel answers `0x0200`; no answer within the board's 120 s window answers
+`0x0201` and takes the question off the screen, as for a signature. A
+companion should wait at least as long as the derivation plus that window
+(the host libraries wait 210 s) and tell the user to confirm on the board;
+the board does not say whether it is asking.
+
+A yes holds for the rest of that session, for that account, that network and
+that seed (the same index under another passphrase is another wallet and is
+asked about again). Any end of the session — a disconnect, a new handshake, a
+transport switch, a frame that failed to authenticate, a lock — forgets it;
+so does a reboot. Nothing about it is written to flash: a host the user wants
+trusted across sessions is a separate design. A board with no seed refuses
+with `0x0300` before it asks. While the question is up, a new `hello` is
+refused as for any other question (§3, "A handshake does not interrupt a
+question the device is asking").
 
 `birthday` is present in `zGetAccount` only when the device has one for that
 account and network of the open seed (records are per network: the same
@@ -722,5 +758,7 @@ and it is one an added field would quietly break.
 
 - **Does the passkey confirm survive BLE re-pairing**, or is it re-run per connection? Per
   connection is safer and costs the user one screen glance.
-- `zGetAccount` hands the viewing key to any paired host without a press on the board. It is
-  not spend authority, but it is the whole history; whether to ask once per session is open.
+- **Remembered hosts.** `zGetAccount` asks once per session (§4, "Zcash account metadata"), so
+  a companion that reconnects asks again. Whether the board should remember a host it shared a
+  viewing key with across sessions and reboots — and by what identity, since the host key is
+  ephemeral today — is open.

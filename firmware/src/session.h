@@ -218,6 +218,20 @@ void session_set_on_reset(void (*callback)(void));
 SessionState session_state(void);
 
 /**
+ * Which session this is: a number that changes every time the session goes
+ * away, and so differs between any two channels that ever existed since boot.
+ *
+ * For state that belongs to one channel and must not leak into the next one
+ * without a callback of its own to clear it - today the viewing keys the user
+ * agreed to share with this host (zGetAccount). Compare it with the value
+ * taken when the state was granted: a disconnect, a new handshake, a
+ * transport switch and a failed frame all change it, because they all go
+ * through session_reset(). Not secret, and never sent anywhere; it is a
+ * counter, not an identifier a host could present.
+ */
+uint32_t session_generation(void);
+
+/**
  * Decrypt a host→device payload in place.
  *
  * `input` is nonce-counter-implicit: the counter is maintained here and a

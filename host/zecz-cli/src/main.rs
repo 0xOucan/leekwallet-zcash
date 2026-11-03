@@ -436,10 +436,26 @@ fn cmd_zkv_open(profile: &Profile, input: &Path, bip39_pass: &str) -> Result<()>
     Ok(())
 }
 
+/// `zGetAccount`, with the hint the device's question needs: it shares the
+/// viewing key only after a press, once per session.
+fn device_account(dev: &mut Device, account: u32, net: &str) -> Result<device::Value> {
+    println!("Confirm on the device to share account {account}'s viewing key (it asks once per session).");
+    dev.z_get_account(account, net).map_err(|e| {
+        let why = if device::is_code(&e, device::ERR_USER_REJECTED) {
+            "You declined on the device; the viewing key was not shared."
+        } else if device::is_code(&e, device::ERR_USER_TIMEOUT) {
+            "Nobody answered on the device; the viewing key was not shared."
+        } else {
+            return e;
+        };
+        e.context(why)
+    })
+}
+
 async fn cmd_device_init(profile: Profile, port: &str, account: u32, birthday: Option<u32>, name: &str) -> Result<()> {
     let net = profile.net_name();
     let mut dev = connect_device(port)?;
-    let a = dev.z_get_account(account, net)?;
+    let a = device_account(&mut dev, account, net)?;
     if device::get_text(&a, "network")? != net {
         bail!("the device answered for a different network");
     }
@@ -479,7 +495,7 @@ async fn cmd_device_init(profile: Profile, port: &str, account: u32, birthday: O
 fn cmd_device_show_address(profile: &Profile, port: &str, account: u32) -> Result<()> {
     let mut dev = connect_device(port)?;
     // The address this wallet would hand out, from the device's own UFVK.
-    let a = dev.z_get_account(account, profile.net_name())?;
+    let a = device_account(&mut dev, account, profile.net_name())?;
     let ua = wallet::addresses_for_ufvk(profile.network, &device::get_text(&a, "ufvk")?).context("device UFVK")?.unified;
     println!("This wallet's address:\n  {ua}\nCompare it with the device and answer there.");
     dev.z_show_address(account, profile.net_name(), &ua)?;

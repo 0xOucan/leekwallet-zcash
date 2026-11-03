@@ -135,8 +135,16 @@ void ui_request_passphrase_confirm(uint32_t fingerprint)
     shown_passphrase_xfp = fingerprint;
 }
 
+/* The link dies while the user is reading the question: the cable pulled,
+ * the board locked. Set by a test; acted on at the next poll, once. */
+static bool stub_session_dies_on_answer = false;
+
 SignOutcome ui_sign_outcome(void)
 {
+    if (stub_session_dies_on_answer) {
+        stub_session_dies_on_answer = false;
+        session_reset();
+    }
     return scripted_outcome;
 }
 
@@ -165,6 +173,21 @@ void ui_request_show_address(const char *ua, const char *t_address, uint32_t acc
     address_checks++;
     shown_network = network;
     snprintf(shown_ua, sizeof shown_ua, "%s", ua);
+}
+
+/* zGetAccount's question: how often the device asked, and what it named. */
+static int  share_key_prompts;
+static uint32_t share_key_account;
+static uint8_t  share_key_network = 0xFF;
+static char share_key_code[8];
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble)
+{
+    (void)over_ble;
+    share_key_prompts++;
+    share_key_account = account;
+    share_key_network = network;
+    snprintf(share_key_code, sizeof share_key_code, "%s", pairing_code ? pairing_code : "");
 }
 
 /* Counted, because the timeout path answering the host is only half of what it
@@ -454,6 +477,7 @@ static void fresh_device(void)
     passphrase_prompts = 0;
     shown_passphrase_xfp = 0;
     stub_user_is_answering = false;
+    stub_session_dies_on_answer = false;
     scripted_outcome = SIGN_APPROVED;
 
     protocol_start();
@@ -1545,6 +1569,109 @@ static void test_zget_account(void)
         }
     }
     stub_zcash_network = 1;
+}
+
+/* A viewing key is the account's whole history: the board asks before it
+ * hands one over, names the host by its pairing code, and remembers a yes
+ * for that session only. */
+static void test_zget_account_asks_first(void)
+{
+    printf("== zGetAccount: the viewing key only after a yes, once per session\n");
+    fresh_device();
+    device_unlocked();
+    confirmed_session(28);
+    char paired[8];
+    snprintf(paired, sizeof paired, "%s", session_passkey());
+
+    uint8_t payload[96];
+    const size_t len = zget_account_request(payload, sizeof payload, 0, "test");
+
+    /* No: refused, with the code a refused signature gets, and no key. */
+    share_key_prompts = 0;
+    scripted_outcome = SIGN_REJECTED;
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_REJECTED, "a no on the device");
+    CHECK(share_key_prompts == 1, "the device did not ask (%d)", share_key_prompts);
+    CHECK(share_key_account == 0 && share_key_network == 1, "asked about account %u net %u",
+          (unsigned)share_key_account, share_key_network);
+    CHECK(strlen(paired) == 6 && strcmp(share_key_code, paired) == 0,
+          "the host was named \"%s\", paired as \"%s\"", share_key_code, paired);
+
+    /* Nobody answered: the timeout code, and the question comes down. */
+    sign_expiries = 0;
+    scripted_outcome = SIGN_PENDING;
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_TIMEOUT, "nobody answered");
+    CHECK(sign_expiries == 1, "the question was left on the screen");
+    CHECK(share_key_prompts == 2, "a no was remembered as an answer");
+
+    /* Yes: the key. */
+    scripted_outcome = SIGN_APPROVED;
+    send_encrypted(payload, len);
+    Frame f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "a yes was not answered with the account");
+    CHECK(share_key_prompts == 3, "no question before the yes");
+
+    /* The same account again in this session: no second question, even with
+     * nobody at the board to answer one. */
+    scripted_outcome = SIGN_PENDING;
+    send_encrypted(payload, len);
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "a repeat in the same session was not answered");
+    CHECK(share_key_prompts == 3, "asked again for an account already shared");
+
+    /* Another account is another question. */
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 1, "test"));
+    expect_error(T_ENC_ERROR, E_TIMEOUT, "account 1 rode on account 0's yes");
+    CHECK(share_key_prompts == 4, "account 1 was not asked about");
+
+    /* So is another network: switched on the board, same session. */
+    stub_zcash_network = 0;
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "main"));
+    expect_error(T_ENC_ERROR, E_TIMEOUT, "mainnet rode on testnet's yes");
+    CHECK(share_key_prompts == 5, "mainnet was not asked about");
+    stub_zcash_network = 1;
+
+    /* A new session - a new host, or the same one paired again - asks again.
+     * The link drops first, as it does when an app goes away. */
+    session_reset();
+    host_tx = host_rx = 0;
+    confirmed_session(29);
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "test"));
+    expect_error(T_ENC_ERROR, E_TIMEOUT, "a new session rode on the old one's yes");
+    CHECK(share_key_prompts == 6, "a new session was not asked");
+    CHECK(strcmp(share_key_code, session_passkey()) == 0, "the new host was named by the old code");
+
+    /* Refused before the question: nothing to ask about with no seed. */
+    fake_wallet_reset();
+    pin_set("123456");
+    pin_verify("123456");
+    wallet_unlock("123456", 6);
+    send_encrypted(payload, len);
+    expect_error(T_ENC_ERROR, E_NO_WALLET, "no wallet");
+    CHECK(share_key_prompts == 6, "asked about a key the device does not have");
+
+    /* A yes that lands after the session died gives the key to nobody: a
+     * request whose session is gone is answered in plaintext, so the key
+     * must not be in that answer. */
+    device_has_a_wallet();
+    session_reset();
+    host_tx = host_rx = 0;
+    confirmed_session(30);
+    scripted_outcome = SIGN_APPROVED;
+    stub_session_dies_on_answer = true;
+    send_encrypted(payload, len);
+    f = next_reply();
+    uint32_t code = 0;
+    CHECK(f.present && (f.type == T_ERROR || f.type == T_ENC_ERROR) && error_code(&f, &code) &&
+          code == E_SESSION, "a yes after the session ended: frame 0x%02X, code 0x%04X",
+          f.present ? f.type : 0, (unsigned)code);
+    bool leaked = false;
+    for (size_t i = 0; f.present && i + 5 <= f.len; i++) {
+        if (memcmp(f.payload + i, "uview", 5) == 0) leaked = true;
+    }
+    CHECK(!leaked, "the viewing key went out in the clear");
+    stub_session_dies_on_answer = false;
 }
 
 /* -------------------------------------------------------- zSetAccountMeta */
@@ -3456,6 +3583,7 @@ static int run_all_tests(void)
     test_tampered_frame_tears_down_the_session();
     test_select_wallet();
     test_zget_account();
+    test_zget_account_asks_first();
     test_zset_account_meta();
     test_large_frames_cross_the_usb_driver();
     test_zcash_waits_for_the_wallet();
