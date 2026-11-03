@@ -11,7 +11,11 @@
 //!   to the board), [`sign_pczt`] (all of it over a link), and
 //!   [`apply_zsig`] (a `.zsig` from any transport, such as an SD card, back
 //!   into the wallet's PCZT, every signature verified).
-//! - Records: [`AccountRecord`] (the import record as CBOR).
+//! - SD card (experimental): [`prepare_sd_sign`] (the file the board reads)
+//!   and [`finish_sd_sign`] (its `.zsig` back into a [`SignResult`]).
+//! - Records: [`AccountRecord`] (the import record as CBOR),
+//!   [`SignResult::to_bytes`] (persist before broadcast) and
+//!   [`check_mined`] (compare after mining).
 //! - Errors: one [`LeekError`] with stable codes and a [`Recovery`] hint;
 //!   messages never contain amounts, addresses, keys or PCZT bytes.
 //!
@@ -25,10 +29,12 @@
 mod account;
 mod apply;
 mod error;
+mod persist;
 mod preflight;
 mod prepare;
 mod record;
 mod redact;
+mod sd;
 mod sign;
 mod ua;
 
@@ -38,10 +44,12 @@ pub use account::{
 };
 pub use apply::{apply_zsig, Signature};
 pub use error::{classify, LeekError, Recovery, Unsupported};
+pub use persist::{check_mined, tx_txid, MinedCheck};
 pub use preflight::preflight;
 pub use prepare::{prepare_for_signer, TRANSPARENT_SEARCH_LIMIT};
 pub use record::{AccountEntry, AccountRecord, ACCOUNT_RECORD_UR_TYPE};
 pub use redact::{signer_view_bytes, SignerView};
+pub use sd::{finish_sd_sign, prepare_sd_sign, SdRequest, SD_DIR, SD_SIGNED_ZSIG, SD_UNSIGNED_PCZT};
 pub use sign::{sign_pczt, CancelToken, CancellablePort, SignOptions, SignProgress, SignResult};
 pub use ua::to_checkable_ua;
 

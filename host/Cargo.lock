@@ -1632,6 +1632,7 @@ dependencies = [
  "zcash_address",
  "zcash_client_backend",
  "zcash_keys",
+ "zcash_primitives",
  "zcash_protocol",
  "zcash_transparent",
  "zecz-core",
