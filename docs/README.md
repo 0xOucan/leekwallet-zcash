@@ -11,6 +11,7 @@ Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute
 | [zcash/FORMATS.md](zcash/FORMATS.md) | `.zsig` (v1, v2), `.zkv` seed cards, the SD card layout |
 | [zcash/MAINNET.md](zcash/MAINNET.md) | Checklist for the first mainnet tests with real funds |
 | [zcash/CHROME-ENGINE.md](zcash/CHROME-ENGINE.md) | The browser engine study: numbers and the chosen design |
+| [zcash/zip-draft-app-storage-keys.md](zcash/zip-draft-app-storage-keys.md) | Draft, not submitted: a ZIP for per-app storage keys that the board derives (ZIP 32 Registered derivation) and releases after approval, so companion apps keep their data encrypted at rest |
 | [TOOLCHAIN.md](TOOLCHAIN.md) | Toolchains and versions |
 | [../firmware/docs/PROTOCOL.md](../firmware/docs/PROTOCOL.md) | The device protocol: pairing, session, every call |
 | [../firmware/docs/WIRING-S3CAM.md](../firmware/docs/WIRING-S3CAM.md) | Wiring the board, screen, encoder and buttons |
