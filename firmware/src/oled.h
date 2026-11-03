@@ -189,6 +189,33 @@ uint8_t oled_panel_rows(void);
 void oled_show_panel_picture(const uint8_t *picture);
 
 /**
+ * What text means, for a panel that can show it in colour.
+ *
+ * A screen names a meaning, never a colour; the panel's palette decides
+ * (panel-color.h). Most text never asks and is OLED_ROLE_AUTO, which a colour
+ * panel resolves from where the text sits: row 0 a title, row 7 the hint
+ * footer, a row starting with '>' the selected item. Monochrome panels ignore
+ * roles entirely, so setting one changes nothing on an OLED.
+ */
+typedef enum {
+    OLED_ROLE_AUTO = 0,
+    OLED_ROLE_TEXT,      /* body text */
+    OLED_ROLE_DIM,       /* secondary: hints, units, captions */
+    OLED_ROLE_ACCENT,    /* titles, the brand colour */
+    OLED_ROLE_WARN,      /* look before you continue */
+    OLED_ROLE_OK,        /* done, approved */
+    OLED_ROLE_DANGER,    /* destructive, refused, failed */
+    OLED_ROLE_COUNT
+} oled_role_t;
+
+/**
+ * The role for text drawn from now until the next oled_set_role() or
+ * oled_clear(), which goes back to OLED_ROLE_AUTO. Callers that set one for a
+ * line set it back to AUTO after it.
+ */
+void oled_set_role(oled_role_t role);
+
+/**
  * Set a single pixel on the display
  * @param x X coordinate (0-127)
  * @param y Y coordinate (0-63)

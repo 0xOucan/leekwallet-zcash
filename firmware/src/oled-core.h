@@ -28,6 +28,22 @@ uint8_t *oled_core_framebuffer(void);
  */
 const QRCode *oled_core_last_qr(bool *inverted);
 
+/**
+ * The text layer, for a panel that redraws glyphs at its own scale
+ * (panel-color.h). Two OLED_PAGES x OLED_WIDTH arrays, row-major by page:
+ *
+ *   glyphs[page * OLED_WIDTH + col]  the character whose glyph starts at that
+ *                                    column, or 0;
+ *   roles[...]                       the oled_role_t it was drawn in.
+ *
+ * Kept in step with the frame: anything that overwrites part of a glyph's
+ * cell (another glyph, a pixel, a page fill, a QR) forgets it, so what is
+ * left of it is drawn from the frame bits like any other pixel. A character
+ * clipped at the right edge is never recorded, for the same reason.
+ */
+const uint8_t *oled_core_glyphs(void);
+const uint8_t *oled_core_roles(void);
+
 /** The picture set by oled_show_panel_picture(), or NULL since a clear. */
 const uint8_t *oled_core_panel_picture(void);
 
