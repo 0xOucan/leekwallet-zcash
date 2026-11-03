@@ -26,6 +26,16 @@ ciborium = "=0.2.2"
 # The device client: session, z* calls, .zsig. No transport of its own.
 leek-device = { path = "../leek-device", default-features = false }
 leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
+# App Storage Keys (src/storage.rs): ZIP 32 Registered key derivation, and
+# the draft's HKDF subkeys, key check and XChaCha20-Poly1305. All already in
+# the tree (zcash_keys, leek-device).
+zip32 = "0.3"
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+chacha20poly1305 = "0.10"
+zeroize = "1"
+getrandom = "0.3"
 
 [dev-dependencies]
 # The soft signer (the vectors' seed) and the prover, to check that what
@@ -36,3 +46,5 @@ leek-device = { path = "../leek-device", features = ["serial"] }
 rand = { version = "0.10", features = ["sys_rng"] }
 serde_json = "1"
 hex = "0.4"
+# The draft's ZIP 32 expansion, written out in storage.rs's tests.
+blake2b_simd = "1"

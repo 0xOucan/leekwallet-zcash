@@ -259,6 +259,10 @@ const DERIVE: Duration = Duration::from_secs(90);
 /// to 120 s for the press, after the derivation; DERIVE alone would give up
 /// on a user still reading the question.
 const SHARE_VIEW_KEY: Duration = Duration::from_secs(90 + 120);
+/// `zGetStorageKey`: no derivation before the question (the board derives
+/// only after the yes), but it may first wait up to 10 s for its vault, then
+/// up to 120 s for the press.
+const STORAGE_KEY: Duration = Duration::from_secs(10 + 120 + 20);
 /// The pause before the one retry of a first zGetAccount refused with
 /// 0x0300: about the vault's own unlock (one PBKDF2 on the S3).
 pub const NO_WALLET_RETRY: Duration = Duration::from_millis(1500);
@@ -465,6 +469,45 @@ impl Device {
         }?;
         self.account_answered = true;
         Ok(r)
+    }
+
+    /// `zGetStorageKey`: the app's Storage Key for `app_id` on `network`,
+    /// `account` (docs/zcash/zip-draft-app-storage-keys.md).
+    ///
+    /// The board shows the app identifier, account, network and pairing code
+    /// and answers only after OK there, every time: no yes is remembered. A
+    /// no is [`ERR_USER_REJECTED`], no answer in its 120 s window
+    /// [`ERR_USER_TIMEOUT`], an identifier it refuses 0x0001. The reply's
+    /// copy of the key is wiped before this returns; the caller wipes the
+    /// returned array.
+    pub fn z_get_storage_key(&mut self, app_id: &str, account: u32, network: &str) -> Result<[u8; 32]> {
+        use zeroize::Zeroize;
+        let mut r = self.call("zGetStorageKey", vec![
+            ("appId", Value::Text(app_id.into())),
+            ("account", Value::Integer(account.into())),
+            ("network", Value::Text(network.into())),
+        ], STORAGE_KEY)?;
+        let mut key = None;
+        if let Value::Map(m) = &mut r {
+            for (k, v) in m.iter_mut() {
+                if let (Value::Text(k), Value::Bytes(b)) = (k, v) {
+                    if k == "storageKey" {
+                        key = <[u8; 32]>::try_from(b.as_slice()).ok();
+                        b.zeroize();
+                    }
+                }
+            }
+        }
+        let key = key.ok_or_else(|| anyhow!("reply has no 32-byte storageKey"))?;
+        // The board echoes what it derived for; anything else is not this key.
+        if get_text(&r, "appId")? != app_id || get_text(&r, "network")? != network
+            || get_uint(&r, "account")? != u64::from(account)
+        {
+            let mut key = key;
+            key.zeroize();
+            bail!("the device answered for another app, account or network");
+        }
+        Ok(key)
     }
 
     /// `zShowAddress`: the device shows its own unified address for the user

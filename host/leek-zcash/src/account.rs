@@ -137,6 +137,11 @@ pub struct Features {
     pub max_transparent_inputs: usize,
     /// Whether `zShowAddress` is available.
     pub show_address: bool,
+    /// The ZIP number the board derives App Storage Keys under
+    /// (`zGetStorageKey`), or `None` if its firmware has no such call. An
+    /// app offers "unlock with the board" only when this is
+    /// [`STORAGE_ZIP_NUMBER`](crate::STORAGE_ZIP_NUMBER).
+    pub storage_key: Option<u16>,
 }
 
 impl Default for Features {
@@ -153,6 +158,7 @@ impl Default for Features {
             max_pczt_bytes: MAX_PCZT_BYTES,
             max_transparent_inputs: MAX_TRANSPARENT_INPUTS,
             show_address: true,
+            storage_key: None,
         }
     }
 }
@@ -202,15 +208,17 @@ fn texts(v: &Value, k: &str) -> Option<Vec<String>> {
     }
 }
 
-/// Where [`get_account_with`] is.
+/// Where [`get_account_with`] (or [`get_storage_key_with`](crate::get_storage_key_with)) is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AccountProgress {
-    /// The request is on the board. Unless the user already agreed in this
-    /// session (same account, network and seed), the board asks "Share view
-    /// key?" and answers only after OK there, waiting up to 120 s. Tell the
-    /// user to confirm on the board. The board does not say whether it is
-    /// asking, so this comes for every call.
+    /// The request is on the board. For [`get_account_with`], unless the
+    /// user already agreed in this session (same account, network and seed),
+    /// the board asks "Share view key?"; for
+    /// [`get_storage_key_with`](crate::get_storage_key_with) it always asks
+    /// "Unlock app data?". It answers only after OK there, waiting up to
+    /// 120 s. Tell the user to confirm on the board. The board does not say
+    /// whether it is asking, so this comes for every call.
     ConfirmOnDevice,
 }
 
@@ -312,5 +320,6 @@ pub fn get_features(device: &mut Device) -> Result<Features, LeekError> {
         f.max_pczt_bytes = n as usize;
     }
     f.show_address = device::get_uint(&z, "showAddress").unwrap_or(0) == 1;
+    f.storage_key = device::get_uint(&z, "storageKey").ok().and_then(|n| u16::try_from(n).ok());
     Ok(f)
 }

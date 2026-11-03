@@ -14,6 +14,8 @@ hkdf = "0.12"
 chacha20poly1305 = "0.10"
 ciborium = "0.2"
 getrandom = "0.3"
+# Wipes the Storage Key the board sends (z_get_storage_key).
+zeroize = "1"
 leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
 
 [features]

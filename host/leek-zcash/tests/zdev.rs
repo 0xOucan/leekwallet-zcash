@@ -16,8 +16,9 @@ use std::time::{Duration, Instant};
 use common::*;
 use leek_device::device::Device;
 use leek_zcash::{
-    apply_zsig, get_account, get_account_with, get_features, preflight, set_birthday, show_address, sign_pczt, AddressCheck,
-    AccountProgress, CancelToken, CancellablePort, LeekError, Network, SignOptions, SignProgress, SignerView,
+    apply_zsig, get_account, get_account_with, get_features, get_storage_key, get_storage_key_with, preflight,
+    set_birthday, show_address, sign_pczt, AddressCheck, AccountProgress, CancelToken, CancellablePort, LeekError,
+    Network, SignOptions, SignProgress, SignerView, StorageKey,
 };
 
 fn zdev_binary() -> Option<PathBuf> {
@@ -177,6 +178,39 @@ fn the_viewing_key_takes_a_press() {
     assert_eq!(a.ufvk, key("test/abandon-art/pp0/acct0")["ufvk"].as_str().unwrap());
     get_account(&mut dev, 0, Network::Test).expect("asked again in the same session");
     assert_eq!(get_account(&mut dev, 1, Network::Test).unwrap_err(), LeekError::UserRejected);
+}
+
+#[test]
+fn the_storage_key_takes_a_press_every_time() {
+    let mut z = zdev_or_skip!("storage-key", false);
+    // Pairing: yes. Then no, yes, yes (a yes is never remembered), and yes
+    // for another app.
+    z.child.stdin.as_mut().unwrap().write_all(b"y\nn\ny\ny\ny\n").unwrap();
+    let mut dev = connect(&z);
+    assert_eq!(get_features(&mut dev).unwrap().storage_key, Some(leek_zcash::STORAGE_ZIP_NUMBER));
+
+    let app = "xyz.leekwallet.zcash";
+    let steps = Mutex::new(Vec::new());
+    let record = |p: AccountProgress| steps.lock().unwrap().push(p);
+    assert_eq!(get_storage_key_with(&mut dev, app, 0, Network::Test, &record).unwrap_err(), LeekError::UserRejected);
+    assert_eq!(steps.lock().unwrap().as_slice(), &[AccountProgress::ConfirmOnDevice]);
+    // Refused on the host, before anything is sent (no answer is used up).
+    assert_eq!(get_storage_key(&mut dev, "Xyz.Leek", 0, Network::Test).unwrap_err(), LeekError::InvalidAppId);
+
+    let k = get_storage_key(&mut dev, app, 0, Network::Test).expect("released after a yes");
+    let seed = hex::decode(key("test/abandon-art/pp0/acct0")["seed"].as_str().unwrap()).unwrap();
+    let want = StorageKey::from_seed(&seed, app, 0, Network::Test).unwrap();
+    assert_eq!(*k.to_bytes(), *want.to_bytes(), "the board's key is not the SDK's");
+
+    // Sealed with one release, opened with the next: what an app does
+    // across two openings.
+    let sealed = k.seal_ufvk("uviewtest1...").unwrap();
+    drop(k);
+    let again = get_storage_key(&mut dev, app, 0, Network::Test).expect("asked again, and released");
+    assert_eq!(&*again.open_ufvk(&sealed).unwrap(), "uviewtest1...");
+
+    let other = get_storage_key(&mut dev, "com.example.wallet", 0, Network::Test).expect("another app");
+    assert_eq!(other.open_ufvk(&sealed).unwrap_err(), LeekError::StorageKeyMismatch);
 }
 
 #[test]
