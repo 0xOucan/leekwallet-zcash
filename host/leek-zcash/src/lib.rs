@@ -22,14 +22,18 @@
 //! errors with [`classify`].
 
 mod account;
+mod apply;
 mod error;
+mod redact;
 mod ua;
 
 pub use account::{
     get_account, get_features, set_birthday, show_address, Account, AccountMeta, AddressCheck, Features, Network,
     KEY_SOURCE, KNOWN_BRANCH_IDS, MAX_PCZT_BYTES, MAX_TRANSPARENT_INPUTS,
 };
+pub use apply::{apply_zsig, Signature};
 pub use error::{classify, LeekError, Recovery, Unsupported};
+pub use redact::{signer_view_bytes, SignerView};
 pub use ua::to_checkable_ua;
 
 /// The crates this API is expressed in, re-exported so a wallet uses the
