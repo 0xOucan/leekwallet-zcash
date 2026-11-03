@@ -1635,11 +1635,15 @@ async function diagnosticsReport(): Promise<string> {
     ? "Network setting: not reported by this firmware; it refuses requests for the other network (0x0528)."
     : `Network setting: ${networkLabel(boardNetwork)} (getStatus)`);
   const acct = zcashView?.boardAccount ?? null;
+  const boardId = zcashView?.boardId ?? null;
   L.push(
-    acct === null
-      ? "Account:    not read"
-      : `Account:    ${acct.account} on ${networkLabel(acct.network)}, ZFP ${acct.seedFingerprint}, ` +
-        `birthday ${acct.birthday ?? "not set on the board"}`,
+    acct !== null
+      ? `Account:    ${acct.account} on ${networkLabel(acct.network)}, ZFP ${acct.seedFingerprint}, ` +
+        `birthday ${acct.birthday ?? "not set on the board"}`
+      : boardId !== null
+        ? `Account:    ${boardId.account} on ${networkLabel(boardId.network)}, ZFP ${boardId.seedFingerprint} ` +
+          "(seed only; the account was not read)"
+        : "Account:    not read",
   );
   L.push("");
 

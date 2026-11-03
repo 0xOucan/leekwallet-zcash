@@ -50,6 +50,8 @@ export const Z_SHARE_KEY_HINT = "If the board asks “Share view key?”, press 
 
 /** Error codes of the Zcash calls (PROTOCOL.md §6). */
 export const ZErr = {
+  /** Malformed, or a method this firmware does not know. */
+  UnknownMethod: 0x0001,
   UserRejected: 0x0200,
   UserTimeout: 0x0201,
   /** 0x05xx: the board will not sign; the low byte is the reason. */
@@ -157,6 +159,24 @@ export async function zGetFeatures(call: ZCall): Promise<ZFeatures> {
     maxChunk: uintField(f, "maxChunk"),
     showAddress: f["showAddress"] === 1,
   };
+}
+
+/**
+ * The ZIP 32 seed fingerprint (hex) of the seed open on the board, with no
+ * question on the board: how to recognise the board, and which seed or
+ * passphrase wallet it has open, on every connect. The same 32 bytes as
+ * zGetAccount's `seedFingerprint`; ask zGetAccount only when the viewing
+ * key is needed (the first import).
+ *
+ * A stable identifier of the seed that every paired host can read. With
+ * `network` the board also checks its setting (0x0528); the answer does not
+ * depend on it. Firmware without the call answers 0x0001
+ * (ZErr.UnknownMethod).
+ */
+export async function zGetSeedFingerprint(call: ZCall, network?: ZNetwork): Promise<string> {
+  if (network !== undefined) checkNetwork(network);
+  const a = await call("zGetSeedFingerprint", network === undefined ? {} : { network }, Z_TIMEOUT.derive);
+  return toHex(bytesField(a, "seedFingerprint", 32));
 }
 
 /**

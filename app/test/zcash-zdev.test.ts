@@ -15,12 +15,12 @@ import { join } from "node:path";
 import { DeviceError } from "../packages/core/src/transport.ts";
 import { parseStatus } from "../packages/core/src/device-state.ts";
 import {
-  encodeZsig, parseZsig, toHex, zErrorText, zGetAccount, zGetFeatures, ZErr, ZPool,
+  encodeZsig, parseZsig, toHex, zErrorText, zGetAccount, zGetFeatures, zGetSeedFingerprint, ZErr, ZPool,
   zSetBirthday, zShowAddress, zSign, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import { repo, startZdev, zdevBinary, ZdevClient } from "./zdev.ts";
 import { fakeWallet } from "./fake-wallet.ts";
-import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying } from "../src/zcash-auto.ts";
+import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying, readSeedRetrying } from "../src/zcash-auto.ts";
 import { isWrongNetwork, networkFromStatus, wrongNetwork } from "../src/network-guard.ts";
 import { ReceiveModel } from "../src/receive-model.ts";
 
@@ -160,6 +160,9 @@ group("a board that says no");
   try {
     z.answer("y"); // the pairing
     await dev.pair();
+    /* Which seed: nothing queued, so a question here would hang. */
+    check(await zGetSeedFingerprint(dev.call, "test") === key("test/abandon-art/pp0/acct0").seed_fingerprint,
+      "the seed fingerprint, with no question");
     z.answer("n"); // sharing the viewing key
     await rejects(zGetAccount(dev.call, 0, "test"),
       (e) => e instanceof DeviceError && e.code === ZErr.UserRejected, "refused viewing key");
@@ -214,6 +217,9 @@ async function autoFlow(network: ZNetwork): Promise<void> {
     check(r.created && r.birthday === expected && r.birthdaySource === "tip" && r.storedOnBoard, `created at ${expected}`);
     check((await zGetAccount(dev.call, 0, network)).birthday === expected, "the board now has the birthday");
     check(w.wallets.has(`${network}-${k.seed_fingerprint}-0`), "the wallet is keyed by network, fingerprint and account");
+    /* The next connection names the wallet by the seed alone. */
+    const seed = await readSeedRetrying(dev.call, 0, network);
+    check(seed.seedFingerprint === k.seed_fingerprint && seed.account === null, "the seed, without the account");
     const again = await ensureWallet(await readAccountRetrying(dev.call, 0, network), { call: dev.call, invoke: w.invoke });
     check(!again.created && again.birthdaySource === "existing" && w.calls.filter((c) => c === "zw_import").length === 1, "the next connection opens it");
     const other: ZNetwork = network === "main" ? "test" : "main";
