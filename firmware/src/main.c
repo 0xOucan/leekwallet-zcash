@@ -41,6 +41,7 @@
 #include "zcash-worker.h"
 #endif
 #include "button.h"
+#include "se.h"
 #include "ui.h"
 #include "device-wipe.h"
 #include "protocol.h"
@@ -128,6 +129,18 @@ void app_main(void)
         ESP_LOGE(TAG, "Check SDA=GPIO%d, SCL=GPIO%d and that the panel is at 0x3C",
                  PIN_I2C_SDA, PIN_I2C_SCL);
 #endif
+    }
+
+    /* The secure element, if this build drives one (se.h). Asked once and
+     * logged; nothing depends on the answer yet, and a build without a part
+     * says so rather than staying silent about it. */
+    {
+        const se_status_t se = se_probe();
+        static const char *const SE_STATUS[] = {
+            "not fitted", "absent", "present", "fault",
+        };
+        ESP_LOGI(TAG, "Secure element: %s (%s)", se_name(),
+                 (unsigned)se < 4 ? SE_STATUS[se] : "?");
     }
 
     /* Initialize buttons */
