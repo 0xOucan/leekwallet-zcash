@@ -1,0 +1,34 @@
+[package]
+name = "leek-zcash-ffi"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+description = "UniFFI bindings (Kotlin, Swift) for leek-zcash: a byte-oriented API, one error type with stable codes, and a foreign transport callback so the host app owns the USB or Bluetooth link."
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[[bin]]
+# The bindings generator, pinned with the scaffolding (scripts/generate.sh).
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+uniffi = "=0.29.5"
+# leek-device reports its errors as anyhow; leek_zcash::classify maps them.
+anyhow = "=1.0.100"
+leek-zcash = { path = "../leek-zcash" }
+leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
+
+[dev-dependencies]
+# zdev's PTY, for the end-to-end test of the foreign transport.
+leek-transport-serial = { path = "../../app/transport-serial", features = ["serialport"] }
+serde_json = "1"
+# A raw byte stream over the PTY, as a USB host moves it.
+serialport = { version = "=4.10.1", default-features = false }
+hex = "0.4"
