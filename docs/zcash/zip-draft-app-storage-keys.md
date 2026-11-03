@@ -227,7 +227,9 @@ lead    = %x61-7A / DIGIT   ; a-z or 0-9
 
 and its total length MUST be between 3 and 64 bytes inclusive. Upper-case
 letters, spaces, and any non-ASCII character are not allowed; there is no
-normalization step. An identifier that does not match is invalid.
+normalization step. An identifier that does not match is invalid. (Because an
+identifier has at least two labels, the total length limit makes 62 bytes the
+longest label that can occur, below the 63 the grammar alone allows.)
 
 - An App SHOULD use a reverse-DNS name under a domain its developer controls,
   so that identifiers of different Apps do not collide by accident. This is a
@@ -524,18 +526,35 @@ Storage Key changes with it.
 
 # Reference implementation
 
-To be written in the LeekWallet Zcash project
+In the LeekWallet Zcash project
 (<https://github.com/0xOucan/leekwallet-zcash>):
 
-- Signer: the LeekWallet firmware (ESP32-S3), as a new device call that shows
-  the App identifier, network and account, and releases the Storage Key over
-  the existing paired session.
-- Apps: the `leek-zcash` host SDK (`host/leek-zcash`), used by the LeekWallet
-  Zcash desktop and Android app and the Chrome extension.
+- Signer: the LeekWallet firmware (ESP32-S3). The derivation is
+  `zc_storage_key` and the App identifier check `zc_app_id_valid`, in the C
+  signer (`firmware/components/zsign-c/zsign_c.c`), written from the ZIP 32
+  formulas on the same PRF^expand and BLAKE2b as its Orchard keys. The
+  device call is `zGetStorageKey` (`firmware/src/protocol.c`,
+  `handle_storage_key`; wire format in `firmware/docs/PROTOCOL.md`, "App
+  Storage Keys"). It refuses an invalid identifier before showing anything,
+  shows "Unlock app data?" with the identifier in full (wrapped over up to
+  four rows of a 21-column screen, never cut), the account, the network and
+  the session's pairing code, asks for every release (no approval is
+  remembered, even within a session), derives only after the approval, and
+  answers only inside the paired encrypted session. Tests:
+  `firmware/sim/test_storage_key.c` (the vectors below, identifier rules),
+  `test_protocol.c` (`test_zget_storage_key`), `test_ui.c`
+  (`test_storage_key_question`).
+- Apps: the `leek-zcash` host SDK (`host/leek-zcash/src/storage.rs`):
+  `get_storage_key`, and `StorageKey` with the Storage Subkeys and the
+  [Recommended storage encryption](#recommended-storage-encryption)
+  (XChaCha20-Poly1305 with the key check value and the context as
+  associated data), derived with the `zip32` Rust crate 0.3.0
+  (`zip32::registered`). Its Kotlin and Swift bindings are in
+  `host/leek-zcash-ffi`. Tests check the vectors below and the ZIP 32
+  expansion written out by hand.
 
-Both will use the `zip32` Rust crate, version 0.3.0 or later
-(`zip32::registered`).
-
+The two implementations are independent (C from the formulas, and the
+`zip32` crate) and both reproduce every vector below.
 
 # Test vectors
 
@@ -547,7 +566,8 @@ reference implementation once a ZIP number is assigned.
 
 They were computed with the `zip32` crate 0.3.0
 (`registered::cryptovalue_from_subpath`) and checked against an independent
-implementation of the ZIP 32 formulas. The seed is the test seed
+implementation of the ZIP 32 formulas, and are reproduced by both reference
+implementations (the firmware's C derivation and the host SDK). The seed is the test seed
 `000102…1f` (32 bytes, 0x00 to 0x1f), never a real seed.
 $\mathsf{ContextString} = \texttt{“AppStorageKeys”}$.
 
@@ -620,6 +640,8 @@ label, empty labels, over 64 bytes).
   other network than the one it is set to.
 - A standard wire format for the request and response between Signer and App
   is out of scope here; it could be added if more than one Signer adopts this.
+  The reference implementation's (`zGetStorageKey`, a CBOR map over an
+  encrypted session) is one candidate.
 
 
 # References
