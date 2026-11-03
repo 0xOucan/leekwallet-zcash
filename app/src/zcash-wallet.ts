@@ -32,7 +32,7 @@
 
 import {
   encodeZsig, explorerTx, formatZec, memoBytes, MEMO_BYTES, toHex, zErrorText, zGetAccount,
-  zSetBirthday, zShowAddress, zSign, type ZNetwork,
+  zSetBirthday, zShowAddress, zSign, Z_SHARE_KEY_HINT, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import { addressKind, parsePaymentRequest } from "../packages/core/src/zip321.ts";
 import type { Invoke } from "./tauri-transport.ts";
@@ -704,7 +704,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     if (key.network === "main" && !mainOk) throw new Error("This is mainnet: tick the confirmation above first.");
     try {
       const zsig = await view.busy("signing a send", async () => {
-        line("Checking that this board holds the wallet's seed…");
+        line(`Checking that this board holds the wallet's seed… ${Z_SHARE_KEY_HINT}`);
         const account = await boardMatches(s);
         bar.hidden = false;
         bar.value = 0;
@@ -1023,6 +1023,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const ua = recv.shielded().verifyUa;
     if (!s || !ua) return;
     void view.busy("the address check", async () => {
+      say("zwrecvstatus", `Checking that this board holds the wallet's seed… ${Z_SHARE_KEY_HINT}`);
       const account = await boardMatches(s);
       say("zwrecvstatus", "Compare the address on the board with the one here, then answer on the board.");
       await zShowAddress(requireBoard(), account, net(), ua);
@@ -1034,6 +1035,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const tv = recv.transparent();
     if (!s || !tv.verifyUa || !tv.address) return;
     void view.busy("the address check", async () => {
+      say("zwrecvstatus", `Checking that this board holds the wallet's seed… ${Z_SHARE_KEY_HINT}`);
       const account = await boardMatches(s);
       say("zwrecvstatus", "The board shows the unified address that carries this transparent receiver: compare, then answer on the board.");
       const r = await zShowAddress(requireBoard(), account, net(), tv.verifyUa!);

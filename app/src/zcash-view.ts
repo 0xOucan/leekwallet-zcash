@@ -14,7 +14,7 @@
 
 import {
   checkPczt, encodeZsig, sha256, toHex, zErrorText, zSetBirthday, zShowAddress, zSign,
-  zsigName, MAX_BIRTHDAY, type ZAccount, type ZCall, type ZNetwork,
+  zsigName, MAX_BIRTHDAY, Z_SHARE_KEY_HINT, type ZAccount, type ZCall, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import type { Invoke } from "./tauri-transport.ts";
 import { readAccountRetrying } from "./zcash-auto.ts";
@@ -206,7 +206,7 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     const call = requireCall();
     const n = network;
     const i = account;
-    status(`Reading account ${i} (${networkLabel(n)}) from the board…`);
+    status(`Reading account ${i} (${networkLabel(n)}) from the board… ${Z_SHARE_KEY_HINT}`);
     /* Right after the PIN the board can answer 0x0300 ("no wallet on the
      * device", "derivation failed") while its vault is still opening; a
      * read a moment later works (docs/JOURNAL.md, the 0x0300 retry). The

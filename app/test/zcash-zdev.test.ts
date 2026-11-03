@@ -160,7 +160,14 @@ group("a board that says no");
   try {
     z.answer("y"); // the pairing
     await dev.pair();
-    z.answer("n"); // the review
+    z.answer("n"); // sharing the viewing key
+    await rejects(zGetAccount(dev.call, 0, "test"),
+      (e) => e instanceof DeviceError && e.code === ZErr.UserRejected, "refused viewing key");
+    z.answer("y");
+    check((await zGetAccount(dev.call, 0, "test")).ufvk === key("test/abandon-art/pp0/acct0").ufvk, "shared after a yes");
+    z.answer("n"); // the review, queued first: a second view-key question would take it
+    check((await zGetAccount(dev.call, 0, "test")).ufvk === key("test/abandon-art/pp0/acct0").ufvk,
+      "asked again in the same session");
     await rejects(zSign(dev.call, vector("iw_send_shielded_compact").bytes, 0, "test"),
       (e) => e instanceof DeviceError && e.code === ZErr.UserRejected, "rejected review");
     z.answer("n"); // the address check

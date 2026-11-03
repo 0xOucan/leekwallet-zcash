@@ -283,7 +283,9 @@ Every other board error is displayed verbatim, with its code.
 **Automatic, as in Zodl.** Connecting is one guided flow with no other
 click: Connect (or, from the launcher, *Reconnect your board*) pairs (compare
 the passkey, ALLOW on the board), asks the board for its PIN, reads the
-account (`zGetAccount`, once more after 1.5 s on 0x0300), and opens the
+account (`zGetAccount`, once more after 1.5 s on 0x0300; the board shares
+the viewing key only after OK on its "Share view key?", once per session,
+and the status line says so), and opens the
 wallet of that network, seed fingerprint and account, creating it when this
 device has none (`src/zcash-auto.ts`): born at the board's birthday for that
 network, or, when the board has none, at the chain tip minus 100 blocks,
