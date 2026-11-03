@@ -334,6 +334,20 @@ $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
 $(BUILD)/test_ble_chunk: test_ble_chunk.c ../src/ble-chunk.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
+# The OPTIGA Trust M bring-up (components/leek-se-optiga): frames, APDUs,
+# parsers and the link layer against a simulated chip. Pure C below leek-se.c,
+# so it runs here and under the sanitisers. See the file comment for what a
+# simulated chip can and cannot prove.
+SE_OPTIGA := ../components/leek-se-optiga
+SE_OPTIGA_SRC := test_se_optiga.c $(SE_OPTIGA)/optiga-proto.c $(SE_OPTIGA)/optiga-link.c $(SE_OPTIGA)/optiga-cmd.c
+
+$(BUILD)/test_se_optiga: $(SE_OPTIGA_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(SE_OPTIGA)/include -fsanitize=address,undefined -fno-sanitize-recover=all \
+	      -fno-omit-frame-pointer -o $@ $^ -lm
+
+TESTS += test_se_optiga
+all: $(BUILD)/test_se_optiga
+
 # SLIP-39. The core has no ESP-IDF dependency, so the host drives it directly;
 # entropy.c comes along because share values must come from the entropy gate.
 # shamir.c and slip39_english.c are trezor-crypto's own (the SLIP-39 authors'),
