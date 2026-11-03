@@ -31,13 +31,13 @@
  */
 
 import {
-  encodeZsig, explorerTx, formatZec, memoBytes, MEMO_BYTES, toHex, zErrorText, zGetAccount,
+  encodeZsig, explorerTx, formatZec, memoBytes, MEMO_BYTES, toHex, zErrorText,
   zSetBirthday, zShowAddress, zSign, Z_SHARE_KEY_HINT, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import { addressKind, parsePaymentRequest } from "../packages/core/src/zip321.ts";
 import type { Invoke } from "./tauri-transport.ts";
 import { networkLabel, type ZcashDeps, type ZcashView } from "./zcash-view.ts";
-import { ensureWallet } from "./zcash-auto.ts";
+import { ensureWallet, readSeedRetrying } from "./zcash-auto.ts";
 import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
@@ -146,11 +146,11 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   /** A wallet opened without the board (src/wallet-list.ts). */
   let offline: Key | null = null;
 
-  /** Which wallet is on screen: the board account's seed fingerprint and
-   * account on the current network, or the wallet opened without the
-   * board, or none until the board was read. */
+  /** Which wallet is on screen: the board's seed fingerprint and account
+   * on the current network, or the wallet opened without the board, or
+   * none until the board was read. */
   const keyNow = (): Key | null => {
-    const a = view.boardAccount;
+    const a = view.boardId;
     if (a && a.network === net()) return { network: a.network, wallet: a.seedFingerprint, account: a.account };
     return offline && offline.network === net() ? offline : null;
   };
@@ -182,7 +182,9 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     if (s.seedFingerprint === null || s.accountIndex === null) {
       throw new Error("This wallet has no board account; import it from the board first.");
     }
-    const a = await zGetAccount(requireBoard(), s.accountIndex, net());
+    /* The seed fingerprint alone: the board answers it with no question,
+     * and the viewing key is this wallet's already. */
+    const a = await readSeedRetrying(requireBoard(), s.accountIndex, net());
     if (a.seedFingerprint !== s.seedFingerprint) {
       throw new Error(`This board holds another seed than this wallet (ZFP ${s.zfp}). Connect the board that holds it, or open that seed on the board.`);
     }
@@ -311,10 +313,10 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     stopEdit();
     renderContacts();
     $("zwinfo").replaceChildren();
-    say("zwstatus", view.boardAccount === null
+    say("zwstatus", view.boardId === null
       ? (deps.call() === null
         ? "Connect the board, or open a wallet on this device without it (the launcher)."
-        : "Reading the board's account: its seed fingerprint names the wallet on this device…")
+        : "Reading which seed the board holds: its fingerprint names the wallet on this device…")
       : "");
   }
 
@@ -406,22 +408,26 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
    * path; a failure leaves the manual set-up on screen with the reason.
    */
   async function autoOpen(): Promise<void> {
-    const a = view.boardAccount;
     const k = keyNow();
-    if (!a || !k) return;
+    if (!view.boardId || !k) return;
     await refresh();
     if (!sameKey(k, keyNow()) || !status) return;
     if (!status.hasAccount && autoFailed === null) {
       settingUp = true;
-      say("zwstatus", "Setting up the wallet from the board…");
+      say("zwstatus", `Setting up the wallet from the board… ${Z_SHARE_KEY_HINT}`);
       try {
         await boardFree();
-        const r = await view.busy("setting up the wallet", () => ensureWallet(a, {
-          call: requireBoard(),
-          invoke,
-          say: (t) => { if (sameKey(k, keyNow())) say("zwstatus", t); },
-          log: deps.log,
-        }));
+        const r = await view.busy("setting up the wallet", async () => {
+          /* Only now the account: a new wallet needs the viewing key, and
+           * the board asks before it shares it. An existing one does not. */
+          const a = view.boardAccount ?? await view.readAccount();
+          return ensureWallet(a, {
+            call: requireBoard(),
+            invoke,
+            say: (t) => { if (sameKey(k, keyNow())) say("zwstatus", t); },
+            log: deps.log,
+          });
+        });
         if (r.birthdaySource === "tip") contacted();
       } catch (e) {
         autoFailed = zErrorText(e);
@@ -704,7 +710,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     if (key.network === "main" && !mainOk) throw new Error("This is mainnet: tick the confirmation above first.");
     try {
       const zsig = await view.busy("signing a send", async () => {
-        line(`Checking that this board holds the wallet's seed… ${Z_SHARE_KEY_HINT}`);
+        line("Checking that this board holds the wallet's seed…");
         const account = await boardMatches(s);
         bar.hidden = false;
         bar.value = 0;
@@ -1023,7 +1029,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const ua = recv.shielded().verifyUa;
     if (!s || !ua) return;
     void view.busy("the address check", async () => {
-      say("zwrecvstatus", `Checking that this board holds the wallet's seed… ${Z_SHARE_KEY_HINT}`);
+      say("zwrecvstatus", "Checking that this board holds the wallet's seed…");
       const account = await boardMatches(s);
       say("zwrecvstatus", "Compare the address on the board with the one here, then answer on the board.");
       await zShowAddress(requireBoard(), account, net(), ua);
@@ -1035,7 +1041,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const tv = recv.transparent();
     if (!s || !tv.verifyUa || !tv.address) return;
     void view.busy("the address check", async () => {
-      say("zwrecvstatus", `Checking that this board holds the wallet's seed… ${Z_SHARE_KEY_HINT}`);
+      say("zwrecvstatus", "Checking that this board holds the wallet's seed…");
       const account = await boardMatches(s);
       say("zwrecvstatus", "The board shows the unified address that carries this transparent receiver: compare, then answer on the board.");
       const r = await zShowAddress(requireBoard(), account, net(), tv.verifyUa!);
@@ -1171,10 +1177,10 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     leaveWallet();
     void refresh();
   });
-  /* The board's account names the wallet: a new one (first read, another
-   * seed after a passphrase, another account) is another wallet, opened (or
-   * created) and synced by itself; none (lock, disconnect) is no wallet on
-   * screen. */
+  /* The board's seed and account name the wallet: a new one (first read,
+   * another seed after a passphrase, another account) is another wallet,
+   * opened (or created) and synced by itself; none (lock, disconnect) is no
+   * wallet on screen. */
   view.onAccount((a) => {
     leaveWallet();
     /* A board account takes over from a wallet opened without the board. */

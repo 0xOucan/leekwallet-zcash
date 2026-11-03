@@ -229,11 +229,17 @@ export class BoardHost {
    * The seed fingerprint of the board's wallet now. Without it (an error
    * on the board) no device account is shown, and the popup says why (a
    * board set to the other network, say).
+   *
+   * zGetSeedFingerprint, which the board answers with no question: reading
+   * the whole account here put "Share view key?" up on every connect.
+   * Firmware without it (0x0001) still gets the account read.
    */
   async #readWallet(device, network) {
     let accountError = null;
-    const acc = await device.zGetAccount(0, network).catch((e) => ((accountError = String(e?.message ?? e)), null));
-    return { seedFingerprint: acc?.seedFingerprint ?? null, accountError };
+    const fail = (e) => ((accountError = String(e?.message ?? e)), null);
+    const seedFingerprint = await device.zGetSeedFingerprint(network).catch((e) =>
+      e?.code === ERR.UNKNOWN_METHOD ? device.zGetAccount(0, network).then((a) => a.seedFingerprint, fail) : fail(e));
+    return { seedFingerprint, accountError };
   }
 
   #startWatch() {

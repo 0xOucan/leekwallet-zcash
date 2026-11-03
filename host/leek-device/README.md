@@ -64,6 +64,7 @@ PIN never crosses the wire.
 
 | Method | Board call | What |
 |---|---|---|
+| `z_get_seed_fingerprint(network?)` | `zGetSeedFingerprint` | the ZIP 32 seed fingerprint of the open seed, with no question on the board: which seed is connected. A stable identifier of the seed that every paired host can read |
 | `z_get_account(account, network)` | `zGetAccount` | UFVK, unified address, t-address, seed fingerprint, and the birthday if the board knows one. Only after the user presses OK on the board's "Share view key?" (once per session) |
 | `z_show_address(account, network, ua)` | `zShowAddress` | The board proves `ua` is its own (even a rotated diversified address), shows it, and the user confirms |
 | `z_set_birthday(account, network, height)` | `zSetAccountMeta` | Record the birthday on the board, one per network. True if stored in flash, false if held until the board locks |

@@ -374,6 +374,11 @@ void*_Nonnull uniffi_leek_zcash_ffi_fn_method_leekdevice_get_storage_key(void*_N
 void uniffi_leek_zcash_ffi_fn_method_leekdevice_pair(void*_Nonnull ptr, void*_Nonnull listener, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_SEED_FINGERPRINT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_SEED_FINGERPRINT
+RustBuffer uniffi_leek_zcash_ffi_fn_method_leekdevice_seed_fingerprint(void*_Nonnull ptr, RustBuffer network, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_SET_BIRTHDAY
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_LEEKDEVICE_SET_BIRTHDAY
 int8_t uniffi_leek_zcash_ffi_fn_method_leekdevice_set_birthday(void*_Nonnull ptr, uint32_t index, RustBuffer network, uint32_t height, RustCallStatus *_Nonnull out_status
@@ -1001,6 +1006,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_get_storage_key(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_PAIR
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_PAIR
 uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_pair(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_SEED_FINGERPRINT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_SEED_FINGERPRINT
+uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_seed_fingerprint(void
     
 );
 #endif

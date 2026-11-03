@@ -868,6 +868,15 @@ impl LeekDevice {
         lz::get_features(&mut d).map(Into::into).map_err(|e| self.err(e))
     }
 
+    /// The ZIP 32 seed fingerprint (32 bytes) of the seed open on the board,
+    /// with no question on the board: how to recognise the board on every
+    /// connect. A stable identifier of the seed that every paired host can
+    /// read. `get_account` is for when the UFVK is needed.
+    pub fn seed_fingerprint(&self, network: Option<Network>) -> Result<Vec<u8>> {
+        let (mut d, _) = self.begin();
+        lz::seed_fingerprint(&mut d, network.map(Into::into)).map(|fp| fp.to_vec()).map_err(|e| self.err(e))
+    }
+
     pub fn get_account(&self, index: u32, network: Network) -> Result<Account> {
         let (mut d, _) = self.begin();
         lz::get_account(&mut d, index, network.into()).map(Into::into).map_err(|e| self.err(e))
