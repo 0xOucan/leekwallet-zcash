@@ -183,6 +183,12 @@ typedef struct {
 
 static VaultLayout active_layout = { .legacy = true, .gen = 0 };
 static bool    vault_rec_present = false;
+/* The vault holds something this firmware cannot read: NVS would not come
+ * up, the record is there but not in a form this build knows, or there are
+ * mnemonics and no verifier that opens them. Never the same as empty - see
+ * docs/AUDIT-SD-WRITES.md, finding N1. While it is set nothing is erased,
+ * no new password is accepted and no PIN attempt is spent. */
+static bool    vault_unreadable = false;
 static bool    vault_rec_loaded  = false;
 static uint8_t vault_stored_hash[HASH_SIZE] = {0};
 static bool    vault_stored_hash_valid = false;
@@ -205,7 +211,13 @@ static void load_vault_record(void) {
     vault_stored_hash_valid = false;
 
     nvs_handle_t nvs;
-    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+    esp_err_t oerr = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
+    if (oerr != ESP_OK) {
+        /* NOT_FOUND is a namespace nobody ever wrote: a new device. Any other
+         * answer is NVS failing to say, which is not the same thing. */
+        if (oerr != ESP_ERR_NVS_NOT_FOUND) {
+            vault_unreadable = true;
+        }
         return;
     }
 
@@ -219,6 +231,16 @@ static void load_vault_record(void) {
         active_layout.gen = rec.generation;
         memcpy(vault_stored_hash, rec.password_hash, HASH_SIZE);
         vault_stored_hash_valid = true;
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        /* A record is there and this build cannot read it: a newer version
+         * (a downgrade - a longer one comes back as INVALID_LENGTH), or a
+         * damaged one. It used to fall through to the legacy layout below,
+         * and the boot sweep then erased every generation slot as "stale" -
+         * the seeds, with no PIN typed. It is the vault, unreadable; it is
+         * never "no record". */
+        ESP_LOGE(TAG, "Vault record unreadable (%s, %u bytes); refusing to touch the vault",
+                 esp_err_to_name(err), (unsigned)len);
+        vault_unreadable = true;
     } else {
         size_t hlen = HASH_SIZE;
         if (nvs_get_blob(nvs, KEY_PASSWORD_HASH, vault_stored_hash, &hlen) == ESP_OK &&
@@ -316,6 +338,56 @@ static void get_mnemonic_key(uint8_t index, char *key, size_t key_size) {
 
 static void get_iv_key(uint8_t index, char *key, size_t key_size) {
     slot_key("iv", index, key, key_size);
+}
+
+// Does what is stored contradict the layout load_vault_record() chose?
+//
+// Only asked when there is no record. Then the layout is the legacy one, and
+// it is right for exactly two kinds of device: a new one (no verifier, no
+// mnemonics) and a pre-generation one (pwd_hash, mnemonics under m_N). What
+// it is wrong for is a device whose record was lost - its mnemonics sit
+// under m0_N or m1_N, which the legacy layout calls stale and the boot sweep
+// erases - and a device with mnemonics and no verifier at all, which would
+// otherwise be offered PIN setup over them.
+//
+// The order of the vault's own writes is what makes this safe to ask: a
+// password is always published before the first mnemonic is written, and a
+// PIN change from the legacy layout leaves m_N in place until after its
+// record lands. So no interrupted operation of this firmware produces either
+// contradiction; only lost or foreign storage does.
+static bool vault_contradicts_layout(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return false;   /* nothing there: the new device */
+    }
+    bool any_legacy = false, any_gen = false;
+    for (uint8_t i = 1; i <= MAX_WALLETS; i++) {
+        char key[16];
+        size_t len = 0;
+        snprintf(key, sizeof(key), "m_%d", i);
+        if (nvs_get_blob(nvs, key, NULL, &len) == ESP_OK) any_legacy = true;
+        for (uint8_t g = 0; g <= 1; g++) {
+            len = 0;
+            snprintf(key, sizeof(key), "m%u_%d", (unsigned)g, i);
+            if (nvs_get_blob(nvs, key, NULL, &len) == ESP_OK) any_gen = true;
+        }
+    }
+    uint8_t count = 0;
+    bool counted = nvs_get_u8(nvs, KEY_WALLET_COUNT, &count) == ESP_OK && count > 0;
+    nvs_close(nvs);
+
+    if (vault_stored_hash_valid) {
+        if (any_gen && !any_legacy) {
+            ESP_LOGE(TAG, "Generation slots and no vault record: the record was lost");
+            return true;
+        }
+        return false;
+    }
+    if (any_legacy || any_gen || counted) {
+        ESP_LOGE(TAG, "Mnemonics stored and no verifier for them");
+        return true;
+    }
+    return false;
 }
 
 // Erase everything the authoritative record does not point at.
@@ -1198,6 +1270,7 @@ void wallet__reset_static_state_for_test(void) {
     memzero(&state, sizeof(state));
     vault_rec_loaded = false;
     vault_rec_present = false;
+    vault_unreadable = false;
     vault_stored_hash_valid = false;
     vault_params_loaded = false;
     active_layout.legacy = true;
@@ -1214,20 +1287,36 @@ WalletError wallet_init(void) {
     }
 
     // Initialize NVS
+    //
+    // Never erased here. NO_FREE_PAGES and NEW_VERSION_FOUND are what the
+    // ESP-IDF examples answer with nvs_flash_erase(), and on this device the
+    // partition they would erase is the vault: a downgrade, or a partition
+    // that no longer mounts, turned into a factory-new wallet offering PIN
+    // setup. A vault that cannot be read is reported as one (finding N1 in
+    // docs/AUDIT-SD-WRITES.md); erasing it is the owner's decision, made
+    // through the wipe, never storage's.
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        nvs_flash_erase();
-        err = nvs_flash_init();
-    }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "NVS init failed: %s; the vault is left as it is", esp_err_to_name(err));
+        vault_unreadable = true;
+        vault_rec_loaded = true;
+        state.initialized = true;
+        state.password_set = true;
+        state.unlocked = false;
+        state.has_mnemonic = false;
         return WALLET_ERROR_STORAGE_FAILED;
     }
 
     // Whether a password exists, and which generation opens it, come from the
     // same record - asking two sources is how they get to disagree.
     load_vault_record();
-    state.password_set = vault_stored_hash_valid;
+    if (!vault_unreadable && !vault_rec_present && vault_contradicts_layout()) {
+        vault_unreadable = true;
+    }
+    /* An unreadable vault still has a password - just not one this build can
+     * check. Reporting "no password" is what offers PIN setup on a device
+     * full of seeds. */
+    state.password_set = vault_stored_hash_valid || vault_unreadable;
 
     state.initialized = true;
     state.unlocked = false;
@@ -1240,6 +1329,13 @@ WalletError wallet_init(void) {
      * open one. */
     load_wallet_metadata();
     load_vault_params();
+
+    if (vault_unreadable) {
+        /* Neither sweep below may run: both decide what is stale from the
+         * record, and there is no record to decide from. */
+        ESP_LOGE(TAG, "Vault unreadable: nothing erased, unlock refused");
+        return WALLET_OK;
+    }
 
     /* Sweep up whatever an interrupted PIN change left behind. Safe at any
      * boot because the record already decided which generation is real. */
@@ -1268,9 +1364,18 @@ WalletStatus wallet_get_status(void) {
     return status;
 }
 
+bool wallet_storage_unreadable(void) {
+    return vault_unreadable;
+}
+
 WalletError wallet_set_password(const char *password, size_t length) {
     if (!state.initialized) {
         return WALLET_ERROR_NOT_INITIALIZED;
+    }
+    if (vault_unreadable) {
+        /* A new password over a vault nobody can read is a new vault written
+         * over the old one's ciphertext. */
+        return WALLET_ERROR_STORAGE_FAILED;
     }
     if (length < MIN_PASSWORD_LENGTH) {
         return WALLET_ERROR_WRONG_PASSWORD;
@@ -1341,6 +1446,9 @@ WalletError wallet_set_password(const char *password, size_t length) {
 WalletError wallet_unlock(const char *password, size_t length) {
     if (!state.initialized) {
         return WALLET_ERROR_NOT_INITIALIZED;
+    }
+    if (vault_unreadable) {
+        return WALLET_ERROR_STORAGE_FAILED;
     }
     if (!state.password_set) {
         return WALLET_ERROR_WRONG_PASSWORD;
@@ -1424,7 +1532,7 @@ void wallet_lock(void) {
 }
 
 bool wallet_verify_password(const char *password, size_t length) {
-    if (!state.password_set) {
+    if (!state.password_set || vault_unreadable) {
         return false;
     }
 
@@ -1514,6 +1622,9 @@ WalletError wallet_change_password(const char *old_password, size_t old_length,
                                    WalletProgressFn progress) {
     if (!state.initialized) {
         return WALLET_ERROR_NOT_INITIALIZED;
+    }
+    if (vault_unreadable) {
+        return WALLET_ERROR_STORAGE_FAILED;
     }
     if (!state.password_set) {
         return WALLET_ERROR_WRONG_PASSWORD;
@@ -1968,6 +2079,7 @@ WalletError wallet_wipe(void) {
     memzero(&state, sizeof(state));
     vault_rec_loaded = false;
     vault_rec_present = false;
+    vault_unreadable = false;
     vault_stored_hash_valid = false;
     vault_params_loaded = false;
     active_layout.legacy = true;

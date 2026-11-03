@@ -82,6 +82,10 @@ typedef enum {
     /* A host asked to show an address (zShowAddress): the UA in full, then
      * "same as the app?". Answered through the sign-outcome channel. */
     SCREEN_ADDRESS_CHECK,
+    /* The vault is there and cannot be read (wallet_storage_unreadable()).
+     * A dead end on purpose: no PIN is asked, because none can be checked,
+     * and nothing offers setup, because that would write over the seeds. */
+    SCREEN_STORAGE_FAULT,
     SCREEN_COUNT
 } screen_id_t;
 

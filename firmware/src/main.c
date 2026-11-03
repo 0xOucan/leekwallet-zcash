@@ -75,15 +75,21 @@ void app_main(void)
     return;
 #endif
 
-    /* Initialize NVS (required for wallet and PIN storage) */
+    /* Initialize NVS (required for wallet and PIN storage).
+     *
+     * Not erased when it will not mount, though that is what the ESP-IDF
+     * examples do with NO_FREE_PAGES and NEW_VERSION_FOUND: here the partition
+     * is the vault, and erasing it turned a downgrade or a damaged page into a
+     * factory-new device offering PIN setup. Nor aborted, which would only
+     * reboot into the same answer forever. wallet_init() meets the same error,
+     * reports the vault unreadable, and the UI says so instead of asking for a
+     * PIN (docs/AUDIT-SD-WRITES.md N1). */
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "NVS partition truncated, erasing...");
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS will not mount (%s); left as it is", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "NVS initialized");
     }
-    ESP_ERROR_CHECK(ret);
-    ESP_LOGI(TAG, "NVS initialized");
 
     /* Initialize wallet subsystem */
     wallet_init();

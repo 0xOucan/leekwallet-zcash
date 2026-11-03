@@ -485,6 +485,15 @@ $(BUILD)/test_pin_change: test_pin_change.c esp_stubs.c host_stubs.c \
                           $(VAULT_SRC) ../src/pin.c $(VAULT_CRYPTO) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $^
 
+# A vault that cannot be read is never an empty one (docs/AUDIT-SD-WRITES.md
+# N1): the real vault and PIN gate, with records broken and NVS unmountable.
+TESTS += test_vault_unreadable
+all: $(BUILD)/test_vault_unreadable
+$(BUILD)/test_vault_unreadable: CFLAGS += -DAES_VAR
+$(BUILD)/test_vault_unreadable: test_vault_unreadable.c esp_stubs.c host_stubs.c \
+                                $(VAULT_SRC) ../src/pin.c $(VAULT_CRYPTO) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $^
+
 # The real src/protocol.c, against an in-memory USB-Serial-JTAG pipe. This is
 # the only place the wire protocol exists on the device, so it is the reference
 # the mock has to match; see test_protocol.c.

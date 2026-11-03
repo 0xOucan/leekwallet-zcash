@@ -51,6 +51,9 @@ void fake_wallet_seed_loading(uint32_t polls);
  */
 bool fake_wallet_seed_ready(void);
 
+/** Make the vault one that cannot be read (wallet_storage_unreadable). */
+void fake_wallet_unreadable(void);
+
 /** True once the UI has called wallet_mark_backup_verified for `index`. */
 bool fake_wallet_backup_verified(uint8_t index);
 
