@@ -204,6 +204,17 @@ void ui_request_show_address(const char *ua, const char *t_address, uint32_t acc
     outcome = SIGN_PENDING;
 }
 
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble)
+{
+    printf("\n[device] Share view key? The app will see your balance and history.\n"
+           "  account %u, %s; %s, pairing code %s\n",
+           (unsigned)account, network == ZS_NET_MAIN ? "mainnet" : "testnet",
+           over_ble ? "BLE" : "USB", pairing_code && *pairing_code ? pairing_code : "none");
+    question_pending = true;
+    outcome = SIGN_PENDING;
+}
+
 /* Polled by protocol.c's wait_for_user(); the first poll asks. */
 SignOutcome ui_sign_outcome(void)
 {

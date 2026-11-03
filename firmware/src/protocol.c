@@ -41,6 +41,7 @@
 #include "leek-wallet.h"
 #include "pin.h"
 #include "session.h"
+#include "transport.h"
 #include "ui.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
@@ -547,10 +548,10 @@ static void host_passphrase_forget(void)
  * Block until the user answers the prompt on screen, or long enough that
  * nobody is going to.
  *
- * Shared by every confirmation - today only the passphrase - because a
- * second copy of this loop is a second place for a request to be answered
- * without anyone having looked at the device. Returns the outcome; the caller
- * owns whatever it has to undo on anything but SIGN_APPROVED.
+ * Shared by every confirmation - passphrase, signature, address, viewing
+ * key - because a second copy of this loop is a second place for a request to
+ * be answered without anyone having looked at the device. Returns the outcome;
+ * the caller owns whatever it has to undo on anything but SIGN_APPROVED.
  */
 static SignOutcome wait_for_user(void)
 {
@@ -685,6 +686,98 @@ static bool network_is_the_boards(uint8_t network)
     ui_notify_wrong_network(network);
     send_error((uint16_t)(ERR_ZSIGN_BASE | (unsigned)-ZSIGN_E_BOARD_NETWORK), why);
     return false;
+}
+
+/*
+ * The viewing keys the user agreed, on the board, to give this session's host.
+ *
+ * zGetAccount asks before it answers (see there). A companion does not ask
+ * once, though: it reads the account at import, again after an unlock, again
+ * to compare what the board has with what it stored, and a question that came
+ * back every time would be answered without reading it, which is worse than
+ * none. So a yes holds for the rest of the session that earned it, and for
+ * nothing else:
+ *
+ *   - the session, by session_generation(): a disconnect, a new handshake, a
+ *     transport switch or a frame that failed to authenticate all end it, so
+ *     a host that pairs next asks again. Nothing here survives a reboot,
+ *     because RAM does not; a host the user wants trusted for good is a
+ *     different feature with a different screen.
+ *   - the account and network asked about, and the SEED: the same index
+ *     under another passphrase is another wallet, and a yes for one is not a
+ *     yes for the other.
+ *
+ * A handful of slots, overwritten in turn: a companion uses one account or
+ * two, and a host that cycles through more just gets asked again.
+ */
+#define SHARED_KEYS_MAX 4
+static struct {
+    bool     used;
+    uint32_t session;
+    uint32_t account;
+    uint8_t  network;
+    uint8_t  seed_fingerprint[32];
+} shared_keys[SHARED_KEYS_MAX];
+static unsigned shared_keys_next;
+
+static bool view_key_already_shared(uint32_t account, uint8_t network,
+                                    const uint8_t seed_fingerprint[32])
+{
+    const uint32_t now = session_generation();
+    for (unsigned i = 0; i < SHARED_KEYS_MAX; i++) {
+        if (shared_keys[i].used && shared_keys[i].session == now &&
+            shared_keys[i].account == account && shared_keys[i].network == network &&
+            memcmp(shared_keys[i].seed_fingerprint, seed_fingerprint, 32) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void view_key_note_shared(uint32_t account, uint8_t network,
+                                 const uint8_t seed_fingerprint[32])
+{
+    unsigned i = shared_keys_next++ % SHARED_KEYS_MAX;
+    shared_keys[i].used = true;
+    shared_keys[i].session = session_generation();
+    shared_keys[i].account = account;
+    shared_keys[i].network = network;
+    memcpy(shared_keys[i].seed_fingerprint, seed_fingerprint, 32);
+}
+
+/*
+ * Ask the user whether this session's host may have the account's viewing
+ * key, unless they already said yes in this session. True to share; on false
+ * the refusal has been sent: 0x0200 for a no, 0x0201 when nobody answered in
+ * the 120 s window, the same two a signature gets.
+ */
+static bool share_view_key_allowed(uint32_t account, uint8_t network,
+                                   const uint8_t seed_fingerprint[32])
+{
+    if (view_key_already_shared(account, network, seed_fingerprint)) {
+        return true;
+    }
+    const uint32_t asked_in = session_generation();
+    ui_request_share_view_key(account, network, session_passkey(),
+                              transport_get() == TRANSPORT_BLE);
+    SignOutcome outcome = wait_for_user();
+    if (outcome != SIGN_APPROVED) {
+        send_error(outcome == SIGN_PENDING ? ERR_USER_TIMEOUT : ERR_USER_REJECTED,
+                   outcome == SIGN_PENDING ? "no answer on the device"
+                                           : "viewing key not shared: refused on the device");
+        return false;
+    }
+    /* The yes was for the host that asked. If its session ended while the
+     * question was up (the cable pulled, the board locked), there is no one
+     * to give the key to - and dispatch() answers a request whose session
+     * is gone in PLAINTEXT, so going on would put the key on the wire in
+     * the clear. */
+    if (session_generation() != asked_in || session_state() != SESSION_ACTIVE) {
+        send_session_error(ERR_SESSION, "the session ended before the answer");
+        return false;
+    }
+    view_key_note_shared(account, network, seed_fingerprint);
+    return true;
 }
 
 /* zSignBegin / zSignChunk / zSignFinish. Writes the result into `w` and
@@ -1126,11 +1219,13 @@ static void dispatch(const uint8_t *payload, size_t len)
     } else if (strcmp(method, "zGetAccount") == 0) {
         /* The account a companion imports: viewing key, address, and the
          * seed fingerprint that lets it tell this seed's accounts apart (and a
-         * passphrase wallet from the base one). Viewing keys reveal history,
-         * not spend authority, so this needs a session and an unlocked device
-         * but no on-screen confirmation - the same footing as the xpub a
-         * watch-only Bitcoin wallet asks for. Showing an address for the user
-         * to compare is zShowAddress's job. */
+         * passphrase wallet from the base one). A viewing key is not spend
+         * authority, but it is the account's whole balance and history, for
+         * good: so besides a session and an unlocked device it takes a yes on
+         * the board, once per session (share_view_key_allowed). It used to go
+         * to any paired host without one, on the footing of a watch-only
+         * xpub; a shielded history is worth more than that. Showing an
+         * address for the user to compare is zShowAddress's job. */
         if (!request_is_authenticated()) {
             send_session_error(ERR_SESSION, "session required");
             return;
@@ -1169,6 +1264,13 @@ static void dispatch(const uint8_t *payload, size_t len)
         }
         if (werr != WALLET_OK) {
             send_wallet_error(werr);
+            return;
+        }
+        /* Derived first, asked second: a board with no seed says so without
+         * a question nobody could usefully answer, and the seed fingerprint
+         * is what a yes earlier in the session is matched against. */
+        if (!share_view_key_allowed(account, network, acct.keys.seed_fingerprint)) {
+            memzero(&acct, sizeof acct);
             return;
         }
         /* The birthday, when the device has one for this account (a
@@ -1670,6 +1772,10 @@ void protocol__pump_for_test(void)
 void protocol__reset_for_test(void)
 {
     rx_len = 0;
+#if LEEK_HAS_ZCASH
+    memset(shared_keys, 0, sizeof shared_keys);
+    shared_keys_next = 0;
+#endif
 }
 #endif
 

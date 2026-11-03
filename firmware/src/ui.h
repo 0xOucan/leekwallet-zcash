@@ -82,6 +82,10 @@ typedef enum {
     /* A host asked to show an address (zShowAddress): the UA in full, then
      * "same as the app?". Answered through the sign-outcome channel. */
     SCREEN_ADDRESS_CHECK,
+    /* A host asked for an account's viewing key (zGetAccount): "share it?",
+     * with the account and the pairing code of the host that asked.
+     * Answered through the sign-outcome channel. */
+    SCREEN_SHARE_VIEW_KEY,
     SCREEN_COUNT
 } screen_id_t;
 
@@ -323,6 +327,20 @@ void ui_request_zsign_review(const zs_summary *s, uint8_t network);
  */
 void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
                              uint8_t network);
+
+/**
+ * A host asked for an account's viewing key (zGetAccount). The key is not
+ * spend authority, but it is the account's whole balance and history, so the
+ * user says yes on the device first, as for a signature.
+ *
+ * `pairing_code` names the host: the six digits the user compared when this
+ * session was paired, or NULL/"" when there is none to show (the screen then
+ * names the link only). `over_ble` says which link it came in on. The answer
+ * arrives through ui_sign_outcome(): APPROVED = share, REJECTED = refuse. The
+ * code is copied.
+ */
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble);
 #endif
 
 typedef enum {
