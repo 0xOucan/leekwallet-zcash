@@ -73,6 +73,22 @@ fun main(args: Array<String>) {
     check(back.accounts == rec.accounts && back.seedFingerprint.contentEquals(rec.seedFingerprint), "record")
     check(accountRecordType() == "leek-zcash-accounts", "record type")
 
+    // Stored app data: the draft's vector 1 key, sealed and opened.
+    val sk = StorageKey.fromBytes(
+        hex("f43c678ee392cc4552daa3bde21c3cb15b416811dfdacf64e7aceca6114bd0d0"),
+        "xyz.leekwallet.zcash", 0u, Network.MAIN,
+    )
+    check(sk.dbKey().contentEquals(hex("abd9811ecdfd468b538e7f11714bdacca99e354ea622d31f0ee3b2cee3f85973")), "db subkey")
+    check(sk.openUfvk(sk.sealUfvk("uview1example")) == "uview1example", "ufvk round trip")
+    sk.forget()
+    try {
+        sk.openDb(ByteArray(0))
+        check(false, "a forgotten key is refused")
+    } catch (e: LeekException.Storage) {
+        check(e.code.toInt() == 704, "forgotten: $e")
+    }
+    sk.close()
+
     // A Kotlin transport: its failures keep their kind.
     LeekDevice(Refused(), LinkKind.STREAM).use { d ->
         try {

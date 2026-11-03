@@ -73,6 +73,11 @@ void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pa
 {
     (void)account; (void)network; (void)pairing_code; (void)over_ble;
 }
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble)
+{
+    (void)app_id; (void)account; (void)network; (void)pairing_code; (void)over_ble;
+}
 void ui_sign_clear(void) { }
 void ui_sign_expire(void) { }
 

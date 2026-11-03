@@ -190,6 +190,23 @@ void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pa
     snprintf(share_key_code, sizeof share_key_code, "%s", pairing_code ? pairing_code : "");
 }
 
+/* zGetStorageKey's question: how often, and what it named. */
+static int  storage_key_prompts;
+static char storage_key_app[72];
+static uint32_t storage_key_account;
+static uint8_t  storage_key_network = 0xFF;
+static char storage_key_code[8];
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble)
+{
+    (void)over_ble;
+    storage_key_prompts++;
+    snprintf(storage_key_app, sizeof storage_key_app, "%s", app_id);
+    storage_key_account = account;
+    storage_key_network = network;
+    snprintf(storage_key_code, sizeof storage_key_code, "%s", pairing_code ? pairing_code : "");
+}
+
 /* Counted, because the timeout path answering the host is only half of what it
  * owes: the confirmation screen has to come down too, and for a long time it
  * did not. */
@@ -1672,6 +1689,232 @@ static void test_zget_account_asks_first(void)
     }
     CHECK(!leaked, "the viewing key went out in the clear");
     stub_session_dies_on_answer = false;
+}
+
+/* --------------------------------------------------------- zGetStorageKey */
+
+#include "bip39.h"
+#include "memzero.h"
+
+/* `app_id_len` < 0 leaves appId out; otherwise that many bytes of `app_id`,
+ * so a test can send an embedded NUL. */
+static size_t zstorage_request(uint8_t *buf, size_t cap, const char *app_id, int app_id_len,
+                               int account, const char *network)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 1 + (app_id_len >= 0) + (account >= 0) + (network != NULL));
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zGetStorageKey");
+    if (app_id_len >= 0) {
+        /* cbor_write_text takes a C string; write the header by hand. */
+        cbor_write_text(&w, "appId");
+        if (app_id_len < 24) {
+            const uint8_t h = (uint8_t)(0x60 | app_id_len);
+            memcpy(buf + w.length, &h, 1);
+            w.length += 1;
+        } else {
+            const uint8_t h[2] = { 0x78, (uint8_t)app_id_len };
+            memcpy(buf + w.length, h, 2);
+            w.length += 2;
+        }
+        memcpy(buf + w.length, app_id, (size_t)app_id_len);
+        w.length += (size_t)app_id_len;
+    }
+    if (account >= 0) {
+        cbor_write_text(&w, "account");
+        cbor_write_uint(&w, (uint32_t)account);
+    }
+    if (network) {
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, network);
+    }
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+static size_t zstorage(uint8_t *buf, size_t cap, const char *app_id, int account,
+                       const char *network)
+{
+    return zstorage_request(buf, cap, app_id, (int)strlen(app_id), account, network);
+}
+
+/* The key the fake wallet's seed should give, by the C signer directly. */
+static void expected_storage_key(const char *app_id, uint32_t account, uint8_t net,
+                                 uint8_t out[32])
+{
+    uint8_t seed[64];
+    mnemonic_to_seed(TEST_MNEMONIC, "", seed, NULL);
+    CHECK(zc_storage_key(seed, 64, net, account, app_id, strlen(app_id), out) == ZS_OK,
+          "zc_storage_key failed");
+    memzero(seed, sizeof seed);
+}
+
+static bool frame_contains(const Frame *f, const uint8_t *needle, size_t n)
+{
+    for (size_t i = 0; f->present && i + n <= f->len; i++) {
+        if (memcmp(f->payload + i, needle, n) == 0) return true;
+    }
+    return false;
+}
+
+static void test_zget_storage_key(void)
+{
+    printf("== zGetStorageKey: an app's Storage Key, after a yes, every time\n");
+    fresh_device();
+    /* `asked` is the one request the user answers; `payload` the rest. */
+    uint8_t asked[96], payload[160];
+    const char *app = "xyz.leekwallet.zcash";
+    const size_t len = zstorage(asked, sizeof asked, app, 0, "test");
+
+    /* Never over plaintext, and never on a locked board. */
+    send_plain(asked, len);
+    expect_error(T_ERROR, E_SESSION, "zGetStorageKey before any handshake");
+    device_has_a_wallet();
+    confirmed_session(31);
+    char paired[8];
+    snprintf(paired, sizeof paired, "%s", session_passkey());
+    storage_key_prompts = 0;
+    send_encrypted(asked, len);
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "zGetStorageKey while locked");
+    pin_set("123456");
+    pin_verify("123456");
+
+    /* Plaintext inside a session is not the session. */
+    send_plain(asked, len);
+    expect_error(T_ERROR, E_SESSION, "a plaintext zGetStorageKey inside a session");
+
+    /* Invalid identifiers are refused as they are, before any screen. */
+    static const char *bad[] = {
+        "Xyz.leekwallet.zcash", "xyz", "xyz..zcash", ".xyz.zcash", "xyz.zcash.", "-a.b",
+        "xyz.leek wallet", "xyz.leekwället", "ab",
+        "abcdefghij.abcdefghij.abcdefghij.abcdefghij.abcdefghij.abcdefghij",
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        send_encrypted(payload, zstorage(payload, sizeof payload, bad[i], 0, "test"));
+        expect_error(T_ENC_ERROR, E_MALFORMED, bad[i]);
+    }
+    send_encrypted(payload, zstorage_request(payload, sizeof payload, "a.b\0c", 5, 0, "test"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "an embedded NUL");
+    send_encrypted(payload, zstorage_request(payload, sizeof payload, NULL, -1, 0, "test"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "no appId");
+    send_encrypted(payload, zstorage(payload, sizeof payload, app, 0, NULL));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "no network");
+    {
+        CborWriter w;
+        cbor_writer_init(&w, payload, sizeof payload);
+        cbor_write_map(&w, 4);
+        cbor_write_text(&w, "method");
+        cbor_write_text(&w, "zGetStorageKey");
+        cbor_write_text(&w, "appId");
+        cbor_write_text(&w, app);
+        cbor_write_text(&w, "account");
+        cbor_write_uint(&w, 0x80000000u);
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, "test");
+        send_encrypted(payload, w.length);
+        expect_error(T_ENC_ERROR, E_MALFORMED, "a hardened account index");
+    }
+    /* The other network than the board's: refused, nothing asked. */
+    send_encrypted(payload, zstorage(payload, sizeof payload, app, 0, "main"));
+    Frame f = next_reply();
+    uint32_t code = 0;
+    CHECK(f.present && f.type == T_ENC_ERROR && error_code(&f, &code) &&
+          code == (0x0500u | 40u), "mainnet on a testnet board: code 0x%04X", (unsigned)code);
+    CHECK(storage_key_prompts == 0, "asked about a request it refuses (%d)", storage_key_prompts);
+
+    /* No: the code a refused signature gets. Nothing remembered. */
+    scripted_outcome = SIGN_REJECTED;
+    send_encrypted(asked, len);
+    expect_error(T_ENC_ERROR, E_REJECTED, "a no on the device");
+    CHECK(storage_key_prompts == 1, "the device did not ask (%d)", storage_key_prompts);
+    CHECK(strcmp(storage_key_app, app) == 0 && storage_key_account == 0 &&
+          storage_key_network == 1, "asked about \"%s\" account %u net %u", storage_key_app,
+          (unsigned)storage_key_account, storage_key_network);
+    CHECK(strcmp(storage_key_code, paired) == 0, "the host was named \"%s\", paired as \"%s\"",
+          storage_key_code, paired);
+
+    /* Nobody answered: the timeout code, and the question comes down. */
+    sign_expiries = 0;
+    scripted_outcome = SIGN_PENDING;
+    send_encrypted(asked, len);
+    expect_error(T_ENC_ERROR, E_TIMEOUT, "nobody answered");
+    CHECK(sign_expiries == 1, "the question was left on the screen");
+
+    /* Yes: the key, and only the key the draft defines. */
+    uint8_t want[32];
+    scripted_outcome = SIGN_APPROVED;
+    for (int round = 0; round < 2; round++) {
+        send_encrypted(asked, len);
+        f = next_reply();
+        const uint8_t *body;
+        size_t body_len;
+        CborItem it;
+        char text[80];
+        CHECK(f.present && f.type == T_ENC_RESPONSE, "a yes was not answered with the key");
+        if (f.present && result_body(&f, &body, &body_len)) {
+            expected_storage_key(app, 0, ZS_NET_TEST, want);
+            CHECK(cbor_map_find(body, body_len, "storageKey", &it) && it.type == CBOR_BYTES &&
+                  it.value == 32 && memcmp(it.data, want, 32) == 0, "storageKey differs");
+            CHECK(cbor_map_find(body, body_len, "appId", &it) &&
+                  cbor_text_copy(&it, text, sizeof text) && strcmp(text, app) == 0,
+                  "appId not echoed");
+            CHECK(cbor_map_find(body, body_len, "network", &it) &&
+                  cbor_text_copy(&it, text, sizeof text) && strcmp(text, "test") == 0,
+                  "network not echoed");
+            CHECK(cbor_map_find(body, body_len, "account", &it) && it.type == CBOR_UINT &&
+                  it.value == 0, "account not echoed");
+        }
+    }
+    /* Asked both times: a yes is never remembered, not even in its session. */
+    CHECK(storage_key_prompts == 4, "a yes was remembered (%d questions)", storage_key_prompts);
+
+    /* Another app, another account: another key, and the question names it. */
+    const char *other = "com.example.wallet.with-a-rather-long-name.and_more.labels";
+    send_encrypted(payload, zstorage(payload, sizeof payload, other, 3, "test"));
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "a second app was not answered");
+    CHECK(strcmp(storage_key_app, other) == 0 && storage_key_account == 3,
+          "the question named \"%s\" account %u", storage_key_app, (unsigned)storage_key_account);
+    {
+        const uint8_t *body;
+        size_t body_len;
+        CborItem it;
+        uint8_t k[32];
+        expected_storage_key(other, 3, ZS_NET_TEST, k);
+        CHECK(f.present && result_body(&f, &body, &body_len) &&
+              cbor_map_find(body, body_len, "storageKey", &it) && it.value == 32 &&
+              memcmp(it.data, k, 32) == 0 && memcmp(k, want, 32) != 0,
+              "the second app's key differs from the C signer's, or equals the first");
+    }
+
+    /* A yes that lands after the session died releases nothing: the key must
+     * not ride a plaintext answer. */
+    session_reset();
+    host_tx = host_rx = 0;
+    confirmed_session(32);
+    stub_session_dies_on_answer = true;
+    send_encrypted(asked, len);
+    f = next_reply();
+    code = 0;
+    CHECK(f.present && (f.type == T_ERROR || f.type == T_ENC_ERROR) && error_code(&f, &code) &&
+          code == E_SESSION, "a yes after the session ended: frame 0x%02X, code 0x%04X",
+          f.present ? f.type : 0, (unsigned)code);
+    CHECK(!frame_contains(&f, want, 32), "the storage key went out in the clear");
+    stub_session_dies_on_answer = false;
+
+    /* No seed: refused before the question. */
+    session_reset();
+    host_tx = host_rx = 0;
+    confirmed_session(33);
+    fake_wallet_reset();
+    pin_set("123456");
+    pin_verify("123456");
+    wallet_unlock("123456", 6);
+    const int prompts = storage_key_prompts;
+    send_encrypted(asked, len);
+    expect_error(T_ENC_ERROR, E_NO_WALLET, "no wallet");
+    CHECK(storage_key_prompts == prompts, "asked about a key the device does not have");
+    scripted_outcome = SIGN_PENDING;
 }
 
 /* -------------------------------------------------------- zSetAccountMeta */
@@ -3584,6 +3827,7 @@ static int run_all_tests(void)
     test_select_wallet();
     test_zget_account();
     test_zget_account_asks_first();
+    test_zget_storage_key();
     test_zset_account_meta();
     test_large_frames_cross_the_usb_driver();
     test_zcash_waits_for_the_wallet();

@@ -1715,6 +1715,7 @@ dependencies = [
  "leek-transport-serial",
  "sha2 0.10.8",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -1729,8 +1730,13 @@ name = "leek-zcash"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake2b_simd",
+ "chacha20poly1305 0.10.1",
  "ciborium",
+ "getrandom 0.3.4",
  "hex",
+ "hkdf",
+ "hmac 0.12.1",
  "leek-device",
  "leek-transport-serial",
  "orchard",
@@ -1738,6 +1744,7 @@ dependencies = [
  "rand 0.10.3",
  "secp256k1",
  "serde_json",
+ "sha2 0.10.8",
  "zcash_address",
  "zcash_client_backend",
  "zcash_keys",
@@ -1745,6 +1752,8 @@ dependencies = [
  "zcash_protocol",
  "zcash_transparent",
  "zecz-core",
+ "zeroize",
+ "zip32",
 ]
 
 [[package]]

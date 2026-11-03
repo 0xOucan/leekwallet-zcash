@@ -14,6 +14,10 @@
 //!   into the wallet's PCZT, every signature verified).
 //! - SD card (experimental): [`prepare_sd_sign`] (the file the board reads)
 //!   and [`finish_sd_sign`] (its `.zsig` back into a [`SignResult`]).
+//! - Stored app data: [`get_storage_key`] (the app's Storage Key, after a
+//!   press on the board every time) and [`StorageKey`] (subkeys, and
+//!   [`StorageKey::seal`] / [`StorageKey::open`] for the database and the
+//!   UFVK), per docs/zcash/zip-draft-app-storage-keys.md.
 //! - Records: [`AccountRecord`] (the import record as CBOR),
 //!   [`SignResult::to_bytes`] (persist before broadcast) and
 //!   [`check_mined`] (compare after mining).
@@ -37,6 +41,7 @@ mod record;
 mod redact;
 mod sd;
 mod sign;
+mod storage;
 mod ua;
 
 pub use account::{
@@ -53,6 +58,10 @@ pub use record::{AccountEntry, AccountRecord, ACCOUNT_RECORD_UR_TYPE};
 pub use redact::{signer_view_bytes, SignerView};
 pub use sd::{finish_sd_sign, prepare_sd_sign, SdRequest, SD_DIR, SD_SIGNED_ZSIG, SD_UNSIGNED_PCZT};
 pub use sign::{sign_pczt, CancelToken, CancellablePort, SignOptions, SignProgress, SignResult};
+pub use storage::{
+    get_storage_key, get_storage_key_with, validate_app_id, StorageKey, LABEL_DB, LABEL_UFVK, SEALED_HEADER_LEN,
+    STORAGE_ZIP_NUMBER,
+};
 pub use ua::to_checkable_ua;
 
 /// The crates this API is expressed in, re-exported so a wallet uses the

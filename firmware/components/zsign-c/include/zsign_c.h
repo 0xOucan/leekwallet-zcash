@@ -64,6 +64,28 @@ int32_t zc_pczt_verify_sig(zc_ctx *ctx, const zs_sig *sig);
 int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t index_out[11],
                     uint8_t p2pkh_out[20], int *has_p2pkh);
 
+/* App Storage Keys (docs/zcash/zip-draft-app-storage-keys.md). */
+
+/* The ZIP number the draft has not been given yet: a placeholder, and an
+ * input to the derivation, so every key changes when it is assigned. */
+#define ZC_STORAGE_ZIP_NUMBER 65535u
+#define ZC_APP_ID_MIN 3
+#define ZC_APP_ID_MAX 64
+
+/* 1 if app_id[0..len) is a valid App identifier: lower-case ASCII
+ * reverse-DNS, labels of [a-z0-9] then [a-z0-9_-], at least two, 3 to 64
+ * bytes in all. No normalisation: anything else is 0. */
+int32_t zc_app_id_valid(const char *app_id, size_t len);
+
+/* The App Storage Key for (seed, network, account, app_id): ZIP 32
+ * Registered derivation, context "AppStorageKeys", path
+ * ZC_STORAGE_ZIP_NUMBER' / coin_type' / account' / (0', [len] || app_id),
+ * the first 32 bytes of the full-width cryptovalue. seed_len 32 to 252.
+ * ZS_OK; ZS_E_PARSE for an invalid app_id; ZS_ERR_ARG otherwise. Every
+ * intermediate is wiped. */
+int32_t zc_storage_key(const uint8_t *seed, size_t seed_len, uint8_t net, uint32_t account,
+                       const char *app_id, size_t app_id_len, uint8_t out[32]);
+
 /* Known-answer self test of the primitives the library lacks (Poseidon) and
  * of the embedded Sinsemilla table. 0 on success. */
 int32_t zc_selftest(void);

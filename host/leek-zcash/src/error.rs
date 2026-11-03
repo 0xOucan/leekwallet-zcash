@@ -144,6 +144,22 @@ pub enum LeekError {
     /// wallet's PCZT, or the board reviewed another sighash.
     SighashMismatch,
 
+    // ---- stored app data (7xx)
+    /// The app identifier is not lower-case ASCII reverse-DNS of 3 to 64
+    /// bytes; the board would refuse it.
+    InvalidAppId,
+    /// A Storage Subkey label other than `db`, `ufvk` or `x-...`.
+    InvalidStorageLabel,
+    /// The stored object was sealed under another Storage Key: another seed
+    /// or passphrase, app, account or network.
+    StorageKeyMismatch,
+    /// The stored object is malformed or was changed.
+    StorageCorrupted,
+    /// The Storage Key was already forgotten; ask the board again.
+    StorageKeyForgotten,
+    /// A seed outside ZIP 32's 32 to 252 bytes.
+    InvalidSeed,
+
     /// A firmware error code this crate does not know yet.
     Device {
         /// The firmware's code (docs/PROTOCOL.md §6).
@@ -153,7 +169,8 @@ pub enum LeekError {
 
 impl LeekError {
     /// The stable numeric code: 1xx link, 2xx session and board, 3xx user,
-    /// 4xx account and network, 5xx PCZT, 6xx signatures, 9xx unknown.
+    /// 4xx account and network, 5xx PCZT, 6xx signatures, 7xx stored app
+    /// data, 9xx unknown.
     pub fn code(&self) -> u16 {
         use LeekError::*;
         match self {
@@ -200,6 +217,12 @@ impl LeekError {
             SignatureInvalid => 602,
             SignatureMissing => 603,
             SighashMismatch => 604,
+            InvalidAppId => 700,
+            InvalidStorageLabel => 701,
+            StorageKeyMismatch => 702,
+            StorageCorrupted => 703,
+            StorageKeyForgotten => 704,
+            InvalidSeed => 705,
             Device { .. } => 900,
         }
     }
@@ -262,6 +285,12 @@ impl LeekError {
             SignatureInvalid => "a signature from the board does not verify",
             SignatureMissing => "a spend is still unsigned after applying the board's signatures",
             SighashMismatch => "the board signed a different transaction than this wallet's",
+            InvalidAppId => "the app identifier must be lower-case reverse-DNS, such as com.example.wallet",
+            InvalidStorageLabel => "unknown storage label",
+            StorageKeyMismatch => "the stored data was sealed for another seed, app, account or network",
+            StorageCorrupted => "the stored data is damaged or was changed",
+            StorageKeyForgotten => "the storage key was already forgotten; ask the board again",
+            InvalidSeed => "the seed is too short or too long",
             Device { .. } => "the board refused the request",
         }
     }
@@ -382,7 +411,8 @@ mod tests {
             Locked, NoWallet, FirmwareTooOld, Protocol, TransferCorrupted, DeviceInternal, UserRejected, UserTimeout,
             WrongNetwork, WrongAccount, SpendNotOurs, AddressNotOurs, AddressUncheckable, MissingDerivation, TooMany,
             TooLarge, Parse, PcztVersion, ValueBalance, OutputMismatch, MissingData, DuplicateRk, ZsigHashMismatch, ZsigMalformed,
-            SignatureInvalid, SignatureMissing, SighashMismatch, Device { code: 0x0599 },
+            SignatureInvalid, SignatureMissing, SighashMismatch, InvalidAppId, InvalidStorageLabel,
+            StorageKeyMismatch, StorageCorrupted, StorageKeyForgotten, InvalidSeed, Device { code: 0x0599 },
         ];
         use super::Unsupported as U;
         for u in [U::Pool, U::Version, U::Sapling, U::Multistep, U::Branch, U::Network] {

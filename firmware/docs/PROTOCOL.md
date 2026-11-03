@@ -305,6 +305,7 @@ against it.
 | `getAddress`, `signMessage`, `signTypedData`, `signTransaction` | — | — | **removed** in the Zcash fork (roadmap 1.1): an unknown method |
 | `zGetAccount` | keys | **yes — "Share view key?", once per session per account, network and seed** | implemented |
 | `zGetFeatures` | always | — (describes the firmware, not the wallet) | implemented |
+| `zGetStorageKey` | keys | **yes — "Unlock app data?", every time, with the app identifier in full** | implemented |
 | `zSetAccountMeta` | keys | — (birthday and label; not secret, not needed to sign) | implemented |
 | `zShowAddress` | keys | **yes — the user compares the address and answers on the device** | implemented |
 | `zSignBegin` / `zSignChunk` / `zSignFinish` | keys | **yes — every review page, ACCEPT on the last** | implemented |
@@ -441,7 +442,7 @@ shows that such a seed was used.
 zGetFeatures  {}
            -> { backend: "both"|"rust"|"c", branchIds: [uint], txVersions: [6],
                 spendPools: ["orchard", "ironwood", "transparent"], maxPczt: uint, maxChunk: uint,
-                storage: ["vault","stateless","sd"?], showAddress: 1 }
+                storage: ["vault","stateless","sd"?], showAddress: 1, storageKey: 65535 }
 zShowAddress  { account?: uint, network: "main"|"test" }
            -> { ua, tAddress }
 ```
@@ -451,12 +452,71 @@ before pairing: it describes the firmware and says nothing about the wallet.
 `branchIds` is the list both signer backends accept. `test_zcash_sign` checks
 it against what they actually accept.
 
+`storageKey` is present when the firmware answers `zGetStorageKey`; its value
+is the ZIP number the board derives App Storage Keys under (the draft's
+placeholder 65535 until one is assigned). Every key changes with it, so an app
+that stored data under one number must not expect another to open it.
+
 `zShowAddress` has the device derive the account's address itself and page
 the whole unified address on its screen. The user answers on the last page
 whether it matches what the app shows. The address comes back only after a
 yes. A no is `0x0200` (rejected) and no answer is `0x0201` (timeout).
 `zecz device-show-address` runs the check and also compares the address the
 device confirmed with the one its own copy of the UFVK gives.
+
+### App Storage Keys
+
+```
+zGetStorageKey { appId: text, account?: uint, network: "main"|"test" }
+            -> { appId, account, network, storageKey: h'32' }
+```
+
+The key an app encrypts its stored wallet data under (its database, its
+copy of the UFVK), one per app identifier, network and account:
+docs/zcash/zip-draft-app-storage-keys.md. The board derives it from the seed
+(passphrase applied) with ZIP 32 Registered key derivation, context
+`"AppStorageKeys"`, path `m_storage / 65535' / coin_type' / account' / (0',
+[len] || appId)`, and releases the first 32 bytes of the leaf's cryptovalue.
+An app that keeps only ciphertext asks for it each time it opens, so a host
+that is stolen, or a backup of it, reads nothing without the board and a
+press on it. It protects nothing from the app itself, or from malware on the
+host while the app is open.
+
+`appId` is lower-case ASCII reverse-DNS: dot-separated labels, at least two,
+each starting with `a-z` or `0-9` and going on with those, `-` and `_`; 3 to
+64 bytes in all. Anything else (upper case, a space, a non-ASCII byte, an
+empty label, a NUL) is refused with `0x0001` as it is, never corrected, and
+nothing is shown. `account` defaults to 0 and must be below 2^31; `network` is
+required and must be the board's (`0x0528` otherwise). Session and unlock
+first, as for `zGetAccount`; a board with no seed refuses with `0x0300` before
+it asks. Nothing is derived before the answer. Then:
+
+```
+   Unlock app data?          (title)
+ xyz.leekwallet.zcash        (appId, whole: up to four rows)
+Lets this app open           (warning, when appId takes one or two rows)
+its saved wallet data        (warning)
+     acct 0  MAIN
+  USB, code 123 456          (the link, and this session's pairing code)
+X:NO          OK:YES
+```
+
+`appId` is shown in full, never cut: up to four 21-column rows, broken
+after a dot in the second half of a row when that fits, and every 21
+characters otherwise, with no character added at a break. OK releases;
+Cancel answers `0x0200`; no answer within 120 s answers `0x0201` and takes the
+question off the screen.
+
+**Asked every time.** Unlike the view key, a yes is not remembered, not even
+for the rest of the session: an app asks once per opening, and the draft
+requires an approval per release. If the session ends while the question is
+up the answer is `0x0400` and nothing is derived. The reply is sealed by the
+handler itself rather than by the common reply path, so a key that cannot go
+out encrypted does not go out at all.
+
+The board cannot tell which app is asking: any software on the host can claim
+any `appId`. The user's press is the protection, so an app asks only right
+after the user opened it, and the user approves only then.
 
 ### Zcash signing (PCZT)
 

@@ -38,6 +38,10 @@ Swift use camelCase.
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
 | `.get_features()`, `.get_account(index, network)`, `.show_address(..)`, `.set_birthday(..)` | |
 | `.sign_pczt(pczt, AccountMeta, SignerView, verify_account, SignListener?) -> SignResult` | progress: `Checking`, `Uploading{sent,total}`, `ReviewOnDevice`, `Applying` |
+| `.get_storage_key(app_id, index, network) -> StorageKey` | the app's Storage Key, after "Unlock app data?" is answered OK on the board, every time |
+| `StorageKey.from_bytes(key, app_id, account, network)` | a key the app kept in secure storage ("remember on this device") |
+| `StorageKey.seal_db / open_db / seal_ufvk / open_ufvk / seal / open` | sealed app data (XChaCha20-Poly1305, key check); `db_key()` / `subkey(label)` for SQLCipher; `key_bytes()` for secure storage only; `forget()` wipes it now |
+| `validate_app_id(app_id)`, `storage_zip_number()` | the board's App identifier rules; the ZIP number to compare with `Features.storage_key` |
 | `.cancel()` | from any thread; the running call ends with code 104 |
 
 `SignResult { signed_pczt, sighash, zsig, signature_count, txid, txid_hex,
@@ -49,7 +53,9 @@ broadcasting**, broadcast idempotently, and compare after mining
 
 One error type, `LeekError` (Kotlin `LeekException`, Swift `LeekError`),
 by the hundreds digit of its code: `Link` (1xx), `Session` (2xx), `User`
-(3xx), `Account` (4xx), `Pczt` (5xx), `Signature` (6xx), `Device` (9xx,
+(3xx), `Account` (4xx), `Pczt` (5xx), `Signature` (6xx), `Storage` (7xx:
+an invalid app identifier, data sealed for another key 702, damaged data
+703, a forgotten key 704), `Device` (9xx,
 with the firmware's `device_code`). Each carries `code` (the stable
 `leek_zcash::LeekError::code`), `recovery` (`RetrySameLink`, `Reconnect`,
 `DoNotRetry`) and `reason`, a fixed sentence per code with no amounts,
@@ -88,10 +94,18 @@ they never store either. The app must:
   user's activity on their own.
 
 This protects a stolen device or a backup, not a malicious app; the board
-cannot stop a paired host from storing the viewing key. The board will
-soon ask on its screen before releasing the viewing key, and the six-digit
-pairing code is required on every connection. There is no API here that
-persists a UFVK in plaintext, and none should be added.
+cannot stop a paired host from storing the viewing key. The board asks on
+its screen before releasing the viewing key, and the six-digit pairing code
+is required on every connection. There is no API here that persists a UFVK
+in plaintext, and none should be added.
+
+An app can instead keep nothing readable at all: "unlock with the board",
+where the database and the UFVK are sealed under the app's `StorageKey` and
+the board is asked for it on every opening. The two modes, what each
+protects and how to present the choice are in
+[leek-zcash: Stored app data](../leek-zcash/README.md#stored-app-data-two-modes).
+Call `forget()` when the app closes or locks: the JVM and Swift free the
+object when they choose to.
 
 ## Generate the bindings
 
@@ -149,11 +163,14 @@ leek-zcash-ffi/scripts/kotlin-smoke.sh    # Kotlin bindings on the JVM
   check, `sign_pczt` with progress, the same `.zsig` through `apply_zsig`
   and `finish_sd_sign`, the persisted record read back, a host-side refusal
   through the device, cancel mid-upload and from another thread, transport
-  failures keeping their kind, typed byte-API errors, the account record.
+  failures keeping their kind, typed byte-API errors, the account record,
+  sealed app data (the draft's vector key and `db` subkey, round trips,
+  damage, another key, another app, `forget`).
 - `scripts/kotlin-smoke.sh`: compiles the committed Kotlin bindings with
   `tests/kotlin/Smoke.kt` and runs it against the freshly built library:
   the byte API, the SD request, errors by category and code, the account
-  record, a Kotlin transport's failures and a cancel from another thread.
+  record, sealed app data, a Kotlin transport's failures and a cancel from
+  another thread.
   It takes the Kotlin compiler, kotlin-stdlib and JNA from the Gradle cache
   (or `KOTLIN_COMPILER_CP`, `KOTLIN_STDLIB`, `JNA_JAR`) and skips if they
   are missing; with a JNA older than 5.12 it adds a test-only `Cleaner`

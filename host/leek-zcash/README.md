@@ -26,6 +26,7 @@ src/ua.rs         to_checkable_ua
 src/sd.rs         prepare_sd_sign, finish_sd_sign: the SD-card air gap (experimental)
 src/record.rs     AccountRecord: the import record as CBOR
 src/persist.rs    SignResult::to_bytes / from_bytes, txid, check_mined
+src/storage.rs    get_storage_key, StorageKey: App Storage Keys, subkeys, seal / open
 src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 ```
 
@@ -49,6 +50,11 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 | `AccountRecord::{encode, decode, from_accounts}` | one seed's accounts as CBOR (below) |
 | `SignResult::{to_bytes, from_bytes, txid_hex}` | persist the signed result and its txid before broadcast |
 | `check_mined(signed_tx, mined_tx) -> MinedCheck` | `Identical`, `SameEffectsOtherAuth` (same txid, other proofs or signatures) or `Different`; `tx_txid(tx)` |
+| `get_storage_key(&mut Device, app_id, index, Network) -> StorageKey` | `zGetStorageKey`: the app's Storage Key, after the user presses OK on the board, every time (below) |
+| `get_storage_key_with(.., progress) -> StorageKey` | the same, calling `progress(AccountProgress::ConfirmOnDevice)` first |
+| `StorageKey::{seal, open, seal_db, open_db, seal_ufvk, open_ufvk}` | XChaCha20-Poly1305 under the label's subkey, with a key check; `open` tells a wrong key (`StorageKeyMismatch`) from damage (`StorageCorrupted`) |
+| `StorageKey::{subkey, to_bytes, from_bytes, from_seed, forget}` | a subkey (`db` for SQLCipher), the key for secure storage and back, the key from a seed (tests and emergency recovery only), wipe now |
+| `validate_app_id(app_id)` | the board's App identifier rules, checked on the host first |
 | `classify(&anyhow::Error) -> LeekError` | maps `leek-device` errors (for example from `Device::pair`) |
 
 `SignOptions { view, progress, cancel, features, verify_account }`:
@@ -63,7 +69,7 @@ account first and refuses a different seed before anything is uploaded.
 
 One `LeekError` for everything, `#[non_exhaustive]`. `code()` is stable (1xx
 link, 2xx session and board, 3xx user, 4xx account and network, 5xx PCZT,
-6xx signatures, 900 an unknown firmware code; `DuplicateRk`, the board's
+6xx signatures, 7xx stored app data, 900 an unknown firmware code; `DuplicateRk`, the board's
 `ZS_E_DUPLICATE_RK` (0x0518), is 517). `recovery()` says
 `RetrySameLink`, `Reconnect` or `DoNotRetry`. Every firmware code in
 `docs/PROTOCOL.md` §6, `ZS_E_*` and `ZSIGN_E_*` is mapped (a few by call:
@@ -218,12 +224,83 @@ wallet's history, and both deserve protection:
 - Be honest about what this buys: it protects a stolen device or a backup,
   not a malicious app running as the user. The board cannot prevent a host
   it is paired with from storing the viewing key.
-- On the board's side: a coming firmware will ask on its screen before
+- On the board's side: it asks "Share view key?" on its screen before
   releasing the viewing key, and the six-digit pairing code is required on
   every connection.
 
 This crate and its bindings never write a UFVK anywhere; there is no API
 that persists one in plaintext.
+
+## Stored app data: two modes
+
+An app can protect what it stores in one of two ways. The app vendor chooses
+which to offer: one, the other, or both with a setting (and may hide the
+setting). Both encrypt the database; they differ in where the key lives.
+
+**Remember viewing key on this device.** The rule above: the app keeps the
+UFVK (or a database key) in the platform's secure storage and opens without
+the board. The data is as safe as the phone's or computer's lock screen and
+secure storage.
+
+**Unlock with the board.** The app keeps nothing readable. Its database and
+its copy of the UFVK are sealed under the app's **Storage Key**
+(docs/zcash/zip-draft-app-storage-keys.md), which only the board can produce:
+
+1. First connection: pair, `get_account` (the user shares the view key),
+   then `get_storage_key(app_id, account, network)` (the user approves
+   "Unlock app data?"). Seal the UFVK with `seal_ufvk` and the database with
+   `seal_db` (or key SQLCipher with `subkey("db")`), store the sealed bytes,
+   and drop the `StorageKey` when the app closes.
+2. Every later opening: pair, `get_storage_key`, the user approves on the
+   board, `open_ufvk` / `open_db`, sync. The board asks every time; it
+   remembers no yes, not even for the session.
+3. A new phone or a new board: the same seed (and passphrase) on any board
+   gives the same key, so a copy of the sealed files opens again.
+
+The Storage Key is per app identifier, network and account, unrelated to
+every spending and viewing key and to other apps' keys. The app identifier is
+lower-case ASCII reverse-DNS (`com.example.wallet`), the same on every
+platform and in every version that should open the same data. The board
+shows it in full; `validate_app_id` applies its rules on the host first.
+`Features::storage_key` says whether the board has the call (and under which
+ZIP number: 65535, a placeholder, until the draft is assigned one; every key
+changes with it).
+
+What each mode protects, said plainly:
+
+| | Remember on this device | Unlock with the board |
+|---|---|---|
+| Host lost or stolen, locked | protected by the host's lock screen and secure storage | protected: ciphertext only |
+| Disk image or cloud backup | protected if the secure storage is not in the backup | protected: ciphertext only |
+| Someone who knows the host's PIN or password | can open the app and read everything | needs the board, its PIN and a press on it |
+| A malicious app, or malware on the host while the app is open | **not protected** | **not protected**: an open app holds the key, the UFVK and the data |
+| The board's seed | unaffected | unaffected: the key reveals nothing about it |
+
+Neither mode protects against the app itself or against malware running as
+the user while the app is open, and neither can take back a viewing key that
+was shared: whoever saw the UFVK can watch the account for good. A user who
+thinks the account is being watched should move the funds to a new seed (a
+new wallet on the board, a fresh backup) and set the app up again on it.
+That is the only remedy.
+
+How to present the choice: name the modes by what the user does, not by
+keys. For example "Open with the board each time (most private)" and
+"Remember on this phone (opens without the board)". Say what the second
+trades away, make it the user's explicit choice, and let them switch back,
+which deletes what was remembered. Ask the board for the Storage Key only
+right after the user opened the app: the board cannot tell which app is
+asking, and the user's press is the protection. In "unlock with the board"
+mode show "Confirm on the board" for every open (`get_storage_key_with`
+reports `ConfirmOnDevice`), and handle `UserRejected` as "stay locked".
+
+Sealed objects (`seal`) are this crate's format: `"ZASK" || 0x01 (version)
+|| 0x01 (XChaCha20-Poly1305) || salt (32) || check (32) || nonce (24) ||
+ciphertext || tag (16)`, with `check = HMAC-SHA256(SubKey("commit"), salt)`,
+a random salt and nonce per seal, and associated data the header followed by
+the app identifier, coin type, account and label. A different seed, app,
+account or network fails the key check (`StorageKeyMismatch`) before
+anything is decrypted; any changed byte fails (`StorageCorrupted`). Keys and
+subkeys are wiped on drop; `forget` wipes at once.
 
 ## Tests
 
@@ -257,11 +334,18 @@ cargo test -p leek-zcash
   made; `SignResult` round-trips through bytes and refuses damage;
   `check_mined` tells identical, re-extracted and different transactions
   apart.
+- `src/storage.rs` unit tests: the draft's four Storage Key vectors and their
+  `db` / `ufvk` / `commit` subkeys, the draft's ZIP 32 expansion written out
+  by hand, App identifier rules, seal / open round trips, a pinned sealed
+  format, every single-bit change refused, another seed, app, account,
+  network or label refused, labels, `forget`.
 - `tests/zdev.rs`: against the simulated board (built with `make` if needed,
   skipped loudly otherwise): features, account, address check (verified, not
   ours, rejected), birthday, `sign_pczt` in both views with transparent inputs,
-  a rejection on the board, host-side refusals, a board-side refusal, and a
-  cancel mid-upload.
+  a rejection on the board, host-side refusals, a board-side refusal, a
+  cancel mid-upload, and the Storage Key (refused, then released on each
+  press, equal to the SDK's own derivation, opening what an earlier release
+  sealed).
 
 ## Bindings
 
