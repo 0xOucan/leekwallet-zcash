@@ -265,6 +265,34 @@ typedef void (*UniffiCallbackInterfaceFrameTransportMethod1)(uint64_t, uint32_t,
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD0
+typedef void (*UniffiCallbackInterfaceKeyWrapperMethod0)(uint64_t, RustBuffer* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD1
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD1
+typedef void (*UniffiCallbackInterfaceKeyWrapperMethod1)(uint64_t, RustBuffer, RustBuffer* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD2
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD2
+typedef void (*UniffiCallbackInterfaceKeyWrapperMethod2)(uint64_t, RustBuffer, RustBuffer* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD3
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_KEY_WRAPPER_METHOD3
+typedef void (*UniffiCallbackInterfaceKeyWrapperMethod3)(uint64_t, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_PAIRING_LISTENER_METHOD0
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_PAIRING_LISTENER_METHOD0
 typedef void (*UniffiCallbackInterfacePairingListenerMethod0)(uint64_t, RustBuffer, void* _Nonnull, 
@@ -286,6 +314,17 @@ typedef struct UniffiVTableCallbackInterfaceFrameTransport {
     UniffiCallbackInterfaceFrameTransportMethod1 _Nonnull recv;
     UniffiCallbackInterfaceFree _Nonnull uniffiFree;
 } UniffiVTableCallbackInterfaceFrameTransport;
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_KEY_WRAPPER
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_KEY_WRAPPER
+typedef struct UniffiVTableCallbackInterfaceKeyWrapper {
+    UniffiCallbackInterfaceKeyWrapperMethod0 _Nonnull info;
+    UniffiCallbackInterfaceKeyWrapperMethod1 _Nonnull wrap;
+    UniffiCallbackInterfaceKeyWrapperMethod2 _Nonnull unwrap;
+    UniffiCallbackInterfaceKeyWrapperMethod3 _Nonnull deleteKey;
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+} UniffiVTableCallbackInterfaceKeyWrapper;
 
 #endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_PAIRING_LISTENER
@@ -327,6 +366,41 @@ void uniffi_leek_zcash_ffi_fn_method_frametransport_send(void*_Nonnull ptr, Rust
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_FRAMETRANSPORT_RECV
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_FRAMETRANSPORT_RECV
 RustBuffer uniffi_leek_zcash_ffi_fn_method_frametransport_recv(void*_Nonnull ptr, uint32_t timeout_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_KEYWRAPPER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_KEYWRAPPER
+void*_Nonnull uniffi_leek_zcash_ffi_fn_clone_keywrapper(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_KEYWRAPPER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_KEYWRAPPER
+void uniffi_leek_zcash_ffi_fn_free_keywrapper(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_INIT_CALLBACK_VTABLE_KEYWRAPPER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_INIT_CALLBACK_VTABLE_KEYWRAPPER
+void uniffi_leek_zcash_ffi_fn_init_callback_vtable_keywrapper(const UniffiVTableCallbackInterfaceKeyWrapper* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_INFO
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_INFO
+RustBuffer uniffi_leek_zcash_ffi_fn_method_keywrapper_info(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_WRAP
+RustBuffer uniffi_leek_zcash_ffi_fn_method_keywrapper_wrap(void*_Nonnull ptr, RustBuffer key, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_UNWRAP
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_UNWRAP
+RustBuffer uniffi_leek_zcash_ffi_fn_method_keywrapper_unwrap(void*_Nonnull ptr, RustBuffer blob, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_DELETE_KEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_KEYWRAPPER_DELETE_KEY
+void uniffi_leek_zcash_ffi_fn_method_keywrapper_delete_key(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_LEEKDEVICE
@@ -412,6 +486,56 @@ void uniffi_leek_zcash_ffi_fn_init_callback_vtable_pairinglistener(const UniffiV
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_PAIRINGLISTENER_ON_PAIRING_CODE
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_PAIRINGLISTENER_ON_PAIRING_CODE
 void uniffi_leek_zcash_ffi_fn_method_pairinglistener_on_pairing_code(void*_Nonnull ptr, RustBuffer code, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QUICKUNLOCK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QUICKUNLOCK
+void*_Nonnull uniffi_leek_zcash_ffi_fn_clone_quickunlock(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_QUICKUNLOCK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_QUICKUNLOCK
+void uniffi_leek_zcash_ffi_fn_free_quickunlock(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QUICKUNLOCK_CREATE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QUICKUNLOCK_CREATE
+void*_Nonnull uniffi_leek_zcash_ffi_fn_constructor_quickunlock_create(void*_Nonnull key, void*_Nonnull wrapper, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QUICKUNLOCK_FROM_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QUICKUNLOCK_FROM_BYTES
+void*_Nonnull uniffi_leek_zcash_ffi_fn_constructor_quickunlock_from_bytes(RustBuffer bytes, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_ACCOUNT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_ACCOUNT
+uint32_t uniffi_leek_zcash_ffi_fn_method_quickunlock_account(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_APP_ID
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_APP_ID
+RustBuffer uniffi_leek_zcash_ffi_fn_method_quickunlock_app_id(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_LABEL
+RustBuffer uniffi_leek_zcash_ffi_fn_method_quickunlock_label(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_NETWORK
+RustBuffer uniffi_leek_zcash_ffi_fn_method_quickunlock_network(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_OPEN
+void*_Nonnull uniffi_leek_zcash_ffi_fn_method_quickunlock_open(void*_Nonnull ptr, RustBuffer app_id, uint32_t account, RustBuffer network, void*_Nonnull wrapper, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_TO_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QUICKUNLOCK_TO_BYTES
+RustBuffer uniffi_leek_zcash_ffi_fn_method_quickunlock_to_bytes(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_SIGNLISTENER
@@ -533,6 +657,11 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_check_mined(RustBuffer signed_tx, RustB
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_DECODE_ACCOUNT_RECORD
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_DECODE_ACCOUNT_RECORD
 RustBuffer uniffi_leek_zcash_ffi_fn_func_decode_account_record(RustBuffer bytes, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_DISABLE_QUICK_UNLOCK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_DISABLE_QUICK_UNLOCK
+void uniffi_leek_zcash_ffi_fn_func_disable_quick_unlock(void*_Nonnull wrapper, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_ENCODE_ACCOUNT_RECORD
@@ -895,6 +1024,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_decode_account_record(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_DISABLE_QUICK_UNLOCK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_DISABLE_QUICK_UNLOCK
+uint16_t uniffi_leek_zcash_ffi_checksum_func_disable_quick_unlock(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ENCODE_ACCOUNT_RECORD
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ENCODE_ACCOUNT_RECORD
 uint16_t uniffi_leek_zcash_ffi_checksum_func_encode_account_record(void
@@ -973,6 +1108,30 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_frametransport_recv(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_INFO
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_INFO
+uint16_t uniffi_leek_zcash_ffi_checksum_method_keywrapper_info(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_WRAP
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_WRAP
+uint16_t uniffi_leek_zcash_ffi_checksum_method_keywrapper_wrap(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_UNWRAP
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_UNWRAP
+uint16_t uniffi_leek_zcash_ffi_checksum_method_keywrapper_unwrap(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_DELETE_KEY
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_KEYWRAPPER_DELETE_KEY
+uint16_t uniffi_leek_zcash_ffi_checksum_method_keywrapper_delete_key(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_CANCEL
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_LEEKDEVICE_CANCEL
 uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_cancel(void
@@ -1036,6 +1195,42 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_leekdevice_sign_pczt(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_PAIRINGLISTENER_ON_PAIRING_CODE
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_PAIRINGLISTENER_ON_PAIRING_CODE
 uint16_t uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_ACCOUNT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_ACCOUNT
+uint16_t uniffi_leek_zcash_ffi_checksum_method_quickunlock_account(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_APP_ID
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_APP_ID
+uint16_t uniffi_leek_zcash_ffi_checksum_method_quickunlock_app_id(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_LABEL
+uint16_t uniffi_leek_zcash_ffi_checksum_method_quickunlock_label(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_NETWORK
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_NETWORK
+uint16_t uniffi_leek_zcash_ffi_checksum_method_quickunlock_network(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_OPEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_OPEN
+uint16_t uniffi_leek_zcash_ffi_checksum_method_quickunlock_open(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_TO_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_TO_BYTES
+uint16_t uniffi_leek_zcash_ffi_checksum_method_quickunlock_to_bytes(void
     
 );
 #endif
@@ -1126,6 +1321,18 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_LEEKDEVICE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_LEEKDEVICE_NEW
 uint16_t uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QUICKUNLOCK_CREATE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QUICKUNLOCK_CREATE
+uint16_t uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_create(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QUICKUNLOCK_FROM_BYTES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QUICKUNLOCK_FROM_BYTES
+uint16_t uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_from_bytes(void
     
 );
 #endif

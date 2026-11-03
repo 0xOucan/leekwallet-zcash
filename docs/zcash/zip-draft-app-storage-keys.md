@@ -287,6 +287,9 @@ An App implementing this ZIP:
    from memory when it closes or locks, as far as its platform allows.
 5. MUST NOT use the Storage Key directly as a cipher key. It MUST derive a
    Storage Subkey per purpose, as in [Storage Subkeys](#storage-subkeys).
+6. MUST NOT store a Storage Key, a Storage Subkey or the UFVK encrypted under
+   a key derived on the host from a short PIN or another low-entropy secret
+   alone (see [Local quick unlock](#local-quick-unlock-non-normative)).
 
 ### Usage flow (non-normative)
 
@@ -317,6 +320,35 @@ An App MAY offer the user a choice between:
 An App that offers remembered mode MUST make it an explicit choice of the
 user, MUST explain the difference, and MUST let the user switch back, which
 deletes what was remembered.
+
+### Local quick unlock (non-normative)
+
+Quick unlock is a form of remembered mode for an App that wants to open
+without the Signer but still behind the user. After the App has obtained the
+Storage Key from the Signer once, it can keep the Storage Key encrypted
+("wrapped") under a platform key that:
+
+- is generated in and never leaves secure hardware (for example Android
+  Keystore in StrongBox or a TEE, the Apple Secure Enclave, a TPM through
+  Windows Hello, or a WebAuthn authenticator through its PRF extension); and
+- is usable only after the user authenticates to that hardware with a
+  biometric or the device PIN, with attempt limits that the hardware
+  enforces.
+
+The App then opens after that prompt instead of after an approval on the
+Signer. A stolen host is protected by the platform's secure hardware and its
+attempt limits, not by the Signer. The Signer path is unchanged and keeps
+working from the seed, on that host or a new one. The App should bind the
+wrapped key to its App identifier, coin type and account, and verify the key
+check value (see [Recommended storage encryption](#recommended-storage-encryption))
+after unwrapping.
+
+A key derived on the host from a short PIN alone does not qualify: anyone
+with a copy of the App's storage can try every PIN offline, and no hardware
+limits the attempts (App requirement 6). An App on a platform without such a
+key does not offer quick unlock. It may offer a long passphrase stretched
+with a memory-hard function instead, which is weaker and depends on the
+passphrase alone, or nothing.
 
 ## Storage Subkeys
 
@@ -515,6 +547,17 @@ Remembered mode
   lock screen, and no longer requires the Signer. Apps make this an explicit
   user choice.
 
+Local quick unlock
+: An App that keeps the Storage Key wrapped by a hardware-backed,
+  user-authenticated platform key moves the protection of a stolen host from
+  the Signer to the platform's secure hardware and its attempt limits. Apps
+  MUST NOT protect a Storage Key with a key derived only from a short PIN: a
+  six-digit PIN is $10^6$ guesses, which a stolen copy of the App's storage
+  exhausts offline in seconds, so such a scheme would look like protection
+  and give none. This is a MUST NOT rather than a SHOULD NOT because no
+  deployment makes that trade acceptable; a host without suitable hardware
+  has the Signer path and remembered mode, whose limits are stated plainly.
+
 
 # Deployment
 
@@ -552,6 +595,12 @@ In the LeekWallet Zcash project
   (`zip32::registered`). Its Kotlin and Swift bindings are in
   `host/leek-zcash-ffi`. Tests check the vectors below and the ZIP 32
   expansion written out by hand.
+- Local quick unlock: `QuickUnlock` in the same SDK
+  (`host/leek-zcash/src/quick.rs`) wraps the Storage Key through an
+  App-supplied platform key and refuses one that does not report itself
+  hardware-backed and user-authenticated; reference platform keys for
+  Android Keystore, the Secure Enclave and WebAuthn PRF are in
+  `host/leek-zcash-ffi/examples/quick-unlock`.
 
 The two implementations are independent (C from the formulas, and the
 `zip32` crate) and both reproduce every vector below.

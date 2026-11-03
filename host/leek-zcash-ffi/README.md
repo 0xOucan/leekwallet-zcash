@@ -13,6 +13,7 @@ scripts/kotlin-smoke.sh         compiles bindings/kotlin + tests/kotlin/Smoke.kt
 bindings/kotlin/                generated: io/leekwallet/zcash/sdk/leek_zcash_ffi.kt
 bindings/swift/                 generated: LeekZcash.swift, LeekZcashFFI.h, LeekZcashFFI.modulemap
 tests/ffi.rs                    the FFI layer from Rust, against the zdev simulator
+examples/quick-unlock/          reference KeyWrappers: Android Keystore (Kotlin), Secure Enclave (Swift), WebAuthn PRF (JS)
 ```
 
 ## API
@@ -42,6 +43,9 @@ Swift use camelCase.
 | `.get_storage_key(app_id, index, network) -> StorageKey` | the app's Storage Key, after "Unlock app data?" is answered OK on the board, every time |
 | `StorageKey.from_bytes(key, app_id, account, network)` | a key the app kept in secure storage ("remember on this device") |
 | `StorageKey.seal_db / open_db / seal_ufvk / open_ufvk / seal / open` | sealed app data (XChaCha20-Poly1305, key check); `db_key()` / `subkey(label)` for SQLCipher; `key_bytes()` for secure storage only; `forget()` wipes it now |
+| `QuickUnlock.create(StorageKey, KeyWrapper)`, `QuickUnlock.from_bytes(record)` | quick unlock: wraps the key with the app's platform key (706 unless it is hardware-backed and user-authenticated); store `to_bytes()` |
+| `QuickUnlock.open(app_id, account, network, KeyWrapper) -> StorageKey` | after the platform's biometric or PIN prompt; `app_id()`, `account()`, `network()`, `label()` read the record |
+| `disable_quick_unlock(KeyWrapper)` | deletes the platform key; delete the stored record too |
 | `validate_app_id(app_id)`, `storage_zip_number()` | the board's App identifier rules; the ZIP number to compare with `Features.storage_key` |
 | `.cancel()` | from any thread; the running call ends with code 104 |
 
@@ -56,7 +60,9 @@ One error type, `LeekError` (Kotlin `LeekException`, Swift `LeekError`),
 by the hundreds digit of its code: `Link` (1xx), `Session` (2xx), `User`
 (3xx), `Account` (4xx), `Pczt` (5xx), `Signature` (6xx), `Storage` (7xx:
 an invalid app identifier, data sealed for another key 702, damaged data
-703, a forgotten key 704), `Device` (9xx,
+703, a forgotten key 704; quick unlock: an insecure platform key 706, an
+invalidated one 707, a cancelled prompt 708, a platform failure 709),
+`Device` (9xx,
 with the firmware's `device_code`). Each carries `code` (the stable
 `leek_zcash::LeekError::code`), `recovery` (`RetrySameLink`, `Reconnect`,
 `DoNotRetry`) and `reason`, a fixed sentence per code with no amounts,
@@ -84,6 +90,40 @@ thrown by the callback is 102. Reads are asked for in slices of at most
 background thread (`Dispatchers.IO`, a Swift `Task.detached` or queue).
 Listeners must return quickly and must not throw.
 
+### Quick unlock: the platform key
+
+The app implements `KeyWrapper` over its platform's secure hardware:
+
+```kotlin
+interface KeyWrapper {
+    fun info(): KeyWrapperInfo                 // hardwareBacked, userAuthRequired, label; must not throw
+    fun wrap(key: ByteArray): ByteArray        // throw KeyWrapperFailure.* on failure
+    fun unwrap(blob: ByteArray): ByteArray     // after the user's biometric or device PIN
+    fun deleteKey()
+}
+```
+
+(Swift: `protocol KeyWrapper` with `info()`, `wrap(key:)`, `unwrap(blob:)`,
+`deleteKey()`.) `KeyWrapperFailure.Cancelled` comes back as 708,
+`Invalidated` as 707, `Failed` and any other exception as 709. `wrap` and
+`unwrap` may block while the prompt is up: call `QuickUnlock` off the main
+thread. Report the flags honestly: `QuickUnlock` refuses (706) a wrapper
+that does not claim both, but it cannot check the claim. Zero the
+`ByteArray` / `Data` you are given and return once used.
+
+Reference implementations, to copy and review, not built with the SDK:
+
+| File | Platform key | Compiled here |
+|---|---|---|
+| `examples/quick-unlock/AndroidKeystoreWrapper.kt` | AES-256-GCM in Android Keystore (StrongBox, else TEE), per-use auth through `BiometricPrompt` with a `CryptoObject` (biometric or device credential on API 30+), invalidated by a new enrolment | compiles (kotlinc 2.0.21 against android-34, androidx.biometric 1.4.0-alpha05 and the generated bindings); not run on a device |
+| `examples/quick-unlock/SecureEnclaveWrapper.swift` | ECIES to a P-256 Secure Enclave key with `.privateKeyUsage` + `.userPresence`, this device only, passcode set | no (no Swift toolchain) |
+| `examples/quick-unlock/webauthn-prf.js` | a passkey's PRF output through HKDF into AES-256-GCM (Chrome wallet; there is no WebAssembly build of the SDK yet) | no |
+
+Never implement `KeyWrapper` with a key derived from a short PIN in
+software: offline, a six-digit PIN falls in seconds. Without a suitable
+platform key, do not offer quick unlock
+([leek-zcash: Stored app data](../leek-zcash/README.md#stored-app-data-three-tiers)).
+
 ## Host-side protection
 
 The bindings hand the app the UFVK (`get_account`) and the account record;
@@ -102,9 +142,11 @@ in plaintext, and none should be added.
 
 An app can instead keep nothing readable at all: "unlock with the board",
 where the database and the UFVK are sealed under the app's `StorageKey` and
-the board is asked for it on every opening. The two modes, what each
-protects and how to present the choice are in
-[leek-zcash: Stored app data](../leek-zcash/README.md#stored-app-data-two-modes).
+the board is asked for it on every opening, or "quick unlock", where the
+key is also kept wrapped by a hardware-backed key behind the user's
+biometric or device PIN. The three tiers, what each protects and how to
+present the choice are in
+[leek-zcash: Stored app data](../leek-zcash/README.md#stored-app-data-three-tiers).
 Call `forget()` when the app closes or locks: the JVM and Swift free the
 object when they choose to.
 
@@ -166,12 +208,16 @@ leek-zcash-ffi/scripts/kotlin-smoke.sh    # Kotlin bindings on the JVM
   through the device, cancel mid-upload and from another thread, transport
   failures keeping their kind, typed byte-API errors, the account record,
   sealed app data (the draft's vector key and `db` subkey, round trips,
-  damage, another key, another app, `forget`).
+  damage, another key, another app, `forget`), quick unlock through a Rust
+  `KeyWrapper` as a foreign one (round trip, another account, a cancelled
+  prompt, a software key refused, `disable_quick_unlock`, a bad record, a
+  forgotten key).
 - `scripts/kotlin-smoke.sh`: compiles the committed Kotlin bindings with
   `tests/kotlin/Smoke.kt` and runs it against the freshly built library:
   the byte API, the SD request, errors by category and code, the account
-  record, sealed app data, a Kotlin transport's failures and a cancel from
-  another thread.
+  record, sealed app data, quick unlock through a Kotlin `KeyWrapper` (round
+  trip, a software key refused, a cancelled prompt, disabled), a Kotlin
+  transport's failures and a cancel from another thread.
   It takes the Kotlin compiler, kotlin-stdlib and JNA from the Gradle cache
   (or `KOTLIN_COMPILER_CP`, `KOTLIN_STDLIB`, `JNA_JAR`) and skips if they
   are missing; with a JNA older than 5.12 it adds a test-only `Cleaner`

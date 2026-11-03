@@ -23,6 +23,8 @@ uniffi = "=0.29.5"
 # leek-device reports its errors as anyhow; leek_zcash::classify maps them.
 anyhow = "=1.0.100"
 leek-zcash = { path = "../leek-zcash" }
+# Wiping what a KeyWrapper unwraps (already in the tree through leek-zcash).
+zeroize = "1"
 leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
 
 [dev-dependencies]

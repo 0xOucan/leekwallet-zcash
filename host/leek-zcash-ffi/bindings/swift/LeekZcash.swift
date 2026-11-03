@@ -771,6 +771,318 @@ public func FfiConverterTypeFrameTransport_lower(_ value: FrameTransport) -> Uns
 
 
 /**
+ * The app's platform key for quick unlock, implemented in Kotlin or Swift
+ * (reference implementations in `examples/`): encrypts the 32-byte Storage
+ * Key under a key held in secure hardware that requires the user.
+ *
+ * Calls come from the thread that called [`QuickUnlock`]; `wrap` and
+ * `unwrap` may block it while the platform's prompt is up. `info` must not
+ * throw. Overwrite the `ByteArray` / `Data` you receive or return with
+ * zeros once used: Rust cannot wipe the JVM's or Swift's copies.
+ */
+public protocol KeyWrapper: AnyObject, Sendable {
+    
+    func info()  -> KeyWrapperInfo
+    
+    /**
+     * Encrypts `key` under the platform key (creating it if needed); the
+     * blob may carry an IV or an ephemeral key and must be authenticated.
+     */
+    func wrap(key: Data) throws  -> Data
+    
+    /**
+     * Decrypts what `wrap` returned, after the user's biometric or PIN.
+     */
+    func unwrap(blob: Data) throws  -> Data
+    
+    /**
+     * Deletes the platform key; already gone is not an error.
+     */
+    func deleteKey() throws 
+    
+}
+/**
+ * The app's platform key for quick unlock, implemented in Kotlin or Swift
+ * (reference implementations in `examples/`): encrypts the 32-byte Storage
+ * Key under a key held in secure hardware that requires the user.
+ *
+ * Calls come from the thread that called [`QuickUnlock`]; `wrap` and
+ * `unwrap` may block it while the platform's prompt is up. `info` must not
+ * throw. Overwrite the `ByteArray` / `Data` you receive or return with
+ * zeros once used: Rust cannot wipe the JVM's or Swift's copies.
+ */
+open class KeyWrapperImpl: KeyWrapper, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_leek_zcash_ffi_fn_clone_keywrapper(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_leek_zcash_ffi_fn_free_keywrapper(pointer, $0) }
+    }
+
+    
+
+    
+open func info() -> KeyWrapperInfo  {
+    return try!  FfiConverterTypeKeyWrapperInfo_lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_keywrapper_info(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Encrypts `key` under the platform key (creating it if needed); the
+     * blob may carry an IV or an ephemeral key and must be authenticated.
+     */
+open func wrap(key: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeKeyWrapperFailure_lift) {
+    uniffi_leek_zcash_ffi_fn_method_keywrapper_wrap(self.uniffiClonePointer(),
+        FfiConverterData.lower(key),$0
+    )
+})
+}
+    
+    /**
+     * Decrypts what `wrap` returned, after the user's biometric or PIN.
+     */
+open func unwrap(blob: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeKeyWrapperFailure_lift) {
+    uniffi_leek_zcash_ffi_fn_method_keywrapper_unwrap(self.uniffiClonePointer(),
+        FfiConverterData.lower(blob),$0
+    )
+})
+}
+    
+    /**
+     * Deletes the platform key; already gone is not an error.
+     */
+open func deleteKey()throws   {try rustCallWithError(FfiConverterTypeKeyWrapperFailure_lift) {
+    uniffi_leek_zcash_ffi_fn_method_keywrapper_delete_key(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceKeyWrapper {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceKeyWrapper] = [UniffiVTableCallbackInterfaceKeyWrapper(
+        info: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> KeyWrapperInfo in
+                guard let uniffiObj = try? FfiConverterTypeKeyWrapper.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.info(
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterTypeKeyWrapperInfo_lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        wrap: { (
+            uniffiHandle: UInt64,
+            key: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Data in
+                guard let uniffiObj = try? FfiConverterTypeKeyWrapper.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.wrap(
+                     key: try FfiConverterData.lift(key)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterData.lower($0) }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeKeyWrapperFailure_lower
+            )
+        },
+        unwrap: { (
+            uniffiHandle: UInt64,
+            blob: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Data in
+                guard let uniffiObj = try? FfiConverterTypeKeyWrapper.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.unwrap(
+                     blob: try FfiConverterData.lift(blob)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterData.lower($0) }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeKeyWrapperFailure_lower
+            )
+        },
+        deleteKey: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeKeyWrapper.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.deleteKey(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeKeyWrapperFailure_lower
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterTypeKeyWrapper.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface KeyWrapper: handle missing in uniffiFree")
+            }
+        }
+    )]
+}
+
+private func uniffiCallbackInitKeyWrapper() {
+    uniffi_leek_zcash_ffi_fn_init_callback_vtable_keywrapper(UniffiCallbackInterfaceKeyWrapper.vtable)
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKeyWrapper: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<KeyWrapper>()
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = KeyWrapper
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> KeyWrapper {
+        return KeyWrapperImpl(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: KeyWrapper) -> UnsafeMutableRawPointer {
+        guard let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: handleMap.insert(obj: value))) else {
+            fatalError("Cast to UnsafeMutableRawPointer failed")
+        }
+        return ptr
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KeyWrapper {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: KeyWrapper, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeyWrapper_lift(_ pointer: UnsafeMutableRawPointer) throws -> KeyWrapper {
+    return try FfiConverterTypeKeyWrapper.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeyWrapper_lower(_ value: KeyWrapper) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeKeyWrapper.lower(value)
+}
+
+
+
+
+
+
+/**
  * A LeekWallet board over the host's [`FrameTransport`].
  *
  * Calls are serialized (one at a time); each blocks until the board
@@ -1239,6 +1551,236 @@ public func FfiConverterTypePairingListener_lift(_ pointer: UnsafeMutableRawPoin
 #endif
 public func FfiConverterTypePairingListener_lower(_ value: PairingListener) -> UnsafeMutableRawPointer {
     return FfiConverterTypePairingListener.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Quick unlock: the Storage Key kept wrapped by the app's [`KeyWrapper`],
+ * so the app opens with the user's biometric or device PIN instead of the
+ * board (`leek_zcash::QuickUnlock`; the record format is in its docs).
+ * Offer it only where the platform has a hardware-backed, user-authenticated
+ * key; never wrap with a key derived from a short PIN.
+ */
+public protocol QuickUnlockProtocol: AnyObject, Sendable {
+    
+    func account()  -> UInt32
+    
+    func appId()  -> String
+    
+    /**
+     * The wrapper's label when the record was made.
+     */
+    func label()  -> String
+    
+    func network()  -> Network
+    
+    /**
+     * The Storage Key after the platform's prompt: 702 for another app,
+     * account or network (no prompt), 706 for an insecure wrapper, 708 if
+     * the user cancelled, 707 if the platform key is gone or gives another
+     * key, 709 if it failed, 703 if the record was changed. On anything but
+     * 708, offer the board.
+     */
+    func `open`(appId: String, account: UInt32, network: Network, wrapper: KeyWrapper) throws  -> StorageKey
+    
+    func toBytes()  -> Data
+    
+}
+/**
+ * Quick unlock: the Storage Key kept wrapped by the app's [`KeyWrapper`],
+ * so the app opens with the user's biometric or device PIN instead of the
+ * board (`leek_zcash::QuickUnlock`; the record format is in its docs).
+ * Offer it only where the platform has a hardware-backed, user-authenticated
+ * key; never wrap with a key derived from a short PIN.
+ */
+open class QuickUnlock: QuickUnlockProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_leek_zcash_ffi_fn_clone_quickunlock(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_leek_zcash_ffi_fn_free_quickunlock(pointer, $0) }
+    }
+
+    
+    /**
+     * Wraps `key` (from the board) with `wrapper`; store `to_bytes()`.
+     * Code 706 unless the wrapper reports a hardware-backed key that
+     * requires the user, before `wrap` is called.
+     */
+public static func create(key: StorageKey, wrapper: KeyWrapper)throws  -> QuickUnlock  {
+    return try  FfiConverterTypeQuickUnlock_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_constructor_quickunlock_create(
+        FfiConverterTypeStorageKey_lower(key),
+        FfiConverterTypeKeyWrapper_lower(wrapper),$0
+    )
+})
+}
+    
+    /**
+     * A stored record; code 703 if it is not one.
+     */
+public static func fromBytes(bytes: Data)throws  -> QuickUnlock  {
+    return try  FfiConverterTypeQuickUnlock_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_constructor_quickunlock_from_bytes(
+        FfiConverterData.lower(bytes),$0
+    )
+})
+}
+    
+
+    
+open func account() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_quickunlock_account(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func appId() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_quickunlock_app_id(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * The wrapper's label when the record was made.
+     */
+open func label() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_quickunlock_label(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func network() -> Network  {
+    return try!  FfiConverterTypeNetwork_lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_quickunlock_network(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * The Storage Key after the platform's prompt: 702 for another app,
+     * account or network (no prompt), 706 for an insecure wrapper, 708 if
+     * the user cancelled, 707 if the platform key is gone or gives another
+     * key, 709 if it failed, 703 if the record was changed. On anything but
+     * 708, offer the board.
+     */
+open func `open`(appId: String, account: UInt32, network: Network, wrapper: KeyWrapper)throws  -> StorageKey  {
+    return try  FfiConverterTypeStorageKey_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_method_quickunlock_open(self.uniffiClonePointer(),
+        FfiConverterString.lower(appId),
+        FfiConverterUInt32.lower(account),
+        FfiConverterTypeNetwork_lower(network),
+        FfiConverterTypeKeyWrapper_lower(wrapper),$0
+    )
+})
+}
+    
+open func toBytes() -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_quickunlock_to_bytes(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQuickUnlock: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = QuickUnlock
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> QuickUnlock {
+        return QuickUnlock(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: QuickUnlock) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QuickUnlock {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: QuickUnlock, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQuickUnlock_lift(_ pointer: UnsafeMutableRawPointer) throws -> QuickUnlock {
+    return try FfiConverterTypeQuickUnlock.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQuickUnlock_lower(_ value: QuickUnlock) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeQuickUnlock.lower(value)
 }
 
 
@@ -2272,6 +2814,109 @@ public func FfiConverterTypeFeatures_lower(_ value: Features) -> RustBuffer {
 
 
 /**
+ * What a [`KeyWrapper`] says about its platform key (`leek_zcash::WrapperInfo`).
+ */
+public struct KeyWrapperInfo {
+    /**
+     * Generated in and never leaving secure hardware (StrongBox or a TEE,
+     * the Secure Enclave, a TPM, a security key).
+     */
+    public var hardwareBacked: Bool
+    /**
+     * Usable only after the user's biometric or device PIN, with the
+     * hardware's own attempt limits.
+     */
+    public var userAuthRequired: Bool
+    /**
+     * Shown on the unlock screen ("Fingerprint (StrongBox)"), up to 64 bytes.
+     */
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Generated in and never leaving secure hardware (StrongBox or a TEE,
+         * the Secure Enclave, a TPM, a security key).
+         */hardwareBacked: Bool, 
+        /**
+         * Usable only after the user's biometric or device PIN, with the
+         * hardware's own attempt limits.
+         */userAuthRequired: Bool, 
+        /**
+         * Shown on the unlock screen ("Fingerprint (StrongBox)"), up to 64 bytes.
+         */label: String) {
+        self.hardwareBacked = hardwareBacked
+        self.userAuthRequired = userAuthRequired
+        self.label = label
+    }
+}
+
+#if compiler(>=6)
+extension KeyWrapperInfo: Sendable {}
+#endif
+
+
+extension KeyWrapperInfo: Equatable, Hashable {
+    public static func ==(lhs: KeyWrapperInfo, rhs: KeyWrapperInfo) -> Bool {
+        if lhs.hardwareBacked != rhs.hardwareBacked {
+            return false
+        }
+        if lhs.userAuthRequired != rhs.userAuthRequired {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(hardwareBacked)
+        hasher.combine(userAuthRequired)
+        hasher.combine(label)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKeyWrapperInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KeyWrapperInfo {
+        return
+            try KeyWrapperInfo(
+                hardwareBacked: FfiConverterBool.read(from: &buf), 
+                userAuthRequired: FfiConverterBool.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KeyWrapperInfo, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.hardwareBacked, into: &buf)
+        FfiConverterBool.write(value.userAuthRequired, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeyWrapperInfo_lift(_ buf: RustBuffer) throws -> KeyWrapperInfo {
+    return try FfiConverterTypeKeyWrapperInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeyWrapperInfo_lower(_ value: KeyWrapperInfo) -> RustBuffer {
+    return FfiConverterTypeKeyWrapperInfo.lower(value)
+}
+
+
+/**
  * **Experimental.** What to write to the SD card (`prepare_sd_sign`).
  */
 public struct SdRequest {
@@ -2656,6 +3301,112 @@ extension AddressCheck: Equatable, Hashable {}
 
 
 /**
+ * Why the app's [`KeyWrapper`] failed.
+ */
+public enum KeyWrapperFailure: Swift.Error {
+
+    
+    
+    /**
+     * The user cancelled or failed the prompt: code 708.
+     */
+    case Cancelled
+    /**
+     * The platform key is gone or invalidated (new biometric enrolled,
+     * device PIN removed), or the blob does not decrypt: code 707.
+     */
+    case Invalidated
+    /**
+     * Anything else: code 709.
+     */
+    case Failed
+    /**
+     * The callback threw something else: code 709.
+     */
+    case Unexpected
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKeyWrapperFailure: FfiConverterRustBuffer {
+    typealias SwiftType = KeyWrapperFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KeyWrapperFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .Cancelled
+        case 2: return .Invalidated
+        case 3: return .Failed
+        case 4: return .Unexpected
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: KeyWrapperFailure, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case .Cancelled:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .Invalidated:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .Failed:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .Unexpected:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeyWrapperFailure_lift(_ buf: RustBuffer) throws -> KeyWrapperFailure {
+    return try FfiConverterTypeKeyWrapperFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeyWrapperFailure_lower(_ value: KeyWrapperFailure) -> RustBuffer {
+    return FfiConverterTypeKeyWrapperFailure.lower(value)
+}
+
+
+extension KeyWrapperFailure: Equatable, Hashable {}
+
+
+
+
+extension KeyWrapperFailure: Foundation.LocalizedError {
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+}
+
+
+
+
+
+/**
  * Every error, by the hundreds digit of its stable `code`.
  *
  * `code` is `leek_zcash::LeekError::code` (the README lists them),
@@ -2700,7 +3451,8 @@ public enum LeekError: Swift.Error {
     )
     /**
      * 7xx: stored app data (an invalid app identifier, data sealed for
-     * another key, damaged data, a forgotten Storage Key).
+     * another key, damaged data, a forgotten Storage Key) and quick unlock
+     * (an insecure platform key, an invalidated one, a cancelled prompt).
      */
     case Storage(code: UInt16, recovery: Recovery, reason: String
     )
@@ -3725,6 +4477,16 @@ public func decodeAccountRecord(bytes: Data)throws  -> AccountRecord  {
 })
 }
 /**
+ * Turns quick unlock off: deletes the wrapper's platform key. Delete the
+ * stored record as well.
+ */
+public func disableQuickUnlock(wrapper: KeyWrapper)throws   {try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_func_disable_quick_unlock(
+        FfiConverterTypeKeyWrapper_lower(wrapper),$0
+    )
+}
+}
+/**
  * The account record's CBOR body.
  */
 public func encodeAccountRecord(record: AccountRecord)throws  -> Data  {
@@ -3872,6 +4634,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_func_decode_account_record() != 20047) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_func_disable_quick_unlock() != 9343) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_func_encode_account_record() != 8489) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3911,6 +4676,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_method_frametransport_recv() != 13466) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_method_keywrapper_info() != 56262) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_keywrapper_wrap() != 56770) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_keywrapper_unwrap() != 59360) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_keywrapper_delete_key() != 24150) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_method_leekdevice_cancel() != 36527) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3942,6 +4719,24 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code() != 41350) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_quickunlock_account() != 47227) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_quickunlock_app_id() != 28314) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_quickunlock_label() != 755) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_quickunlock_network() != 45412) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_quickunlock_open() != 37434) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_quickunlock_to_bytes() != 9842) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_method_signlistener_on_progress() != 63101) {
@@ -3989,11 +4784,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new() != 20437) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_create() != 45728) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_from_bytes() != 14578) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_constructor_storagekey_from_bytes() != 55411) {
         return InitializationResult.apiChecksumMismatch
     }
 
     uniffiCallbackInitFrameTransport()
+    uniffiCallbackInitKeyWrapper()
     uniffiCallbackInitPairingListener()
     uniffiCallbackInitSignListener()
     return InitializationResult.ok

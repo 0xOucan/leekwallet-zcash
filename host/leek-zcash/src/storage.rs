@@ -43,7 +43,7 @@ const SUBKEY_INFO: &[u8] = b"Zcash_AppStorage_v1";
 /// The draft's subkey labels.
 pub const LABEL_DB: &str = "db";
 pub const LABEL_UFVK: &str = "ufvk";
-const LABEL_COMMIT: &str = "commit";
+pub(crate) const LABEL_COMMIT: &str = "commit";
 
 /// The sealed format: magic, version, algorithm.
 const MAGIC: &[u8; 4] = b"ZASK";
@@ -174,7 +174,7 @@ impl StorageKey {
         self.app_id.clear();
     }
 
-    fn live(&self) -> Result<(), LeekError> {
+    pub(crate) fn live(&self) -> Result<(), LeekError> {
         if self.app_id.is_empty() {
             Err(LeekError::StorageKeyForgotten)
         } else {
@@ -182,7 +182,7 @@ impl StorageKey {
         }
     }
 
-    fn subkey_unchecked(&self, label: &str) -> Zeroizing<[u8; 32]> {
+    pub(crate) fn subkey_unchecked(&self, label: &str) -> Zeroizing<[u8; 32]> {
         let hk = Hkdf::<Sha256>::new(Some(&[]), &self.key[..]);
         let mut out = Zeroizing::new([0u8; 32]);
         hk.expand_multi_info(&[SUBKEY_INFO, &[label.len() as u8], label.as_bytes()], &mut out[..])
@@ -215,7 +215,7 @@ impl StorageKey {
         c
     }
 
-    fn check_value(&self, salt: &[u8]) -> Hmac<Sha256> {
+    pub(crate) fn check_value(&self, salt: &[u8]) -> Hmac<Sha256> {
         let commit = self.subkey_unchecked(LABEL_COMMIT);
         let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&commit[..]).expect("HMAC takes any key length");
         mac.update(salt);

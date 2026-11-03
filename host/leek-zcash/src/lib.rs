@@ -18,7 +18,9 @@
 //! - Stored app data: [`get_storage_key`] (the app's Storage Key, after a
 //!   press on the board every time) and [`StorageKey`] (subkeys, and
 //!   [`StorageKey::seal`] / [`StorageKey::open`] for the database and the
-//!   UFVK), per docs/zcash/zip-draft-app-storage-keys.md.
+//!   UFVK), per docs/zcash/zip-draft-app-storage-keys.md; [`QuickUnlock`]
+//!   (the key kept wrapped by the platform's secure hardware behind the
+//!   user's biometric or device PIN, through the app's [`KeyWrapper`]).
 //! - Records: [`AccountRecord`] (the import record as CBOR),
 //!   [`SignResult::to_bytes`] (persist before broadcast) and
 //!   [`check_mined`] (compare after mining).
@@ -38,6 +40,7 @@ mod error;
 mod persist;
 mod preflight;
 mod prepare;
+mod quick;
 mod record;
 mod redact;
 mod sd;
@@ -55,6 +58,7 @@ pub use error::{classify, LeekError, Recovery, Unsupported};
 pub use persist::{check_mined, tx_txid, MinedCheck};
 pub use preflight::preflight;
 pub use prepare::{prepare_for_signer, TRANSPARENT_SEARCH_LIMIT};
+pub use quick::{KeyWrapper, QuickUnlock, WrapFailure, WrapperInfo, MAX_WRAPPED_LEN};
 pub use record::{AccountEntry, AccountRecord, ACCOUNT_RECORD_UR_TYPE};
 pub use redact::{signer_view_bytes, SignerView};
 pub use sd::{finish_sd_sign, prepare_sd_sign, SdRequest, SD_DIR, SD_SIGNED_ZSIG, SD_UNSIGNED_PCZT};
