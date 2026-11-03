@@ -154,6 +154,9 @@ static void button_poll_once(void)
     int64_t now = esp_timer_get_time();
 
     for (int i = 0; i < 4; i++) {
+        if (buttons[i] == GPIO_NUM_NC) {
+            continue;   /* not on this kit, and its pin belongs to something else */
+        }
         uint8_t raw = gpio_get_level(buttons[i]);
 
         if (!button_armed[i]) {
@@ -222,10 +225,22 @@ esp_err_t button_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Configure all button GPIOs - polling mode, no interrupts */
+    /* Configure all button GPIOs - polling mode, no interrupts.
+     *
+     * A key a board marks GPIO_NUM_NC is not fitted AND its pin is in use
+     * for something else - on the CAM board's colour build, K1 and K2's pins
+     * carry the panel's SPI clock and data. It is left out of the mask
+     * rather than given a pull-up, and the poll skips it, so it can never
+     * produce an event. (Shifting by GPIO_NUM_NC, -1, would also be
+     * undefined behaviour.) */
+    uint64_t mask = 0;
+    for (int i = 0; i < 4; i++) {
+        if (buttons[i] != GPIO_NUM_NC) {
+            mask |= 1ULL << buttons[i];
+        }
+    }
     gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << PIN_K1) | (1ULL << PIN_K2) |
-                        (1ULL << PIN_K3) | (1ULL << PIN_K4),
+        .pin_bit_mask = mask,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,

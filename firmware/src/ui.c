@@ -1073,7 +1073,9 @@ static void service_wrong_network(void)
 static void render_wrong_network(void)
 {
     oled_clear();
+    oled_set_role(OLED_ROLE_WARN);
     oled_draw_string_centered(0, "Wrong network");
+    oled_set_role(OLED_ROLE_AUTO);
     oled_draw_string_centered(2, wrong_network_asked ? "App: Testnet" : "App: Mainnet");
     oled_draw_string_centered(3, zcash_network ? "Board: Testnet" : "Board: Mainnet");
     oled_draw_string_centered(5, "Refused. Change it");
@@ -1786,7 +1788,9 @@ static void pin_change_progress_cb(uint8_t done, uint8_t total)
     char line[22];
     snprintf(line, sizeof(line), "%d of %d", (int)done, (int)total);
     oled_draw_string_centered(5, line);
+    oled_set_role(OLED_ROLE_WARN);
     oled_draw_string_centered(7, "Do not power off");
+    oled_set_role(OLED_ROLE_AUTO);
     oled_flush();
 }
 
@@ -2265,7 +2269,9 @@ static void screen_wallet_info_render(void)
     } else if (wallet_info_error[0] || master_xfp[0] == '\0') {
         /* Say plainly that there is nothing to show, rather than drawing
          * something identifier-shaped. */
+        oled_set_role(OLED_ROLE_DANGER);
         oled_draw_string_centered(2, "Error");
+        oled_set_role(OLED_ROLE_AUTO);
         oled_draw_string_centered(4, wallet_info_error[0] ? wallet_info_error
                                                           : "No fingerprint");
     } else {
@@ -3364,16 +3370,25 @@ static void screen_settings_on_button(button_id_t btn)
 
 static screen_id_t qr_out_back = SCREEN_MAIN_MENU;
 
+/* A panel big enough to show a whole message as one still code at a size a
+ * camera reads (qr-out.h, QR_OUT_MODE_STILL): the 240-row colour TFT. The
+ * OLEDs keep their animated modes and never cycle into this one. */
+static bool qr_out_still_first(void)
+{
+    return oled_panel_rows() > 128;
+}
+
 bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
                 screen_id_t back)
 {
     const int64_t now = esp_timer_get_time();
     /* Most readable first. v3 x2 cannot carry everything, so a message that
        does not fit there falls back to the next most readable mode, and one
-       that fits nowhere is refused rather than half shown. */
-    static const uint8_t ORDER[] = { QR_OUT_MODE_DEFAULT, 0, 1 };
+       that fits nowhere is refused rather than half shown. A colour panel
+       (qr_out_still_first) tries one still code before any of them. */
+    static const uint8_t ORDER[] = { QR_OUT_MODE_STILL, QR_OUT_MODE_DEFAULT, 0, 1 };
     bool started = false;
-    for (size_t i = 0; i < sizeof ORDER && !started; i++) {
+    for (size_t i = qr_out_still_first() ? 0 : 1; i < sizeof ORDER && !started; i++) {
         started = qr_out_start(type, cbor, len, ORDER[i], now);
     }
     if (!started) {
@@ -3389,7 +3404,8 @@ static void screen_qr_out_render(void)
     const char *frame = qr_out_frame();
     const QrOutMode *m = qr_out_mode_info(qr_out_current_mode());
     if (frame == NULL || m == NULL ||
-        oled_draw_qrcode_ex(frame, m->version, m->scale, m->inverted) != ESP_OK) {
+        oled_draw_qrcode_ex(frame, qr_out_current_version(), m->scale,
+                            m->inverted) != ESP_OK) {
         /* qr-out.c measured every frame before showing one, so this is a
            bug rather than a state; say so instead of a blank panel. */
         oled_clear();
@@ -3410,6 +3426,9 @@ static void screen_qr_out_on_button(button_id_t btn)
             uint8_t mode = qr_out_current_mode();
             for (int i = 0; i < QR_OUT_MODE_COUNT - 1; i++) {
                 mode = (uint8_t)((mode + step) % QR_OUT_MODE_COUNT);
+                if (mode == QR_OUT_MODE_STILL && !qr_out_still_first()) {
+                    continue;
+                }
                 if (qr_out_set_mode(mode, now)) {
                     break;
                 }
@@ -4621,7 +4640,9 @@ static void screen_wipe_confirm_enter(void)
 static void screen_wipe_confirm_render(void)
 {
     oled_clear();
+    oled_set_role(OLED_ROLE_DANGER);
     oled_draw_string_centered(0, "!! WIPE DEVICE !!");
+    oled_set_role(OLED_ROLE_AUTO);
 
     WalletStatus status = wallet_get_status();
     char line[22];
@@ -4781,7 +4802,9 @@ static void screen_mnemonic_verify_render(void)
     oled_draw_string(3, 36, typed);
 
     if (verify_last_wrong) {
+        oled_set_role(OLED_ROLE_DANGER);
         oled_draw_string(5, 0, "Wrong - try again");
+        oled_set_role(OLED_ROLE_AUTO);
     } else {
         if (entry.word_mode) {
             char line[22];
@@ -5254,7 +5277,9 @@ static void screen_passphrase_confirm_render(void)
      * blank row under "Match your record" invites them to accept a wallet
      * that never derived. */
     if (master_xfp[0] == '\0') {
+        oled_set_role(OLED_ROLE_DANGER);
         oled_draw_string_centered(2, "Error");
+        oled_set_role(OLED_ROLE_AUTO);
         oled_draw_string_centered(4, "No fingerprint");
         oled_draw_string_centered(6, "Cannot confirm");
         oled_draw_string(7, 0, HINT_RETRY);
@@ -5492,8 +5517,12 @@ static void screen_zsign_review_render(void)
         return;
     }
     for (int r = 0; r < ZREVIEW_ROWS; r++) {
+        /* zcash-review.c marks a warning row with a leading '!' (a public
+           output, a transparent recipient); a colour panel shows it amber. */
+        oled_set_role(page.row[r][0] == '!' ? OLED_ROLE_WARN : OLED_ROLE_AUTO);
         oled_draw_string(r, 0, page.row[r]);
     }
+    oled_set_role(OLED_ROLE_AUTO);
 }
 
 static void screen_zsign_review_on_button(button_id_t btn)

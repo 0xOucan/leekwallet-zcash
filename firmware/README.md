@@ -83,11 +83,33 @@ version is set in one place, `src/version.h`, which `getFeatures` reports too.
 Everything runs at 3.3 V. Wiring: [docs/WIRING-S3CAM.md](docs/WIRING-S3CAM.md);
 the board's pins: [docs/BOARD-S3CAM-PINOUT.md](docs/BOARD-S3CAM-PINOUT.md).
 
-The `esp32s3cam` build is the Zcash board. The `esp32s3` (the upstream
+The `esp32s3cam` build is the Zcash board. `esp32s3cam-color` is the same
+board with a 240×240 colour TFT that has the knob and Cancel built in
+([docs/WIRING-S3CAM-COLOR.md](docs/WIRING-S3CAM-COLOR.md)). The `esp32s3` (the upstream
 reference board: plain ESP32-S3, SSD1306, four buttons) build still has the Zcash signer but no camera or
 card slot. The `pixie` build (Firefly Pixie, ESP32-C3) boots and holds seeds
 but has no Zcash signer, which is built for Xtensa only
 ([docs/PIXIE-PORT.md](docs/PIXIE-PORT.md)).
+
+### Boards, components and builds
+
+A **board** is a pin map (`src/boards/<board>.h`): its GPIOs, its own
+peripherals, and which components it has pins for. A **component** is one
+driver selected by one value in `src/board.h`: the display
+(`LEEK_DISPLAY_SSD1306`, `_SH1107`, `_ST7789`), the input (`LEEK_INPUT_KNOB`,
+or the four-button module on the boards that shipped with it) and the secure
+element hook (`LEEK_SE`, `src/se.h`). A **build** is a named combination in
+`platformio.ini`. Adding a board is one short header; adding a panel is one
+driver and one value; neither touches the screens, which are laid out once
+and shown by every panel (`src/oled-core.c`, `src/panel128.c`,
+`src/panel-color.c`).
+
+| Build | Board | Display | Input |
+|---|---|---|---|
+| `esp32s3cam` | ESP32-S3 CAM | SH1107 128×128 OLED | knob + Cancel |
+| `esp32s3cam-color` | ESP32-S3 CAM | ST7789 240×240 colour TFT | knob + Cancel (on the module) |
+| `esp32s3` | ESP32-S3 reference | SSD1306 128×64 OLED | four buttons |
+| `pixie` | Firefly Pixie (C3) | ST7789 240×240 colour TFT | four buttons |
 
 ## Storage modes
 
@@ -111,6 +133,7 @@ needs the Espressif Rust toolchain: [docs/TOOLCHAIN.md](../docs/TOOLCHAIN.md).
 ```sh
 cd firmware
 pio run -e esp32s3cam                  # build
+pio run -e esp32s3cam-color            # build: same board, colour screen kit
 ./flash-board.sh s3cam                 # flash the app only, keeps the wallet
 ./flash-board.sh s3cam --port /dev/ttyACM0 --fresh   # a blank board: bootloader, partitions, app
 ./monitor.sh                           # serial log (Ctrl-] to exit)

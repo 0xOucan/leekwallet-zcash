@@ -5,14 +5,14 @@
  * Why this file exists
  *
  * There are two panels now: an SSD1306 over I2C on the reference board, and an
- * ST7789 over SPI on the Firefly Pixie. Almost nothing about drawing differs
+ * ST7789 over SPI on the Pixie and the CAM colour kit. Almost nothing about drawing differs
  * between them. The glyphs are the same glyphs, the 8x21 grid is the same grid,
  * the clip-at-the-right-edge rule is the same rule, and the QR renderer does
  * not care what it is eventually shown on.
  *
  * Only four things are actually panel-specific: bringing the bus up, pushing
  * the framebuffer out, contrast, and clearing the physical panel. Those live in
- * `oled.c` and `oled-pixie.c`. Everything else lives here and is compiled once.
+ * `oled.c` and `oled-st7789.c`. Everything else lives here and is compiled once.
  *
  * The alternative was to copy this into the second driver, and the reason not
  * to is not tidiness: two copies of `oled_draw_string_centered` would drift,
@@ -55,7 +55,37 @@ static const uint8_t *panel_picture;
 static uint8_t cursor_page = 0;
 static uint8_t cursor_col = 0;
 
+/* The text layer (oled-core.h). 2 KB, on every panel: the OLEDs never read
+ * it, and keeping one build of this file is worth more than the RAM. */
+static uint8_t glyph_at[OLED_PAGES * OLED_WIDTH];
+static uint8_t role_at[OLED_PAGES * OLED_WIDTH];
+static uint8_t current_role = OLED_ROLE_AUTO;
+
 uint8_t *oled_core_framebuffer(void) { return framebuffer; }
+const uint8_t *oled_core_glyphs(void) { return glyph_at; }
+const uint8_t *oled_core_roles(void) { return role_at; }
+
+void oled_set_role(oled_role_t role)
+{
+    current_role = (role < OLED_ROLE_COUNT) ? (uint8_t)role : OLED_ROLE_AUTO;
+}
+
+/* Forget every glyph whose 6-column cell overlaps columns [from, to]. */
+static void forget_glyphs(uint8_t page, int from, int to)
+{
+    if (page >= OLED_PAGES) return;
+    /* A cell starting at c covers c..c+5, so starts from from-5 overlap. */
+    for (int c = (from >= 5 ? from - 5 : 0); c <= to && c < OLED_WIDTH; c++) {
+        glyph_at[(size_t)page * OLED_WIDTH + c] = 0;
+    }
+}
+
+static void forget_page(uint8_t page)
+{
+    if (page < OLED_PAGES) {
+        memset(&glyph_at[(size_t)page * OLED_WIDTH], 0, OLED_WIDTH);
+    }
+}
 
 void oled_show_panel_picture(const uint8_t *picture) { panel_picture = picture; }
 
@@ -70,12 +100,15 @@ void oled_blit_page(uint8_t page, const uint8_t *cols, size_t len)
         len = OLED_WIDTH;
     }
     memcpy(&framebuffer[(size_t)page * OLED_WIDTH], cols, len);
+    forget_page(page);
 }
 
 esp_err_t oled_clear(void)
 {
     /* Clears the buffer, not the panel. The panel changes once, at flush. */
     memset(framebuffer, 0, sizeof(framebuffer));
+    memset(glyph_at, 0, sizeof(glyph_at));
+    current_role = OLED_ROLE_AUTO;
     cursor_page = 0;
     cursor_col = 0;
     last_qr_valid = false;
@@ -97,6 +130,7 @@ esp_err_t oled_clear_page(uint8_t page)
         return ESP_ERR_INVALID_ARG;
     }
     memset(&oled_core_framebuffer()[(size_t)page * OLED_WIDTH], 0x00, OLED_WIDTH);
+    forget_page(page);
     return ESP_OK;
 }
 
@@ -115,6 +149,17 @@ esp_err_t oled_draw_char(char c)
 
     const uint8_t *glyph = font_5x7_glyph(c);
     size_t base = (size_t)cursor_page * OLED_WIDTH;
+
+    /* The text layer: this cell replaces whatever glyphs it overlaps, and is
+       recorded itself only when all five glyph columns are on the panel. A
+       space is recorded as nothing, which is what it draws. */
+    if (cursor_col < OLED_WIDTH) {
+        forget_glyphs(cursor_page, cursor_col, cursor_col + 5);
+        if (c != ' ' && cursor_col + 5 <= OLED_WIDTH) {
+            glyph_at[base + cursor_col] = (uint8_t)c;
+            role_at[base + cursor_col] = current_role;
+        }
+    }
 
     for (int i = 0; i < 6; i++) {
         if (cursor_col >= OLED_WIDTH) {
@@ -178,6 +223,7 @@ esp_err_t oled_fill_page(uint8_t page, uint8_t pattern)
        end of a frame regardless, so the visible behaviour is unchanged and the
        framebuffer no longer disagrees with the glass in between. */
     memset(&oled_core_framebuffer()[(size_t)page * OLED_WIDTH], pattern, OLED_WIDTH);
+    forget_page(page);
     return ESP_OK;
 }
 
@@ -193,6 +239,7 @@ esp_err_t oled_set_pixel(uint8_t x, uint8_t y, bool on)
     uint8_t page = y / 8;
     uint8_t bit = y % 8;
     uint16_t index = page * OLED_WIDTH + x;
+    forget_glyphs(page, x, x);
 
     if (on) {
         framebuffer[index] |= (1 << bit);
@@ -258,6 +305,7 @@ static esp_err_t render_qr(QRCode *qrcode, uint8_t scale, int style)
      * (zxing's tryInvert, which the companion uses) read it as normal.
      */
     memset(framebuffer, (style == QR_STYLE_FILL) ? 0xFF : 0x00, sizeof(framebuffer));
+    memset(glyph_at, 0, sizeof(glyph_at));
 
     /*
      * FRAMED: normal polarity, but only the QR and its quiet zone are lit and

@@ -13,6 +13,7 @@
 
 typedef int gpio_num_t;
 
+#define GPIO_NUM_NC  (-1)
 #define GPIO_NUM_5   5
 #define GPIO_NUM_6   6
 #define GPIO_NUM_7   7

@@ -41,6 +41,7 @@
 #include "zcash-worker.h"
 #endif
 #include "button.h"
+#include "se.h"
 #include "ui.h"
 #include "device-wipe.h"
 #include "protocol.h"
@@ -118,10 +119,10 @@ void app_main(void)
      *
      * This was briefly a target-specific branch, while the C3 had no display
      * driver and had to come up headless. It does not need to be one any more:
-     * `oled.c` and `oled-pixie.c` implement the same seven transport entry
-     * points, and `oled_i2c_init()` on the Pixie succeeds without touching
-     * anything — there is no I2C panel there, and its pins belong to a button
-     * and the LED string.
+     * `oled.c` and `oled-st7789.c` implement the same seven transport entry
+     * points, and `oled_i2c_init()` on an SPI panel succeeds without touching
+     * anything — there is no I2C panel there, and on the Pixie its pins belong
+     * to a button and the LED string.
      *
      * `have_display` stays, because a panel can still fail to answer, and the
      * headless path it selects was written long before this port.
@@ -136,6 +137,18 @@ void app_main(void)
         ESP_LOGE(TAG, "Check SDA=GPIO%d, SCL=GPIO%d and that the panel is at 0x3C",
                  PIN_I2C_SDA, PIN_I2C_SCL);
 #endif
+    }
+
+    /* The secure element, if this build drives one (se.h). Asked once and
+     * logged; nothing depends on the answer yet, and a build without a part
+     * says so rather than staying silent about it. */
+    {
+        const se_status_t se = se_probe();
+        static const char *const SE_STATUS[] = {
+            "not fitted", "absent", "present", "fault",
+        };
+        ESP_LOGI(TAG, "Secure element: %s (%s)", se_name(),
+                 (unsigned)se < 4 ? SE_STATUS[se] : "?");
     }
 
     /* Initialize buttons */

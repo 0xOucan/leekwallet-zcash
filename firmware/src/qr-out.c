@@ -20,6 +20,8 @@ static const QrOutMode MODES[QR_OUT_MODE_COUNT] = {
        compares the same module size with the lit area swapped. */
     { 3,  2, 250, "v3 x2i", true },
     { 6,  1, 300, "v6 i",   true },
+    /* QR_OUT_MODE_STILL: version chosen per message, never animated. */
+    { 0,  1, 0,   "still",  false },
 };
 
 /* ISO 18004 table 7, alphanumeric column at level L. */
@@ -30,6 +32,7 @@ static const uint16_t ALNUM_L[10] = { 25, 47, 77, 114, 154, 195, 224, 279, 335, 
 static struct {
     bool      running;
     uint8_t   mode;
+    uint8_t   version;     /* what the current mode drew at */
     char      type[UR_TYPE_MAX + 1];
     uint8_t   message[QR_OUT_MAX_MESSAGE];
     size_t    message_len;
@@ -94,10 +97,24 @@ static bool restart(uint8_t mode, int64_t now_us)
     if (m == NULL) {
         return false;
     }
-    if (!choose_fragment(qr_out_alnum_capacity(m->version))) {
+    uint8_t version = m->version;
+    if (version == 0) {
+        /* Still: the smallest version whose fragment takes the whole
+           message, so there is exactly one part and nothing to cycle. */
+        for (version = 1; version <= 10; version++) {
+            if (choose_fragment(qr_out_alnum_capacity(version)) &&
+                ur_encoder_is_single_part(&out.enc)) {
+                break;
+            }
+        }
+        if (version > 10) {
+            return false;
+        }
+    } else if (!choose_fragment(qr_out_alnum_capacity(version))) {
         return false;
     }
     out.mode = mode;
+    out.version = version;
     out.seq_num = 1;
     if (!render_part(out.seq_num)) {
         return false;
@@ -159,6 +176,7 @@ const char *qr_out_frame(void)
 }
 
 uint8_t qr_out_current_mode(void)  { return out.mode; }
+uint8_t qr_out_current_version(void) { return out.running ? out.version : 0; }
 uint32_t qr_out_seq_len(void)      { return out.running ? out.enc.seq_len : 0; }
 uint32_t qr_out_seq_num(void)      { return out.running ? out.seq_num : 0; }
 

@@ -3,9 +3,13 @@
  * SSD1306 128x64 I2C display driver
  */
 
+#include "board.h"
+
+/* The I2C OLEDs only; a build with the SPI TFT links oled-st7789.c instead. */
+#if BOARD_HAS_I2C_PANEL
+
 #include "oled.h"
 #include "oled-core.h"
-#include "board.h"
 #if BOARD_PANEL_SH1107
 #include "panel128.h"
 #endif
@@ -408,3 +412,5 @@ esp_err_t oled_refresh(void)
 }
 
 #endif /* BOARD_PANEL_SH1107 */
+
+#endif /* BOARD_HAS_I2C_PANEL */

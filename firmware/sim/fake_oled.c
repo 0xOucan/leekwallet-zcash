@@ -157,6 +157,9 @@ esp_err_t oled_set_fast_refresh(bool fast)
     return ESP_OK;
 }
 
+/* Roles only colour a colour panel; the text grid has none to show. */
+void oled_set_role(oled_role_t role) { (void)role; }
+
 esp_err_t oled_set_contrast(uint8_t level)
 {
     contrast = level;
