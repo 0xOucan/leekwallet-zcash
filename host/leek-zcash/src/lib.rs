@@ -27,6 +27,7 @@ mod error;
 mod preflight;
 mod prepare;
 mod redact;
+mod sign;
 mod ua;
 
 pub use account::{
@@ -38,6 +39,7 @@ pub use error::{classify, LeekError, Recovery, Unsupported};
 pub use preflight::preflight;
 pub use prepare::{prepare_for_signer, TRANSPARENT_SEARCH_LIMIT};
 pub use redact::{signer_view_bytes, SignerView};
+pub use sign::{sign_pczt, CancelToken, CancellablePort, SignOptions, SignProgress, SignResult};
 pub use ua::to_checkable_ua;
 
 /// The crates this API is expressed in, re-exported so a wallet uses the
