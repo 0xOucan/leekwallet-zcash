@@ -305,6 +305,11 @@ function useBoard(b) {
   onBoardChanged();
 }
 
+/* Reading which wallet the board holds is a zGetAccount, and the board
+ * answers it only after OK on "Share view key?" (once per session). It does
+ * not say whether it is asking, so the line says "if". */
+const SHARE_KEY_HINT = 'If the board asks “Share view key?”, press OK on it.';
+
 function signLine(t) {
   if (t.phase === 'upload') return `Uploading to the board: ${t.sent} of ${t.total} bytes…`;
   if (t.phase === 'review') return 'Review the transaction on the board, page by page; ACCEPT on the last page signs.';
@@ -646,7 +651,7 @@ function boardSection() {
       h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'),
     );
   } else if (s.phase === 'unlocking') {
-    const line = s.waiting === 'pin' ? 'Enter your PIN on the board.' : s.waiting === 'wallet' ? 'Unlocked. Reading which wallet the board holds…' : 'Paired. Checking that the board is unlocked…';
+    const line = s.waiting === 'pin' ? 'Enter your PIN on the board.' : s.waiting === 'wallet' ? `Unlocked. Reading which wallet the board holds… ${SHARE_KEY_HINT}` : 'Paired. Checking that the board is unlocked…';
     lines.push(h('p', { id: 'board-pin' }, line), h('button', { onclick: () => ui.board.run('cancel') }, 'Cancel'));
   } else if (s.phase === 'ready') {
     const fp = boardFingerprint();
@@ -665,7 +670,7 @@ function boardSection() {
       s.locked
         ? h('p', { class: 'notice', id: 'board-locked' }, 'The board locked, and dropped any passphrase. Unlock it with your PIN on the board to see its wallet.')
         : s.waiting === 'wallet'
-          ? h('p', { class: 'muted', id: 'board-reading' }, 'The board\'s wallet changed. Reading which wallet it holds now…')
+          ? h('p', { class: 'muted', id: 'board-reading' }, `The board's wallet changed. Reading which wallet it holds now… ${SHARE_KEY_HINT}`)
           : fp
             ? null
             : h('p', { class: 'notice bad', id: 'board-account-error' }, s.accountError ?? 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),

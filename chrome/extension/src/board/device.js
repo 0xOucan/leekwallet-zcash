@@ -38,6 +38,11 @@ export const USER_TIMEOUT = 150e3;
 const SHORT = 10e3;
 /** Calls that derive keys on the board: an Orchard account takes seconds at 160 MHz. */
 const DERIVE = 90e3;
+/**
+ * zGetAccount: a derivation, then the board asks "Share view key?" (once
+ * per session) and waits up to 120 s for the press.
+ */
+const SHARE_KEY = DERIVE + 120e3;
 
 export class DeviceError extends Error {
   constructor(code, message) {
@@ -284,10 +289,13 @@ export class Device {
     return this.call('zGetFeatures', {});
   }
 
-  /** UFVK, UA, t-address, ZIP 32 seed fingerprint and (if set) birthday. */
+  /**
+   * UFVK, UA, t-address, ZIP 32 seed fingerprint and (if set) birthday,
+   * after the user presses OK on the board's "Share view key?".
+   */
   async zGetAccount(account, network) {
     checkNetwork(network);
-    const a = await this.call('zGetAccount', { account, network }, DERIVE);
+    const a = await this.call('zGetAccount', { account, network }, SHARE_KEY);
     return {
       account: uintField(a, 'account'),
       network: textField(a, 'network'),
