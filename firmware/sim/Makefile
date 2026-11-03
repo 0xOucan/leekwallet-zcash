@@ -494,6 +494,16 @@ $(BUILD)/test_vault_unreadable: test_vault_unreadable.c esp_stubs.c host_stubs.c
                                 $(VAULT_SRC) ../src/pin.c $(VAULT_CRYPTO) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $^
 
+# The v1/v2 -> v3 KDF migration, cut after every write and again on the
+# retry (docs/AUDIT-SD-WRITES.md N2), on vaults built as those firmwares wrote
+# them.
+TESTS += test_vault_migrate
+all: $(BUILD)/test_vault_migrate
+$(BUILD)/test_vault_migrate: CFLAGS += -DAES_VAR
+$(BUILD)/test_vault_migrate: test_vault_migrate.c esp_stubs.c host_stubs.c \
+                             $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -DLEEK_HOST_TEST -o $@ $^
+
 # The real src/protocol.c, against an in-memory USB-Serial-JTAG pipe. This is
 # the only place the wire protocol exists on the device, so it is the reference
 # the mock has to match; see test_protocol.c.

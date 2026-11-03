@@ -482,7 +482,16 @@ static void load_vault_params(void) {
 
     /* Absent is the common case and not a failure: every device shipped so far
      * predates this key, and those vaults were all written at the default work
-     * factor. vault_params_parse() encodes exactly that. */
+     * factor. vault_params_parse() encodes exactly that.
+     *
+     * Under a v1 marker a parameter blob is never v1's own - v1 has no work
+     * factor - but one staged by a v1 -> v3 migration that has not flipped
+     * its marker yet. Reading it as v1's turned the unsalted v1 verifier
+     * into a PBKDF2 one and refused the right PIN (finding N2 in
+     * docs/AUDIT-SD-WRITES.md). It belongs to staged_target(). */
+    if (vault_version == VAULT_KDF_V1_LEGACY) {
+        blob_len = 0;
+    }
     if (!vault_params_parse(blob_len ? blob : NULL, blob_len,
                             vault_version, &vault_kdf_params)) {
         ESP_LOGE(TAG, "kdf params blob unusable (%u bytes); using v%d defaults",
@@ -493,6 +502,72 @@ static void load_vault_params(void) {
     ESP_LOGI(TAG, "Vault KDF v%d, family %u, %u iterations", (int)vault_version,
              (unsigned)vault_kdf_params.family,
              (unsigned)vault_kdf_params.iterations);
+}
+
+// The derivation a v1 -> v3 migration has staged but not yet published.
+//
+// A v1 vault has no salt, so a salt under a v1 marker can only be one an
+// interrupted migration wrote, together with the parameters it was going to
+// use. Reading it back is what lets a migration be resumed onto the same
+// salt rather than a fresh one: blobs already rewritten under it stay
+// readable, where minting another would strand them.
+static bool staged_target(uint8_t salt[VAULT_SALT_SIZE], VaultKdfParams *params) {
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return false;
+    }
+    size_t slen = VAULT_SALT_SIZE;
+    bool found = nvs_get_blob(nvs, KEY_KDF_SALT, salt, &slen) == ESP_OK &&
+                 slen == VAULT_SALT_SIZE;
+    uint8_t blob[VAULT_PARAMS_BLOB_SIZE];
+    size_t blen = sizeof(blob);
+    if (nvs_get_blob(nvs, KEY_KDF_PARAMS, blob, &blen) != ESP_OK) {
+        blen = 0;
+    }
+    nvs_close(nvs);
+    if (found && !vault_params_parse(blen ? blob : NULL, blen, VAULT_KDF_CURRENT, params)) {
+        ESP_LOGE(TAG, "Staged kdf params unusable; using v%d defaults", (int)VAULT_KDF_CURRENT);
+    }
+    return found;
+}
+
+// Stage a fresh salt and the current parameters for a v1 -> v3 migration,
+// without the version marker. Until the marker is written the vault is still
+// v1 as far as every reader is concerned - load_vault_params() ignores both
+// under a v1 marker - so a cut anywhere up to it leaves a vault the v1 PIN
+// opens. See migrate_vault_to_current().
+static WalletError stage_v3_params(void) {
+    uint8_t salt[VAULT_SALT_SIZE];
+    random_buffer(salt, sizeof(salt));
+    VaultKdfParams params;
+    vault_params_default(VAULT_KDF_CURRENT, &params);
+    uint8_t blob[VAULT_PARAMS_BLOB_SIZE];
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        if (vault_params_serialize(&params, blob, sizeof(blob)) != sizeof(blob)) {
+            err = ESP_FAIL;
+        }
+        if (err == ESP_OK) {
+            err = nvs_set_blob(nvs, KEY_KDF_SALT, salt, VAULT_SALT_SIZE);
+        }
+        if (err == ESP_OK) {
+            err = nvs_set_blob(nvs, KEY_KDF_PARAMS, blob, sizeof(blob));
+        }
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) {
+        memzero(salt, sizeof(salt));
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    memcpy(vault_salt, salt, VAULT_SALT_SIZE);
+    vault_kdf_params = params;
+    memzero(salt, sizeof(salt));
+    return WALLET_OK;
 }
 
 // Generate and persist a fresh salt, switching the vault to v2.
@@ -508,12 +583,14 @@ static WalletError init_vault_params_v3(void) {
         return WALLET_ERROR_STORAGE_FAILED;
     }
 
-    /* Salt, version and parameters in one commit. They are three halves of a
-     * single fact - "this vault is derived like so" - and a power cut that
-     * separated them would leave blobs nobody can attribute to a derivation.
-     * It is also what lets an interrupted migration be resumed correctly: the
-     * salt on disk never appears without the version and parameters it was
-     * created for. */
+    /* Salt, parameters, then version - three NVS writes, not one: ESP-IDF
+     * writes each nvs_set_* to flash as it is called, and nvs_commit() does
+     * not make a group of them atomic. Only a vault with nothing encrypted
+     * calls this (a new device's first password), so a cut between them costs
+     * nothing: the version marker is written last, and without it
+     * load_vault_params() reads v1 and ignores the other two, and the next
+     * wallet_set_password() starts again. A migration must not use this; it
+     * stages with stage_v3_params() and flips the marker itself, last. */
     VaultKdfParams params;
     vault_params_default(VAULT_KDF_CURRENT, &params);
 
@@ -929,6 +1006,65 @@ uint8_t wallet_unverified_count(void) {
     return count;
 }
 
+// Write the version marker that makes the current format the vault's. The
+// in-RAM version follows it whether or not the write lands: everything this
+// session writes from now on is in the current format.
+static WalletError publish_current_version(void) {
+    vault_version = VAULT_KDF_CURRENT;
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, KEY_KDF_VERSION, VAULT_KDF_CURRENT);
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+    return err == ESP_OK ? WALLET_OK : WALLET_ERROR_STORAGE_FAILED;
+}
+
+// Does `password` open this vault? Into `hash` (HASH_SIZE) goes the verifier
+// that matched, for wallet_unlock().
+//
+// One case beyond the plain comparison: a v1 vault whose migration published
+// its new verifier and was cut before the version marker (step 4 of
+// migrate_vault_to_current). The verifier on flash is then the staged
+// derivation's, not v1's. It is accepted only when it matches exactly that,
+// so nothing weaker than either derivation ever opens the vault, and when
+// `finish` is set the marker is written and the session moves to the staged
+// derivation - the migration's last step, done here instead.
+static bool unlock_matches(const char *password, size_t length, bool finish,
+                           uint8_t hash[HASH_SIZE]) {
+    compute_password_hash(password, length, hash);
+    load_vault_record();
+    if (!vault_stored_hash_valid) {
+        return false;
+    }
+    if (vault_hash_equals(hash, vault_stored_hash)) {
+        return true;
+    }
+    if (vault_version != VAULT_KDF_V1_LEGACY) {
+        return false;
+    }
+
+    uint8_t salt[VAULT_SALT_SIZE];
+    VaultKdfParams params;
+    bool match = false;
+    if (staged_target(salt, &params)) {
+        vault_derive_verifier_with(&params, password, length, salt, hash);
+        match = vault_hash_equals(hash, vault_stored_hash);
+        if (match && finish) {
+            ESP_LOGW(TAG, "Finishing a migration cut before its version marker");
+            memcpy(vault_salt, salt, VAULT_SALT_SIZE);
+            vault_kdf_params = params;
+            publish_current_version();
+        }
+    }
+    memzero(salt, sizeof(salt));
+    memzero(&params, sizeof(params));
+    return match;
+}
+
 // ========== Vault Migration (v1 -> v2) ========== //
 
 /**
@@ -949,31 +1085,52 @@ uint8_t wallet_unverified_count(void) {
  * BIP39 checksum and is rejected.
  */
 /**
- * Load wallet `index` with the active key, falling back to `alt_key`.
+ * Load wallet `index` with the active key and format, falling back to
+ * `alt_key` and to the current (GCM) format.
  *
- * Needed because a migration interrupted during pass 2 leaves some blobs
- * encrypted under v2 while the version marker still reads v1. Without this,
- * the retry on the next unlock would fail its own pre-check and the user would
- * be stuck with a vault that is intact but unopenable.
+ * Needed because a migration interrupted while rewriting leaves some blobs in
+ * the target's form - GCM, under the target key - while the version marker
+ * still names the old one. Without this, the retry on the next unlock would
+ * fail its own pre-check and the user would be stuck with a vault that is
+ * intact but unopenable.
  *
- * Safe because a wrong key does not silently succeed: the decrypted bytes fail
- * their BIP39 checksum and load_encrypted_mnemonic_at_index() rejects them.
+ * Safe because a wrong key or form does not silently succeed: GCM checks its
+ * tag, and CBC's output must pass a BIP39 checksum before
+ * load_encrypted_mnemonic_at_index() accepts it.
  */
 static WalletError load_mnemonic_with_alt(uint8_t index, const uint8_t *alt_key) {
     WalletError err = load_encrypted_mnemonic_at_index(index);
-    if (err == WALLET_OK || alt_key == NULL) {
+    if (err == WALLET_OK) {
         return err;
     }
 
+    /* A migration rewrites each slot in place, in the target's format (GCM),
+     * before the marker that names the format flips. So a slot can be in
+     * either format, under either key. Every combination is tried; a wrong
+     * one cannot succeed by accident, because GCM checks its tag and CBC's
+     * output must pass a BIP39 checksum. The active key and format are put
+     * back whichever one opens it - the caller owns those. */
+    const VaultKdfVersion fmt = vault_version;
     uint8_t saved[32];
     memcpy(saved, state.encryption_key, sizeof(saved));
-    memcpy(state.encryption_key, alt_key, 32);
-
-    err = load_encrypted_mnemonic_at_index(index);
-    if (err != WALLET_OK) {
-        memcpy(state.encryption_key, saved, sizeof(saved));
-    } else {
-        ESP_LOGW(TAG, "Wallet %d opened with the alternate key "
+    const uint8_t *keys[2] = { saved, alt_key };
+    for (int k = 0; k < 2 && err != WALLET_OK; k++) {
+        if (!keys[k]) {
+            continue;
+        }
+        memcpy(state.encryption_key, keys[k], 32);
+        if (k == 1) {
+            err = load_encrypted_mnemonic_at_index(index);
+        }
+        if (err != WALLET_OK && !VAULT_USES_GCM(fmt)) {
+            vault_version = VAULT_KDF_CURRENT;
+            err = load_encrypted_mnemonic_at_index(index);
+            vault_version = fmt;
+        }
+    }
+    memcpy(state.encryption_key, saved, sizeof(saved));
+    if (err == WALLET_OK) {
+        ESP_LOGW(TAG, "Wallet %d opened in the migration's target form "
                       "(interrupted migration)", index);
     }
 
@@ -984,14 +1141,33 @@ static WalletError load_mnemonic_with_alt(uint8_t index, const uint8_t *alt_key)
 /**
  * Bring an older vault up to the current format.
  *
- * Two cases, and they differ in cost. v1 needs a new salt and new keys, so
- * every mnemonic is re-derived and re-encrypted. v2 already uses the current
- * derivation and differs only in storage, so the key is unchanged and the
- * blobs are simply rewritten under GCM.
+ * Two cases, and they differ in cost. v1 needs a salt and a new key, so every
+ * mnemonic is re-derived and re-encrypted. v2 already uses the current
+ * derivation and differs only in storage: its salt, parameters and key are
+ * kept, and the blobs are simply rewritten under GCM.
  *
- * Both share the same ordering, which is what makes them crash-safe: prove
- * everything is readable, rewrite it, and flip the version marker last. Losing
- * power leaves the vault on its old version and the next unlock tries again.
+ * Crash safety rests on one rule: until the version marker flips, every state
+ * a power cut can leave must still open with the same PIN (finding N2 in
+ * docs/AUDIT-SD-WRITES.md). NVS writes each value as it is set, so nothing
+ * here is grouped by a commit; the ordering is the whole of it.
+ *
+ *   1. Stage the target derivation (v1 only): salt, then parameters. Under a
+ *      v1 marker both are ignored by load_vault_params(), so the vault is
+ *      still v1. A staged salt from an earlier, interrupted run is reused,
+ *      never replaced: blobs may already be under it.
+ *   2. Prove every slot readable (in either form, under either key).
+ *   3. Rewrite each slot in place in GCM under the target key. A slot is in
+ *      one form or the other at every instant; load_mnemonic_with_alt()
+ *      reads both.
+ *   4. Publish the target verifier. For v2 it is the same bytes. For v1 the
+ *      marker still says v1 here, so unlock_matches() also accepts the
+ *      staged derivation's verifier and finishes the flip itself.
+ *   5. Write the version marker. Last.
+ *
+ * The old code minted a fresh salt for v2 as well, and wrote the marker
+ * before the verifier: a cut in either window refused the right PIN, spent
+ * attempts towards a wipe, and for v2 overwrote the only salt the blobs could
+ * be read with.
  */
 static WalletError migrate_vault_to_current(const char *password, size_t length) {
     VaultKdfVersion from = vault_version;
@@ -1001,123 +1177,67 @@ static WalletError migrate_vault_to_current(const char *password, size_t length)
     uint8_t old_key[32], new_key[32];
     memcpy(old_key, state.encryption_key, sizeof(old_key));
 
-    /*
-     * If a salt already exists, a previous migration was interrupted and some
-     * blobs may already be under the key that migration was targeting. Derive
-     * that key up front so both passes can fall back to it.
-     *
-     * The target version is NOT assumed to be the current one, and must not
-     * be: the partial blobs on disk were written by whatever firmware ran
-     * last, which may be older than this one. It is recorded, though -
-     * init_vault_params_v3() commits the salt, the version marker and the
-     * parameter blob together, so a salt on disk never appears without the
-     * two values that say how it was used. Read them back and derive under
-     * those, not under whatever this build would choose today.
-     */
-    uint8_t  resume_key[32];
-    uint8_t *resume = NULL;
-    {
-        nvs_handle_t nvs;
-        if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
-            uint8_t existing[VAULT_SALT_SIZE];
-            size_t  slen = VAULT_SALT_SIZE;
-            if (nvs_get_blob(nvs, KEY_KDF_SALT, existing, &slen) == ESP_OK &&
-                slen == VAULT_SALT_SIZE) {
-                uint8_t rver = VAULT_KDF_CURRENT;
-                uint8_t rv = 0;
-                if (nvs_get_u8(nvs, KEY_KDF_VERSION, &rv) == ESP_OK &&
-                    rv >= VAULT_KDF_V2 && rv <= VAULT_KDF_CURRENT) {
-                    rver = rv;
-                }
-
-                uint8_t rblob[VAULT_PARAMS_BLOB_SIZE];
-                size_t  rblob_len = sizeof(rblob);
-                if (nvs_get_blob(nvs, KEY_KDF_PARAMS, rblob, &rblob_len) != ESP_OK) {
-                    rblob_len = 0;
-                }
-
-                VaultKdfParams rparams;
-                if (!vault_params_parse(rblob_len ? rblob : NULL, rblob_len,
-                                        (VaultKdfVersion)rver, &rparams)) {
-                    ESP_LOGE(TAG, "Interrupted migration left unusable kdf params; "
-                                  "resuming on v%d defaults", (int)rver);
-                }
-
-                vault_derive_key_with(&rparams, password, length, existing, resume_key);
-                resume = resume_key;
-                ESP_LOGW(TAG, "Found an existing salt; resuming a prior migration "
-                              "targeting v%d (%u iterations)",
-                         (int)rver, (unsigned)rparams.iterations);
-                memzero(&rparams, sizeof(rparams));
-            }
-            memzero(existing, sizeof(existing));
-            nvs_close(nvs);
-        }
-    }
-
-    // Pass 1: prove every wallet is readable under the legacy key before
-    // writing anything. If one is corrupt we abort with the vault untouched,
-    // rather than half-converting it.
-    for (uint8_t i = 1; i <= state.wallet_count && i <= MAX_WALLETS; i++) {
-        memcpy(state.encryption_key, old_key, sizeof(old_key));
-        if (load_mnemonic_with_alt(i, resume) != WALLET_OK) {
-            ESP_LOGE(TAG, "Wallet %d unreadable; aborting migration", i);
+    // 1. The target derivation. v2 keeps its own; v1 resumes a staged one or
+    // stages a new one.
+    if (from == VAULT_KDF_V1_LEGACY) {
+        uint8_t staged_salt[VAULT_SALT_SIZE];
+        VaultKdfParams staged_params;
+        if (staged_target(staged_salt, &staged_params)) {
+            ESP_LOGW(TAG, "Resuming an interrupted migration on its staged salt");
+            memcpy(vault_salt, staged_salt, VAULT_SALT_SIZE);
+            vault_kdf_params = staged_params;
+        } else if (stage_v3_params() != WALLET_OK) {
             memzero(old_key, sizeof(old_key));
-            memzero(resume_key, sizeof(resume_key));
+            memzero(staged_salt, sizeof(staged_salt));
             return WALLET_ERROR_STORAGE_FAILED;
         }
-    }
-
-    // Establish the parameters for the version being migrated TO, and derive
-    // the new key under exactly those. Naming a version here - any fixed
-    // version - is how a migration ends up writing blobs under one derivation
-    // while recording another, which is unrecoverable rather than merely
-    // wrong. init_vault_params_v3() has just published salt, version and
-    // parameters, so vault_kdf_params is the target by construction.
-    WalletError err = init_vault_params_v3();
-    if (err != WALLET_OK) {
-        memzero(old_key, sizeof(old_key));
-        memzero(resume_key, sizeof(resume_key));
-        return err;
+        memzero(staged_salt, sizeof(staged_salt));
     }
     vault_derive_key_with(&vault_kdf_params, password, length, vault_salt, new_key);
 
-    // Pass 2: re-encrypt one wallet at a time, swapping the active key around
-    // each operation. Holding two 32-byte keys instead of every plaintext keeps
-    // this off the RAM budget - buffering 30 mnemonics would cost ~7.7 KB and
-    // park every seed in .bss for the duration.
+    // 2. Prove every wallet is readable before writing anything. If one is
+    // corrupt we abort with the vault untouched, rather than half-converting
+    // it.
     for (uint8_t i = 1; i <= state.wallet_count && i <= MAX_WALLETS; i++) {
-        /* Read under the old format, write under the new one. vault_version
-         * selects the format on both sides, so it is moved around each pair. */
-        VaultKdfVersion target = vault_version;
-        vault_version = from;
         memcpy(state.encryption_key, old_key, sizeof(old_key));
-        WalletError rerr = load_mnemonic_with_alt(i, new_key);
-        vault_version = target;
-
-        if (rerr != WALLET_OK) {
-            memzero(old_key, sizeof(old_key));
-            memzero(new_key, sizeof(new_key));
-            memzero(resume_key, sizeof(resume_key));
-            return WALLET_ERROR_STORAGE_FAILED;
-        }
-
-        memcpy(state.encryption_key, new_key, sizeof(new_key));
-        if (save_encrypted_mnemonic_at_index(i) != WALLET_OK) {
-            ESP_LOGE(TAG, "Failed to rewrite wallet %d", i);
+        if (load_mnemonic_with_alt(i, new_key) != WALLET_OK) {
+            ESP_LOGE(TAG, "Wallet %d unreadable; aborting migration", i);
+            memcpy(state.encryption_key, old_key, sizeof(old_key));
+            /* The staged derivation stays staged; this session goes back to
+             * reading the vault as its marker says. */
+            vault_params_loaded = false;
             memzero(old_key, sizeof(old_key));
             memzero(new_key, sizeof(new_key));
             return WALLET_ERROR_STORAGE_FAILED;
         }
     }
 
-    // Publish the new verifier last. Until this write lands the vault still
-    // authenticates against the v1 hash, so an interrupted migration is retried
-    // on the next unlock rather than locking the user out.
-    //
-    // A crash inside pass 2 leaves some blobs under v2 while the marker still
-    // says v1. Both passes handle that via load_mnemonic_with_alt(), so the
-    // retry on the next unlock picks up where this one stopped.
+    // 3. Re-encrypt one wallet at a time, swapping the active key around each
+    // operation. Holding two 32-byte keys instead of every plaintext keeps
+    // this off the RAM budget - buffering 30 mnemonics would cost ~7.7 KB and
+    // park every seed in .bss for the duration. vault_version selects the
+    // format the save writes, so it names the target only around the save.
+    for (uint8_t i = 1; i <= state.wallet_count && i <= MAX_WALLETS; i++) {
+        memcpy(state.encryption_key, old_key, sizeof(old_key));
+        WalletError rerr = load_mnemonic_with_alt(i, new_key);
+        if (rerr == WALLET_OK) {
+            memcpy(state.encryption_key, new_key, sizeof(new_key));
+            vault_version = VAULT_KDF_CURRENT;
+            rerr = save_encrypted_mnemonic_at_index(i);
+            vault_version = from;
+        }
+        if (rerr != WALLET_OK) {
+            ESP_LOGE(TAG, "Failed to rewrite wallet %d", i);
+            memcpy(state.encryption_key, old_key, sizeof(old_key));
+            vault_params_loaded = false;
+            memzero(old_key, sizeof(old_key));
+            memzero(new_key, sizeof(new_key));
+            return WALLET_ERROR_STORAGE_FAILED;
+        }
+    }
+
+    // 4. The target verifier. compute_password_hash() derives under
+    // vault_kdf_params and vault_salt, which name the target now.
     compute_password_hash(password, length, state.password_hash);
 
     /* Same generation - a KDF migration rewrites blobs in place - but the
@@ -1129,16 +1249,14 @@ static WalletError migrate_vault_to_current(const char *password, size_t length)
         nerr = write_vault_record(active_layout.gen, state.password_hash);
     } else {
         nvs_handle_t nvs;
-        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) {
-            memzero(old_key, sizeof(old_key));
-            memzero(new_key, sizeof(new_key));
-            return WALLET_ERROR_STORAGE_FAILED;
-        }
-        esp_err_t werr = nvs_set_blob(nvs, KEY_PASSWORD_HASH, state.password_hash, HASH_SIZE);
+        esp_err_t werr = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
         if (werr == ESP_OK) {
-            werr = nvs_commit(nvs);
+            werr = nvs_set_blob(nvs, KEY_PASSWORD_HASH, state.password_hash, HASH_SIZE);
+            if (werr == ESP_OK) {
+                werr = nvs_commit(nvs);
+            }
+            nvs_close(nvs);
         }
-        nvs_close(nvs);
         if (werr == ESP_OK) {
             memcpy(vault_stored_hash, state.password_hash, HASH_SIZE);
             vault_stored_hash_valid = true;
@@ -1146,24 +1264,30 @@ static WalletError migrate_vault_to_current(const char *password, size_t length)
         nerr = (werr == ESP_OK) ? WALLET_OK : WALLET_ERROR_STORAGE_FAILED;
     }
 
+    if (nerr != WALLET_OK) {
+        /* Every slot is in the target form now, and the old verifier still
+         * stands: the next unlock (old derivation) resumes and reads them
+         * through the fallback. This session keeps the old key so the
+         * verifier and the key it pairs with agree. */
+        memcpy(state.encryption_key, old_key, sizeof(old_key));
+        vault_params_loaded = false;
+        memzero(old_key, sizeof(old_key));
+        memzero(new_key, sizeof(new_key));
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
     memzero(old_key, sizeof(old_key));
-    memzero(resume_key, sizeof(resume_key));
     memcpy(state.encryption_key, new_key, sizeof(new_key));
     memzero(new_key, sizeof(new_key));
 
-    if (nerr != WALLET_OK) {
-        return WALLET_ERROR_STORAGE_FAILED;
+    // 5. The marker, last.
+    if (publish_current_version() != WALLET_OK) {
+        /* Everything else landed; the next unlock recognises the staged
+         * verifier and writes the marker then. */
+        ESP_LOGE(TAG, "Version marker not written; finished at the next unlock");
     }
 
     if (state.active_wallet_index > 0) {
         load_encrypted_mnemonic_at_index(state.active_wallet_index);
-    }
-
-    nvs_handle_t vnvs;
-    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &vnvs) == ESP_OK) {
-        nvs_set_u8(vnvs, KEY_KDF_VERSION, VAULT_KDF_CURRENT);
-        nvs_commit(vnvs);
-        nvs_close(vnvs);
     }
 
     ESP_LOGW(TAG, "Vault migrated to v%d", (int)VAULT_KDF_CURRENT);
@@ -1454,15 +1578,11 @@ WalletError wallet_unlock(const char *password, size_t length) {
         return WALLET_ERROR_WRONG_PASSWORD;
     }
 
-    // Verify password
+    // Verify password. unlock_matches() compares with vault_hash_equals, not
+    // memcmp: vault-kdf.h requires it, and a compare that exits on the first
+    // differing byte leaks how much of a guessed verifier was right.
     uint8_t hash[HASH_SIZE];
-    compute_password_hash(password, length, hash);
-
-    load_vault_record();
-    /* vault_hash_equals, not memcmp: vault-kdf.h requires it, and a compare
-     * that exits on the first differing byte leaks how much of a guessed
-     * verifier was right. */
-    if (!vault_stored_hash_valid || !vault_hash_equals(hash, vault_stored_hash)) {
+    if (!unlock_matches(password, length, true, hash)) {
         memzero(hash, sizeof(hash));
         return WALLET_ERROR_WRONG_PASSWORD;
     }
@@ -1536,15 +1656,12 @@ bool wallet_verify_password(const char *password, size_t length) {
         return false;
     }
 
+    /* The same answer wallet_unlock() would give, without writing: pin.c
+     * charges an attempt on false, so a PIN that unlock would accept must
+     * never be refused here. */
     uint8_t hash[HASH_SIZE];
-    compute_password_hash(password, length, hash);
-
-    load_vault_record();
-    bool match = vault_stored_hash_valid &&
-                 vault_hash_equals(hash, vault_stored_hash);
-
+    bool match = unlock_matches(password, length, false, hash);
     memzero(hash, sizeof(hash));
-
     return match;
 }
 

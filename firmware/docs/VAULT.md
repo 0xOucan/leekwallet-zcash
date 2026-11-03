@@ -316,6 +316,12 @@ There are no production wallets yet, but the mechanism is needed before there ar
 - Make the re-encryption crash-safe and idempotent — write the new blobs first, flip the version
   last, resume on boot. The fake NVS crash injection in `sim/` is what proves this, the same way
   it proved the S4 fix.
+- NVS writes each value as it is set; `nvs_commit()` does not make a group of writes atomic. So
+  "flip the version last" has to hold write by write: v1 → v3 stages its salt and parameters
+  (ignored under a v1 marker), rewrites the blobs, publishes the verifier, and writes `kdf_ver`
+  last, with unlock accepting the staged verifier for the one window between those two; v2 → v3
+  keeps its salt and key and only changes the blob format. `sim/test_vault_migrate.c` cuts every
+  write, twice. See [AUDIT-SD-WRITES.md](AUDIT-SD-WRITES.md), N2.
 
 ## Backing it up
 
