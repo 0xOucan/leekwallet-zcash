@@ -108,3 +108,14 @@ fn limits_are_the_boards() {
         Err(LeekError::Unsupported(Unsupported::Pool))
     );
 }
+
+#[test]
+fn a_repeated_rk_is_refused_before_anything_else() {
+    // Within Ironwood, and across Orchard and Ironwood (the board's
+    // ZS_E_DUPLICATE_RK, 0x0518): caught before any ownership check.
+    for name in ["r_duplicate_rk", "r_duplicate_rk_cross_pool"] {
+        assert_eq!(check(name, &test0()), Err(LeekError::DuplicateRk), "{name}");
+        let bare = leek_zcash::AccountMeta { ufvk: None, ..test0() };
+        assert_eq!(check(name, &bare), Err(LeekError::DuplicateRk), "{name} without UFVK");
+    }
+}

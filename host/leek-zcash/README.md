@@ -54,7 +54,8 @@ account first and refuses a different seed before anything is uploaded.
 
 One `LeekError` for everything, `#[non_exhaustive]`. `code()` is stable (1xx
 link, 2xx session and board, 3xx user, 4xx account and network, 5xx PCZT,
-6xx signatures, 900 an unknown firmware code). `recovery()` says
+6xx signatures, 900 an unknown firmware code; `DuplicateRk`, the board's
+`ZS_E_DUPLICATE_RK` (0x0518), is 517). `recovery()` says
 `RetrySameLink`, `Reconnect` or `DoNotRetry`. Every firmware code in
 `docs/PROTOCOL.md` §6, `ZS_E_*` and `ZSIGN_E_*` is mapped (a few by call:
 code 0x0E is `AddressNotOurs` for an address check and `OutputMismatch` for
@@ -73,6 +74,8 @@ Before sending (`preflight`):
 - the PCZT's coin type is the account's network;
 - its transaction version and consensus branch are in the board's lists;
 - no Sapling spend or output;
+- no two Orchard or Ironwood actions, both pools together, share an `rk`
+  (raw bytes, signed padding included, as the board and Keystone refuse it);
 - at most 16 transparent inputs, each plain P2PKH with `SIGHASH_ALL`, no
   existing signatures, exactly one BIP 32 derivation naming this seed
   fingerprint, coin type and account at scope 0, 1 or 2, whose key the script
@@ -146,7 +149,8 @@ cargo test -p leek-zcash
   upstream's compact view equals the vectors leek-android's `compact_view`
   made.
 - `tests/preflight.rs`: every vector the board signs passes; the refusal
-  vectors (other network, old branch, foreign spend, transparent inputs with
+  vectors (other network, old branch, a repeated `rk` within and across
+  pools, foreign spend, transparent inputs with
   missing, foreign, wrong-account or wrong-path derivations, `SIGHASH_NONE`)
   get their precise error; limits.
 - `tests/prepare.rs`: stripped and zero-fingerprint derivations are restored
@@ -181,7 +185,6 @@ Also left for next slices: L2 device actions as a state stream
 (`ConfirmPairingCode`, `UnlockOnDevice`, `ReviewOnDevice`, ...) with
 `cancel()`; re-checking expiry against the chain height after the board
 returns; `prepareSdSign` / `finishSdSign`; account-record codecs
-(`zcash-accounts`); mapping `ZS_E_DUPLICATE_RK` once its code lands (TODO in
-`src/error.rs`); typed transport errors from `leek-device` instead of
+(`zcash-accounts`); typed transport errors from `leek-device` instead of
 matching its wording; replacing `leek-android`'s hand-written `compact_view`
 with this crate (the vectors show they are byte-identical).
