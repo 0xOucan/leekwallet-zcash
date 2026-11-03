@@ -1715,6 +1715,100 @@ static void test_zget_account_asks_first(void)
     stub_session_dies_on_answer = false;
 }
 
+static size_t zget_fp_request(uint8_t *buf, size_t cap, const char *network)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 1 + (network != NULL));
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zGetSeedFingerprint");
+    if (network) {
+        cbor_write_text(&w, "network");
+        cbor_write_text(&w, network);
+    }
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+/* The 32 bytes of a zGetSeedFingerprint or zGetAccount answer, or false. */
+static bool reply_fingerprint(uint8_t fp[32])
+{
+    Frame f = next_reply();
+    const uint8_t *body;
+    size_t body_len;
+    CborItem it;
+    if (!(f.present && f.type == T_ENC_RESPONSE && result_body(&f, &body, &body_len))) return false;
+    if (!cbor_map_find(body, body_len, "seedFingerprint", &it) || it.type != CBOR_BYTES ||
+        it.value != 32) {
+        return false;
+    }
+    memcpy(fp, it.data, 32);
+    return true;
+}
+
+static void test_zget_seed_fingerprint(void)
+{
+    printf("== zGetSeedFingerprint: which seed, for a paired host, with no question\n");
+    uint8_t payload[96];
+    fresh_device();
+
+    send_plain(payload, zget_fp_request(payload, sizeof payload, NULL));
+    expect_error(T_ERROR, E_SESSION, "a fingerprint without a session");
+
+    confirmed_session(36);
+    send_encrypted(payload, zget_fp_request(payload, sizeof payload, NULL));
+    expect_error(T_ENC_ERROR, E_NOT_UNLOCKED, "a fingerprint from a locked board");
+
+    pin_set("123456");
+    pin_verify("123456");
+    wallet_unlock("123456", 6);
+    send_encrypted(payload, zget_fp_request(payload, sizeof payload, NULL));
+    expect_error(T_ENC_ERROR, E_NO_WALLET, "a fingerprint with no seed");
+
+    /* Nobody at the board, and it still answers: there is no question. The
+     * seed is a vector's, so the answer can be checked against librustzcash
+     * (fake_zcash.c answers zGetAccount from the same vectors). */
+    const zv_key_vector *k = NULL;
+    for (size_t i = 0; i < ZV_KEYS_COUNT; i++) {
+        if (strcmp(ZV_KEYS[i].name, "test/abandon-art/pp0/acct0") == 0) k = &ZV_KEYS[i];
+    }
+    CHECK(k != NULL, "no abandon-art vector");
+    if (!k) return;
+    fake_wallet_preload(k->mnemonic);
+    share_key_prompts = 0;
+    scripted_outcome = SIGN_PENDING;
+    uint8_t fp[32], again[32], from_account[32];
+    send_encrypted(payload, zget_fp_request(payload, sizeof payload, NULL));
+    CHECK(reply_fingerprint(fp) && memcmp(fp, k->seed_fingerprint, 32) == 0,
+          "not the ZIP 32 fingerprint of the open seed");
+    send_encrypted(payload, zget_fp_request(payload, sizeof payload, "test"));
+    CHECK(reply_fingerprint(again) && memcmp(fp, again, 32) == 0,
+          "naming the network changed the answer");
+    CHECK(share_key_prompts == 0, "the board asked to share the view key (%d)", share_key_prompts);
+
+    /* The other network is refused like any other z* request. */
+    send_encrypted(payload, zget_fp_request(payload, sizeof payload, "main"));
+    expect_error(T_ENC_ERROR, E_ZSIGN(ZSIGN_E_BOARD_NETWORK), "a fingerprint for the other network");
+    send_encrypted(payload, zget_fp_request(payload, sizeof payload, "regtest"));
+    expect_error(T_ENC_ERROR, E_MALFORMED, "a network that is neither");
+
+    /* The same 32 bytes zGetAccount returns, from any account. */
+    scripted_outcome = SIGN_APPROVED;
+    send_encrypted(payload, zget_account_request(payload, sizeof payload, 0, "test"));
+    CHECK(reply_fingerprint(from_account) && memcmp(fp, from_account, 32) == 0,
+          "zGetAccount names another seed than zGetSeedFingerprint");
+    CHECK(share_key_prompts == 1, "zGetAccount did not ask (%d)", share_key_prompts);
+
+    /* Another seed is another fingerprint. */
+    fake_wallet_reset();
+    pin_set("123456");
+    pin_verify("123456");
+    wallet_unlock("123456", 6);
+    fake_wallet_preload(TEST_MNEMONIC);
+    send_encrypted(payload, zget_fp_request(payload, sizeof payload, NULL));
+    CHECK(reply_fingerprint(again) && memcmp(fp, again, 32) != 0,
+          "two seeds, one fingerprint");
+}
+
 /*
  * A request that arrived encrypted is answered under the session it came in
  * on, or refused: never in plaintext, and never under another host's keys.
@@ -3707,6 +3801,7 @@ static int run_all_tests(void)
     test_select_wallet();
     test_zget_account();
     test_zget_account_asks_first();
+    test_zget_seed_fingerprint();
     test_no_plaintext_answer_once_the_session_is_gone();
     test_zset_account_meta();
     test_large_frames_cross_the_usb_driver();

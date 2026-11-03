@@ -45,6 +45,7 @@
 #include "ui.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
+#include "zcash-fp.h"
 #include "zcash-meta.h"
 #include "zcash-sign.h"
 #else
@@ -1333,6 +1334,52 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, acct.keys.ua);
         cbor_write_text(&w, "tAddress");
         cbor_write_text(&w, acct.t_address);
+
+    } else if (strcmp(method, "zGetSeedFingerprint") == 0) {
+        /* Which seed the board has open, and nothing else: how a companion
+         * recognises the board on every connect without asking for the
+         * viewing key, and so without putting "Share view key?" up each
+         * time. No question: the fingerprint is not a key and the board
+         * shows its first four bytes on its own screen. It is a stable
+         * identifier of the seed, though, the same for every paired host,
+         * so it takes what zGetAccount takes short of the press. */
+        if (!request_is_authenticated()) {
+            send_session_error(ERR_SESSION, "session required");
+            return;
+        }
+        if (!pin_is_unlocked()) {
+            send_error(ERR_NOT_UNLOCKED, "device is locked");
+            return;
+        }
+        /* Optional, and it does not change the answer; named, it is held
+         * to the board's setting like everywhere else, so one call tells a
+         * companion both which seed and whether the network is right. */
+        if (cbor_map_find(payload, len, "network", &item)) {
+            char net_name[8];
+            if (!cbor_text_copy(&item, net_name, sizeof(net_name)) ||
+                (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+                send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+                return;
+            }
+            if (!network_is_the_boards(strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN
+                                                                     : ZCASH_NET_TEST)) {
+                return;
+            }
+        }
+        uint8_t seed_fp[32];
+        WalletError werr = wait_for_wallet();
+        if (werr == WALLET_OK) {
+            werr = zcash_seed_fingerprint(seed_fp);
+        }
+        if (werr != WALLET_OK) {
+            send_wallet_error(werr);
+            return;
+        }
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "result");
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "seedFingerprint");
+        cbor_write_bytes(&w, seed_fp, sizeof seed_fp);
 
     } else if (strcmp(method, "zGetFeatures") == 0) {
         /* What this device's Zcash signer does, so a companion can decide
