@@ -94,13 +94,21 @@ SdSeedResult sdseed_save(const char *pass, size_t pass_len, const char *label, u
                                        sizeof file, &len));
     if (r == SDSEED_OK) {
         char name[SDCARD_NAME_MAX + 1];
+        int wrc = SDCARD_E_IO;
         if (!sdcard_free_name("SEED", "ZKV", name)) {
             r = SDSEED_E_FULL;
-        } else if (sdcard_write_new(name, file, len) != SDCARD_OK) {
-            r = SDSEED_E_IO;
+        } else if ((wrc = sdcard_write_new(name, file, len)) != SDCARD_OK) {
+            /* sdcard_write_new has already taken the name back off a file
+             * that did not read back the same. */
+            r = wrc == SDCARD_E_VERIFY ? SDSEED_E_VERIFY : SDSEED_E_IO;
         } else {
             /* Read back and open before saying it worked: a card that cannot
-             * be opened again is not a backup. */
+             * be opened again is not a backup. And one that cannot be opened
+             * must not stay on the card under a seed file's name, where it
+             * would later look like a backup whose passphrase was forgotten
+             * (a damaged file and a wrong passphrase fail the same GCM tag).
+             * The name was free a moment ago, so the file removed is only
+             * ever the one this call wrote. */
             uint8_t back[ZKV_FILE_MAX];
             size_t blen = 0;
             ZkvContents check;
@@ -108,6 +116,7 @@ SdSeedResult sdseed_save(const char *pass, size_t pass_len, const char *label, u
                 memcmp(back, file, len) != 0 ||
                 zkv_open(back, blen, pass, pass_len, &check) != ZKV_OK ||
                 memcmp(check.entropy, c.entropy, c.entropy_len) != 0) {
+                sdcard_remove(name);
                 r = SDSEED_E_VERIFY;
             } else {
                 snprintf(out_name, SDCARD_NAME_MAX + 1, "%s", name);

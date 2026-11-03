@@ -12,7 +12,10 @@
  * Writes never overwrite. A new file is written as a temporary, flushed,
  * then renamed to a name that does not exist yet, so a power cut leaves
  * either the old directory or the new file whole, never half a seed file
- * under a real name. A stray temporary is removed at the next mount.
+ * under a real name. A stray temporary is removed at the next mount. Once
+ * renamed, the file is read back through a fresh handle and compared with
+ * what was meant; a file that does not match loses its name again
+ * (SDCARD_E_VERIFY). docs/AUDIT-SD-WRITES.md walks every step.
  */
 #ifndef LEEK_SDCARD_H
 #define LEEK_SDCARD_H
@@ -32,6 +35,7 @@
 #define SDCARD_E_EXISTS  (-4)
 #define SDCARD_E_TOOBIG  (-5)
 #define SDCARD_E_NOTFOUND (-6)
+#define SDCARD_E_VERIFY  (-7)   /* written, but did not read back: removed again */
 
 /** Mount the card if it is not mounted. */
 int sdcard_mount(void);
@@ -50,7 +54,8 @@ int sdcard_list(const char *ext, char names[][SDCARD_NAME_MAX + 1], int max);
 /** Read a whole file of at most `cap` bytes. */
 int sdcard_read(const char *name, uint8_t *buf, size_t cap, size_t *len);
 
-/** Write a new file; SDCARD_E_EXISTS if the name is taken. */
+/** Write a new file; SDCARD_E_EXISTS if the name is taken. Read back before
+ * SDCARD_OK; on SDCARD_E_VERIFY the name is not left behind. */
 int sdcard_write_new(const char *name, const uint8_t *buf, size_t len);
 
 /**
@@ -80,8 +85,11 @@ int sdcard_sha256(const char *path, uint8_t out[32], size_t *size);
 int sdcard_mkdir(const char *path);
 
 /**
- * Write `path`, replacing any file there, through a temporary and a rename,
- * so a power cut leaves the old file or the new one. For files that are not
+ * Write `path`, replacing any file there, through `path`.tmp and a rename.
+ * FAT will not rename over a name, so the old file is removed between the
+ * two: a power cut leaves the old file, nothing, or the new file whole, and
+ * at worst a complete `path`.tmp the caller should discard. Never a short
+ * file under `path`. Read back before SDCARD_OK. For files that are not
  * secrets and may be overwritten (a .zsig); seed files use sdcard_write_new.
  */
 int sdcard_write_replace(const char *path, const uint8_t *buf, size_t len);
@@ -94,6 +102,30 @@ int sdcard_remove(const char *path);
 void sdcard__set_root_for_test(const char *dir);
 /** Fail the rename step of the next write, as a power cut there would. */
 void sdcard__fail_next_rename_for_test(void);
+
+/*
+ * A fake card that breaks on cue. Each call that changes the card (create,
+ * write, sync, close, unlink, rename) is a step, counted from the call
+ * below; at step `step`:
+ *   FAIL  that one call fails and the device carries on (a bad sector);
+ *   CUT   the power goes: that call and every later one, reads included,
+ *         do nothing, until sdcard__set_root_for_test() "reboots";
+ *   TEAR  as CUT, but a write at that step leaves its first half behind;
+ *   FLIP  a write at that step stores one bit flipped and reports success
+ *         (a card that lies); any other step at that number is unaffected.
+ */
+typedef enum {
+    SDCARD_FAULT_NONE,
+    SDCARD_FAULT_FAIL,
+    SDCARD_FAULT_CUT,
+    SDCARD_FAULT_TEAR,
+    SDCARD_FAULT_FLIP,
+} SdcardFault;
+void sdcard__fault_at_step_for_test(int step, SdcardFault kind);
+/** The card fills after `bytes` more written; -1 for no limit. */
+void sdcard__card_space_for_test(long bytes);
+/** Steps taken since the last fault plan (to find how many there are). */
+int sdcard__steps_for_test(void);
 #endif
 
 #endif /* LEEK_SDCARD_H */
