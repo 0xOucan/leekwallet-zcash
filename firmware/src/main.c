@@ -47,6 +47,7 @@
 #include "transport.h"
 #include "airgap.h"
 #include "qr-bench.h"
+#include "se-bench.h"
 
 static const char *TAG = "leekwallet";
 
@@ -63,6 +64,13 @@ void app_main(void)
        number it prints is what research/qr-spike could not measure without a
        board; see research/qr-spike/README.md. */
     qr_bench_start();
+    return;
+#endif
+
+#if LEEK_SE_BENCH
+    /* The secure-element bench, likewise an instrument: it owns the I2C bus,
+       and the wallet never starts. See components/leek-se-optiga/README.md. */
+    se_bench_start();
     return;
 #endif
 

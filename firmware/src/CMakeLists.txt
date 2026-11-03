@@ -27,7 +27,11 @@ else()
 endif()
 
 set(app_requires driver nvs_flash esp_hw_support bootloader_support
-                 esp_driver_usb_serial_jtag trezor-crypto leek-wallet)
+                 esp_driver_usb_serial_jtag trezor-crypto leek-wallet
+                 # The OPTIGA bring-up. Only se-bench.c calls it today, and
+                 # that file is empty outside the se-bench environment, so
+                 # the linker drops it from every other image.
+                 leek-se-optiga)
 if(NOT IDF_TARGET STREQUAL "esp32c3")
     # Both signer backends: BOTH mode requires them to agree (zcash-sign.c).
     list(APPEND app_requires zsign-rust zsign-c)
