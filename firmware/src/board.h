@@ -104,7 +104,7 @@
  * predates this list still builds the image it always built.
  */
 
-/* Display. One driver each: oled.c (both I2C OLEDs), oled-pixie.c. */
+/* Display. One driver each: oled.c (both I2C OLEDs), oled-st7789.c. */
 #define LEEK_DISPLAY_SSD1306    1   /* 128x64 OLED, I2C */
 #define LEEK_DISPLAY_SH1107     2   /* 128x128 OLED, I2C */
 #define LEEK_DISPLAY_ST7789     3   /* 240x240 colour TFT, SPI */

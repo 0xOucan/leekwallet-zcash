@@ -111,10 +111,10 @@ void app_main(void)
      *
      * This was briefly a target-specific branch, while the C3 had no display
      * driver and had to come up headless. It does not need to be one any more:
-     * `oled.c` and `oled-pixie.c` implement the same seven transport entry
-     * points, and `oled_i2c_init()` on the Pixie succeeds without touching
-     * anything — there is no I2C panel there, and its pins belong to a button
-     * and the LED string.
+     * `oled.c` and `oled-st7789.c` implement the same seven transport entry
+     * points, and `oled_i2c_init()` on an SPI panel succeeds without touching
+     * anything — there is no I2C panel there, and on the Pixie its pins belong
+     * to a button and the LED string.
      *
      * `have_display` stays, because a panel can still fail to answer, and the
      * headless path it selects was written long before this port.

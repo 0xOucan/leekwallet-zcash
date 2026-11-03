@@ -5,14 +5,14 @@
  * Why this file exists
  *
  * There are two panels now: an SSD1306 over I2C on the reference board, and an
- * ST7789 over SPI on the Firefly Pixie. Almost nothing about drawing differs
+ * ST7789 over SPI on the Pixie and the CAM colour kit. Almost nothing about drawing differs
  * between them. The glyphs are the same glyphs, the 8x21 grid is the same grid,
  * the clip-at-the-right-edge rule is the same rule, and the QR renderer does
  * not care what it is eventually shown on.
  *
  * Only four things are actually panel-specific: bringing the bus up, pushing
  * the framebuffer out, contrast, and clearing the physical panel. Those live in
- * `oled.c` and `oled-pixie.c`. Everything else lives here and is compiled once.
+ * `oled.c` and `oled-st7789.c`. Everything else lives here and is compiled once.
  *
  * The alternative was to copy this into the second driver, and the reason not
  * to is not tidiness: two copies of `oled_draw_string_centered` would drift,

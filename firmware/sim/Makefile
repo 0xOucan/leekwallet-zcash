@@ -197,6 +197,11 @@ $(BUILD)/test_panel128: test_panel128.c ../src/panel128.c ../src/oled-core.c ../
                         host_stubs.c ../../vectors/keys_vectors.h | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
 
+# The colour panel (240x240 ST7789): crisp glyphs, roles, native-scale QR.
+$(BUILD)/test_panel_color: test_panel_color.c ../src/panel-color.c ../src/oled-core.c ../src/font5x7.c \
+                           ../src/qrcode.c host_stubs.c ../../vectors/keys_vectors.h | $(BUILD)
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
+
 # The boot splash: timing, both renderings, the version line. With --pgm DIR
 # it also writes every frame as an image (make splash-frames).
 $(BUILD)/test_splash: test_splash.c ../src/splash.c ../src/splash.h ../src/splash-frames.h \
@@ -304,8 +309,8 @@ $(BUILD)/test_zkv: test_zkv.c ../src/zkv.c ../src/zkv.h host_stubs.c ../../vecto
                    $(CRYPTO)/pbkdf2.c $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ $(filter %.c,$^)
 
-TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta test_encoder test_panel128 test_splash test_sd_sign test_hints test_hints_knob
-all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta $(BUILD)/test_encoder $(BUILD)/test_panel128 $(BUILD)/test_splash $(BUILD)/test_sd_sign $(BUILD)/test_hints $(BUILD)/test_hints_knob
+TESTS += test_zcash_pczt_c test_zsign_diff test_zcash_sign test_zcash_review test_zcash_receive test_zkv test_sd_seed test_zcash_meta test_encoder test_panel128 test_panel_color test_splash test_sd_sign test_hints test_hints_knob
+all: $(BUILD)/test_zcash_pczt_c $(BUILD)/test_zsign_diff $(BUILD)/test_zcash_sign $(BUILD)/test_zcash_review $(BUILD)/test_zcash_receive $(BUILD)/test_zkv $(BUILD)/test_sd_seed $(BUILD)/test_zcash_meta $(BUILD)/test_encoder $(BUILD)/test_panel128 $(BUILD)/test_panel_color $(BUILD)/test_splash $(BUILD)/test_sd_sign $(BUILD)/test_hints $(BUILD)/test_hints_knob
 
 $(BUILD)/test_xfp: test_xfp.c host_stubs.c \
                    $(CRYPTO)/bip32.c $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \

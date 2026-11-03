@@ -174,8 +174,8 @@ esp_err_t oled_draw_qrcode_ex(const char *data, uint8_t version, uint8_t scale,
 bool oled_present(void);
 
 /**
- * Rows the attached panel has: 128 on the SH1107 screen kit, 64 on the
- * SSD1306 and on the Pixie (which draws the 64-row frame scaled).
+ * Rows the attached panel has: 128 on the SH1107 screen kit, 240 on an
+ * ST7789 (panel-color.h), 64 on the SSD1306.
  */
 uint8_t oled_panel_rows(void);
 

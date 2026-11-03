@@ -48,13 +48,15 @@
 /*
  * Display: ST7789 on SPI2 at the C3's IOMUX pins (CLK 6, MOSI 7), which is
  * what firefly-display used. CS is tied to ground from rev.3 onward, which is
- * why the bus runs without it.
+ * why the bus runs without it. The panel's own settings - orientation, gamma,
+ * pixel byte order - are the Pixie profile in oled-st7789.c.
  */
 #define PIN_DISPLAY_SCLK        GPIO_NUM_6
 #define PIN_DISPLAY_MOSI        GPIO_NUM_7
 #define PIN_DISPLAY_CS          GPIO_NUM_NC
 #define PIN_DISPLAY_DC          GPIO_NUM_4
 #define PIN_DISPLAY_RESET       GPIO_NUM_5
+#define ST7789_PROFILE_PIXIE    1
 
 /* Four addressable LEDs, one beside each button. */
 #define PIN_PIXELS              GPIO_NUM_9
