@@ -24,6 +24,8 @@
 mod account;
 mod apply;
 mod error;
+mod preflight;
+mod prepare;
 mod redact;
 mod ua;
 
@@ -33,6 +35,8 @@ pub use account::{
 };
 pub use apply::{apply_zsig, Signature};
 pub use error::{classify, LeekError, Recovery, Unsupported};
+pub use preflight::preflight;
+pub use prepare::{prepare_for_signer, TRANSPARENT_SEARCH_LIMIT};
 pub use redact::{signer_view_bytes, SignerView};
 pub use ua::to_checkable_ua;
 
