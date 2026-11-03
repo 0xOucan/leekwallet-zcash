@@ -1616,6 +1616,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "leek-zcash"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "leek-device",
+ "leek-transport-serial",
+ "orchard",
+ "pczt",
+ "rand 0.10.3",
+ "secp256k1",
+ "serde_json",
+ "zcash_address",
+ "zcash_client_backend",
+ "zcash_keys",
+ "zcash_protocol",
+ "zcash_transparent",
+ "zecz-core",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"

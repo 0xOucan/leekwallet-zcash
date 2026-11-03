@@ -7,7 +7,7 @@ syncs, builds PCZTs (ZIP 374), proves and broadcasts; the board only
 checks and signs. One Cargo workspace, with librustzcash pinned to a git
 commit (Ironwood, NU6.3, is newer than any release).
 
-All four are ours (Apache-2.0). They are built on librustzcash, the
+All five are ours (Apache-2.0). They are built on librustzcash, the
 official Zcash Rust libraries; they are not official Zcash tools.
 
 | Crate | What it is | Used by | README |
@@ -15,6 +15,7 @@ official Zcash Rust libraries; they are not official Zcash tools.
 | `zecz-core` (lib `zecz`) | The wallet engine: profiles per network (a server of the other chain is refused), watch-only board accounts, lightwalletd sync with transparent spend detection, balances, rotating addresses, history, `propose_send` / `propose_shield` (full or compact signer view), applying a `.zsig`, proving, broadcast; `.zkv` seed cards; a DEV-only soft signer | `zecz-cli`, the desktop app, the Zcash LeekWallet app, tests | [zecz-core](zecz-core/README.md) |
 | `zecz-cli` (bin `zecz`) | The command line over `zecz-core`: pair, import, sync, send, sign on the board, finish; `.zkv` cards | you, scripts | [zecz-cli](zecz-cli/README.md) |
 | `leek-device` | The board's client: v2 pairing with a six-digit passkey, encrypted session, the `z*` calls over any `FramePort` (USB serial, Bluetooth), the 0x0528 network refusal worded for the user, one retry on 0x0300 right after connecting, and the `.zsig` format | `zecz-core`, `leek-android`, the desktop app | [leek-device](leek-device/README.md) |
+| `leek-zcash` | The LeekWallet SDK's Zcash kit: host-side preflight, filling missing derivations, the signer view, `sign_pczt` and `apply_zsig` (every signature verified, a signed PCZT out for the wallet's Keystone path), typed `LeekError` with stable codes. No transport of its own | wallet integrations (next: UniFFI / WASM bindings) | [leek-zcash](leek-zcash/README.md) |
 | `leek-android` | JNI library for the Android app: the board's client over a Kotlin-owned USB or Bluetooth link, the compact signer view, applying a `.zsig` to the full PCZT | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android) | [leek-android](leek-android/README.md) |
 
 The Chrome extension cannot use `zecz-core` directly (tonic, files, tokio);
