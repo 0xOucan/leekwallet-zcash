@@ -1,6 +1,6 @@
     ZIP: Unassigned
     Title: Hardware-Wallet App Storage Keys
-    Owners: 0xOucan
+    Owners: 0xOucan <0xoucanxxx@gmail.com>
     Status: Draft
     Category: Standards / Wallet
     Created: 2026-11-04
@@ -13,6 +13,10 @@
 This is a draft kept in the LeekWallet Zcash repository. It has not been
 submitted to the ZIP editors, has no ZIP number, and may change in any way.
 `ZIP_NUMBER` below stands for the number the ZIP editors would assign.
+The same protocol could instead be written as a standardised metadata
+protocol under ZIP 325; see
+[Alternative: a protocol under ZIP 325](#alternative-a-protocol-under-zip-325).
+The owner is happy to take that route if the editors prefer it.
 
 
 # Terminology
@@ -438,17 +442,55 @@ every other App, and a leaked backup of one App's key would expose all of
 them. With a key per App identifier, the user's approval on the Signer grants
 exactly what the screen says.
 
-## Why not ZIP 325 Account Metadata Keys
+## Relation to ZIP 325 Account Metadata Keys
 
-ZIP 325 metadata keys solve a similar problem for software wallets, but are
-account-wide: the Account-level Inherent Metadata Key covers every metadata
-protocol of the account, including all private-use subtrees. A Signer that
-released it to one App would give that App the keys of every other App.
-A private-use subject under ZIP 325 would avoid that, but its derivation is
-not coordinated by any ZIP. A separate registered tree keeps Storage Keys
-independent of whatever is later standardised under ZIP 325. Defining this
-protocol instead as a standardised metadata protocol under ZIP 325 is listed
-under [Open issues](#open-issues).
+ZIP 325 [^zip-0325] has the same goal for software wallets: keys for local,
+off-chain data, derived from the seed so that no new secret needs a backup.
+This ZIP uses the same machinery (ZIP 32 Registered key derivation, then
+coin type and account) and differs in what it adds for a Signer that holds
+the seed on behalf of an App:
+
+- one key per App identifier, so that approving one App releases nothing
+  another App can use;
+- the rule that only the leaf leaves the Signer, after an approval on the
+  Signer's own screen, every time;
+- requirements on Apps, including what a Local quick unlock may and may not
+  use.
+
+Releasing a ZIP 325 key from high in its tree, such as the Account-level
+Inherent Metadata Key, would not meet the first point: it covers every
+metadata protocol of the account, including all private-use subtrees. A
+private-use subject would avoid that, but ZIP 325 leaves private-use
+derivation uncoordinated and without compatibility guarantees, which does
+not suit a key that more than one Signer and App must derive identically.
+Neither point rules out ZIP 325 itself; see the next section.
+
+## Alternative: a protocol under ZIP 325
+
+ZIP 325 invites new uses to be specified as a standardised metadata
+protocol, in a 2000-series ZIP that updates it. Written that way, with a
+protocol index $P$ assigned in that update, the tree would be:
+
+```
+m_metadata / 325' / coin_type' / account' / 0' / P' / (0', AppIdTag)
+```
+
+that is, under the Account-level Inherent Metadata Key, a protocol root at
+$P'$, and the App Storage Key as the full-width cryptovalue at
+$(0', \mathsf{AppIdTag})$ below it, exactly as in this draft. Everything
+above the leaf would stay in the Signer, so Apps remain isolated from each
+other and from every other ZIP 325 protocol.
+
+What would change: the context string and ZIP number (`"MetadataKeys"` and
+325 instead of `"AppStorageKeys"` and `ZIP_NUMBER`), the two path levels
+$0'/P'$, and the test vectors. What would not: the App identifier, the
+Signer and App requirements, the Storage Subkeys, the recommended
+encryption and Local quick unlock. Wallets that already derive ZIP 325 keys
+could reuse that code.
+
+The trade-off is a dependency on ZIP 325, which is itself a Draft, against
+one key tree fewer for the ecosystem and review by the editors who wrote
+it. The owner has no strong preference and will follow the editors' view.
 
 ## Why not derive from the viewing key
 
@@ -567,6 +609,14 @@ an App works with any Signer that implements it. Before public deployment the
 ZIP number must be assigned, since it is an input to the derivation and every
 Storage Key changes with it.
 
+ZIP 32 strongly recommends that a registered tree's documentation be
+substantially complete before software or hardware using it is publicly
+deployed. The reference implementation therefore lives only on a
+development branch, uses the placeholder 65535 for `ZIP_NUMBER`, and is not
+part of any release. Data encrypted with those keys must be treated as
+disposable: the keys change once a number is assigned, or if the protocol
+moves under ZIP 325.
+
 
 # Reference implementation
 
@@ -678,10 +728,9 @@ label, empty labels, over 64 bytes).
 
 # Open issues
 
-- TODO (owner): add a contact email to the Owners header; ZIP 0 requires
-  one for each owner.
 - Whether to submit this to zcash/zips as a separate ZIP, or as a
-  standardised metadata protocol under ZIP 325 (a 2000-series update).
+  standardised metadata protocol under ZIP 325 (a 2000-series update); see
+  [Alternative: a protocol under ZIP 325](#alternative-a-protocol-under-zip-325).
 - The context string `“AppStorageKeys”` and the HKDF info prefix
   `“Zcash_AppStorage_v1”` are proposals.
 - Rotation within one seed (for example a generation index in the path) was
