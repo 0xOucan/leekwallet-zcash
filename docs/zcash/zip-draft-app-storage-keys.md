@@ -5,7 +5,7 @@
     Category: Standards / Wallet
     Created: 2026-11-04
     License: MIT
-    Discussions-To: <TODO>
+    Discussions-To: <https://forum.zcashcommunity.com/t/pre-zip-hardware-wallet-app-storage-keys-encrypting-a-light-wallets-data-with-a-key-from-the-signer/58856>
     Pull-Request: <TODO>
 
 <div class="note"></div>
