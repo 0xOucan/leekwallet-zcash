@@ -59,6 +59,12 @@ pub struct ProposalDto {
     /// "send", or "shield": no payments, the change is what is shielded.
     pub kind: &'static str,
     pub target_height: u32,
+    /// The network upgrade the transaction commits to ("NU7").
+    pub upgrade: String,
+    /// The last height it can be mined at.
+    pub expiry_height: u32,
+    /// Target time until then, in seconds.
+    pub expires_in_secs: u64,
     pub payments: Vec<PaymentDto>,
     pub change: Vec<ChangeDto>,
     pub fee_zat: u64,
@@ -115,6 +121,7 @@ pub fn propose_send(profile: &Profile, to: &str, amount_zec: &str, memo: Option<
         bail!("This is a watch-only account; nothing could sign the send. Import the account from a LeekWallet to spend.");
     }
     let p = w.propose_send(&SendRequest { to: to.to_string(), amount_zat, memo, compact: true })?;
+    block_on(w.check_view_current(&p.signer_view))??;
     Ok(proposal_dto(p, "send"))
 }
 
@@ -128,6 +135,7 @@ pub fn propose_shield(profile: &Profile) -> Result<(ProposalDto, Vec<u8>)> {
         bail!("This is a watch-only account; nothing could sign the shielding. Import the account from a LeekWallet to spend.");
     }
     let p = w.propose_shield(true)?;
+    block_on(w.check_view_current(&p.signer_view))??;
     Ok(proposal_dto(p, "shield"))
 }
 
@@ -142,6 +150,9 @@ fn proposal_dto(p: wallet::SendProposal, kind: &'static str) -> (ProposalDto, Ve
         id: proposal_id(&p.signer_view),
         kind,
         target_height: p.target_height,
+        upgrade: p.upgrade.clone(),
+        expiry_height: p.expiry_height,
+        expires_in_secs: p.expires_in_secs,
         payments,
         change: p.change.iter().map(|c| ChangeDto { value_zat: c.value_zat, pool: c.pool.clone() }).collect(),
         fee_zat: p.fee_zat,

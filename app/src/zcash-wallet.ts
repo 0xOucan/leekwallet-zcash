@@ -13,7 +13,7 @@
  * Automatic, like Zodl's board flow: once the board is paired and unlocked,
  * its account is read (zcash-view.ts), the wallet of its network, seed
  * fingerprint and account is opened or created at the board's birthday
- * (zcash-auto.ts), and it syncs on open, every 75 s in the foreground and
+ * (zcash-auto.ts), and it syncs on open, every block (25 s) in the foreground and
  * after a send (sync-scheduler.ts). The manual import stays as the
  * fallback when the automatic set-up fails.
  *
@@ -653,6 +653,8 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     }
     for (const c of p.change) row("Change back to you", `${formatZec(c.valueZat)} ZEC (${c.pool})`);
     row("Fee", `${formatZec(p.feeZat)} ZEC`);
+    row("Rules", p.upgrade);
+    row("Expires", `after block ${p.expiryHeight}, about ${Math.round(p.expiresInSecs / 60)} min from now`);
     row("Leaves the wallet", `${formatZec(p.totalZat)} ZEC`);
     $("zwmainconfirmrow").hidden = net() !== "main";
     ($("zwmainconfirm") as HTMLInputElement).checked = false;
