@@ -8,7 +8,8 @@
  *
  *   1. zc_pczt_new   wire format (pczt_reader.c)               -> ZS_E_PARSE
  *   2. check()       the Rust check(): branch, network, our keys,
- *                    unsupported bundles, transparent outputs, then per
+ *                    unsupported bundles, distinct rks, transparent
+ *                    outputs, then per
  *                    Orchard-protocol pool: the field validation that
  *                    orchard::pczt parsing performs (validate_pool) and the
  *                    signer checks (check_pool), then the fee
@@ -38,6 +39,11 @@
 
 #define BRANCH_NU6_3 0x37a5165bu
 #define BRANCH_NU7   0x77190ad9u
+/* The first NU7 block on each network, and the expiry delta of an app without
+ * NU7's mainnet height: see built_by_old_app in zsign-rust. */
+#define NU7_HEIGHT_MAIN 3543405u
+#define NU7_HEIGHT_TEST 4465026u
+#define OLD_APP_EXPIRY_DELTA 40u
 #define V6_TX_VERSION 6u
 #define V6_VERSION_GROUP_ID 0xD884B698u
 #define MAX_MONEY 2100000000000000ull
@@ -298,6 +304,19 @@ static int verify_rk(const zc_action *a, const uint8_t ak[32])
     if (!a->alpha) return -1;
     if (zc_randomize_ak(rk, ak, a->alpha) != 0) return -1;
     return memcmp(rk, a->rk, 32) == 0 ? 0 : -1;
+}
+
+/* No two actions, Orchard and Ironwood together, may share an rk. Each
+ * spend draws its own alpha, so an honest builder never repeats one; a
+ * repeat would let a signature made for one action stand for the other.
+ * Keystone refuses it across both pools too, though their sighashes differ. */
+static int distinct_rks(const zc_pczt *z)
+{
+    /* z->actions holds both pools' actions, Orchard first. */
+    for (int i = 0; i < z->n_actions; i++)
+        for (int j = i + 1; j < z->n_actions; j++)
+            if (memcmp(z->actions[i].rk, z->actions[j].rk, 32) == 0) return 0;
+    return 1;
 }
 
 static int32_t check_pool(zc_ctx *c, int pool, acc_t *acc)
@@ -724,6 +743,9 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
 
     if (branch != BRANCH_NU6_3 && branch != BRANCH_NU7) return ZS_E_UNSUPPORTED_BRANCH;
     if (z->g.coin_type != (net == ZS_NET_MAIN ? 133u : 1u)) return ZS_E_NETWORK;
+    if (branch == BRANCH_NU6_3 &&
+        z->g.expiry_height >= (net == ZS_NET_MAIN ? NU7_HEIGHT_MAIN : NU7_HEIGHT_TEST) + OLD_APP_EXPIRY_DELTA)
+        return ZS_E_APP_OUTDATED;
     if (zc_account_keys(seed, net == ZS_NET_MAIN ? 133 : 1, account, ask, &fvk) != 0)
         return ZS_E_INTERNAL;
     memzero(ask, sizeof ask);
@@ -733,6 +755,7 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
 
     /* Not supported on the device: refuse rather than sign blind. */
     if (z->sapling.n_spends || z->sapling.n_outputs) { rc = ZS_E_UNSUPPORTED_BUNDLE; goto done; }
+    if (!distinct_rks(z)) { rc = ZS_E_DUPLICATE_RK; goto done; }
 
     memset(&acc, 0, sizeof acc);
     acc.fvk = &fvk;
@@ -1053,6 +1076,83 @@ int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t 
     }
     memzero(&f, sizeof f);
     return rc;
+}
+
+/* ---- App Storage Keys ---------------------------------------------------
+ *
+ * docs/zcash/zip-draft-app-storage-keys.md: ZIP 32 Registered key derivation
+ * under the context string "AppStorageKeys", path
+ * m_storage / ZIP_NUMBER' / coin_type' / account' / (0', AppIdTag), the key
+ * being the first half of the full-width cryptovalue at the leaf. */
+
+int32_t zc_app_id_valid(const char *app_id, size_t len)
+{
+    size_t label = 0, labels = 1;
+    if (!app_id || len < ZC_APP_ID_MIN || len > ZC_APP_ID_MAX) return 0;
+    for (size_t i = 0; i < len; i++) {
+        const char c = app_id[i];
+        const int lead = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (c == '.') {
+            if (label == 0) return 0;               /* empty label */
+            label = 0;
+            labels++;
+        } else if (label == 0 ? lead : (lead || c == '-' || c == '_')) {
+            if (++label > 63) return 0;             /* lead *62(...) */
+        } else {
+            return 0;
+        }
+    }
+    return label > 0 && labels >= 2;
+}
+
+int32_t zc_storage_key(const uint8_t *seed, size_t seed_len, uint8_t net, uint32_t account,
+                       const char *app_id, size_t app_id_len, uint8_t out[32])
+{
+    static const char ctx_string[] = "AppStorageKeys";
+    const uint8_t ctx_len = sizeof ctx_string - 1, seed_len8 = (uint8_t)seed_len;
+    const uint8_t ckd = 0xAC;                       /* PrfExpand REGISTERED_ZIP32_CHILD */
+    uint8_t w[64], sk[32], c[32], tail[4 + 1 + 1 + ZC_APP_ID_MAX];
+    blake2b_state s;
+    if (!seed || !out || seed_len < 32 || seed_len > 252) return ZS_ERR_ARG;
+    if (net != ZS_NET_MAIN && net != ZS_NET_TEST) return ZS_ERR_ARG;
+    if (account >= 0x80000000u) return ZS_ERR_ARG;
+    if (!zc_app_id_valid(app_id, app_id_len)) return ZS_E_PARSE;
+
+    /* Master: I = BLAKE2b-512("ZIPRegistered_KD", [len] || ctx || [len(S)] || S). */
+    blake2b_InitPersonal(&s, 64, "ZIPRegistered_KD", 16);
+    blake2b_Update(&s, &ctx_len, 1);
+    blake2b_Update(&s, ctx_string, ctx_len);
+    blake2b_Update(&s, &seed_len8, 1);
+    blake2b_Update(&s, seed, seed_len);
+    blake2b_Final(&s, w, 64);
+    memzero(&s, sizeof s);
+
+    /* ZIP_NUMBER', coin_type', account', untagged: PRF(c, [0xAC] || sk || i). */
+    const uint32_t path[3] = { 0x80000000u | ZC_STORAGE_ZIP_NUMBER,
+                               0x80000000u | (net == ZS_NET_MAIN ? 133u : 1u),
+                               0x80000000u | account };
+    for (int d = 0; d < 3; d++) {
+        const uint8_t i_le[4] = { (uint8_t)path[d], (uint8_t)(path[d] >> 8),
+                                  (uint8_t)(path[d] >> 16), (uint8_t)(path[d] >> 24) };
+        memcpy(sk, w, 32);
+        memcpy(c, w + 32, 32);
+        zc_prf_expand(c, &ckd, 1, sk, 32, i_le, 4, w);
+    }
+    memcpy(sk, w, 32);
+    memcpy(c, w + 32, 32);
+
+    /* The leaf, 0' with lead byte 1 (cryptovalue) and AppIdTag = [len] || id. */
+    tail[0] = 0x00; tail[1] = 0x00; tail[2] = 0x00; tail[3] = 0x80;
+    tail[4] = 0x01;
+    tail[5] = (uint8_t)app_id_len;
+    memcpy(tail + 6, app_id, app_id_len);
+    zc_prf_expand(c, &ckd, 1, sk, 32, tail, 6 + app_id_len, w);
+    memcpy(out, w, 32);                             /* the second half is never released */
+
+    memzero(w, sizeof w);
+    memzero(sk, sizeof sk);
+    memzero(c, sizeof c);
+    return ZS_OK;
 }
 
 int32_t zc_selftest(void)

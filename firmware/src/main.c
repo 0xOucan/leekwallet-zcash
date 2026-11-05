@@ -41,12 +41,14 @@
 #include "zcash-worker.h"
 #endif
 #include "button.h"
+#include "se.h"
 #include "ui.h"
 #include "device-wipe.h"
 #include "protocol.h"
 #include "transport.h"
 #include "airgap.h"
 #include "qr-bench.h"
+#include "se-bench.h"
 
 static const char *TAG = "leekwallet";
 
@@ -66,15 +68,28 @@ void app_main(void)
     return;
 #endif
 
-    /* Initialize NVS (required for wallet and PIN storage) */
+#if LEEK_SE_BENCH
+    /* The secure-element bench, likewise an instrument: it owns the I2C bus,
+       and the wallet never starts. See components/leek-se-optiga/README.md. */
+    se_bench_start();
+    return;
+#endif
+
+    /* Initialize NVS (required for wallet and PIN storage).
+     *
+     * Not erased when it will not mount, though that is what the ESP-IDF
+     * examples do with NO_FREE_PAGES and NEW_VERSION_FOUND: here the partition
+     * is the vault, and erasing it turned a downgrade or a damaged page into a
+     * factory-new device offering PIN setup. Nor aborted, which would only
+     * reboot into the same answer forever. wallet_init() meets the same error,
+     * reports the vault unreadable, and the UI says so instead of asking for a
+     * PIN (docs/AUDIT-SD-WRITES.md N1). */
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "NVS partition truncated, erasing...");
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS will not mount (%s); left as it is", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "NVS initialized");
     }
-    ESP_ERROR_CHECK(ret);
-    ESP_LOGI(TAG, "NVS initialized");
 
     /* Initialize wallet subsystem */
     wallet_init();
@@ -110,10 +125,10 @@ void app_main(void)
      *
      * This was briefly a target-specific branch, while the C3 had no display
      * driver and had to come up headless. It does not need to be one any more:
-     * `oled.c` and `oled-pixie.c` implement the same seven transport entry
-     * points, and `oled_i2c_init()` on the Pixie succeeds without touching
-     * anything — there is no I2C panel there, and its pins belong to a button
-     * and the LED string.
+     * `oled.c` and `oled-st7789.c` implement the same seven transport entry
+     * points, and `oled_i2c_init()` on an SPI panel succeeds without touching
+     * anything — there is no I2C panel there, and on the Pixie its pins belong
+     * to a button and the LED string.
      *
      * `have_display` stays, because a panel can still fail to answer, and the
      * headless path it selects was written long before this port.
@@ -128,6 +143,18 @@ void app_main(void)
         ESP_LOGE(TAG, "Check SDA=GPIO%d, SCL=GPIO%d and that the panel is at 0x3C",
                  PIN_I2C_SDA, PIN_I2C_SCL);
 #endif
+    }
+
+    /* The secure element, if this build drives one (se.h). Asked once and
+     * logged; nothing depends on the answer yet, and a build without a part
+     * says so rather than staying silent about it. */
+    {
+        const se_status_t se = se_probe();
+        static const char *const SE_STATUS[] = {
+            "not fitted", "absent", "present", "fault",
+        };
+        ESP_LOGI(TAG, "Secure element: %s (%s)", se_name(),
+                 (unsigned)se < 4 ? SE_STATUS[se] : "?");
     }
 
     /* Initialize buttons */

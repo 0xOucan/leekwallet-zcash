@@ -21,7 +21,7 @@ The readthedocs pages you linked (basics, zcashd, protocol, zig) are years out o
 | **ZIP 2005**: Ironwood notes use lead byte 0x03, a new ψ/rcm derivation, and the optional `use_qsk` key, with qk derived via **BLAKE3**. Hardware wallets are told to keep qsk on the device. | Add BLAKE3. Make qsk a device secret. |
 | **ZIP 326**: every Orchard spend gets a fabricated 0-value output back to the same address, with a *random* enc_ciphertext. | The signer must accept this dummy while still checking its cmx (`pczt/src/roles/signer/mod.rs` L16-33). |
 | **PCZT = ZIP 374** (Draft). v1 (Keystone-era) and v2 (optional bundles, Ironwood) encodings. Magic `PCZT` + u32 LE + postcard. | This is the wire format. Do not invent a new one. |
-| **NU7** (ZIP 259): testnet h 4,465,026, branch ID 0x77190AD9, mainnet height still being set. 25 s blocks, fee burn, NSM. **No ZSAs, no new tx format.** | Add the branch ID to the whitelist and keep the expiry logic flexible. |
+| **NU7** (ZIP 259): testnet h 4,465,026, mainnet h 3,543,405 (about 2026-11-06 02:20 UTC), branch ID 0x77190AD9. 25 s blocks, fee burn, NSM, v4 transactions invalid (ZIP 2003). **No ZSAs, no new tx format.** | The board already whitelists the branch ID. Hosts need `zcash_protocol` 0.11 for the height, and take the expiry delta from upstream: 120 blocks from NU7, 40 before. See [MAINNET.md](MAINNET.md). |
 | **zcashd stopped itself on 2026-07-18** (h 3,417,100) and its repo is archived. The successors are Zebra (with a built-in lightwalletd gRPC server, `zebra-rpc/src/lightwalletd.rs`), Zaino, and Zallet (beta). | Host sync goes through Zebra or Zaino, never zcashd. |
 | **Zashi became Zodl** (ECC → ZODL, Feb 2026). Zodl already signs through Keystone over QR using PCZT, and does NEAR 1Click swaps. | A ready-made host app exists if the device speaks Keystone's UR profile. |
 
@@ -240,7 +240,6 @@ The LeekWallet source is 25.9k lines in `src/`, plus 3.6k in `components/leek-wa
 - https://github.com/esp-rs/rust/issues/277 (Xtensa ICE)
 
 **Treat as uncertain:**
-- NU7 mainnet date
 - 1Click deposit address type
 - all ESP32 performance figures (no published benchmarks)
 - the NU6.2 date (from secondary sources)

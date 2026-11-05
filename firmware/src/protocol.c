@@ -41,11 +41,14 @@
 #include "leek-wallet.h"
 #include "pin.h"
 #include "session.h"
+#include "transport.h"
 #include "ui.h"
 #if LEEK_HAS_ZCASH
 #include "zcash-account.h"
+#include "zcash-fp.h"
 #include "zcash-meta.h"
 #include "zcash-sign.h"
+#include "zcash-storage.h"
 #else
 /* No Zcash signer on this board (the Pixie), but getStatus still reports
  * the Settings > Network choice, whose values are zsign's: 0 is Mainnet
@@ -137,6 +140,31 @@ static bool rx_enabled = false;
  * about frames that never decrypted — goes back the way it came.
  */
 static bool reply_encrypted = false;
+
+/**
+ * The session an encrypted request arrived on, by session_generation().
+ *
+ * reply_encrypted says the host is owed an encrypted answer; this says by
+ * whom. A request can outlive its session: a signature, a viewing key or an
+ * unlock waits up to 120 s on the user, and in that time the cable can be
+ * pulled, the board locked, or another host paired. Deciding the reply's
+ * form by "is a session up NOW" then went wrong both ways - with none up it
+ * answered in PLAINTEXT, so whatever the request earned (a viewing key,
+ * signatures) crossed the wire in the clear; with a newer one up it sealed
+ * the answer under the NEW host's keys, handing it a reply to a question it
+ * never asked and moving its counters. So the answer to an encrypted
+ * request goes out under the session it came in on or not at all: if that
+ * session is gone, the reply is a refusal (ERR_SESSION, plaintext, nothing
+ * in it), whatever the method. reply_session_intact() is that test, and the
+ * two places every reply leaves through - dispatch()'s tail and
+ * send_error_ex() - both apply it.
+ */
+static uint32_t request_generation = 0;
+
+static bool reply_session_intact(void)
+{
+    return session_state() == SESSION_ACTIVE && session_generation() == request_generation;
+}
 
 /* Reads the flag transport_apply() owns. Exists so the host suite can assert
  * the boot default is off, which is the half of the fix a behavioural test
@@ -278,6 +306,16 @@ static void send_frame(uint8_t type, const uint8_t *payload, size_t len)
  */
 static void send_error_ex(uint16_t code, const char *message, bool allow_encrypt)
 {
+    /* An error is a reply too, and its message can say what the request
+     * found ("this address is not from this device's wallet"). If the
+     * session the request came in on is gone, the host gets the refusal,
+     * not the error. See request_generation. */
+    if (allow_encrypt && reply_encrypted && !reply_session_intact()) {
+        code = ERR_SESSION;
+        message = "the session ended before the answer";
+        allow_encrypt = false;
+    }
+
     /* Room for the longest message (the wrong-network one, 101 characters)
      * with the CBOR around it and the session tag. */
     uint8_t out[176];
@@ -294,7 +332,7 @@ static void send_error_ex(uint16_t code, const char *message, bool allow_encrypt
         return;
     }
 
-    if (allow_encrypt && reply_encrypted && session_state() == SESSION_ACTIVE) {
+    if (allow_encrypt && reply_encrypted) {
         int enc = session_encrypt(out, w.length, sizeof(out));
         if (enc > 0) {
             /* A distinct type. Sending an encrypted error as an encrypted
@@ -547,10 +585,10 @@ static void host_passphrase_forget(void)
  * Block until the user answers the prompt on screen, or long enough that
  * nobody is going to.
  *
- * Shared by every confirmation - today only the passphrase - because a
- * second copy of this loop is a second place for a request to be answered
- * without anyone having looked at the device. Returns the outcome; the caller
- * owns whatever it has to undo on anything but SIGN_APPROVED.
+ * Shared by every confirmation - passphrase, signature, address, viewing
+ * key - because a second copy of this loop is a second place for a request to
+ * be answered without anyone having looked at the device. Returns the outcome;
+ * the caller owns whatever it has to undo on anything but SIGN_APPROVED.
  */
 static SignOutcome wait_for_user(void)
 {
@@ -652,7 +690,35 @@ static void send_wallet_error(WalletError err)
 
 static void send_zsign_refusal(int rc)
 {
+    if (rc == ZS_E_APP_OUTDATED) {
+        ui_notify_app_outdated();
+    }
     send_error((uint16_t)(ERR_ZSIGN_BASE | ((unsigned)-rc & 0xFF)), zcash_sign_strerror(rc));
+}
+
+/*
+ * Hosts send hostCompat with zGetSeedFingerprint, zGetAccount and zSignBegin;
+ * apps from before it send nothing, and every firmware ignores a field it does
+ * not know. Absent or too low: "Update your app" on the board, once a session.
+ * A notice and nothing more: the caller carries on, and no check depends on it.
+ */
+static uint32_t app_notice_session;
+static bool app_notice_shown;
+
+static void note_host_compat(const uint8_t *payload, size_t len)
+{
+    CborItem item;
+    if (cbor_map_find(payload, len, "hostCompat", &item) && item.type == CBOR_UINT &&
+        item.value >= LEEK_HOST_COMPAT_MIN) {
+        return;
+    }
+    const uint32_t now = session_generation();
+    if (app_notice_shown && app_notice_session == now) {
+        return;
+    }
+    app_notice_shown = true;
+    app_notice_session = now;
+    ui_notify_app_outdated();
 }
 
 static const char *network_title(uint8_t network)
@@ -687,6 +753,215 @@ static bool network_is_the_boards(uint8_t network)
     return false;
 }
 
+/*
+ * The viewing keys the user agreed, on the board, to give this session's host.
+ *
+ * zGetAccount asks before it answers (see there). A companion does not ask
+ * once, though: it reads the account at import, again after an unlock, again
+ * to compare what the board has with what it stored, and a question that came
+ * back every time would be answered without reading it, which is worse than
+ * none. So a yes holds for the rest of the session that earned it, and for
+ * nothing else:
+ *
+ *   - the session, by session_generation(): a disconnect, a new handshake, a
+ *     transport switch or a frame that failed to authenticate all end it, so
+ *     a host that pairs next asks again. Nothing here survives a reboot,
+ *     because RAM does not; a host the user wants trusted for good is a
+ *     different feature with a different screen.
+ *   - the account and network asked about, and the SEED: the same index
+ *     under another passphrase is another wallet, and a yes for one is not a
+ *     yes for the other.
+ *
+ * A handful of slots, overwritten in turn: a companion uses one account or
+ * two, and a host that cycles through more just gets asked again.
+ */
+#define SHARED_KEYS_MAX 4
+static struct {
+    bool     used;
+    uint32_t session;
+    uint32_t account;
+    uint8_t  network;
+    uint8_t  seed_fingerprint[32];
+} shared_keys[SHARED_KEYS_MAX];
+static unsigned shared_keys_next;
+
+static bool view_key_already_shared(uint32_t account, uint8_t network,
+                                    const uint8_t seed_fingerprint[32])
+{
+    const uint32_t now = session_generation();
+    for (unsigned i = 0; i < SHARED_KEYS_MAX; i++) {
+        if (shared_keys[i].used && shared_keys[i].session == now &&
+            shared_keys[i].account == account && shared_keys[i].network == network &&
+            memcmp(shared_keys[i].seed_fingerprint, seed_fingerprint, 32) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void view_key_note_shared(uint32_t account, uint8_t network,
+                                 const uint8_t seed_fingerprint[32])
+{
+    unsigned i = shared_keys_next++ % SHARED_KEYS_MAX;
+    shared_keys[i].used = true;
+    shared_keys[i].session = session_generation();
+    shared_keys[i].account = account;
+    shared_keys[i].network = network;
+    memcpy(shared_keys[i].seed_fingerprint, seed_fingerprint, 32);
+}
+
+/*
+ * Ask the user whether this session's host may have the account's viewing
+ * key, unless they already said yes in this session. True to share; on false
+ * the refusal has been sent: 0x0200 for a no, 0x0201 when nobody answered in
+ * the 120 s window, the same two a signature gets.
+ */
+static bool share_view_key_allowed(uint32_t account, uint8_t network,
+                                   const uint8_t seed_fingerprint[32])
+{
+    if (view_key_already_shared(account, network, seed_fingerprint)) {
+        return true;
+    }
+    const uint32_t asked_in = session_generation();
+    ui_request_share_view_key(account, network, session_passkey(),
+                              transport_get() == TRANSPORT_BLE);
+    SignOutcome outcome = wait_for_user();
+    if (outcome != SIGN_APPROVED) {
+        send_error(outcome == SIGN_PENDING ? ERR_USER_TIMEOUT : ERR_USER_REJECTED,
+                   outcome == SIGN_PENDING ? "no answer on the device"
+                                           : "viewing key not shared: refused on the device");
+        return false;
+    }
+    /* The yes was for the host that asked. If its session ended while the
+     * question was up (the cable pulled, the board locked), there is no one
+     * to give the key to. dispatch() would refuse the reply anyway (see
+     * request_generation); this stops the yes being noted for a session
+     * that never asked. */
+    if (session_generation() != asked_in || session_state() != SESSION_ACTIVE) {
+        send_session_error(ERR_SESSION, "the session ended before the answer");
+        return false;
+    }
+    view_key_note_shared(account, network, seed_fingerprint);
+    return true;
+}
+
+/*
+ * zGetStorageKey: the key an app encrypts its stored wallet data under
+ * (docs/zcash/zip-draft-app-storage-keys.md), one per app identifier,
+ * network and account, derived from the seed with ZIP 32 Registered key
+ * derivation. An app that keeps only ciphertext asks for it each time it
+ * opens, so a stolen host or a backup of it reads nothing without the board.
+ *
+ * The draft's Signer rules, and how they are met here:
+ *   - the app identifier is checked, never corrected: anything but the
+ *     draft's lower-case reverse-DNS is refused before a screen goes up,
+ *     so the bytes shown are the bytes derived from;
+ *   - the user approves EVERY release on the board, with the identifier in
+ *     full, the account, the network and the pairing code of the host that
+ *     asked. Unlike the view key, no yes is remembered, not even for the
+ *     session: the draft forbids it, and an app asks once per opening;
+ *   - derived only after the yes, and only over the paired session: the
+ *     answer is sealed here rather than by dispatch(), whose tail answers in
+ *     plaintext when the session is gone, and a key that cannot go out
+ *     encrypted does not go out at all.
+ *
+ * Answers everything itself, error or result. `out` is dispatch()'s buffer.
+ */
+static void handle_storage_key(const uint8_t *payload, size_t len, uint8_t *out, size_t out_size)
+{
+    CborItem item;
+    if (!request_is_authenticated()) {
+        send_session_error(ERR_SESSION, "session required");
+        return;
+    }
+    if (!pin_is_unlocked()) {
+        send_error(ERR_NOT_UNLOCKED, "device is locked");
+        return;
+    }
+    uint32_t account = 0;
+    if (cbor_map_find(payload, len, "account", &item)) {
+        if (item.type != CBOR_UINT || item.value >= 0x80000000u) {
+            send_error(ERR_MALFORMED, "account out of range");
+            return;
+        }
+        account = item.value;
+    }
+    char net_name[8];
+    if (!cbor_map_find(payload, len, "network", &item) ||
+        !cbor_text_copy(&item, net_name, sizeof(net_name)) ||
+        (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+        send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+        return;
+    }
+    const uint8_t network = strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN : ZCASH_NET_TEST;
+    /* The identifier's own length, not strlen: an embedded NUL is a byte the
+     * grammar refuses, not the end of the string. */
+    char app_id[ZCASH_APP_ID_MAX + 1];
+    if (!cbor_map_find(payload, len, "appId", &item) || item.type != CBOR_TEXT ||
+        !zcash_app_id_valid((const char *)item.data, item.value)) {
+        send_error(ERR_MALFORMED,
+                   "appId must be lower-case reverse-DNS: a-z 0-9 - _ and dots, 3 to 64 bytes");
+        return;
+    }
+    const size_t app_id_len = item.value;
+    memcpy(app_id, item.data, app_id_len);
+    app_id[app_id_len] = '\0';
+    if (!network_is_the_boards(network)) {
+        return;
+    }
+    /* A board with no seed says so before asking a question nobody could
+     * usefully answer. Nothing is derived until the yes. */
+    WalletError werr = wait_for_wallet();
+    if (werr != WALLET_OK) {
+        send_wallet_error(werr);
+        return;
+    }
+
+    const uint32_t asked_in = session_generation();
+    ui_request_storage_key(app_id, account, network, session_passkey(),
+                           transport_get() == TRANSPORT_BLE);
+    SignOutcome outcome = wait_for_user();
+    if (outcome != SIGN_APPROVED) {
+        send_error(outcome == SIGN_PENDING ? ERR_USER_TIMEOUT : ERR_USER_REJECTED,
+                   outcome == SIGN_PENDING ? "no answer on the device"
+                                           : "storage key not released: refused on the device");
+        return;
+    }
+    if (session_generation() != asked_in || session_state() != SESSION_ACTIVE) {
+        send_session_error(ERR_SESSION, "the session ended before the answer");
+        return;
+    }
+
+    uint8_t key[32];
+    werr = zcash_storage_key(app_id, app_id_len, account, network, key);
+    if (werr != WALLET_OK) {
+        memzero(key, sizeof key);
+        send_wallet_error(werr);
+        return;
+    }
+    CborWriter w;
+    cbor_writer_init(&w, out, out_size);
+    cbor_write_map(&w, 1);
+    cbor_write_text(&w, "result");
+    cbor_write_map(&w, 4);
+    cbor_write_text(&w, "appId");
+    cbor_write_text(&w, app_id);
+    cbor_write_text(&w, "account");
+    cbor_write_uint(&w, account);
+    cbor_write_text(&w, "network");
+    cbor_write_text(&w, net_name);
+    cbor_write_text(&w, "storageKey");
+    cbor_write_bytes(&w, key, sizeof key);
+    memzero(key, sizeof key);
+    const int enc = cbor_writer_ok(&w) ? session_encrypt(out, w.length, out_size) : -1;
+    if (enc < 0) {
+        memzero(out, out_size);
+        send_session_error(ERR_SESSION, "the session ended before the answer");
+        return;
+    }
+    send_frame(FRAME_ENC_RESPONSE, out, (size_t)enc);
+}
+
 /* zSignBegin / zSignChunk / zSignFinish. Writes the result into `w` and
  * returns true, or sends an error and returns false. */
 static bool handle_zsign(const char *method, const uint8_t *payload, size_t len, CborWriter *w)
@@ -695,6 +970,7 @@ static bool handle_zsign(const char *method, const uint8_t *payload, size_t len,
     int rc;
 
     if (strcmp(method, "zSignBegin") == 0) {
+        note_host_compat(payload, len);
         /* Before any upload: a PCZT for a wallet that is not open yet would
          * only be refused at the end, after every chunk had crossed. */
         WalletError werr = wait_for_wallet();
@@ -1126,15 +1402,18 @@ static void dispatch(const uint8_t *payload, size_t len)
     } else if (strcmp(method, "zGetAccount") == 0) {
         /* The account a companion imports: viewing key, address, and the
          * seed fingerprint that lets it tell this seed's accounts apart (and a
-         * passphrase wallet from the base one). Viewing keys reveal history,
-         * not spend authority, so this needs a session and an unlocked device
-         * but no on-screen confirmation - the same footing as the xpub a
-         * watch-only Bitcoin wallet asks for. Showing an address for the user
-         * to compare is zShowAddress's job. */
+         * passphrase wallet from the base one). A viewing key is not spend
+         * authority, but it is the account's whole balance and history, for
+         * good: so besides a session and an unlocked device it takes a yes on
+         * the board, once per session (share_view_key_allowed). It used to go
+         * to any paired host without one, on the footing of a watch-only
+         * xpub; a shielded history is worth more than that. Showing an
+         * address for the user to compare is zShowAddress's job. */
         if (!request_is_authenticated()) {
             send_session_error(ERR_SESSION, "session required");
             return;
         }
+        note_host_compat(payload, len);
         if (!pin_is_unlocked()) {
             send_error(ERR_NOT_UNLOCKED, "device is locked");
             return;
@@ -1171,6 +1450,13 @@ static void dispatch(const uint8_t *payload, size_t len)
             send_wallet_error(werr);
             return;
         }
+        /* Derived first, asked second: a board with no seed says so without
+         * a question nobody could usefully answer, and the seed fingerprint
+         * is what a yes earlier in the session is matched against. */
+        if (!share_view_key_allowed(account, network, acct.keys.seed_fingerprint)) {
+            memzero(&acct, sizeof acct);
+            return;
+        }
         /* The birthday, when the device has one for this account (a
          * companion set it, or the SD file carried it). Absent rather than
          * zero: zero would read as "scan from genesis". */
@@ -1197,6 +1483,53 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, "tAddress");
         cbor_write_text(&w, acct.t_address);
 
+    } else if (strcmp(method, "zGetSeedFingerprint") == 0) {
+        /* Which seed the board has open, and nothing else: how a companion
+         * recognises the board on every connect without asking for the
+         * viewing key, and so without putting "Share view key?" up each
+         * time. No question: the fingerprint is not a key and the board
+         * shows its first four bytes on its own screen. It is a stable
+         * identifier of the seed, though, the same for every paired host,
+         * so it takes what zGetAccount takes short of the press. */
+        if (!request_is_authenticated()) {
+            send_session_error(ERR_SESSION, "session required");
+            return;
+        }
+        note_host_compat(payload, len);
+        if (!pin_is_unlocked()) {
+            send_error(ERR_NOT_UNLOCKED, "device is locked");
+            return;
+        }
+        /* Optional, and it does not change the answer; named, it is held
+         * to the board's setting like everywhere else, so one call tells a
+         * companion both which seed and whether the network is right. */
+        if (cbor_map_find(payload, len, "network", &item)) {
+            char net_name[8];
+            if (!cbor_text_copy(&item, net_name, sizeof(net_name)) ||
+                (strcmp(net_name, "main") != 0 && strcmp(net_name, "test") != 0)) {
+                send_error(ERR_MALFORMED, "network must be \"main\" or \"test\"");
+                return;
+            }
+            if (!network_is_the_boards(strcmp(net_name, "main") == 0 ? ZCASH_NET_MAIN
+                                                                     : ZCASH_NET_TEST)) {
+                return;
+            }
+        }
+        uint8_t seed_fp[32];
+        WalletError werr = wait_for_wallet();
+        if (werr == WALLET_OK) {
+            werr = zcash_seed_fingerprint(seed_fp);
+        }
+        if (werr != WALLET_OK) {
+            send_wallet_error(werr);
+            return;
+        }
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "result");
+        cbor_write_map(&w, 1);
+        cbor_write_text(&w, "seedFingerprint");
+        cbor_write_bytes(&w, seed_fp, sizeof seed_fp);
+
     } else if (strcmp(method, "zGetFeatures") == 0) {
         /* What this device's Zcash signer does, so a companion can decide
          * before building a transaction, rather than after the device
@@ -1204,7 +1537,10 @@ static void dispatch(const uint8_t *payload, size_t len)
          * before a session, like getFeatures. */
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 8);
+        cbor_write_map(&w, 10);
+        /* Lets a host suggest a board update; older firmware has no such field. */
+        cbor_write_text(&w, "fwCompat");
+        cbor_write_uint(&w, LEEK_FW_COMPAT);
         cbor_write_text(&w, "backend");
         cbor_write_text(&w, zcash_sign_backend_name(zcash_sign_backend()));
         cbor_write_text(&w, "branchIds");
@@ -1232,6 +1568,11 @@ static void dispatch(const uint8_t *payload, size_t len)
         if (LEEK_HAS_SDCARD) cbor_write_text(&w, "sd");
         cbor_write_text(&w, "showAddress");
         cbor_write_uint(&w, 1);
+        /* zGetStorageKey, and the draft's ZIP number placeholder it derives
+         * under: an app can offer "unlock with the board" only if this is
+         * here, and must not mix keys from two ZIP numbers. */
+        cbor_write_text(&w, "storageKey");
+        cbor_write_uint(&w, ZC_STORAGE_ZIP_NUMBER);
 
     } else if (strcmp(method, "zShowAddress") == 0) {
         /* The app shows an address; the device derives its own and pages it
@@ -1401,6 +1742,11 @@ static void dispatch(const uint8_t *payload, size_t len)
         cbor_write_text(&w, "stored");
         cbor_write_uint(&w, r == ZMETA_OK_STORED ? 1 : 0);
 
+    } else if (strcmp(method, "zGetStorageKey") == 0) {
+        /* Answers on its own, encrypted or not at all. */
+        handle_storage_key(payload, len, out, sizeof(out));
+        return;
+
     } else if (strcmp(method, "zSignBegin") == 0 || strcmp(method, "zSignChunk") == 0 ||
                strcmp(method, "zSignFinish") == 0) {
         /* A PCZT, uploaded in order, checked by the signer backends, shown
@@ -1431,7 +1777,16 @@ static void dispatch(const uint8_t *payload, size_t len)
         return;
     }
 
-    if (reply_encrypted && session_state() == SESSION_ACTIVE) {
+    if (reply_encrypted) {
+        /* Under the session the request came in on, or a refusal: never in
+         * plaintext and never under a newer host's keys. See
+         * request_generation. The answer is wiped, because `out` is static
+         * and a viewing key or a set of signatures should not sit in it. */
+        if (!reply_session_intact()) {
+            memzero(out, w.length);
+            send_session_error(ERR_SESSION, "the session ended before the answer");
+            return;
+        }
         int enc = session_encrypt(out, w.length, sizeof(out));
         if (enc < 0) {
             send_error(ERR_SESSION, "encrypt failed");
@@ -1562,6 +1917,7 @@ void protocol_handle_frame(uint8_t *frame, size_t len)
             /* From here to the end of dispatch the reply owes the host one
              * encrypted frame: the receive counter HAS moved. */
             reply_encrypted = true;
+            request_generation = session_generation();
             dispatch(payload, (size_t)plain);
             reply_encrypted = false;
         }
@@ -1670,6 +2026,10 @@ void protocol__pump_for_test(void)
 void protocol__reset_for_test(void)
 {
     rx_len = 0;
+#if LEEK_HAS_ZCASH
+    memset(shared_keys, 0, sizeof shared_keys);
+    shared_keys_next = 0;
+#endif
 }
 #endif
 

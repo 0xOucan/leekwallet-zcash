@@ -299,6 +299,15 @@ bool pin_verify(const char *pin)
         return false;
     }
 
+    /* A vault that cannot be read cannot check a PIN either. Charging for
+     * the guess anyway would count the owner's right PIN as wrong, and the
+     * last one would wipe seeds that were never lost - the storage fault
+     * turned into the very erasure it was kept from causing. */
+    if (wallet_storage_unreadable()) {
+        ESP_LOGE(TAG, "Verify: vault unreadable, no attempt spent");
+        return false;
+    }
+
     /* Spend the attempt BEFORE comparing, and commit it to flash.
      *
      * The obvious order - compare, then decrement on failure - leaves a window

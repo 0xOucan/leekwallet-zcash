@@ -31,6 +31,35 @@ static int from_sdcard(int rc)
     }
 }
 
+/*
+ * Clear the way for this PCZT's answer, before the review starts.
+ *
+ * A signed.zsig names the SHA-256 of the PCZT it signs (FORMATS.md), and
+ * every reader checks that (zsig.rs parse_for, leek-zcash apply_zsig,
+ * leek-android apply_signatures_to). So an old one cannot be applied to the
+ * wrong transaction; but left beside a new unsigned.pczt it is a file that
+ * looks like the answer, for a user whose signing was then rejected or
+ * failed. It goes now, so that what is on the card is only ever this PCZT's
+ * signatures or nothing. One that names this very file stays: it is still
+ * a good answer if this review is rejected.
+ *
+ * signed.zsig.tmp is what a cut inside sdcard_write_replace() can leave. It
+ * may be whole, but nothing on the card says so, so it is never promoted.
+ */
+static int drop_stale_output(const uint8_t sha[32])
+{
+    if (sdcard_remove(SDSIGN_OUT ".tmp") != SDCARD_OK) return SDSIGN_E_IO;
+    uint8_t head[37];
+    size_t got = 0;
+    int rc = sdcard_read_at(SDSIGN_OUT, 0, head, sizeof head, &got);
+    if (rc == SDCARD_E_NOTFOUND) return 0;
+    if (rc != SDCARD_OK) return SDSIGN_E_IO;
+    if (got == sizeof head && memcmp(head, "ZSIG", 4) == 0 && memcmp(head + 5, sha, 32) == 0) {
+        return 0;
+    }
+    return sdcard_remove(SDSIGN_OUT) == SDCARD_OK ? 0 : SDSIGN_E_IO;
+}
+
 int sdsign_load(uint32_t account, uint8_t network, const zs_summary **summary)
 {
     sdsign_cancel();
@@ -63,6 +92,9 @@ int sdsign_load(uint32_t account, uint8_t network, const zs_summary **summary)
     }
     free(buf);
     if (rc == 0) rc = zcash_sign_check(summary);
+    /* A card that cannot lose its old answer cannot take a new one either:
+     * refuse now rather than after the user has read every page. */
+    if (rc == 0) rc = drop_stale_output(loaded_sha);
     if (rc != 0) {
         zcash_sign_reset();
         *summary = NULL;
@@ -136,6 +168,9 @@ int sdsign_finish(uint32_t *n_sigs)
     static uint8_t zsig[SDSIGN_ZSIG_MAX];
     size_t len = sdsign_zsig_encode(loaded_sha, sigs, n, zsig, sizeof zsig);
     memzero(sigs, sizeof sigs);
+    /* Through a temporary and read back (sdcard.h): on any error the card
+     * holds no signed.zsig, or the old one for this same file, never a short
+     * one. Signatures are not secrets, so nothing here needs wiping. */
     rc = len ? from_sdcard(sdcard_write_replace(SDSIGN_OUT, zsig, len)) : SDSIGN_E_IO;
     if (rc == 0) *n_sigs = n;
     return rc;

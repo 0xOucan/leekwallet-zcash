@@ -218,6 +218,159 @@ static void test_power_cut_and_no_card(void)
     CHECK(sdseed_save(PASS, strlen(PASS), "", 0, 0, IT, name) == SDSEED_E_WALLET, "saved while locked");
 }
 
+/* The bytes of a file on the card, or 0 if it is not there. */
+static size_t card_bytes(const char *name, uint8_t *buf, size_t cap)
+{
+    char p[512];
+    snprintf(p, sizeof p, "%s/%s", card, name);
+    FILE *f = fopen(p, "rb");
+    if (!f) return 0;
+    size_t n = fread(buf, 1, cap, f);
+    fclose(f);
+    return n;
+}
+
+/* What a reboot must find after any failed save: the earlier backup byte for
+ * byte, no temporary, and no other seed file at all (a save that reported
+ * an error must not leave a name behind, whole or not). */
+static void check_after_failed_save(const uint8_t *old, size_t old_len, const char *what)
+{
+    sdcard__set_root_for_test(card);   /* rebooted, card back in */
+    char names[SDCARD_FILES_MAX][SDCARD_NAME_MAX + 1];
+    int n = sdseed_list(names, SDCARD_FILES_MAX);
+    CHECK(n == 1 && strcmp(names[0], "SEED1.ZKV") == 0, "%s: %d files listed", what, n);
+    uint8_t now[ZKV_FILE_MAX + 1];
+    size_t len = card_bytes("SEED1.ZKV", now, sizeof now);
+    CHECK(len == old_len && memcmp(now, old, len) == 0, "%s: the earlier backup changed", what);
+    CHECK(card_bytes("ZKVWRITE.TMP", now, sizeof now) == 0, "%s: a temporary survived", what);
+    ZkvContents meta;
+    CHECK(sdseed_load("SEED1.ZKV", PASS, strlen(PASS), &meta) == SDSEED_OK,
+          "%s: the earlier backup no longer opens", what);
+}
+
+/* docs/AUDIT-SD-WRITES.md: every step of a save, broken every way the fake
+ * card knows. None may cost the backup already on the card, and none may
+ * leave a seed file that is not a whole, openable one. */
+static void test_save_broken_at_every_step(void)
+{
+    printf("== a save broken at any step: the old backup stands, no half file\n");
+    ctx = "every step";
+    fresh_device();
+    empty_card();
+    uint8_t slot = wallet_add_mnemonic(ZV_KEYS[0].mnemonic);
+    wallet_select_wallet(slot);
+    char name[SDCARD_NAME_MAX + 1];
+    CHECK(sdseed_save(PASS, strlen(PASS), "old", 0, 0, IT, name) == SDSEED_OK, "first save");
+    uint8_t old[ZKV_FILE_MAX + 1];
+    size_t old_len = card_bytes("SEED1.ZKV", old, sizeof old);
+
+    /* How many steps a clean save takes, so every one of them is tried. */
+    sdcard__set_root_for_test(card);
+    sdcard__fault_at_step_for_test(0, SDCARD_FAULT_NONE);
+    CHECK(sdseed_save(PASS, strlen(PASS), "", 0, 0, IT, name) == SDSEED_OK, "counting save");
+    int steps = sdcard__steps_for_test();
+    CHECK(steps >= 5, "a save is only %d steps", steps);
+    char p[512];
+    snprintf(p, sizeof p, "%s/%s", card, name);
+    unlink(p);
+
+    static const struct { SdcardFault kind; const char *name; SdSeedResult expect; } kinds[] = {
+        { SDCARD_FAULT_FAIL, "fail", SDSEED_E_IO },
+        { SDCARD_FAULT_CUT,  "cut",  SDSEED_E_IO },
+        { SDCARD_FAULT_TEAR, "tear", SDSEED_E_IO },
+    };
+    int tried = 0;
+    for (size_t k = 0; k < sizeof kinds / sizeof *kinds; k++) {
+        for (int step = 1; step <= steps; step++) {
+            char what[48];
+            snprintf(what, sizeof what, "%s at step %d", kinds[k].name, step);
+            sdcard__set_root_for_test(card);
+            sdcard__fault_at_step_for_test(step, kinds[k].kind);
+            SdSeedResult r = sdseed_save(PASS, strlen(PASS), "", 0, 0, IT, name);
+            CHECK(r == kinds[k].expect, "%s: %s", what, sdseed_strerror(r));
+            check_after_failed_save(old, old_len, what);
+            tried++;
+        }
+    }
+
+    /* A card that stores a flipped bit and says it worked: caught by the
+     * read-back, and the name it was given is taken away again. */
+    for (int step = 1; step <= steps; step++) {
+        char what[48];
+        snprintf(what, sizeof what, "flip at step %d", step);
+        sdcard__set_root_for_test(card);
+        sdcard__fault_at_step_for_test(step, SDCARD_FAULT_FLIP);
+        SdSeedResult r = sdseed_save(PASS, strlen(PASS), "", 0, 0, IT, name);
+        if (r == SDSEED_OK) {
+            /* Not a write step: the save is whole. Take it off again. */
+            snprintf(p, sizeof p, "%s/%s", card, name);
+            unlink(p);
+            continue;
+        }
+        CHECK(r == SDSEED_E_VERIFY, "%s: %s", what, sdseed_strerror(r));
+        check_after_failed_save(old, old_len, what);
+        tried++;
+    }
+
+    /* A full card, at sizes short of the file (label "" is three bytes
+     * shorter than the "old" one above). */
+    const long need = (long)old_len - 3;
+    const long room[] = { 0, 1, 37, 38, need / 2, need - 1 };
+    for (size_t i = 0; i < sizeof room / sizeof *room; i++) {
+        char what[48];
+        snprintf(what, sizeof what, "full card at %ld bytes", room[i]);
+        sdcard__set_root_for_test(card);
+        sdcard__card_space_for_test(room[i]);
+        SdSeedResult r = sdseed_save(PASS, strlen(PASS), "", 0, 0, IT, name);
+        CHECK(r == SDSEED_E_IO, "%s: %s", what, sdseed_strerror(r));
+        check_after_failed_save(old, old_len, what);
+        tried++;
+    }
+    printf("  %d broken saves, %d steps each\n", tried, steps);
+}
+
+/* A file that is damaged on the card is an error the user sees, never an
+ * empty card and never a different seed. */
+static void test_damaged_file_is_an_error(void)
+{
+    printf("== a truncated, empty or garbage seed file is refused, not skipped\n");
+    ctx = "damaged";
+    fresh_device();
+    empty_card();
+    uint8_t slot = wallet_add_mnemonic(ZV_KEYS[0].mnemonic);
+    wallet_select_wallet(slot);
+    char name[SDCARD_NAME_MAX + 1];
+    CHECK(sdseed_save(PASS, strlen(PASS), "", 0, 0, IT, name) == SDSEED_OK, "save");
+    uint8_t good[ZKV_FILE_MAX + 1];
+    size_t len = card_bytes(name, good, sizeof good);
+
+    char p[512];
+    snprintf(p, sizeof p, "%s/%s", card, name);
+    static const size_t cuts[] = { 0, 1, 4, 37, 38, 54, 0 };
+    for (size_t i = 0; i < sizeof cuts / sizeof *cuts; i++) {
+        size_t keep = i + 1 == sizeof cuts / sizeof *cuts ? len - 1 : cuts[i];
+        FILE *f = fopen(p, "wb");
+        fwrite(good, 1, keep, f);
+        fclose(f);
+        char names[SDCARD_FILES_MAX][SDCARD_NAME_MAX + 1];
+        CHECK(sdseed_list(names, SDCARD_FILES_MAX) == 1, "a %zu-byte file is not listed", keep);
+        ZkvContents meta;
+        SdSeedResult r = sdseed_load(name, PASS, strlen(PASS), &meta);
+        CHECK(r == SDSEED_E_FORMAT || r == SDSEED_E_AUTH, "%zu bytes: %s", keep, sdseed_strerror(r));
+        CHECK(!wallet_has_temporary_mnemonic(), "%zu bytes: something was loaded", keep);
+    }
+    /* Garbage of the right length: the tag fails. */
+    uint8_t junk[ZKV_FILE_MAX];
+    memcpy(junk, good, len);
+    junk[len - 20] ^= 0x40;
+    FILE *f = fopen(p, "wb");
+    fwrite(junk, 1, len, f);
+    fclose(f);
+    ZkvContents meta;
+    CHECK(sdseed_load(name, PASS, strlen(PASS), &meta) == SDSEED_E_AUTH, "a flipped bit opened");
+    CHECK(!wallet_has_temporary_mnemonic(), "garbage loaded something");
+}
+
 static void test_golden_from_the_other_side(void)
 {
     printf("== the golden file (also written by zecz) loads on the device\n");
@@ -252,6 +405,8 @@ int main(void)
     test_nothing_reaches_flash();
     test_wrong_passphrase_loads_nothing();
     test_power_cut_and_no_card();
+    test_save_broken_at_every_step();
+    test_damaged_file_is_an_error();
     test_golden_from_the_other_side();
     empty_card();
     rmdir(card);

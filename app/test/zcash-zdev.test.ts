@@ -15,12 +15,12 @@ import { join } from "node:path";
 import { DeviceError } from "../packages/core/src/transport.ts";
 import { parseStatus } from "../packages/core/src/device-state.ts";
 import {
-  encodeZsig, parseZsig, toHex, zErrorText, zGetAccount, zGetFeatures, ZErr, ZPool,
+  APP_UPDATE_TEXT, encodeZsig, firmwareOutdated, MIN_FIRMWARE_COMPAT, parseZsig, toHex, zErrorText, zGetAccount, zGetFeatures, zGetSeedFingerprint, ZErr, ZPool,
   zSetBirthday, zShowAddress, zSign, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import { repo, startZdev, zdevBinary, ZdevClient } from "./zdev.ts";
 import { fakeWallet } from "./fake-wallet.ts";
-import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying } from "../src/zcash-auto.ts";
+import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying, readSeedRetrying } from "../src/zcash-auto.ts";
 import { isWrongNetwork, networkFromStatus, wrongNetwork } from "../src/network-guard.ts";
 import { ReceiveModel } from "../src/receive-model.ts";
 
@@ -78,6 +78,10 @@ group("an approving board");
     check(z.passkeys.at(-1) === passkey, `passkey ${passkey} is not the one zdev shows`);
 
     const f = await zGetFeatures(dev.call);
+    check(f.fwCompat === MIN_FIRMWARE_COMPAT && !firmwareOutdated(f), "this firmware is not called outdated");
+    check(firmwareOutdated({ ...f, fwCompat: null }), "a board that reports no level is outdated");
+    check(!z.out.includes("Update your app"), "a current host got the board's old-app notice");
+    check(zErrorText(new DeviceError(ZErr.AppOutdated, "Update your app")) === APP_UPDATE_TEXT, "0x0519 reads as the update text");
     check(f.showAddress && f.maxChunk > 0 && f.maxPczt > 0, `features ${JSON.stringify(f)}`);
 
     for (const network of ["test", "main"] as ZNetwork[]) {
@@ -160,7 +164,17 @@ group("a board that says no");
   try {
     z.answer("y"); // the pairing
     await dev.pair();
-    z.answer("n"); // the review
+    /* Which seed: nothing queued, so a question here would hang. */
+    check(await zGetSeedFingerprint(dev.call, "test") === key("test/abandon-art/pp0/acct0").seed_fingerprint,
+      "the seed fingerprint, with no question");
+    z.answer("n"); // sharing the viewing key
+    await rejects(zGetAccount(dev.call, 0, "test"),
+      (e) => e instanceof DeviceError && e.code === ZErr.UserRejected, "refused viewing key");
+    z.answer("y");
+    check((await zGetAccount(dev.call, 0, "test")).ufvk === key("test/abandon-art/pp0/acct0").ufvk, "shared after a yes");
+    z.answer("n"); // the review, queued first: a second view-key question would take it
+    check((await zGetAccount(dev.call, 0, "test")).ufvk === key("test/abandon-art/pp0/acct0").ufvk,
+      "asked again in the same session");
     await rejects(zSign(dev.call, vector("iw_send_shielded_compact").bytes, 0, "test"),
       (e) => e instanceof DeviceError && e.code === ZErr.UserRejected, "rejected review");
     z.answer("n"); // the address check
@@ -207,6 +221,9 @@ async function autoFlow(network: ZNetwork): Promise<void> {
     check(r.created && r.birthday === expected && r.birthdaySource === "tip" && r.storedOnBoard, `created at ${expected}`);
     check((await zGetAccount(dev.call, 0, network)).birthday === expected, "the board now has the birthday");
     check(w.wallets.has(`${network}-${k.seed_fingerprint}-0`), "the wallet is keyed by network, fingerprint and account");
+    /* The next connection names the wallet by the seed alone. */
+    const seed = await readSeedRetrying(dev.call, 0, network);
+    check(seed.seedFingerprint === k.seed_fingerprint && seed.account === null, "the seed, without the account");
     const again = await ensureWallet(await readAccountRetrying(dev.call, 0, network), { call: dev.call, invoke: w.invoke });
     check(!again.created && again.birthdaySource === "existing" && w.calls.filter((c) => c === "zw_import").length === 1, "the next connection opens it");
     const other: ZNetwork = network === "main" ? "test" : "main";

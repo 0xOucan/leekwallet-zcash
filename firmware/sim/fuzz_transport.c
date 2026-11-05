@@ -50,6 +50,7 @@ uint32_t ui_hd_account(void) { return 0; }
  * Zcash handlers on either network, and one of them past the guard. */
 uint8_t ui_zcash_network(void) { return 1; }
 void ui_notify_wrong_network(uint8_t asked) { (void)asked; }
+void ui_notify_app_outdated(void) { }
 void ui_request_session_confirm(void) { }
 /* Never mid-answer: the fuzzer's business is the parsers, and a handshake
  * refused halfway through a run would silence the one target that reaches
@@ -67,6 +68,16 @@ void ui_request_show_address(const char *ua, const char *t_address, uint32_t acc
                              uint8_t network)
 {
     (void)ua; (void)t_address; (void)account; (void)network;
+}
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble)
+{
+    (void)account; (void)network; (void)pairing_code; (void)over_ble;
+}
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble)
+{
+    (void)app_id; (void)account; (void)network; (void)pairing_code; (void)over_ble;
 }
 void ui_sign_clear(void) { }
 void ui_sign_expire(void) { }

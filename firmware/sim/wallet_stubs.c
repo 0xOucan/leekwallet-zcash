@@ -72,6 +72,11 @@ WalletError wallet_init(void)
     return WALLET_OK;
 }
 
+bool wallet_storage_unreadable(void)
+{
+    return false;
+}
+
 WalletStatus wallet_get_status(void)
 {
     uint8_t hash[VAULT_HASH_SIZE];

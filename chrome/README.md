@@ -4,7 +4,7 @@ Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute
 
 The Chrome extension (roadmap Phase 9). The board signs; everything else
 (sync, PCZT, proving, extraction, broadcast) runs in the browser, on our
-own librustzcash rev compiled to WASM. Why this architecture, and the
+own build of the librustzcash crates, compiled to WASM. Why this architecture, and the
 numbers behind it: [docs/zcash/CHROME-ENGINE.md](../docs/zcash/CHROME-ENGINE.md).
 
 | Path | What it is |
@@ -74,7 +74,7 @@ and Android use that one) and of LeekWallet's `session.ts`/`framing.ts`:
 | `framing.js` | USB frames with the `LK` marker among console text; BLE frames in 1-byte-header chunks (MTU 23: Web Bluetooth does not expose the negotiated MTU) |
 | `cbor.js` | The protocol's CBOR subset, canonical |
 | `session.js` | v2 pairing crypto: X25519, SHA-256 and HKDF from WebCrypto (Chrome 133+), ChaCha20-Poly1305 from `@noble/ciphers` (vendored at build time from the pinned npm package) |
-| `device.js` | `hello`/`helloReveal` with the commitment check, the passkey, waiting for ALLOW and the PIN, then `zGetFeatures`, `zGetAccount`, `zSetAccountMeta` (with `network`), `zShowAddress` (with `ua`: any rotated address of the account), `zSignBegin/Chunk/Finish` |
+| `device.js` | `hello`/`helloReveal` with the commitment check, the passkey, waiting for ALLOW and the PIN, then `zGetFeatures`, `zGetSeedFingerprint`, `zGetAccount`, `zSetAccountMeta` (with `network`), `zShowAddress` (with `ua`: any rotated address of the account), `zSignBegin/Chunk/Finish` |
 | `zsig.js` | Writes the `.zsig` (v1, or v2 with transparent signatures) the engine's `finish` applies |
 | `serial-link.js`, `ble-link.js` | The two links. Serial: DTR/RTS low after open, boot noise drained (LeekWallet's lessons) |
 | `host.js` | `BoardHost`: connect, import the account into the engine (the board's birthday for this network, or ask and record it), verify an address, sign and finish |
@@ -117,8 +117,11 @@ engine, showing the txid.
 
 **A board's wallet is shown only with that board.** On connect,
 `BoardHost` reads which wallet the board holds: the ZIP 32 seed
-fingerprint of its unlocked seed (`zGetAccount` of account 0; the same on
-both networks), kept in its state as `seedFingerprint`. The popup shows a
+fingerprint of its unlocked seed (`zGetSeedFingerprint`, which the board
+answers with no question, so connecting does not raise "Share view key?";
+`zGetAccount` of account 0 on firmware without it; the same on both
+networks), kept in its state as `seedFingerprint`. Only importing an
+account reads the viewing key, and only then does the board ask. The popup shows a
 device account only while a board is connected (USB in the offscreen
 document, or Bluetooth in this tab) whose fingerprint is the account's.
 Otherwise it shows the board section and "Connect your LeekWallet board
@@ -144,7 +147,7 @@ the Companion's:
   passphrase never leaves the board): Settings → Passphrase on the board.
   While connected and idle, `BoardHost` asks `getStatus` every 4 s; when
   `unlocked`, `passphrase` or `activeWallet` changes it hides the wallet
-  shown and reads the account's fingerprint again (`zGetAccount`).
+  shown and reads the seed fingerprint again (`zGetSeedFingerprint`).
 - **Type it here (less safe)**, behind a closed disclosure with the
   Companion's warnings: this browser sees every character before
   anything is encrypted, and a wrong passphrase opens a different, empty

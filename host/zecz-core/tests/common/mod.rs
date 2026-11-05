@@ -79,25 +79,52 @@ pub fn t_address() -> String {
 }
 
 pub fn db(profile: &Profile) -> WalletDb<rusqlite::Connection, Network, SystemClock, UnwrapErr<SysRng>> {
-    WalletDb::for_path(profile.db_path(), TEST, SystemClock, UnwrapErr(SysRng)).unwrap()
+    WalletDb::for_path(profile.db_path(), profile.network, SystemClock, UnwrapErr(SysRng)).unwrap()
+}
+
+/// Moves a wallet's chain tip and scans one empty block there, as a sync does:
+/// the wallet calls a transaction expired from the blocks it has scanned.
+pub fn set_tip(profile: &Profile, tip: u32) {
+    let mut db = db(profile);
+    db.update_chain_tip(BlockHeight::from_u32(tip)).unwrap();
+    let block = CompactBlock {
+        height: u64::from(tip),
+        hash: vec![4; 32],
+        prev_hash: vec![3; 32],
+        time: 1_760_000_000,
+        chain_metadata: Some(ChainMetadata::default()),
+        ..Default::default()
+    };
+    let cache = MemBlockCache::with_progress(|_| {});
+    tokio::runtime::Runtime::new().unwrap().block_on(cache.insert(vec![block])).unwrap();
+    let from = ChainState::empty(BlockHeight::from_u32(tip - 1), BlockHash([3; 32]));
+    let net = profile.network;
+    scan_cached_blocks(&net, &cache, &mut db, BlockHeight::from_u32(tip), &from, 1).unwrap();
 }
 
 /// A device-account wallet (abandon-art account 0) synced to [`TIP`], whose
 /// t-address holds one coin of `value` zat mined at [`COIN_HEIGHT`], put
 /// into its database as `sync`'s UTXO refresh does.
 pub fn wallet_with_coin(dir: &std::path::Path, value: u64) -> Wallet {
-    let spec = spec();
+    wallet_with_coin_at(dir, value, TEST, TIP)
+}
+
+/// [`wallet_with_coin`] on `net` at chain tip `tip`, the coin 100 blocks below.
+pub fn wallet_with_coin_at(dir: &std::path::Path, value: u64, net: Network, tip: u32) -> Wallet {
+    let acct = DevAccount::from_mnemonic(&net, ABANDON_ART, "", 0).unwrap();
+    let spec = AccountSpec::from_dev_account(net, &acct, "leekwallet-dev").unwrap();
+    let nu5 = u32::from(zcash_protocol::consensus::Parameters::activation_height(&net, zcash_protocol::consensus::NetworkUpgrade::Nu5).unwrap());
     let birthday =
-        AccountBirthday::from_parts(ChainState::empty(BlockHeight::from_u32(TEST_NU5 - 1), BlockHash([0; 32])), None);
-    let profile = Profile::new(TEST, dir.to_path_buf(), None);
+        AccountBirthday::from_parts(ChainState::empty(BlockHeight::from_u32(nu5 - 1), BlockHash([0; 32])), None);
+    let profile = Profile::new(net, dir.to_path_buf(), None);
     let (w, _) = Wallet::init_with_birthday(profile.clone(), &spec, &birthday).unwrap();
     drop(w);
 
     let mut db = db(&profile);
-    db.update_chain_tip(BlockHeight::from_u32(TIP)).unwrap();
+    db.update_chain_tip(BlockHeight::from_u32(tip)).unwrap();
     // One empty block scanned below the tip: the note commitment trees get a
     // checkpoint, so the wallet has an anchor and a target height.
-    let scanned = TIP - 20;
+    let scanned = tip - 20;
     let block = CompactBlock {
         height: u64::from(scanned),
         hash: vec![2; 32],
@@ -109,16 +136,15 @@ pub fn wallet_with_coin(dir: &std::path::Path, value: u64) -> Wallet {
     let cache = MemBlockCache::with_progress(|_| {});
     tokio::runtime::Runtime::new().unwrap().block_on(cache.insert(vec![block])).unwrap();
     let from = ChainState::empty(BlockHeight::from_u32(scanned - 1), BlockHash([1; 32]));
-    scan_cached_blocks(&TEST, &cache, &mut db, BlockHeight::from_u32(scanned), &from, 1).unwrap();
+    scan_cached_blocks(&net, &cache, &mut db, BlockHeight::from_u32(scanned), &from, 1).unwrap();
     let account = db.get_account_ids().unwrap()[0];
-    let taddr = match Address::decode(&TEST, &t_address()).unwrap() {
-        Address::Transparent(t) => t,
-        _ => unreachable!(),
-    };
+    let ufvk = UnifiedFullViewingKey::decode(&net, &spec.ufvk).unwrap();
+    let (ua, _) = ufvk.default_address(UnifiedAddressRequest::custom(Require, Omit, Require).unwrap()).unwrap();
+    let taddr = *ua.transparent().unwrap();
     let coin = WalletTransparentOutput::from_parts(
         OutPoint::new(COIN_TXID, 0),
         TxOut::new(Zatoshis::from_u64(value).unwrap(), taddr.script().into()),
-        Some(BlockHeight::from_u32(COIN_HEIGHT)),
+        Some(BlockHeight::from_u32(tip - 100)),
         Some(account),
         Some(TransparentKeyScope::EXTERNAL),
         None,

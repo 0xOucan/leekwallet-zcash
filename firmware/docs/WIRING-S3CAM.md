@@ -4,6 +4,10 @@ The `esp32s3cam` build (`pio run -e esp32s3cam`) expects this wiring. Pins
 are from [BOARD-S3CAM-PINOUT.md](BOARD-S3CAM-PINOUT.md). The camera, the
 microSD slot and the octal PSRAM are on the board and need no wiring.
 
+(A 240×240 colour TFT with the knob and Cancel built in is the other kit
+for this board: [WIRING-S3CAM-COLOR.md](WIRING-S3CAM-COLOR.md),
+`pio run -e esp32s3cam-color`.)
+
 The kit is three parts:
 
 - a **1.5" SH1107 128×128 I2C OLED**;

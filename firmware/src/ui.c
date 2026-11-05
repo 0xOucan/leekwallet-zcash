@@ -42,6 +42,7 @@
 #include "zcash-meta.h"
 #include "zcash-receive.h"
 #include "zcash-review.h"
+#include "zcash-storage.h"
 #endif
 #if LEEK_HAS_SDCARD && LEEK_HAS_ZCASH
 #include "sd-seed.h"
@@ -137,6 +138,9 @@ static void screen_pin_unlock_enter(void);
 static void screen_pin_unlock_render(void);
 static void screen_pin_unlock_on_button(button_id_t btn);
 
+static void screen_storage_fault_render(void);
+static void screen_storage_fault_on_button(button_id_t btn);
+
 static void screen_main_menu_enter(void);
 static void screen_main_menu_render(void);
 static void screen_main_menu_on_button(button_id_t btn);
@@ -180,6 +184,8 @@ static void screen_lock_hold_on_button(button_id_t btn);
 
 static void screen_lock_confirm_render(void);
 static void screen_lock_confirm_on_button(button_id_t btn);
+static void screen_show_seed_confirm_render(void);
+static void screen_show_seed_confirm_on_button(button_id_t btn);
 
 
 static void screen_mnemonic_verify_enter(void);
@@ -234,6 +240,13 @@ static const screen_t screen_boot = {
     .enter = screen_boot_enter,
     .render = screen_boot_render,
     .on_button = screen_boot_on_button,
+    .exit = NULL
+};
+
+static const screen_t screen_storage_fault = {
+    .enter = NULL,
+    .render = screen_storage_fault_render,
+    .on_button = screen_storage_fault_on_button,
     .exit = NULL
 };
 
@@ -337,6 +350,13 @@ static const screen_t screen_lock_confirm = {
     .enter = NULL,
     .render = screen_lock_confirm_render,
     .on_button = screen_lock_confirm_on_button,
+    .exit = NULL
+};
+
+static const screen_t screen_show_seed_confirm = {
+    .enter = NULL,
+    .render = screen_show_seed_confirm_render,
+    .on_button = screen_show_seed_confirm_on_button,
     .exit = NULL
 };
 
@@ -1045,6 +1065,15 @@ void ui_notify_wrong_network(uint8_t asked)
     ui_invalidate();
 }
 
+/* The same notice slot, for "Update your app": never a network number. */
+#define NOTICE_APP_OUTDATED 2u
+
+void ui_notify_app_outdated(void)
+{
+    wrong_network_pending = (uint8_t)(NOTICE_APP_OUTDATED + 1);
+    ui_invalidate();
+}
+
 static void service_wrong_network(void)
 {
     const uint8_t pending = wrong_network_pending;
@@ -1064,7 +1093,19 @@ static void service_wrong_network(void)
 static void render_wrong_network(void)
 {
     oled_clear();
+    oled_set_role(OLED_ROLE_WARN);
+    if (wrong_network_asked == NOTICE_APP_OUTDATED) {
+        oled_draw_string_centered(0, "Update your app");
+        oled_set_role(OLED_ROLE_AUTO);
+        oled_draw_string_centered(2, "This app is older");
+        oled_draw_string_centered(3, "than this board.");
+        oled_draw_string_centered(5, "Its payments may");
+        oled_draw_string_centered(6, "be refused.");
+        oled_draw_string(7, 0, HINT_OK);
+        return;
+    }
     oled_draw_string_centered(0, "Wrong network");
+    oled_set_role(OLED_ROLE_AUTO);
     oled_draw_string_centered(2, wrong_network_asked ? "App: Testnet" : "App: Mainnet");
     oled_draw_string_centered(3, zcash_network ? "Board: Testnet" : "Board: Mainnet");
     oled_draw_string_centered(5, "Refused. Change it");
@@ -1488,10 +1529,43 @@ static void screen_boot_on_button(button_id_t btn)
         device_wipe();
         wallet_init();
         ui_set_screen(SCREEN_PIN_SETUP);
+    } else if (wallet_storage_unreadable()) {
+        /* After the wipe check, not before: a wipe the owner's own wrong
+         * guesses already decided is still theirs to finish. This is the
+         * opposite case - nothing decided, storage just did not answer. */
+        ui_set_screen(SCREEN_STORAGE_FAULT);
     } else {
         /* PIN is set - need to unlock */
         ui_set_screen(SCREEN_PIN_UNLOCK);
     }
+}
+
+/* ============================================================================
+ * Storage Fault Screen
+ *
+ * The vault is there and this firmware cannot read it: NVS would not mount,
+ * its record is from a newer firmware or damaged, or there are seeds and no
+ * verifier (wallet_storage_unreadable(), docs/AUDIT-SD-WRITES.md N1). Every
+ * screen that could follow is wrong: PIN entry spends attempts on a PIN that
+ * cannot be checked, setup writes a new vault over the old one. So it stops
+ * here and says what to do. A newer firmware reads a newer record; a damaged
+ * vault is the owner's to erase deliberately, and their backup to restore.
+ * ============================================================================ */
+
+static void screen_storage_fault_render(void)
+{
+    oled_clear();
+    oled_draw_string_centered(0, "Storage unreadable");
+    oled_draw_string_centered(2, "Nothing was erased.");
+    oled_draw_string_centered(3, "Your seeds may still");
+    oled_draw_string_centered(4, "be there: flash the");
+    oled_draw_string_centered(5, "newest firmware.");
+    oled_draw_string_centered(7, "No PIN is asked.");
+}
+
+static void screen_storage_fault_on_button(button_id_t btn)
+{
+    (void)btn;   /* nothing to choose: see above */
 }
 
 /* ============================================================================
@@ -1619,6 +1693,12 @@ static void screen_pin_setup_on_button(button_id_t btn)
 
 static void screen_pin_unlock_enter(void)
 {
+    /* Every way here (boot, lock, a host's request) meets the same answer
+     * when the vault cannot check a PIN. */
+    if (wallet_storage_unreadable()) {
+        ui_set_screen(SCREEN_STORAGE_FAULT);
+        return;
+    }
     ESP_LOGI(TAG, "PIN unlock screen");
     pin_entry_reset();
     pin_idle_since_us = esp_timer_get_time();
@@ -1659,8 +1739,8 @@ static void screen_pin_unlock_render(void)
     }
     oled_draw_string_centered(5, attempts_str);
 
-    /* Draw instructions */
-    oled_draw_string(7, 0, HINT_SCROLL_DEL_SEL);
+    /* X deletes a digit; with none typed it is the way out. */
+    oled_draw_string(7, 0, pin_cursor > 0 ? HINT_SCROLL_DEL_SEL : HINT_SCROLL_BACK_SEL);
 }
 
 static void screen_pin_unlock_on_button(button_id_t btn)
@@ -1678,8 +1758,16 @@ static void screen_pin_unlock_on_button(button_id_t btn)
             if (pin_cursor > 0) {
                 pin_entry_backspace();
                 current_digit = 0;
+                break;
             }
-            break;
+            /* Nothing to delete: leave, as the idle timeout does. The device
+             * is locked either way, so this goes to the splash, never to the
+             * menu; it also drops a pending Show Seed, which would otherwise
+             * still be waiting behind the next ordinary unlock. No
+             * pin_verify(), so the attempt counter is untouched. */
+            pending_mnemonic_display = false;
+            ui_set_screen(SCREEN_BOOT);
+            return;
 
         case BUTTON_ACCEPT:
             if (current_digit != PIN_OPTION_SUBMIT) {
@@ -1769,7 +1857,9 @@ static void pin_change_progress_cb(uint8_t done, uint8_t total)
     char line[22];
     snprintf(line, sizeof(line), "%d of %d", (int)done, (int)total);
     oled_draw_string_centered(5, line);
+    oled_set_role(OLED_ROLE_WARN);
     oled_draw_string_centered(7, "Do not power off");
+    oled_set_role(OLED_ROLE_AUTO);
     oled_flush();
 }
 
@@ -2248,7 +2338,9 @@ static void screen_wallet_info_render(void)
     } else if (wallet_info_error[0] || master_xfp[0] == '\0') {
         /* Say plainly that there is nothing to show, rather than drawing
          * something identifier-shaped. */
+        oled_set_role(OLED_ROLE_DANGER);
         oled_draw_string_centered(2, "Error");
+        oled_set_role(OLED_ROLE_AUTO);
         oled_draw_string_centered(4, wallet_info_error[0] ? wallet_info_error
                                                           : "No fingerprint");
     } else {
@@ -2402,6 +2494,35 @@ static void screen_lock_confirm_on_button(button_id_t btn)
     }
     if (btn == BUTTON_CANCEL) {
         ui_set_screen(SCREEN_MAIN_MENU);
+    }
+}
+
+/* Settings -> Show Seed. The lock that follows is deliberate (see
+ * SET_SHOW_SEED), but it was a trap: the PIN screen had no way back, so
+ * someone who opened Show Seed by mistake, or handed the board to a friend
+ * who did, could only type the PIN or wait. This says what happens before it
+ * happens, and BACK leaves the device unlocked on Settings. */
+static void screen_show_seed_confirm_render(void)
+{
+    oled_clear();
+    oled_draw_string_centered(0, "Show seed?");
+    oled_draw_string_centered(2, "This locks the");
+    oled_draw_string_centered(3, "device. Enter your");
+    oled_draw_string_centered(4, "PIN to see words.");
+    oled_draw_string(7, 0, HINT_SHOW_SEED);
+}
+
+static void screen_show_seed_confirm_on_button(button_id_t btn)
+{
+    if (btn == BUTTON_ACCEPT) {
+        ESP_LOGI(TAG, "Show Seed: locking to re-ask the PIN");
+        lock_device();
+        pending_mnemonic_display = true;
+        ui_set_screen(SCREEN_PIN_UNLOCK);
+        return;
+    }
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_SETTINGS);
     }
 }
 
@@ -3209,9 +3330,9 @@ static void screen_settings_on_button(button_id_t btn)
                         ui_set_screen(SCREEN_TEMP_SEED);
                         break;
                     }
-                    lock_device();
-                    pending_mnemonic_display = true;
-                    ui_set_screen(SCREEN_PIN_UNLOCK);
+                    /* Said first, with a way back: past this point the only
+                     * way into the menu again is the PIN. */
+                    ui_set_screen(SCREEN_SHOW_SEED_CONFIRM);
                     break;
                 case SET_NEW_WALLET:
                     /* The same route as the main menu's New Wallet, and for
@@ -3318,16 +3439,25 @@ static void screen_settings_on_button(button_id_t btn)
 
 static screen_id_t qr_out_back = SCREEN_MAIN_MENU;
 
+/* A panel big enough to show a whole message as one still code at a size a
+ * camera reads (qr-out.h, QR_OUT_MODE_STILL): the 240-row colour TFT. The
+ * OLEDs keep their animated modes and never cycle into this one. */
+static bool qr_out_still_first(void)
+{
+    return oled_panel_rows() > 128;
+}
+
 bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
                 screen_id_t back)
 {
     const int64_t now = esp_timer_get_time();
     /* Most readable first. v3 x2 cannot carry everything, so a message that
        does not fit there falls back to the next most readable mode, and one
-       that fits nowhere is refused rather than half shown. */
-    static const uint8_t ORDER[] = { QR_OUT_MODE_DEFAULT, 0, 1 };
+       that fits nowhere is refused rather than half shown. A colour panel
+       (qr_out_still_first) tries one still code before any of them. */
+    static const uint8_t ORDER[] = { QR_OUT_MODE_STILL, QR_OUT_MODE_DEFAULT, 0, 1 };
     bool started = false;
-    for (size_t i = 0; i < sizeof ORDER && !started; i++) {
+    for (size_t i = qr_out_still_first() ? 0 : 1; i < sizeof ORDER && !started; i++) {
         started = qr_out_start(type, cbor, len, ORDER[i], now);
     }
     if (!started) {
@@ -3343,7 +3473,8 @@ static void screen_qr_out_render(void)
     const char *frame = qr_out_frame();
     const QrOutMode *m = qr_out_mode_info(qr_out_current_mode());
     if (frame == NULL || m == NULL ||
-        oled_draw_qrcode_ex(frame, m->version, m->scale, m->inverted) != ESP_OK) {
+        oled_draw_qrcode_ex(frame, qr_out_current_version(), m->scale,
+                            m->inverted) != ESP_OK) {
         /* qr-out.c measured every frame before showing one, so this is a
            bug rather than a state; say so instead of a blank panel. */
         oled_clear();
@@ -3364,6 +3495,9 @@ static void screen_qr_out_on_button(button_id_t btn)
             uint8_t mode = qr_out_current_mode();
             for (int i = 0; i < QR_OUT_MODE_COUNT - 1; i++) {
                 mode = (uint8_t)((mode + step) % QR_OUT_MODE_COUNT);
+                if (mode == QR_OUT_MODE_STILL && !qr_out_still_first()) {
+                    continue;
+                }
                 if (qr_out_set_mode(mode, now)) {
                     break;
                 }
@@ -4575,7 +4709,9 @@ static void screen_wipe_confirm_enter(void)
 static void screen_wipe_confirm_render(void)
 {
     oled_clear();
+    oled_set_role(OLED_ROLE_DANGER);
     oled_draw_string_centered(0, "!! WIPE DEVICE !!");
+    oled_set_role(OLED_ROLE_AUTO);
 
     WalletStatus status = wallet_get_status();
     char line[22];
@@ -4735,7 +4871,9 @@ static void screen_mnemonic_verify_render(void)
     oled_draw_string(3, 36, typed);
 
     if (verify_last_wrong) {
+        oled_set_role(OLED_ROLE_DANGER);
         oled_draw_string(5, 0, "Wrong - try again");
+        oled_set_role(OLED_ROLE_AUTO);
     } else {
         if (entry.word_mode) {
             char line[22];
@@ -5208,7 +5346,9 @@ static void screen_passphrase_confirm_render(void)
      * blank row under "Match your record" invites them to accept a wallet
      * that never derived. */
     if (master_xfp[0] == '\0') {
+        oled_set_role(OLED_ROLE_DANGER);
         oled_draw_string_centered(2, "Error");
+        oled_set_role(OLED_ROLE_AUTO);
         oled_draw_string_centered(4, "No fingerprint");
         oled_draw_string_centered(6, "Cannot confirm");
         oled_draw_string(7, 0, HINT_RETRY);
@@ -5254,6 +5394,10 @@ static volatile SignOutcome sign_outcome = SIGN_PENDING;
 static volatile bool zsign_review_pending = false;
 /* zShowAddress: the address-check screen is wanted (see SCREEN_ADDRESS_CHECK). */
 static volatile bool addr_check_pending = false;
+/* zGetAccount: the share-view-key question is wanted (SCREEN_SHARE_VIEW_KEY). */
+static volatile bool share_key_pending = false;
+/* zGetStorageKey: the unlock-app-data question is wanted (SCREEN_STORAGE_KEY). */
+static volatile bool storage_key_pending = false;
 #endif
 
 /* Raised when the approval window closed with nobody answering, so the UI
@@ -5337,7 +5481,8 @@ bool ui_user_is_answering(void)
         return true;
     }
 #if LEEK_HAS_ZCASH
-    if (zsign_review_pending || addr_check_pending) {
+    if (zsign_review_pending || addr_check_pending || share_key_pending ||
+        storage_key_pending) {
         return true;
     }
 #endif
@@ -5346,6 +5491,8 @@ bool ui_user_is_answering(void)
         case SCREEN_HOST_PASSPHRASE_CONFIRM:
         case SCREEN_ZSIGN_REVIEW:
         case SCREEN_ADDRESS_CHECK:
+        case SCREEN_SHARE_VIEW_KEY:
+        case SCREEN_STORAGE_KEY:
         case SCREEN_PASSPHRASE_CONFIRM:
         case SCREEN_WIPE_CONFIRM:
         /* Not questions, but a seed is on the glass and the user is working
@@ -5446,8 +5593,12 @@ static void screen_zsign_review_render(void)
         return;
     }
     for (int r = 0; r < ZREVIEW_ROWS; r++) {
+        /* zcash-review.c marks a warning row with a leading '!' (a public
+           output, a transparent recipient); a colour panel shows it amber. */
+        oled_set_role(page.row[r][0] == '!' ? OLED_ROLE_WARN : OLED_ROLE_AUTO);
         oled_draw_string(r, 0, page.row[r]);
     }
+    oled_set_role(OLED_ROLE_AUTO);
 }
 
 static void screen_zsign_review_on_button(button_id_t btn)
@@ -5605,6 +5756,242 @@ static const screen_t screen_address_check = {
     .on_button = screen_address_check_on_button,
     .exit = NULL,
 };
+
+/* ============================================================================
+ * Share View Key (zGetAccount)
+ *
+ * A host asked for an account's unified full viewing key. It cannot spend,
+ * but it reads every note the account ever received and every one it spent:
+ * the balance and the whole history, for good, with no way to take it back.
+ * Keystone and Ledger both ask before they hand one over, and so does this.
+ *
+ * The question names three things. What sharing costs, in words rather than
+ * "UFVK". Which account, on which network, because a companion asking for an
+ * account nobody chose is the thing to notice. And which host: the six digits
+ * the user compared when this session was paired (PROTOCOL.md 3), the one
+ * name for a host the user has ever seen, and the link it came in on. A
+ * second app paired since then shows other digits.
+ *
+ * One press answers, as on the last page of a review. The protocol task
+ * remembers a yes for the rest of the session, so a companion re-reading the
+ * account does not ask again; see share_view_key_allowed() in protocol.c.
+ * ============================================================================ */
+
+static uint32_t share_key_account;
+static uint8_t  share_key_network;
+static bool     share_key_ble;
+/* The pairing code, six digits and a NUL, or "" when there is none. */
+static char     share_key_code[SESSION_PASSKEY_LEN + 1];
+
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble)
+{
+    share_key_account = account;
+    share_key_network = network;
+    share_key_ble = over_ble;
+    snprintf(share_key_code, sizeof share_key_code, "%s", pairing_code ? pairing_code : "");
+    sign_outcome = SIGN_PENDING;
+    share_key_pending = true;
+}
+
+static void screen_share_key_enter(void)
+{
+    ESP_LOGI(TAG, "Share view key: account %u", (unsigned)share_key_account);
+}
+
+static void screen_share_key_render(void)
+{
+    oled_clear();
+    oled_set_role(OLED_ROLE_ACCENT);
+    oled_draw_string_centered(0, "Share view key?");
+    oled_set_role(OLED_ROLE_WARN);
+    /* 21 columns: the longest line is exactly a row on a 128-pixel panel. */
+    oled_draw_string(2, 0, "The app will see your");
+    oled_draw_string(3, 0, "balance and history.");
+    oled_set_role(OLED_ROLE_AUTO);
+
+    char line[22];
+    snprintf(line, sizeof line, "acct %u  %s", (unsigned)(share_key_account % 100000u),
+             share_key_network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
+    oled_draw_string_centered(5, line);
+    const char *link = share_key_ble ? "BLE" : "USB";
+    if (strlen(share_key_code) == SESSION_PASSKEY_LEN) {
+        /* Grouped 3+3, as the Connect? screen showed it. */
+        snprintf(line, sizeof line, "%s, code %.3s %.3s", link, share_key_code,
+                 share_key_code + 3);
+    } else {
+        snprintf(line, sizeof line, "%s device", link);
+    }
+    oled_draw_string_centered(6, line);
+    oled_draw_string(7, 0, HINT_NO_YES);
+}
+
+static void share_key_done(SignOutcome o)
+{
+    sign_outcome = o;
+    memzero(share_key_code, sizeof share_key_code);
+    ui_set_screen(SCREEN_MAIN_MENU);
+}
+
+static void screen_share_key_on_button(button_id_t btn)
+{
+    switch (btn) {
+        case BUTTON_ACCEPT:
+            share_key_done(SIGN_APPROVED);
+            return;
+        case BUTTON_CANCEL:
+            share_key_done(SIGN_REJECTED);
+            return;
+        default:
+            /* The knob has nothing to scroll: everything is on one page. */
+            return;
+    }
+}
+
+static const screen_t screen_share_view_key = {
+    .enter = screen_share_key_enter,
+    .render = screen_share_key_render,
+    .on_button = screen_share_key_on_button,
+    .exit = NULL,
+};
+
+/* ============================================================================
+ * Unlock app data? (zGetStorageKey)
+ *
+ * An app that keeps its wallet data encrypted asks for its Storage Key each
+ * time it opens (docs/zcash/zip-draft-app-storage-keys.md). Any app can
+ * claim any name, so what the user approves is what the screen says: the app
+ * identifier IN FULL, never cut (the draft forbids it, and a name that ends
+ * where the panel does is how one app passes for another), the account and
+ * network, and the host's pairing code as on "Share view key?".
+ *
+ * The identifier is at most 64 bytes: four 21-column rows. It breaks after a
+ * dot in the second half of a row when that fits in four, and every 21
+ * characters otherwise; no character is added at a break. Short ones leave
+ * room to say what a yes does. Asked every time; nothing is remembered.
+ * ============================================================================ */
+
+#define STORAGE_KEY_ROWS 4
+
+static char     storage_key_app[ZCASH_APP_ID_MAX + 1];
+static uint32_t storage_key_account;
+static uint8_t  storage_key_network;
+static bool     storage_key_ble;
+static char     storage_key_code[SESSION_PASSKEY_LEN + 1];
+
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble)
+{
+    snprintf(storage_key_app, sizeof storage_key_app, "%s", app_id ? app_id : "");
+    storage_key_account = account;
+    storage_key_network = network;
+    storage_key_ble = over_ble;
+    snprintf(storage_key_code, sizeof storage_key_code, "%s", pairing_code ? pairing_code : "");
+    sign_outcome = SIGN_PENDING;
+    storage_key_pending = true;
+}
+
+/* `id` in rows of at most OLED_CHARS_PER_LINE, broken after a dot past the
+ * middle of a row (or at the row's end when there is none) if that takes no
+ * more than STORAGE_KEY_ROWS, else every OLED_CHARS_PER_LINE.
+ * Returns the number of rows; every character lands in exactly one. */
+static int storage_key_wrap(const char *id, char rows[STORAGE_KEY_ROWS][OLED_CHARS_PER_LINE + 1])
+{
+    const size_t len = strlen(id);
+    int n = 0;
+    size_t at = 0;
+    while (at < len && n < STORAGE_KEY_ROWS) {
+        size_t take = len - at;
+        if (take > OLED_CHARS_PER_LINE) {
+            take = OLED_CHARS_PER_LINE;
+            for (size_t k = OLED_CHARS_PER_LINE; k > OLED_CHARS_PER_LINE / 2; k--) {
+                if (id[at + k - 1] == '.') {
+                    take = k;
+                    break;
+                }
+            }
+        }
+        snprintf(rows[n++], OLED_CHARS_PER_LINE + 1, "%.*s", (int)take, id + at);
+        at += take;
+    }
+    if (at == len) {
+        return n;
+    }
+    n = 0;
+    for (at = 0; at < len; at += OLED_CHARS_PER_LINE) {
+        snprintf(rows[n++], OLED_CHARS_PER_LINE + 1, "%.*s", OLED_CHARS_PER_LINE, id + at);
+    }
+    return n;
+}
+
+static void screen_storage_key_enter(void)
+{
+    ESP_LOGI(TAG, "Storage key: account %u", (unsigned)storage_key_account);
+}
+
+static void screen_storage_key_render(void)
+{
+    char rows[STORAGE_KEY_ROWS][OLED_CHARS_PER_LINE + 1];
+    const int n = storage_key_wrap(storage_key_app, rows);
+
+    oled_clear();
+    oled_set_role(OLED_ROLE_ACCENT);
+    oled_draw_string_centered(0, "Unlock app data?");
+    oled_set_role(OLED_ROLE_AUTO);
+    for (int i = 0; i < n; i++) {
+        oled_draw_string_centered(1 + i, rows[i]);
+    }
+    if (n <= 2) {
+        oled_set_role(OLED_ROLE_WARN);
+        oled_draw_string(3, 0, "Lets this app open");
+        oled_draw_string(4, 0, "its saved wallet data");
+        oled_set_role(OLED_ROLE_AUTO);
+    }
+
+    char line[OLED_CHARS_PER_LINE + 1];
+    snprintf(line, sizeof line, "acct %u  %s", (unsigned)(storage_key_account % 100000u),
+             storage_key_network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
+    oled_draw_string_centered(5, line);
+    const char *link = storage_key_ble ? "BLE" : "USB";
+    if (strlen(storage_key_code) == SESSION_PASSKEY_LEN) {
+        snprintf(line, sizeof line, "%s, code %.3s %.3s", link, storage_key_code,
+                 storage_key_code + 3);
+    } else {
+        snprintf(line, sizeof line, "%s device", link);
+    }
+    oled_draw_string_centered(6, line);
+    oled_draw_string(7, 0, HINT_NO_YES);
+}
+
+static void storage_key_forget(void)
+{
+    memzero(storage_key_app, sizeof storage_key_app);
+    memzero(storage_key_code, sizeof storage_key_code);
+}
+
+static void screen_storage_key_on_button(button_id_t btn)
+{
+    switch (btn) {
+        case BUTTON_ACCEPT:
+            sign_outcome = SIGN_APPROVED;
+            break;
+        case BUTTON_CANCEL:
+            sign_outcome = SIGN_REJECTED;
+            break;
+        default:
+            /* The knob has nothing to scroll: everything is on one page. */
+            return;
+    }
+    storage_key_forget();
+    ui_set_screen(SCREEN_MAIN_MENU);
+}
+
+static const screen_t screen_storage_key = {
+    .enter = screen_storage_key_enter,
+    .render = screen_storage_key_render,
+    .on_button = screen_storage_key_on_button,
+    .exit = NULL,
+};
 #endif /* LEEK_HAS_ZCASH */
 
 /* ============================================================================
@@ -5719,6 +6106,7 @@ void ui_init(void)
     screens[SCREEN_SESSION_CONFIRM] = &screen_session_confirm;
     screens[SCREEN_LOCK_HOLD] = &screen_lock_hold;
     screens[SCREEN_LOCK_CONFIRM] = &screen_lock_confirm;
+    screens[SCREEN_SHOW_SEED_CONFIRM] = &screen_show_seed_confirm;
     screens[SCREEN_PASSPHRASE] = &screen_passphrase;
     screens[SCREEN_BLE_NAME] = &screen_ble_name;
     screens[SCREEN_TEMP_SEED] = &screen_temp_seed;
@@ -5732,8 +6120,11 @@ void ui_init(void)
     screens[SCREEN_SD_SEED] = &screen_sd_seed;
 #if LEEK_HAS_ZCASH
     screens[SCREEN_ADDRESS_CHECK] = &screen_address_check;
+    screens[SCREEN_SHARE_VIEW_KEY] = &screen_share_view_key;
+    screens[SCREEN_STORAGE_KEY] = &screen_storage_key;
 #endif
     screens[SCREEN_SCAN] = &screen_scan;
+    screens[SCREEN_STORAGE_FAULT] = &screen_storage_fault;
 
     current_screen = SCREEN_BOOT;
     needs_render = true;
@@ -5907,6 +6298,18 @@ static void service_sign_expiry(void)
         ui_set_screen(SCREEN_MAIN_MENU);
         return;
     }
+    if (ui_get_screen() == SCREEN_SHARE_VIEW_KEY) {
+        /* The host was already told "no answer"; nothing was shared. */
+        memzero(share_key_code, sizeof share_key_code);
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
+    if (ui_get_screen() == SCREEN_STORAGE_KEY) {
+        /* The host was already told "no answer"; nothing was released. */
+        storage_key_forget();
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
 #endif
     if (ui_get_screen() == SCREEN_HOST_PASSPHRASE_CONFIRM) {
         /* The wallet is the honest place to land: whatever was proposed has
@@ -6032,6 +6435,14 @@ void ui_task(void *pvParameters)
         if (addr_check_pending) {
             addr_check_pending = false;
             ui_set_screen(SCREEN_ADDRESS_CHECK);
+        }
+        if (share_key_pending) {
+            share_key_pending = false;
+            ui_set_screen(SCREEN_SHARE_VIEW_KEY);
+        }
+        if (storage_key_pending) {
+            storage_key_pending = false;
+            ui_set_screen(SCREEN_STORAGE_KEY);
         }
 #endif
 
@@ -6187,6 +6598,8 @@ void ui__reset_static_state_for_test(void)
     zsign_page = 0;
     addr_check_pending = false;
     memzero(&addr_check, sizeof addr_check);
+    share_key_pending = false;
+    memzero(share_key_code, sizeof share_key_code);
     zsign_from_sd = false;
     zsign_from_qr = false;
 #endif

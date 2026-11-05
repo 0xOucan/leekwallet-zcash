@@ -18,6 +18,7 @@
 import { EngineClient } from './engine-client.js';
 import { formatZec, historyEntry } from './format.js';
 import { BLE_TAB_WHY, LocalBoard, RemoteBoard, USB_TAB_WHY, bluetoothHelp, grantUsb, inTab, usbPlan } from './board-client.js';
+import { BOARD_UPDATE_TEXT, firmwareOutdated } from './board/device.js';
 import { passphraseComplaint } from './board/host.js';
 
 const root = document.getElementById('root');
@@ -305,6 +306,12 @@ function useBoard(b) {
   onBoardChanged();
 }
 
+/* Importing an account is a zGetAccount, and the board answers it only
+ * after OK on "Share view key?" (once per session). It does not say
+ * whether it is asking, so the line says "if". Reading which wallet the
+ * board holds asks nothing (zGetSeedFingerprint), so that has no hint. */
+const SHARE_KEY_HINT = 'If the board asks “Share view key?”, press OK on it.';
+
 function signLine(t) {
   if (t.phase === 'upload') return `Uploading to the board: ${t.sent} of ${t.total} bytes…`;
   if (t.phase === 'review') return 'Review the transaction on the board, page by page; ACCEPT on the last page signs.';
@@ -527,7 +534,7 @@ async function forgetBoard() {
 }
 
 async function importFromBoard(birthday = null) {
-  await guarded('Reading the account from the board…', async () => {
+  await guarded(`Reading the account from the board… ${SHARE_KEY_HINT}`, async () => {
     try {
       const hidden = hiddenWallet();
       const r = await ui.board.run('importAccount', { network: net(), accountIndex: 0, birthday, name: hidden ? 'LeekWallet #0 (passphrase)' : null });
@@ -659,13 +666,14 @@ function boardSection() {
         s.kind === 'usb' ? h('button', { class: 'link', id: 'switch-ble', onclick: () => void switchToBluetooth(), disabled: busy }, 'Switch to Bluetooth') : null,
         h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, disconnectBoard), disabled: busy }, 'Disconnect'),
       ),
+      s.features && firmwareOutdated(s.features) ? h('p', { class: 'notice', id: 'board-update' }, BOARD_UPDATE_TEXT) : null,
       ui.usbTabOnly && ui.board?.kind === 'usb-tab'
         ? h('p', { class: 'notice', id: 'usb-tab-only' }, 'This browser gave the USB port to this tab only, so the board is connected from here: keep this tab open while you use it.')
         : null,
       s.locked
         ? h('p', { class: 'notice', id: 'board-locked' }, 'The board locked, and dropped any passphrase. Unlock it with your PIN on the board to see its wallet.')
         : s.waiting === 'wallet'
-          ? h('p', { class: 'muted', id: 'board-reading' }, 'The board\'s wallet changed. Reading which wallet it holds now…')
+          ? h('p', { class: 'muted', id: 'board-reading' }, "The board's wallet changed. Reading which wallet it holds now…")
           : fp
             ? null
             : h('p', { class: 'notice bad', id: 'board-account-error' }, s.accountError ?? 'The board did not say which wallet it holds, so no wallet of a board is shown. Disconnect and connect again.'),
@@ -730,6 +738,8 @@ function reviewBlock() {
       {},
       p.payments.map((x) => h('tr', {}, h('td', {}, h('code', {}, shortAddr(x.recipient)), x.hasMemo ? ' (memo)' : ''), h('td', { class: 'num' }, formatZec(x.amountZat)))),
       h('tr', {}, h('td', {}, 'Fee'), h('td', { class: 'num', id: 'review-fee' }, formatZec(p.feeZat))),
+      h('tr', {}, h('td', {}, 'Rules'), h('td', { class: 'num', id: 'review-upgrade' }, p.upgrade)),
+      h('tr', {}, h('td', {}, 'Expires'), h('td', { class: 'num', id: 'review-expiry' }, `after block ${p.expiryHeight}, about ${Math.round(p.expiresInSecs / 60)} min`)),
       (p.change ?? []).map((c) => h('tr', { class: 'muted' }, h('td', {}, `Change back to you (${c.pool})`), h('td', { class: 'num' }, formatZec(c.valueZat)))),
       p.kind === 'shield' ? null : h('tr', {}, h('th', {}, 'Total out'), h('th', { class: 'num' }, formatZec(sent + p.feeZat))),
     ),

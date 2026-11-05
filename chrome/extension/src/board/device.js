@@ -11,6 +11,8 @@ import { PROTOCOL_VERSION, NONCE_BYTES, Session, commitment, deriveKeys, generat
 import { POOL } from './zsig.js';
 
 export const ERR = {
+  /** Malformed, or a method this firmware does not know. */
+  UNKNOWN_METHOD: 0x0001,
   NOT_UNLOCKED: 0x0100,
   USER_REJECTED: 0x0200,
   USER_TIMEOUT: 0x0201,
@@ -19,6 +21,8 @@ export const ERR = {
   ZSIGN_BASE: 0x0500,
   /** The request named the other network than the board's Settings > Network. */
   BOARD_NETWORK: 0x0500 | 40,
+  /** ZS_E_APP_OUTDATED: NU6.3, with an expiry only an app without NU7 builds. */
+  APP_OUTDATED: 0x0500 | 25,
 };
 
 /** What to tell the user when the board refused `asked` ("main" or "test") because it is set to the other network. */
@@ -38,10 +42,38 @@ export const USER_TIMEOUT = 150e3;
 const SHORT = 10e3;
 /** Calls that derive keys on the board: an Orchard account takes seconds at 160 MHz. */
 const DERIVE = 90e3;
+/**
+ * zGetAccount: a derivation, then the board asks "Share view key?" (once
+ * per session) and waits up to 120 s for the press.
+ */
+const SHARE_KEY = DERIVE + 120e3;
+
+/**
+ * What this host tells the board it is (hostCompat, with zGetSeedFingerprint,
+ * zGetAccount and zSignBegin). A board that expects more says "Update your app"
+ * and carries on. Same value as HOST_COMPAT in host/leek-device.
+ */
+export const HOST_COMPAT = 2;
+
+/** Same value as MIN_FIRMWARE_COMPAT in host/leek-zcash. */
+export const MIN_FIRMWARE_COMPAT = 2;
+
+/** Same text as BOARD_UPDATE_TEXT in host/leek-zcash. */
+export const BOARD_UPDATE_TEXT =
+  'Update your board: its firmware is older than this app expects. It can still sign; the update has the NU7 checks.';
+
+/** Same text as LeekError::AppOutdated in host/leek-zcash. */
+export const APP_UPDATE_TEXT =
+  'Update your app: it built this transaction for network rules that have ended. Nothing was signed.';
+
+/** True for zGetFeatures' answer from a board to update. A suggestion only. */
+export function firmwareOutdated(features) {
+  return Number(features?.fwCompat ?? 1) < MIN_FIRMWARE_COMPAT;
+}
 
 export class DeviceError extends Error {
   constructor(code, message) {
-    const what =
+    const what = code === ERR.APP_OUTDATED ? APP_UPDATE_TEXT :
       (code & 0xff00) === ERR.ZSIGN_BASE && code !== ERR.BOARD_NETWORK
         ? `the board refused to sign: ${message} (code -${code & 0xff})`
         : `board error 0x${code.toString(16).padStart(4, '0')}: ${message}`;
@@ -284,10 +316,27 @@ export class Device {
     return this.call('zGetFeatures', {});
   }
 
-  /** UFVK, UA, t-address, ZIP 32 seed fingerprint and (if set) birthday. */
+  /**
+   * The ZIP 32 seed fingerprint (hex) of the seed open on the board, with
+   * no question on the board: how to tell which board, and which seed or
+   * passphrase wallet on it, is connected. A stable identifier of the
+   * seed that every paired host can read. `network`, when given, is
+   * checked against the board's setting (0x0528). Firmware without the
+   * call answers 0x0001 (ERR.UNKNOWN_METHOD).
+   */
+  async zGetSeedFingerprint(network) {
+    if (network !== undefined) checkNetwork(network);
+    const a = await this.call('zGetSeedFingerprint', network === undefined ? { hostCompat: HOST_COMPAT } : { network, hostCompat: HOST_COMPAT }, DERIVE);
+    return toHex(bytesField(a, 'seedFingerprint', 32));
+  }
+
+  /**
+   * UFVK, UA, t-address, ZIP 32 seed fingerprint and (if set) birthday,
+   * after the user presses OK on the board's "Share view key?".
+   */
   async zGetAccount(account, network) {
     checkNetwork(network);
-    const a = await this.call('zGetAccount', { account, network }, DERIVE);
+    const a = await this.call('zGetAccount', { account, network, hostCompat: HOST_COMPAT }, SHARE_KEY);
     return {
       account: uintField(a, 'account'),
       network: textField(a, 'network'),
@@ -349,7 +398,7 @@ export class Device {
   async zSign(pczt, account, network, onProgress) {
     checkNetwork(network);
     const sha = await sha256(pczt);
-    const begin = await this.call('zSignBegin', { len: pczt.length, sha256: sha, account, network }, DERIVE);
+    const begin = await this.call('zSignBegin', { len: pczt.length, sha256: sha, account, network, hostCompat: HOST_COMPAT }, DERIVE);
     const max = uintField(begin, 'maxChunk');
     if (max === 0) throw new Error('the board offered a zero chunk size');
     let off = 0;

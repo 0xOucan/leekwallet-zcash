@@ -1,0 +1,50 @@
+[package]
+name = "leek-zcash"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+description = "The LeekWallet SDK's Zcash kit (L3): host-side preflight, signer views, signing a PCZT on the board, and applying its .zsig as a signed PCZT a wallet combines and extracts as it does Keystone's. Transport-free: it drives leek-device over any FramePort."
+
+# The same librustzcash releases as zecz-core and leek-android, so the PCZT
+# encoding, the redaction and the Signer role are the ones the board checks.
+[dependencies]
+pczt = { version = "=0.10.0", features = ["orchard", "transparent", "signer"] }
+# redact_pczt_for_signer (SignerView::Full | Compact).
+zcash_client_backend = { version = "=0.25.0", default-features = false, features = ["orchard", "pczt"] }
+zcash_keys = { version = "=0.17.0", features = ["orchard", "transparent-inputs"] }
+zcash_address = { version = "=0.14.0" }
+zcash_protocol = { version = "=0.11.0" }
+# The txid of a signed PCZT, and reading mined transactions (check_mined).
+zcash_primitives = { version = "=0.31.0", default-features = false, features = ["std"] }
+zcash_transparent = { version = "=0.11.0", features = ["transparent-inputs"] }
+orchard = { version = "0.16", default-features = false, features = ["std"] }
+secp256k1 = "0.33"
+anyhow = "1"
+# The account record's CBOR body.
+ciborium = "=0.2.2"
+# The device client: session, z* calls, .zsig. No transport of its own.
+leek-device = { path = "../leek-device", default-features = false }
+leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
+# App Storage Keys (src/storage.rs): ZIP 32 Registered key derivation, and
+# the draft's HKDF subkeys, key check and XChaCha20-Poly1305. All already in
+# the tree (zcash_keys, leek-device).
+zip32 = "0.3"
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+chacha20poly1305 = "0.10"
+zeroize = "1"
+getrandom = "0.3"
+
+[dev-dependencies]
+# The soft signer (the vectors' seed) and the prover, to check that what
+# apply_zsig returns proves and extracts.
+zecz-core = { path = "../zecz-core" }
+# zdev's PTY, for the end-to-end tests.
+leek-device = { path = "../leek-device", features = ["serial"] }
+rand = { version = "0.10", features = ["sys_rng"] }
+serde_json = "1"
+hex = "0.4"
+# The draft's ZIP 32 expansion, written out in storage.rs's tests.
+blake2b_simd = "1"

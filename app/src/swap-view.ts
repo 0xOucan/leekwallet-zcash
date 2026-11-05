@@ -20,6 +20,7 @@ import {
 /** A built send, as zw_propose_send and swap_execute return it. */
 export interface Proposal {
   id: string; kind: "send" | "shield"; targetHeight: number;
+  upgrade: string; expiryHeight: number; expiresInSecs: number;
   payments: { recipient: string; amountZat: number; pool: string; hasMemo: boolean }[];
   change: { valueZat: number; pool: string }[]; feeZat: number; totalZat: number;
   signerViewBytes: number; compact: boolean;
@@ -265,7 +266,7 @@ export function initSwapView(host: SwapHost): SwapView {
       $("swreviewnote").textContent =
         `The board shows the deposit address${s.depositTransparent ? " (transparent, with its warning)" : ""} and the amount: `
         + `compare them with the ones here. Deposit before ${when(s.deadline)}; `
-        + `a built transaction also expires about 40 blocks after ${p.targetHeight}.`;
+        + `a built transaction also expires after block ${p.expiryHeight}, about ${Math.round(p.expiresInSecs / 60)} min from now.`;
       ($("swmainconfirm") as HTMLInputElement).checked = false;
       $("swmainconfirmrow").hidden = k.network !== "main";
       stage("review");

@@ -2,11 +2,13 @@
  * The automatic wallet: what happens once the board is paired and unlocked,
  * with no clicks, the way Zodl's "connect the board" flow runs.
  *
- *   1. Read the board's account (zGetAccount), once more after 1.5 s on
- *      0x0300 while its vault is still opening.
- *   2. Its network, seed fingerprint and account name the wallet on this
- *      device: open it if it exists.
- *   3. Otherwise create it from the board's viewing key, born at the
+ *   1. Read which seed the board has open (zGetSeedFingerprint, no question
+ *      on the board), once more after 1.5 s on 0x0300 while its vault is
+ *      still opening.
+ *   2. The network, that seed fingerprint and the account name the wallet
+ *      on this device: open it if it exists.
+ *   3. Otherwise read the account (zGetAccount: the board asks "Share view
+ *      key?") and create the wallet from its viewing key, born at the
  *      board's birthday for that network; a board without one gets the
  *      chain tip minus BIRTHDAY_MARGIN, recorded on the board
  *      (zSetAccountMeta) for the next companion, as the desktop app does.
@@ -17,15 +19,17 @@
  * Read the board's account, Wallet -> Import) stay for troubleshooting.
  */
 
-import { zGetAccount, zSetBirthday, type ZAccount, type ZCall, type ZNetwork } from "../packages/core/src/zcash.ts";
+import {
+  zGetAccount, zGetSeedFingerprint, zSetBirthday, ZErr, type ZAccount, type ZCall, type ZNetwork,
+} from "../packages/core/src/zcash.ts";
 import type { Invoke } from "./tauri-transport.ts";
 
 /**
  * Blocks below the tip a new wallet is born at, when the board has no
- * birthday: about 2 hours of blocks, so a payment made while the wallet was
- * being set up is still scanned.
+ * birthday: about 2 hours of 25 s blocks (ZIP 218), so a payment made while
+ * the wallet was being set up is still scanned.
  */
-export const BIRTHDAY_MARGIN = 100;
+export const BIRTHDAY_MARGIN = 288;
 
 /** How long to wait before asking again after 0x0300. */
 export const RETRY_0300_MS = 1500;
@@ -46,6 +50,36 @@ export async function readAccountRetrying(
     onRetry?.();
     await new Promise((r) => setTimeout(r, retryMs));
     return zGetAccount(call, account, network);
+  }
+}
+
+/**
+ * Which seed the board has open, retried once on 0x0300 as
+ * readAccountRetrying is. No question on the board. Firmware without
+ * zGetSeedFingerprint (0x0001) is asked for `account` instead, which it
+ * answers only after "Share view key?"; that answer comes back as
+ * `account`, so the caller does not ask twice.
+ */
+export async function readSeedRetrying(
+  call: ZCall, account: number, network: ZNetwork,
+  { retryMs = RETRY_0300_MS, onRetry }: { retryMs?: number; onRetry?: () => void } = {},
+): Promise<{ seedFingerprint: string; account: ZAccount | null }> {
+  const once = async () => {
+    try {
+      return { seedFingerprint: await zGetSeedFingerprint(call, network), account: null };
+    } catch (e) {
+      if ((e as { code?: unknown }).code !== ZErr.UnknownMethod) throw e;
+      const a = await zGetAccount(call, account, network);
+      return { seedFingerprint: a.seedFingerprint, account: a };
+    }
+  };
+  try {
+    return await once();
+  } catch (e) {
+    if ((e as { code?: unknown }).code !== 0x0300) throw e;
+    onRetry?.();
+    await new Promise((r) => setTimeout(r, retryMs));
+    return once();
   }
 }
 

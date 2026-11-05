@@ -99,7 +99,7 @@ group("zGetAccount: the reply must be what was asked");
   const ok = scripted(() => answer("test"));
   const a = await zGetAccount(ok.call, 0, "test");
   check(a.ufvk === k.ufvk && a.birthday === 4_000_000 && a.seedFingerprint === k.seed_fingerprint, "fields");
-  check(ok.asked[0]!.timeoutMs === 90_000, "a derive timeout");
+  check(ok.asked[0]!.timeoutMs === 210_000, "a derive timeout plus the board's 120 s for \"Share view key?\"");
   await rejects(zGetAccount(scripted(() => answer("main")).call, 0, "test"), /asked for test/, "the other network");
   await rejects(zGetAccount(scripted(() => answer("test", key("main/abandon-art/pp0/acct0").ufvk)).call, 0, "test"),
     /not a testnet/, "a mainnet key under a testnet label");

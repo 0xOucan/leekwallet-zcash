@@ -50,14 +50,14 @@
 #define QR_OUT_SEQ_WRAP 255
 
 typedef struct {
-    uint8_t     version;
+    uint8_t     version;     /* 0: the smallest that holds the message whole */
     uint8_t     scale;
     uint16_t    period_ms;
     const char *name;        /* six characters or fewer, for the footer */
     bool        inverted;    /* lit modules on a dark background */
 } QrOutMode;
 
-#define QR_OUT_MODE_COUNT 5
+#define QR_OUT_MODE_COUNT 6
 /* v3 at scale 2: the chunkiest modules, 2 panel pixels each. Measured by
    rendering this panel's framebuffer and blurring it: the scale-1 modes need a
    camera to resolve at least 3 of its pixels per 0.17 mm OLED pixel, which a
@@ -65,6 +65,17 @@ typedef struct {
    distance. v3 x2 decodes at 2. The first CAM-board pairing, at v6 x1 on a
    laptop webcam, never saw a code at all. Frames are the price, not failure. */
 #define QR_OUT_MODE_DEFAULT 2
+
+/*
+ * One still code: the whole message in a single part, at the smallest version
+ * (up to 10) that holds it, so nothing animates. On the 64-row OLED that is a
+ * 1-pixel-per-module code a camera cannot read, which is why it is not the
+ * default there. On a 240x240 panel the code is redrawn at native scale
+ * (panel-color.h) - a .zsig reply is version 8 at 4 px per module - and a
+ * phone reads it at a glance, so the colour panel starts here and falls back
+ * to the animated modes for a message too long for one code.
+ */
+#define QR_OUT_MODE_STILL 5
 
 const QrOutMode *qr_out_mode_info(uint8_t mode);
 
@@ -89,6 +100,7 @@ bool qr_out_tick(int64_t now_us);
 const char *qr_out_frame(void);
 
 uint8_t  qr_out_current_mode(void);
+uint8_t  qr_out_current_version(void);  /* the mode's, or still's choice */
 uint32_t qr_out_seq_len(void);      /* 1 for a static single-part code */
 uint32_t qr_out_seq_num(void);
 

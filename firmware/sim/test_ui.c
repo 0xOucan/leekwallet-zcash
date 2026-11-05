@@ -40,6 +40,7 @@ bool fake_protocol_rx_enabled(void);
 #include "sdcard.h"
 #include "text-entry.h"
 #include "splash.h"
+#include "hints.h"
 #include "version.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -683,6 +684,32 @@ static void test_boot_splash_input(void)
     }
 }
 
+/* docs/AUDIT-SD-WRITES.md N1: a vault the firmware cannot read is shown as
+ * that, not as a PIN prompt (which would spend attempts on a PIN nobody can
+ * check) and not as setup (which would write a new vault over the seeds). */
+static void test_unreadable_vault_stops_at_a_fault_screen(void)
+{
+    printf("== an unreadable vault: a fault screen, no PIN prompt, no setup\n");
+    boot_device();
+    fake_wallet_unreadable();
+    run_ms(50);
+    press(BUTTON_ACCEPT);   /* dismiss the splash */
+    CHECK_SCREEN(ui_get_screen() == SCREEN_STORAGE_FAULT, "not the fault screen: %d", ui_get_screen());
+    CHECK_SCREEN(fake_oled_contains("Storage unreadable") && fake_oled_contains("Nothing was erased"),
+                 "the fault is not said");
+    uint8_t attempts = pin_get_remaining_attempts();
+    const button_id_t keys[] = { BUTTON_UP, BUTTON_DOWN, BUTTON_CANCEL, BUTTON_ACCEPT };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        press(keys[i]);
+        CHECK(ui_get_screen() == SCREEN_STORAGE_FAULT, "%s left the fault screen",
+              button_get_action_name(keys[i]));
+    }
+    /* Any other way to the PIN prompt ends up here too. */
+    go(SCREEN_PIN_UNLOCK);
+    CHECK(ui_get_screen() == SCREEN_STORAGE_FAULT, "the PIN prompt opened on an unreadable vault");
+    CHECK(pin_get_remaining_attempts() == attempts, "an attempt was spent");
+}
+
 static void test_boot_splash_blanks(void)
 {
     printf("== the splash goes black after 10 minutes untouched, and wakes on input\n");
@@ -1039,6 +1066,126 @@ static void test_address_check(void)
     CHECK(ui_get_screen() != SCREEN_ADDRESS_CHECK, "an expired question stayed up");
 }
 
+/* zGetAccount: "share view key?", one page, the press shares and X refuses.
+ * Every line whole on a 21-column row: the fake clips as the panel does. */
+static void test_share_view_key(void)
+{
+    printf("== zGetAccount: the board asks before it shares a viewing key\n");
+    boot_unlocked_with_seed();
+
+    ui_request_share_view_key(0, ZS_NET_TEST, "123456", false);
+    CHECK(ui_user_is_answering(), "a pending question did not hold off a new pairing");
+    go(SCREEN_SHARE_VIEW_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(0, "Share view key?") &&
+                 fake_oled_contains("The app will see your") &&
+                 fake_oled_contains("balance and history.") &&
+                 fake_oled_contains("acct 0  TEST") &&
+                 fake_oled_contains("USB, code 123 456") &&
+                 fake_oled_row_contains(7, HINT_NO_YES),
+                 "the question does not say what it shares, or to whom");
+    CHECK(ui_user_is_answering(), "the question on screen did not hold off a new pairing");
+    /* The knob has nothing to page, and turning it must not answer. */
+    press(BUTTON_DOWN);
+    press(BUTTON_UP);
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "turning the knob answered");
+    CHECK(ui_get_screen() == SCREEN_SHARE_VIEW_KEY, "turning the knob left the question");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_sign_outcome() == SIGN_APPROVED, "OK did not share");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "did not go home after the answer");
+    ui_sign_clear();
+
+    ui_request_share_view_key(7, ZS_NET_MAIN, "654321", true);
+    go(SCREEN_SHARE_VIEW_KEY);
+    CHECK_SCREEN(fake_oled_contains("acct 7  MAIN") && fake_oled_contains("BLE, code 654 321"),
+                 "the second request shows the first one's account or host");
+    press(BUTTON_CANCEL);
+    CHECK(ui_sign_outcome() == SIGN_REJECTED, "X did not refuse");
+    ui_sign_clear();
+
+    /* No pairing code to show: the link alone. */
+    ui_request_share_view_key(0, ZS_NET_TEST, NULL, false);
+    go(SCREEN_SHARE_VIEW_KEY);
+    CHECK_SCREEN(fake_oled_contains("USB device"), "no code, and no name for the host");
+
+    /* The host gave up: the question comes off the screen. */
+    ui_sign_expire();
+    ui__service_sign_expiry_for_test();
+    CHECK(ui_get_screen() != SCREEN_SHARE_VIEW_KEY, "an expired question stayed up");
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "an expired question answered");
+}
+
+/* zGetStorageKey: "unlock app data?", the app identifier in full however
+ * long, the press releases and X refuses. Every row whole on 21 columns. */
+static void test_storage_key_question(void)
+{
+    printf("== zGetStorageKey: the board names the app in full before it unlocks it\n");
+    boot_unlocked_with_seed();
+
+    ui_request_storage_key("xyz.leekwallet.zcash", 0, ZS_NET_TEST, "123456", false);
+    CHECK(ui_user_is_answering(), "a pending question did not hold off a new pairing");
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(0, "Unlock app data?") &&
+                 fake_oled_row_contains(1, "xyz.leekwallet.zcash") &&
+                 fake_oled_contains("Lets this app open") &&
+                 fake_oled_contains("its saved wallet data") &&
+                 fake_oled_row_contains(5, "acct 0  TEST") &&
+                 fake_oled_row_contains(6, "USB, code 123 456") &&
+                 fake_oled_row_contains(7, HINT_NO_YES),
+                 "the question does not name the app, the account or the host");
+    CHECK(ui_user_is_answering(), "the question on screen did not hold off a new pairing");
+    press(BUTTON_DOWN);
+    press(BUTTON_UP);
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "turning the knob answered");
+    CHECK(ui_get_screen() == SCREEN_STORAGE_KEY, "turning the knob left the question");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_sign_outcome() == SIGN_APPROVED, "OK did not release");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "did not go home after the answer");
+    ui_sign_clear();
+
+    /* Two rows, broken after a dot. */
+    ui_request_storage_key("com.example.wallet.desktop-edition", 2, ZS_NET_MAIN, "654321", true);
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(1, "com.example.wallet.") &&
+                 fake_oled_row_contains(2, "desktop-edition") &&
+                 fake_oled_contains("Lets this app open") &&
+                 fake_oled_contains("acct 2  MAIN") && fake_oled_contains("BLE, code 654 321"),
+                 "a two-row name is not broken after its dot");
+    press(BUTTON_CANCEL);
+    CHECK(ui_sign_outcome() == SIGN_REJECTED, "X did not refuse");
+    ui_sign_clear();
+
+    /* 64 bytes with dots too far apart for four rows: every 21 characters,
+     * and nothing cut. */
+    static const char *longest =
+        "abcdefghijklmnopqrstuvwxy.abcdefghijklmnopqrstuvwxy.abcdefghijkl";
+    ui_request_storage_key(longest, 0, ZS_NET_TEST, "123456", false);
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(1, "abcdefghijklmnopqrstu") &&
+                 fake_oled_row_contains(2, "vwxy.abcdefghijklmnop") &&
+                 fake_oled_row_contains(3, "qrstuvwxy.abcdefghijk") &&
+                 fake_oled_row_contains(4, "l") &&
+                 fake_oled_row_contains(5, "acct 0  TEST"),
+                 "a 64-byte name was cut or overlaps the account");
+    press(BUTTON_CANCEL);
+    ui_sign_clear();
+
+    /* Five dotted labels: broken after dots they would take five rows. */
+    static const char *dotted = "abcdefghijk.abcdefghijk.abcdefghijk.abcdefghijk.abcdefghijk";
+    ui_request_storage_key(dotted, 0, ZS_NET_TEST, NULL, false);
+    go(SCREEN_STORAGE_KEY);
+    CHECK_SCREEN(fake_oled_row_contains(1, "abcdefghijk.abcdefghi") &&
+                 fake_oled_row_contains(2, "jk.abcdefghijk.abcdef") &&
+                 fake_oled_row_contains(3, "ghijk.abcdefghijk") &&
+                 !fake_oled_contains("Lets this app open") && fake_oled_contains("USB device"),
+                 "five labels were not shown whole");
+
+    /* The host gave up: the question comes off the screen. */
+    ui_sign_expire();
+    ui__service_sign_expiry_for_test();
+    CHECK(ui_get_screen() != SCREEN_STORAGE_KEY, "an expired question stayed up");
+    CHECK(ui_sign_outcome() == SIGN_PENDING, "an expired question answered");
+}
+
 /* A companion asked for the other network and was refused (protocol.c): the
  * board says so over whatever is on screen, for a few seconds or until a
  * press, and that press does nothing else. */
@@ -1051,6 +1198,16 @@ static void test_wrong_network_notice(void)
     press(BUTTON_ACCEPT);
     CHECK(ui_zcash_network() == 1, "not set to testnet");
     go(SCREEN_MAIN_MENU);
+
+    /* An old app: told so, over the screen, and the press does nothing more. */
+    ui_notify_app_outdated();
+    ui__service_wrong_network_for_test();
+    idle_pump();
+    CHECK_SCREEN(fake_oled_contains("Update your app") && !fake_oled_contains("Wrong network"),
+                 "the old-app notice was not shown");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "the press reached the screen under the notice");
+    CHECK_SCREEN(!fake_oled_contains("Update your app"), "the old-app notice stayed");
 
     ui_notify_wrong_network(0);   /* a mainnet app, from the protocol task */
     ui__service_wrong_network_for_test();
@@ -2687,12 +2844,60 @@ static void test_show_seed_relocks_the_vault_too(void)
 
     settings_goto("Show Seed");
     press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SHOW_SEED_CONFIRM, "Show Seed did not say it locks first");
+    CHECK(pin_is_unlocked(), "the confirmation screen had already locked");
+    press(BUTTON_ACCEPT);
 
     check_fully_locked("show seed");
 
     /* And the request itself survives, or the item would do nothing. */
     CHECK(pin_verify("1234"), "could not re-enter the PIN");
     press(BUTTON_ACCEPT);
+}
+
+/* A friend opened Show Seed on an unlocked board and was stuck: the PIN
+ * screen had no way back. BACK on the confirmation keeps the session; X on an
+ * empty PIN screen goes to the splash, still locked, and forgets the request. */
+static void test_show_seed_has_a_way_back(void)
+{
+    printf("== Show Seed: BACK before the lock, X on an empty PIN screen after it\n");
+    unlocked_in_a_passphrase_wallet();
+
+    settings_goto("Show Seed");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SHOW_SEED_CONFIRM, "no confirmation before the lock");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_SETTINGS, "BACK did not return to Settings");
+    CHECK(pin_is_unlocked(), "BACK locked the device");
+
+    settings_goto("Show Seed");
+    press(BUTTON_ACCEPT);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "OK did not ask for the PIN");
+    CHECK(!pin_is_unlocked(), "OK did not lock");
+    int tries = pin_get_remaining_attempts();
+
+    /* With a digit typed, X still deletes it. */
+    press(BUTTON_ACCEPT);
+    CHECK(ui__pin_cursor_for_test() == 1, "no digit was typed");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "X with a digit left the screen");
+    CHECK(ui__pin_cursor_for_test() == 0, "X did not delete the digit");
+
+    /* With none, it leaves. */
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_BOOT, "X on an empty PIN screen did not leave");
+    CHECK(!pin_is_unlocked(), "leaving unlocked the device");
+    CHECK(pin_get_remaining_attempts() == tries, "leaving cost a try");
+
+    /* The request is gone: the next unlock lands on the menu, not the words. */
+    run_ms(500);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_PIN_UNLOCK, "the splash did not return to the PIN screen");
+    CHECK(type_pin("1234"), "could not type the PIN");
+    CHECK(pin_is_unlocked(), "the PIN did not unlock");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU,
+          "a dropped Show Seed still went to screen %d, not the menu", ui_get_screen());
 }
 
 
@@ -3128,6 +3333,8 @@ int main(void)
     test_receive_shows_the_whole_address();
     test_sd_card_save_and_load();
     test_address_check();
+    test_share_view_key();
+    test_storage_key_question();
     test_wrong_network_notice();
     test_sd_card_signing();
     test_qr_airgap_signing();
@@ -3140,6 +3347,7 @@ int main(void)
     test_harness_sees_the_screen();
     test_boot_splash_loops();
     test_boot_splash_input();
+    test_unreadable_vault_stops_at_a_fault_screen();
     test_boot_splash_blanks();
     test_pin_unlock_idles_to_splash();
 
@@ -3198,6 +3406,7 @@ int main(void)
     test_the_host_lock_actually_locks();
     test_the_autolock_timeout_locks();
     test_show_seed_relocks_the_vault_too();
+    test_show_seed_has_a_way_back();
 
     test_temp_seed_warns_before_it_is_used();
     test_temp_seed_is_visible_on_screen();

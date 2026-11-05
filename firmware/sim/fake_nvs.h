@@ -49,6 +49,17 @@ int fake_nvs_write_count(void);
  */
 void fake_nvs_reboot(void);
 
+/**
+ * Make nvs_flash_init() answer `err` (and nvs_open() fail) until the next
+ * reset, as a partition that will not mount does. The data stays: whether
+ * anything erases it is what the caller is asking.
+ */
+#include "esp_stubs.h"
+void fake_nvs_fail_init(esp_err_t err);
+
+/** How many times nvs_flash_erase() has erased the simulated flash. */
+int fake_nvs_erase_count(void);
+
 /** Test helper: does a key exist in the given namespace? */
 bool fake_nvs_has(const char *ns, const char *key);
 

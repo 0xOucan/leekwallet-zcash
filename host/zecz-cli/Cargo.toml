@@ -13,6 +13,7 @@ path = "src/main.rs"
 # parses arguments and prints.
 [dependencies]
 zecz-core = { path = "../zecz-core" }
+leek-zcash = { path = "../leek-zcash" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"

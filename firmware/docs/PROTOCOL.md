@@ -301,10 +301,12 @@ against it.
 | `selectWallet` | unlocked | — | implemented |
 | `setPassphrase` | unlocked | **yes — fingerprint confirm (§5)** | implemented |
 | `clearPassphrase` | unlocked | — | **not implemented** — `setPassphrase` with an empty string is refused, and locking is the way back to the base wallet |
-| `getFingerprint` | keys | — | **not implemented** — the fingerprint is shown on the device's own screen |
+| `getFingerprint` | keys | — | **not implemented** — a BIP32 master fingerprint; `zGetSeedFingerprint` gives the ZIP 32 seed fingerprint |
 | `getAddress`, `signMessage`, `signTypedData`, `signTransaction` | — | — | **removed** in the Zcash fork (roadmap 1.1): an unknown method |
-| `zGetAccount` | keys | — (viewing key, not spend authority) | implemented |
+| `zGetAccount` | keys | **yes — "Share view key?", once per session per account, network and seed** | implemented |
+| `zGetSeedFingerprint` | keys | — (the seed's ZIP 32 fingerprint only; no key) | implemented |
 | `zGetFeatures` | always | — (describes the firmware, not the wallet) | implemented |
+| `zGetStorageKey` | keys | **yes — "Unlock app data?", every time, with the app identifier in full** | implemented |
 | `zSetAccountMeta` | keys | — (birthday and label; not secret, not needed to sign) | implemented |
 | `zShowAddress` | keys | **yes — the user compares the address and answers on the device** | implemented |
 | `zSignBegin` / `zSignChunk` / `zSignFinish` | keys | **yes — every review page, ACCEPT on the last** | implemented |
@@ -352,8 +354,8 @@ and `zGetFeatures` the signer (below); neither says anything about the wallet.
 
 The board answers for one Zcash network: the one its owner chose under
 Settings → Network on the board (persisted; Mainnet out of the box). Every
-request that names a `network` (`zGetAccount`, `zShowAddress`,
-`zSetAccountMeta`, `zSignBegin`) is refused when it names the other one,
+request that names a `network` (`zGetAccount`, `zGetSeedFingerprint`,
+`zShowAddress`, `zSetAccountMeta`, `zSignBegin`) is refused when it names the other one,
 before anything is derived, with error `0x0528` and a message naming both:
 
 ```
@@ -381,6 +383,74 @@ zSetAccountMeta { account?: uint, network?: "main"|"test", birthday?: uint, labe
              -> { stored: 0|1 }
 ```
 
+**The viewing key takes a press.** A UFVK is not spend authority, but it
+reads every note the account received and every one it spent: the whole
+balance and history, for good. So, like Keystone and Ledger, the board asks
+before it answers `zGetAccount`. After the session, unlock and network checks
+and the derivation, it shows:
+
+```
+    Share view key?          (title)
+The app will see your        (warning)
+balance and history.         (warning)
+
+     acct 0  MAIN
+  USB, code 123 456          (the link, and this session's pairing code)
+X:NO          OK:YES
+```
+
+The pairing code is the six digits the user compared when this session was
+paired (§3), grouped as the Connect? screen grouped them: the one name for a
+host the user has ever seen, so a second app paired since shows other digits.
+With no code to show the line reads "USB device" or "BLE device". OK shares;
+Cancel answers `0x0200`; no answer within the board's 120 s window answers
+`0x0201` and takes the question off the screen, as for a signature. A
+companion should wait at least as long as the derivation plus that window
+(the host libraries wait 210 s) and tell the user to confirm on the board;
+the board does not say whether it is asking.
+
+A yes holds for the rest of that session, for that account, that network and
+that seed (the same index under another passphrase is another wallet and is
+asked about again). Any end of the session — a disconnect, a new handshake, a
+transport switch, a frame that failed to authenticate, a lock — forgets it;
+so does a reboot. Nothing about it is written to flash, and the board
+remembers no host across sessions (see "Open questions"): a companion that
+only needs to know which seed it is talking to asks `zGetSeedFingerprint`
+(below), which takes no press. A board with no seed refuses
+with `0x0300` before it asks. While the question is up, a new `hello` is
+refused as for any other question (§3, "A handshake does not interrupt a
+question the device is asking").
+
+### Which seed is on the board
+
+```
+zGetSeedFingerprint { network?: "main"|"test" }
+                 -> { seedFingerprint: h'32' }
+```
+
+The ZIP 32 seed fingerprint of the open seed (passphrase applied), the same
+32 bytes `zGetAccount` returns, and nothing else. It is how a companion
+recognises the board it is connected to, or notices that the board opened
+another seed or a passphrase wallet, without asking for the viewing key: no
+question on the board, so a connect does not raise "Share view key?" every
+time. Ask `zGetAccount` when the UFVK is actually needed (the first import).
+
+Same tier as `zGetAccount`: a paired, encrypted session and an unlocked
+board, and it waits for the vault as the other `z*` calls do (`0x0300` with
+no seed). `network` is optional and does not change the answer — the
+fingerprint is the seed's, not an account's — but when given it is checked
+like any other (`0x0528` on the other network), so a companion can learn both
+facts in one call.
+
+**The fingerprint is a stable identifier of the seed, and every paired host
+can read it.** It does not change across accounts, networks, sessions,
+companions or reboots; any host the user pairs with sees the same 32 bytes
+for the same seed, and two hosts can tell they saw the same wallet. It reveals
+no key and no address, and the board shows its first four bytes on its own
+screen ("ZFP 1A2B3C4D"), so it is not a secret — but it is a correlator.
+Firmware without the method answers `0x0001` ("unknown or not yet
+implemented"); a companion falls back to `zGetAccount` there.
+
 `birthday` is present in `zGetAccount` only when the device has one for that
 account and network of the open seed (records are per network: the same
 account is born at a far lower height on mainnet; `network` defaults to
@@ -405,7 +475,8 @@ shows that such a seed was used.
 zGetFeatures  {}
            -> { backend: "both"|"rust"|"c", branchIds: [uint], txVersions: [6],
                 spendPools: ["orchard", "ironwood", "transparent"], maxPczt: uint, maxChunk: uint,
-                storage: ["vault","stateless","sd"?], showAddress: 1 }
+                storage: ["vault","stateless","sd"?], showAddress: 1, storageKey: 65535,
+                fwCompat: 2 }
 zShowAddress  { account?: uint, network: "main"|"test" }
            -> { ua, tAddress }
 ```
@@ -415,12 +486,78 @@ before pairing: it describes the firmware and says nothing about the wallet.
 `branchIds` is the list both signer backends accept. `test_zcash_sign` checks
 it against what they actually accept.
 
+`fwCompat` is the firmware's compatibility level. Firmware from before it
+reports none, which counts as 1; a host below its own minimum suggests updating
+the board and carries on. The other way, `zGetSeedFingerprint`, `zGetAccount` and
+`zSignBegin` take an optional `hostCompat: uint`. Absent or below 2, the board
+shows "Update your app" for a few seconds, once a session, and answers as usual.
+Neither is a security boundary: both sides can lie, and nothing depends on them.
+
+`storageKey` is present when the firmware answers `zGetStorageKey`; its value
+is the ZIP number the board derives App Storage Keys under (the draft's
+placeholder 65535 until one is assigned). Every key changes with it, so an app
+that stored data under one number must not expect another to open it.
+
 `zShowAddress` has the device derive the account's address itself and page
 the whole unified address on its screen. The user answers on the last page
 whether it matches what the app shows. The address comes back only after a
 yes. A no is `0x0200` (rejected) and no answer is `0x0201` (timeout).
 `zecz device-show-address` runs the check and also compares the address the
 device confirmed with the one its own copy of the UFVK gives.
+
+### App Storage Keys
+
+```
+zGetStorageKey { appId: text, account?: uint, network: "main"|"test" }
+            -> { appId, account, network, storageKey: h'32' }
+```
+
+The key an app encrypts its stored wallet data under (its database, its
+copy of the UFVK), one per app identifier, network and account:
+docs/zcash/zip-draft-app-storage-keys.md. The board derives it from the seed
+(passphrase applied) with ZIP 32 Registered key derivation, context
+`"AppStorageKeys"`, path `m_storage / 65535' / coin_type' / account' / (0',
+[len] || appId)`, and releases the first 32 bytes of the leaf's cryptovalue.
+An app that keeps only ciphertext asks for it each time it opens, so a host
+that is stolen, or a backup of it, reads nothing without the board and a
+press on it. It protects nothing from the app itself, or from malware on the
+host while the app is open.
+
+`appId` is lower-case ASCII reverse-DNS: dot-separated labels, at least two,
+each starting with `a-z` or `0-9` and going on with those, `-` and `_`; 3 to
+64 bytes in all. Anything else (upper case, a space, a non-ASCII byte, an
+empty label, a NUL) is refused with `0x0001` as it is, never corrected, and
+nothing is shown. `account` defaults to 0 and must be below 2^31; `network` is
+required and must be the board's (`0x0528` otherwise). Session and unlock
+first, as for `zGetAccount`; a board with no seed refuses with `0x0300` before
+it asks. Nothing is derived before the answer. Then:
+
+```
+   Unlock app data?          (title)
+ xyz.leekwallet.zcash        (appId, whole: up to four rows)
+Lets this app open           (warning, when appId takes one or two rows)
+its saved wallet data        (warning)
+     acct 0  MAIN
+  USB, code 123 456          (the link, and this session's pairing code)
+X:NO          OK:YES
+```
+
+`appId` is shown in full, never cut: up to four 21-column rows, broken
+after a dot in the second half of a row when that fits, and every 21
+characters otherwise, with no character added at a break. OK releases;
+Cancel answers `0x0200`; no answer within 120 s answers `0x0201` and takes the
+question off the screen.
+
+**Asked every time.** Unlike the view key, a yes is not remembered, not even
+for the rest of the session: an app asks once per opening, and the draft
+requires an approval per release. If the session ends while the question is
+up the answer is `0x0400` and nothing is derived. The reply is sealed by the
+handler itself rather than by the common reply path, so a key that cannot go
+out encrypted does not go out at all.
+
+The board cannot tell which app is asking: any software on the host can claim
+any `appId`. The user's press is the protection, so an app asks only right
+after the user opened it, and the user approves only then.
 
 ### Zcash signing (PCZT)
 
@@ -460,9 +597,12 @@ input's ZIP 244 digest, which the host recomputes when it applies it.
 A refusal is error `0x05xx`, where the low byte is the reason: `-ZS_E_*`
 from the signers (`zsign_types.h`: 0x0A parse, 0x0B branch, 0x0C foreign
 spend, 0x0D output commitment, 0x0E user address, 0x0F value balance,
-0x10 unsupported bundle, 0x11 network, ...) or `-ZSIGN_E_*` from the
-intake (`zcash-sign.h`: 0x1E out of order, 0x1F size, 0x20 offset, 0x21
-hash, 0x22 incomplete, 0x23 backends disagree, ...). 0x11 is a PCZT for
+0x10 unsupported bundle, 0x11 network, ..., 0x18 two actions with one rk,
+0x19 built by an app without NU7: branch NU6.3 with expiry at or above the
+network's NU7 height + 40, and the board also says "Update your app")
+or `-ZSIGN_E_*` from the intake (`zcash-sign.h`: 0x1E out of order, 0x1F
+size, 0x20 offset, 0x21 hash, 0x22 incomplete, 0x23 backends disagree,
+...). 0x11 is a PCZT for
 another network than the request names; 0x28 (`ZSIGN_E_BOARD_NETWORK`) is a
 request for another network than the board's setting, and is not only
 zSign's (above, "The board's network").
@@ -604,6 +744,17 @@ A plaintext frame still proves nothing about who sent it, so every permission
 tier above `getStatus` refuses it with `0x0400` regardless of whether a session
 exists.
 
+**An encrypted request is answered under the session it came in on, or
+refused.** A request can outlive its session — a signature, a viewing key or
+an address check waits up to 120 s on the user, and meanwhile the cable can be
+pulled, the board locked or another host paired. Whatever the method, and for
+an error as for a result, if the session the request arrived on is gone (or
+replaced by a newer one) when the answer is ready, the reply is a plaintext
+`0x0400` "the session ended before the answer" with nothing else in it: never
+the answer in plaintext, and never the answer sealed under the newer session's
+keys. The check sits where every reply leaves `src/protocol.c`, not in each
+handler.
+
 ### Every complete request is answered
 
 No transport may reply to a complete, well-formed frame with silence. A host
@@ -721,5 +872,9 @@ and it is one an added field would quietly break.
 
 - **Does the passkey confirm survive BLE re-pairing**, or is it re-run per connection? Per
   connection is safer and costs the user one screen glance.
-- `zGetAccount` hands the viewing key to any paired host without a press on the board. It is
-  not spend authority, but it is the whole history; whether to ask once per session is open.
+- ~~**Remembered hosts.**~~ Decided 2026-11-03: the board remembers no host. Every
+  connection is paired from scratch and the six-digit code is compared every time; nothing a
+  host was granted (a shared viewing key, say) outlives its session. A remembered permission
+  is one a malicious host, or a Bluetooth attacker posing as a known one, would inherit.
+  Remembering the viewing key is the host's business (`host/leek-zcash/README.md`); the
+  reasoning is in `DESIGN-REMEMBERED-HOSTS.md`.

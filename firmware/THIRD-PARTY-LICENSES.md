@@ -125,18 +125,34 @@ that works.
 
 ## firefly-display
 
-`components/firefly-display/` — the ST7789 driver used by the Firefly Pixie
-build, vendored from [firefly/component-display](https://github.com/firefly/component-display).
+`src/st7789.c` and the Pixie profile in `src/oled-st7789.c` are derived from
+[firefly/component-display](https://github.com/firefly/component-display), the
+ST7789 driver the Pixie build used to vendor whole as
+`components/firefly-display/`. What carried over: the transaction pattern (D/C
+driven from the SPI pre-transfer callback, two band buffers in flight) and the
+Pixie panel's init sequence, byte for byte. The driver itself was replaced by a
+smaller one whose pins, geometry, rotation and inversion are configuration,
+because the S3 CAM colour kit is a different panel on different pins.
 
-**MIT**, Copyright (c) 2024 Richard Moore. The licence travels with the source in
-`components/firefly-display/LICENSE.md`.
+**MIT**, Copyright (c) 2024 Richard Moore:
 
-Two local changes, both in `CMakeLists.txt` and neither in the driver itself:
-the component is registered only for the ESP32-C3, since the reference board has
-no ST7789 and compiling one in would be a driver for a panel that is not there;
-and `esp_driver_spi` is added to `REQUIRES`, because ESP-IDF 5 split the SPI
-master out of the monolithic `driver` component and the upstream file still
-asks only for `driver`.
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
 
 The rest of the Firefly ecosystem is deliberately **not** vendored.
 `firefly-hollows` is an application framework that would replace this project's

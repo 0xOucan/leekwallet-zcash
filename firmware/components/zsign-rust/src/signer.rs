@@ -50,11 +50,30 @@ pub const ZS_E_DUMMY_KEY: i32 = -20;
 pub const ZS_E_NOT_CHECKED: i32 = -21;
 pub const ZS_E_SIGN: i32 = -22;
 pub const ZS_E_INTERNAL: i32 = -23;
+pub const ZS_E_DUPLICATE_RK: i32 = -24;
+pub const ZS_E_APP_OUTDATED: i32 = -25;
 
 /// NU6.3 (Ironwood) and NU7. Anything else is refused: an older branch id
 /// would produce a signature for a transaction the network rejects, or one
 /// meant for a chain this firmware does not know.
 const ALLOWED_BRANCHES: [u32; 2] = [0x37a5_165b, 0x7719_0ad9];
+
+/// NU6.3's branch id, and the first NU7 block on each network.
+const BRANCH_NU6_3: u32 = 0x37a5_165b;
+const NU7_HEIGHT_MAIN: u32 = 3_543_405;
+const NU7_HEIGHT_TEST: u32 = 4_465_026;
+/// The expiry delta of an app without NU7's mainnet height.
+const OLD_APP_EXPIRY_DELTA: u32 = 40;
+
+/// A NU6.3 transaction an app built for a target height at or past NU7: that
+/// app adds 40 to its target height, so its expiry is at least activation + 40.
+/// The last block that can still mine NU6.3 gives activation + 39, which passes.
+/// The board has no clock; this is how it notices such an app. Guidance, not a
+/// security boundary: a host can set any expiry. Same rule in zsign-c.
+fn built_by_old_app(branch: u32, expiry: u32, net: NetworkType) -> bool {
+    let nu7 = if matches!(net, NetworkType::Main) { NU7_HEIGHT_MAIN } else { NU7_HEIGHT_TEST };
+    branch == BRANCH_NU6_3 && expiry >= nu7 + OLD_APP_EXPIRY_DELTA
+}
 
 /// The only transaction format the device signs (ZIP 229). librustzcash
 /// still extracts a v5 transaction for an Orchard-only bundle under these
@@ -277,6 +296,21 @@ fn check_bundle(
     Ok(())
 }
 
+/// No two actions, Orchard and Ironwood together, may share an rk. Each spend
+/// draws its own alpha, so an honest builder never repeats one; a repeat would
+/// let a signature made for one action stand for the other. Keystone refuses
+/// it across both pools too, though their sighashes differ.
+fn distinct_rks(pczt: &Pczt) -> bool {
+    let rks: Vec<&[u8; 32]> = pczt
+        .orchard()
+        .actions()
+        .iter()
+        .chain(pczt.ironwood().actions().iter())
+        .map(|a| a.spend().rk())
+        .collect();
+    rks.iter().enumerate().all(|(i, a)| rks[i + 1..].iter().all(|b| a != b))
+}
+
 fn t_address(script: &[u8], net: NetworkType) -> Option<String> {
     use zcash_address::{ToAddress, ZcashAddress};
     match script {
@@ -413,12 +447,18 @@ fn check(ctx: &ZsCtx, seed: &[u8; 64], account: u32, net: NetworkType, out: &mut
     if *g.coin_type() != coin_type(net) {
         return Err(ZS_E_NETWORK);
     }
+    if built_by_old_app(branch, *g.expiry_height(), net) {
+        return Err(ZS_E_APP_OUTDATED);
+    }
     let sk = orchard_sk(seed, net, account).ok_or(ZS_E_INTERNAL)?;
     let fvk = FullViewingKey::from(&sk);
 
     // Not supported on the device: refuse rather than sign blind.
     if !pczt.sapling().spends().is_empty() || !pczt.sapling().outputs().is_empty() {
         return Err(ZS_E_UNSUPPORTED_BUNDLE);
+    }
+    if !distinct_rks(pczt) {
+        return Err(ZS_E_DUPLICATE_RK);
     }
 
     let mut acc = Acc {

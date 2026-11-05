@@ -155,6 +155,11 @@ static SignOutcome outcome = SIGN_PENDING;
 uint32_t ui_hd_account(void) { return 0; }
 uint8_t ui_zcash_network(void) { return (uint8_t)board_network; }
 
+void ui_notify_app_outdated(void)
+{
+    printf("\n[device] Update your app\n");
+}
+
 void ui_notify_wrong_network(uint8_t asked)
 {
     printf("\n[device] Wrong network: the app asked for %s; this device is set to %s.\n",
@@ -200,6 +205,28 @@ void ui_request_show_address(const char *ua, const char *t_address, uint32_t acc
 {
     printf("\n[device] Address check, account %u, %s:\n  %s\n  (t-address %s)\n",
            (unsigned)account, network == ZS_NET_MAIN ? "mainnet" : "testnet", ua, t_address);
+    question_pending = true;
+    outcome = SIGN_PENDING;
+}
+
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble)
+{
+    printf("\n[device] Share view key? The app will see your balance and history.\n"
+           "  account %u, %s; %s, pairing code %s\n",
+           (unsigned)account, network == ZS_NET_MAIN ? "mainnet" : "testnet",
+           over_ble ? "BLE" : "USB", pairing_code && *pairing_code ? pairing_code : "none");
+    question_pending = true;
+    outcome = SIGN_PENDING;
+}
+
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble)
+{
+    printf("\n[device] Unlock app data? Lets this app open its saved wallet data.\n"
+           "  %s\n  account %u, %s; %s, pairing code %s\n", app_id,
+           (unsigned)account, network == ZS_NET_MAIN ? "mainnet" : "testnet",
+           over_ble ? "BLE" : "USB", pairing_code && *pairing_code ? pairing_code : "none");
     question_pending = true;
     outcome = SIGN_PENDING;
 }

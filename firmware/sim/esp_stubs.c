@@ -31,6 +31,8 @@ static int    write_count = 0;
 static int    crash_at    = 0;      /* 0 = never */
 static bool   crashed     = false;
 static int    first_read_after = -1;  /* write_count at the first read */
+static esp_err_t init_result = ESP_OK; /* what nvs_flash_init() answers */
+static int    erase_count = 0;         /* nvs_flash_erase() calls that erased */
 
 /* Open handles. The handle value is an index+1 into this table. */
 #define MAX_HANDLES 8
@@ -48,7 +50,11 @@ void fake_nvs_reset(void)
     crash_at    = 0;
     crashed     = false;
     first_read_after = -1;
+    init_result = ESP_OK;
 }
+
+void fake_nvs_fail_init(esp_err_t err) { init_result = err; }
+int  fake_nvs_erase_count(void)       { return erase_count; }
 
 void fake_nvs_crash_after(int n)
 {
@@ -190,7 +196,7 @@ static esp_err_t load(nvs_handle_t handle, const char *key,
 
 /* ------------------------------------------------------------- public API */
 
-esp_err_t nvs_flash_init(void)  { return ESP_OK; }
+esp_err_t nvs_flash_init(void)  { return init_result; }
 esp_err_t nvs_flash_erase(void)
 {
     /* Obeys the simulated failure like every other NVS call. A stub that
@@ -201,11 +207,16 @@ esp_err_t nvs_flash_erase(void)
         return ESP_FAIL;
     }
     fake_nvs_reset();
+    erase_count++;
     return ESP_OK;
 }
 
 esp_err_t nvs_open(const char *ns, nvs_open_mode_t mode, nvs_handle_t *out)
 {
+    /* A partition that did not mount has no namespaces to open. */
+    if (init_result != ESP_OK) {
+        return ESP_ERR_NVS_NOT_INITIALIZED;
+    }
     for (int i = 0; i < MAX_HANDLES; i++) {
         if (!handles[i].used) {
             handles[i].used     = true;

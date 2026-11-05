@@ -36,11 +36,22 @@ export type ZCall = (
  * client's rule: a transport that gives up first leaves the counters apart).
  * Deriving an Orchard account takes seconds at 160 MHz; anything the user
  * answers on the board gets as long as a person reading review pages.
+ * zGetAccount does both: it derives, then asks "Share view key?" and waits
+ * up to 120 s for the press.
  */
-export const Z_TIMEOUT = { short: 10_000, derive: 90_000, user: 150_000 } as const;
+export const Z_TIMEOUT = { short: 10_000, derive: 90_000, user: 150_000, shareKey: 210_000 } as const;
+
+/**
+ * What to tell the user around a zGetAccount. The board shares the viewing
+ * key only after OK on it, once per session; it does not say whether it is
+ * asking, so the hint is "if".
+ */
+export const Z_SHARE_KEY_HINT = "If the board asks “Share view key?”, press OK on it.";
 
 /** Error codes of the Zcash calls (PROTOCOL.md §6). */
 export const ZErr = {
+  /** Malformed, or a method this firmware does not know. */
+  UnknownMethod: 0x0001,
   UserRejected: 0x0200,
   UserTimeout: 0x0201,
   /** 0x05xx: the board will not sign; the low byte is the reason. */
@@ -49,7 +60,28 @@ export const ZErr = {
   ForeignAddress: 0x050e,
   /** ZS_E_UNSUPPORTED on zShowAddress: a receiver the board cannot check. */
   UncheckableAddress: 0x0510,
+  /** ZS_E_APP_OUTDATED: NU6.3, with an expiry only an app without NU7 builds. */
+  AppOutdated: 0x0519,
 } as const;
+
+/**
+ * What this host tells the board it is (hostCompat, with zGetSeedFingerprint,
+ * zGetAccount and zSignBegin). A board that expects more says "Update your app"
+ * and carries on; firmware before it ignores the field. Same value as
+ * HOST_COMPAT in host/leek-device.
+ */
+export const HOST_COMPAT = 2;
+
+/** Same value as MIN_FIRMWARE_COMPAT in host/leek-zcash. */
+export const MIN_FIRMWARE_COMPAT = 2;
+
+/** Same text as BOARD_UPDATE_TEXT in host/leek-zcash. */
+export const BOARD_UPDATE_TEXT =
+  "Update your board: its firmware is older than this app expects. It can still sign; the update has the NU7 checks.";
+
+/** Same text as LeekError::AppOutdated in host/leek-zcash. */
+export const APP_UPDATE_TEXT =
+  "Update your app: it built this transaction for network rules that have ended. Nothing was signed.";
 
 /** Pools of a signature (`ZS_POOL_*`). */
 export const ZPool = { Transparent: 0, Orchard: 1, Ironwood: 2 } as const;
@@ -72,6 +104,13 @@ export interface ZFeatures {
   maxPczt: number;
   maxChunk: number;
   showAddress: boolean;
+  /** The firmware's fwCompat; null when it reports none (older firmware). */
+  fwCompat: number | null;
+}
+
+/** True when the board should be updated. A suggestion: it can still sign. */
+export function firmwareOutdated(f: ZFeatures): boolean {
+  return (f.fwCompat ?? 1) < MIN_FIRMWARE_COMPAT;
 }
 
 export interface ZSigEntry {
@@ -147,12 +186,35 @@ export async function zGetFeatures(call: ZCall): Promise<ZFeatures> {
     maxPczt: uintField(f, "maxPczt"),
     maxChunk: uintField(f, "maxChunk"),
     showAddress: f["showAddress"] === 1,
+    fwCompat: typeof f["fwCompat"] === "number" ? f["fwCompat"] : null,
   };
+}
+
+/**
+ * The ZIP 32 seed fingerprint (hex) of the seed open on the board, with no
+ * question on the board: how to recognise the board, and which seed or
+ * passphrase wallet it has open, on every connect. The same 32 bytes as
+ * zGetAccount's `seedFingerprint`; ask zGetAccount only when the viewing
+ * key is needed (the first import).
+ *
+ * A stable identifier of the seed that every paired host can read. With
+ * `network` the board also checks its setting (0x0528); the answer does not
+ * depend on it. Firmware without the call answers 0x0001
+ * (ZErr.UnknownMethod).
+ */
+export async function zGetSeedFingerprint(call: ZCall, network?: ZNetwork): Promise<string> {
+  if (network !== undefined) checkNetwork(network);
+  const a = await call("zGetSeedFingerprint", network === undefined ? { hostCompat: HOST_COMPAT } : { network, hostCompat: HOST_COMPAT }, Z_TIMEOUT.derive);
+  return toHex(bytesField(a, "seedFingerprint", 32));
 }
 
 /**
  * UFVK, unified and transparent address, seed fingerprint and birthday of
  * one account on one network.
+ *
+ * The board answers only after the user presses OK on its "Share view
+ * key?" (once per session; show Z_SHARE_KEY_HINT): a no is 0x0200, no
+ * answer in its 120 s 0x0201.
  *
  * The reply is checked against what was asked: a board that answered for
  * the other network (or an account other than the one asked for) is a
@@ -161,7 +223,7 @@ export async function zGetFeatures(call: ZCall): Promise<ZFeatures> {
  */
 export async function zGetAccount(call: ZCall, account: number, network: ZNetwork): Promise<ZAccount> {
   checkNetwork(network);
-  const a = await call("zGetAccount", { account, network }, Z_TIMEOUT.derive);
+  const a = await call("zGetAccount", { account, network, hostCompat: HOST_COMPAT }, Z_TIMEOUT.shareKey);
   const out: ZAccount = {
     account: uintField(a, "account"),
     network: textField(a, "network") as ZNetwork,
@@ -263,7 +325,7 @@ export async function zSign(
   checkNetwork(network);
   checkPczt(pczt);
   const sha = sha256(pczt);
-  const begin = await call("zSignBegin", { len: pczt.length, sha256: sha, account, network }, Z_TIMEOUT.derive);
+  const begin = await call("zSignBegin", { len: pczt.length, sha256: sha, account, network, hostCompat: HOST_COMPAT }, Z_TIMEOUT.derive);
   const max = uintField(begin, "maxChunk");
   if (max === 0) throw new Error("the board offered a zero chunk size");
   let off = 0;
@@ -384,6 +446,7 @@ export function zsigName(pcztName: string): string {
  */
 export function zErrorText(e: unknown): string {
   if (e instanceof DeviceError) {
+    if (e.code === ZErr.AppOutdated) return APP_UPDATE_TEXT;
     if ((e.code & 0xff00) === ZErr.SignBase && !/refused to sign/.test(e.message)) {
       return `The board refused: ${e.message}`;
     }

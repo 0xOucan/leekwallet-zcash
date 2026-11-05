@@ -14,10 +14,10 @@
 
 import {
   checkPczt, encodeZsig, sha256, toHex, zErrorText, zSetBirthday, zShowAddress, zSign,
-  zsigName, MAX_BIRTHDAY, type ZAccount, type ZCall, type ZNetwork,
+  zsigName, MAX_BIRTHDAY, Z_SHARE_KEY_HINT, type ZAccount, type ZCall, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import type { Invoke } from "./tauri-transport.ts";
-import { readAccountRetrying } from "./zcash-auto.ts";
+import { readAccountRetrying, readSeedRetrying } from "./zcash-auto.ts";
 import { isWrongNetwork, wrongNetwork } from "./network-guard.ts";
 
 export interface ZcashDeps {
@@ -48,6 +48,16 @@ export function savedNetwork(): ZNetwork {
 
 export const networkLabel = (n: ZNetwork): string => (n === "main" ? "Mainnet" : "Testnet");
 
+/**
+ * Which wallet the board has open: its network, seed fingerprint and the
+ * account in use. What names the wallet on this device; a ZAccount is one.
+ */
+export interface BoardId {
+  network: ZNetwork;
+  seedFingerprint: string;
+  account: number;
+}
+
 export interface ZcashView {
   /** Forget everything read from the board (lock, disconnect, new session). */
   reset(): void;
@@ -55,17 +65,25 @@ export interface ZcashView {
   readonly account: number;
   /** Subscribe to network or account changes (the wallet follows them). */
   onChange(f: () => void): void;
-  /** The account last read from the board on the current network, if any. */
+  /**
+   * The account last read from the board on the current network, if any:
+   * only after zGetAccount, which the board answers after "Share view key?".
+   */
   readonly boardAccount: ZAccount | null;
+  /**
+   * Which wallet the board has open (zGetSeedFingerprint, no question on
+   * the board), or the account read, whichever came first.
+   */
+  readonly boardId: BoardId | null;
   /** Read the board's account (the wallet's import uses it too). */
   readAccount(): Promise<ZAccount>;
   /**
-   * The board's account changed: read, re-read under another seed (a
+   * The board's wallet changed: read, read again under another seed (a
    * passphrase), or forgotten (null) on reset, network or account change.
    * The wallet follows it, because its seed fingerprint names the wallet.
    */
-  onAccount(f: (a: ZAccount | null) => void): void;
-  /** The home screen opened on an unlocked board: read its account. */
+  onAccount(f: (a: BoardId | null) => void): void;
+  /** The home screen opened on an unlocked board: read which seed it holds. */
   opened(): void;
   busy<T>(what: string, f: () => Promise<T>): Promise<T>;
   /** A board operation is running (busy() would refuse another). */
@@ -88,11 +106,12 @@ export function initZcash(deps: ZcashDeps): ZcashView {
   let network: ZNetwork = savedNetwork();
   let account = 0;
   let current: ZAccount | null = null;
+  let id: BoardId | null = null;
   let pczt: { name: string; bytes: Uint8Array } | null = null;
   let working = false;
   const listeners: (() => void)[] = [];
-  const accountListeners: ((a: ZAccount | null) => void)[] = [];
-  const announceAccount = (a: ZAccount | null) => { for (const f of accountListeners) f(a); };
+  const accountListeners: ((a: BoardId | null) => void)[] = [];
+  const announceAccount = (a: BoardId | null) => { for (const f of accountListeners) f(a); };
 
   const status = (text: string) => { $("zstatus").textContent = text; };
 
@@ -129,8 +148,9 @@ export function initZcash(deps: ZcashDeps): ZcashView {
   }
 
   function clearAccount(): void {
-    const had = current !== null;
+    const had = id !== null;
     current = null;
+    id = null;
     if (had) announceAccount(null);
     $("zacct").hidden = true;
     $("zqr").hidden = true;
@@ -157,10 +177,23 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     autoRead();
   }
 
-  /** Read the account unless one is already on screen or the board is busy. */
+  /**
+   * Read which seed the board holds unless that is known or the board is
+   * busy. Not the account: that would put "Share view key?" up on every
+   * connect, and the wallet on this device already has the viewing key.
+   */
   function autoRead(): void {
-    if (current !== null || working || deps.call() === null) return;
-    void busy("reading the account", readAccount).catch((e) => status(zErrorText(e)));
+    if (id !== null || working || deps.call() === null) return;
+    void busy("reading which seed the board holds", readSeed).catch((e) => status(zErrorText(e)));
+  }
+
+  /** The board's wallet is `next`: announced when it is another one. */
+  function setId(next: BoardId): void {
+    const before = id;
+    id = { network: next.network, seedFingerprint: next.seedFingerprint, account: next.account };
+    if (before?.seedFingerprint !== id.seedFingerprint || before?.account !== id.account || before?.network !== id.network) {
+      announceAccount(id);
+    }
   }
 
   /** The board refused a request for this network: the notice and its button. */
@@ -189,7 +222,6 @@ export function initZcash(deps: ZcashDeps): ZcashView {
   }
 
   function renderAccount(a: ZAccount): void {
-    const before = current;
     current = a;
     $("zua").textContent = a.ua;
     $("ztaddr").textContent = a.tAddress;
@@ -197,16 +229,36 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     $("zfp").textContent = a.seedFingerprint;
     $("zbday").textContent = a.birthday === null ? "not set on the board" : String(a.birthday);
     $("zacct").hidden = false;
-    if (before?.seedFingerprint !== a.seedFingerprint || before?.account !== a.account || before?.network !== a.network) {
-      announceAccount(a);
-    }
+    setId(a);
+  }
+
+  async function readSeed(): Promise<BoardId> {
+    const call = requireCall();
+    const n = network;
+    const i = account;
+    status("Reading which seed the board holds…");
+    /* Same 0x0300 retry as readAccount, for the same reason. */
+    const r = await readSeedRetrying(call, i, n, {
+      onRetry: () => status("The board is still opening its wallet; asking again…"),
+    });
+    if (n !== network || i !== account) throw new Error("the network or account changed while reading");
+    hideWrongNetwork();
+    /* Firmware without zGetSeedFingerprint answered with the account. */
+    if (r.account) renderAccount(r.account);
+    else setId({ network: n, seedFingerprint: r.seedFingerprint, account: i });
+    status(r.account
+      ? `Account ${i}, ${networkLabel(n)}. Verify the address on the board before you receive.`
+      : `The board holds seed ZFP ${r.seedFingerprint.slice(0, 8)}…, account ${i}, ${networkLabel(n)}. ` +
+        "Read the account to see the board's own addresses (the board asks before it shares the viewing key).");
+    deps.log(`zcash: the board holds seed ${r.seedFingerprint.slice(0, 16)}… (${n})`);
+    return id!;
   }
 
   async function readAccount(): Promise<ZAccount> {
     const call = requireCall();
     const n = network;
     const i = account;
-    status(`Reading account ${i} (${networkLabel(n)}) from the board…`);
+    status(`Reading account ${i} (${networkLabel(n)}) from the board… ${Z_SHARE_KEY_HINT}`);
     /* Right after the PIN the board can answer 0x0300 ("no wallet on the
      * device", "derivation failed") while its vault is still opening; a
      * read a moment later works (docs/JOURNAL.md, the 0x0300 retry). The
@@ -424,6 +476,7 @@ export function initZcash(deps: ZcashDeps): ZcashView {
     useNetwork(n) { setNetwork(n); },
     onAccount(f) { accountListeners.push(f); },
     opened() { autoRead(); },
+    get boardId() { return id; },
     get network() { return network; },
     get account() { return account; },
     get boardAccount() { return current; },

@@ -195,6 +195,19 @@ fn device_refuses_a_tampered_pczt_before_review() {
 }
 
 #[test]
+fn device_refuses_two_actions_with_one_rk() {
+    let z = zdev_or_skip!("dup-rk", true);
+    let mut dev = connect(&z);
+    for name in ["r_duplicate_rk", "r_duplicate_rk_cross_pool"] {
+        let (_, bytes) = vector(name);
+        let err = dev.z_sign(&bytes, 0, "test", |_, _| {}).expect_err("must refuse");
+        // ZS_E_DUPLICATE_RK = -24, in the board's words.
+        assert!(device::is_code(&err, device::ERR_ZSIGN_BASE | 24), "{name}: {err}");
+        assert!(err.to_string().contains("duplicate action key"), "{name}: {err}");
+    }
+}
+
+#[test]
 fn a_rejection_on_the_device_returns_no_signature() {
     let mut z = zdev_or_skip!("reject", false);
     // Pairing: yes. Review: no.
@@ -245,7 +258,8 @@ fn the_user_confirms_the_address_on_the_device() {
 #[test]
 fn a_no_on_the_device_fails_the_address_check() {
     let mut z = zdev_or_skip!("show-no", false);
-    z.child.stdin.as_mut().unwrap().write_all(b"y\nn\n").unwrap();
+    // Pairing: yes. Sharing the viewing key: yes. The address: no.
+    z.child.stdin.as_mut().unwrap().write_all(b"y\ny\nn\n").unwrap();
     let mut dev = connect(&z);
     // The wallet's own address, so the question reaches the user.
     let ua = device::get_text(&dev.z_get_account(0, "test").unwrap(), "ua").unwrap();

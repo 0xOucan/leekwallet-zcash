@@ -40,6 +40,7 @@ static struct {
      * stored array could not tell the two apart. */
     char temp_mnemonic[FAKE_MNEMONIC_LEN];
     bool temp;
+    bool unreadable;                    /* the real vault's N1 fault state */
 } w;
 
 /* Which seed the device is deriving from: the temporary one when it is in use,
@@ -105,6 +106,20 @@ uint8_t fake_wallet_preload(const char *mnemonic)
     w.count++;
     w.active = w.count;
     return w.count;
+}
+
+void fake_wallet_unreadable(void)
+{
+    /* What the real vault reports: a password it cannot check. */
+    w.initialized = true;
+    w.password_set = true;
+    w.unlocked = false;
+    w.unreadable = true;
+}
+
+bool wallet_storage_unreadable(void)
+{
+    return w.unreadable;
 }
 
 bool fake_wallet_backup_verified(uint8_t index)
@@ -380,7 +395,7 @@ WalletError wallet_change_password(const char *old_password, size_t old_length,
 
 bool wallet_verify_password(const char *password, size_t length)
 {
-    if (!w.password_set || fake_password[0] == '\0') {
+    if (!w.password_set || w.unreadable || fake_password[0] == '\0') {
         return false;
     }
     return length == strlen(fake_password) &&

@@ -62,8 +62,8 @@ suggests a paste problem.
 `libxdo-dev` and `libayatana-appindicator3-dev` are only needed for global
 shortcuts and a tray icon, neither of which this app uses.
 
-**Rust 1.88 or newer** is also required — Tauri's dependency tree moved past
-what Ubuntu's packaged `rustc` provides. `rustup default stable` is enough; a
+**Rust 1.89 or newer** is also required — Tauri's dependency tree and librustzcash's
+releases (MSRV 1.89) moved past what Ubuntu's packaged `rustc` provides. `rustup default stable` is enough; a
 distro Rust will fail with `rustc 1.85.1 is not supported by the following
 packages`.
 
@@ -282,13 +282,15 @@ Every other board error is displayed verbatim, with its code.
 
 **Automatic, as in Zodl.** Connecting is one guided flow with no other
 click: Connect (or, from the launcher, *Reconnect your board*) pairs (compare
-the passkey, ALLOW on the board), asks the board for its PIN, reads the
-account (`zGetAccount`, once more after 1.5 s on 0x0300), and opens the
-wallet of that network, seed fingerprint and account, creating it when this
-device has none (`src/zcash-auto.ts`): born at the board's birthday for that
-network, or, when the board has none, at the chain tip minus 100 blocks,
+the passkey, ALLOW on the board), asks the board for its PIN, reads which seed it holds
+(`zGetSeedFingerprint`, once more after 1.5 s on 0x0300; no question on the
+board), and opens the wallet of that network, seed fingerprint and account.
+When this device has none it reads the account (`zGetAccount`: the board
+shares the viewing key only after OK on its "Share view key?", once per
+session, and the status line says so) and creates it (`src/zcash-auto.ts`): born at the board's birthday for that
+network, or, when the board has none, at the chain tip minus 288 blocks (two hours of NU7 blocks),
 which is then written to the board with `zSetAccountMeta` as the desktop
-app does. Then it syncs (`src/sync-scheduler.ts`): on open, every 75 s while
+app does. Then it syncs (`src/sync-scheduler.ts`): on open, every 25 s (one NU7 block) while
 the app is in front, right after a send or a shield; never two at once, never
 between a proposal and its finish, and not in the background (Android, a
 minimised window). The home screen says *Synced at block N*, *Syncing X%* or
@@ -398,14 +400,19 @@ WebKitGTK's media stream and grants camera requests only; on Android the
 manifest declares the camera (ANDROID.md).
 
 **Which wallet: the seed fingerprint.** When the home screen opens, the
-Companion reads the board's account (`zGetAccount`, retried once on 0x0300
-while the board's vault is still opening). Its ZIP 32 seed fingerprint and
-account, with the network, name the wallet on this device. A BIP39
+Companion reads which seed the board holds (`zGetSeedFingerprint`, retried
+once on 0x0300 while the board's vault is still opening; no question on the
+board, and `zGetAccount` on firmware without it). That ZIP 32 seed
+fingerprint and the account, with the network, name the wallet on this
+device. The board's own addresses and viewing key (Board → Read the
+board's account) are read only on request or to create a wallet, which is
+when the board asks "Share view key?". Before a send or an address check
+the Companion checks the fingerprint again, without a question. A BIP39
 passphrase on the board (on the board itself, or "Passphrase (hidden
 wallet)" here) gives another seed, so another fingerprint, so another wallet,
 with its own directory and address book; it never mixes with the wallet
-without a passphrase. Applying or clearing a passphrase re-reads the account
-and switches wallet. The passphrase panel says this, and that the hidden
+without a passphrase. Applying or clearing a passphrase re-reads the seed
+fingerprint and switches wallet. The passphrase panel says this, and that the hidden
 wallet's synced data stays on this device under its fingerprint (forget it
 in Settings).
 

@@ -60,6 +60,9 @@ typedef enum {
      * both that and "throw away the session". */
     SCREEN_LOCK_HOLD,
     SCREEN_LOCK_CONFIRM,
+    /* Settings -> Show Seed, before the lock: says that it locks and that the
+     * PIN comes next, with BACK as a way out while still unlocked. */
+    SCREEN_SHOW_SEED_CONFIRM,
     /* The QR return path: a UR, animated when it needs more than one frame.
      * Shows whatever ui_show_ur() was handed and nothing else; the screen
      * that decided to share it is the one that said what it is. */
@@ -79,6 +82,18 @@ typedef enum {
     /* A host asked to show an address (zShowAddress): the UA in full, then
      * "same as the app?". Answered through the sign-outcome channel. */
     SCREEN_ADDRESS_CHECK,
+    /* A host asked for an account's viewing key (zGetAccount): "share it?",
+     * with the account and the pairing code of the host that asked.
+     * Answered through the sign-outcome channel. */
+    SCREEN_SHARE_VIEW_KEY,
+    /* The vault is there and cannot be read (wallet_storage_unreadable()).
+     * A dead end on purpose: no PIN is asked, because none can be checked,
+     * and nothing offers setup, because that would write over the seeds. */
+    SCREEN_STORAGE_FAULT,
+    /* A host asked for an app's Storage Key (zGetStorageKey): "unlock app
+     * data?", with the app identifier in full, the account and the pairing
+     * code. Answered through the sign-outcome channel. */
+    SCREEN_STORAGE_KEY,
     SCREEN_COUNT
 } screen_id_t;
 
@@ -256,6 +271,14 @@ uint8_t ui_zcash_network(void);
  */
 void ui_notify_wrong_network(uint8_t asked);
 
+/**
+ * The app is older than this firmware expects. "Update your app" on the board
+ * for a few seconds, over whatever is there, as ui_notify_wrong_network does;
+ * any button dismisses it and does nothing else. Changes no answer the board
+ * gives. Safe from the protocol task.
+ */
+void ui_notify_app_outdated(void);
+
 void ui_request_session_confirm(void);
 
 /**
@@ -320,6 +343,32 @@ void ui_request_zsign_review(const zs_summary *s, uint8_t network);
  */
 void ui_request_show_address(const char *ua, const char *t_address, uint32_t account,
                              uint8_t network);
+
+/**
+ * A host asked for an account's viewing key (zGetAccount). The key is not
+ * spend authority, but it is the account's whole balance and history, so the
+ * user says yes on the device first, as for a signature.
+ *
+ * `pairing_code` names the host: the six digits the user compared when this
+ * session was paired, or NULL/"" when there is none to show (the screen then
+ * names the link only). `over_ble` says which link it came in on. The answer
+ * arrives through ui_sign_outcome(): APPROVED = share, REJECTED = refuse. The
+ * code is copied.
+ */
+void ui_request_share_view_key(uint32_t account, uint8_t network, const char *pairing_code,
+                               bool over_ble);
+
+/**
+ * A host asked for the Storage Key of `app_id` (zGetStorageKey), the key the
+ * app's stored wallet data is encrypted under. Asked every time, never
+ * remembered: an app asks once each time it opens.
+ *
+ * `app_id` is already valid (zcash_app_id_valid), at most 64 bytes, and is
+ * shown in full. `pairing_code` and `over_ble` as for the view key. The
+ * answer arrives through ui_sign_outcome(). Both strings are copied.
+ */
+void ui_request_storage_key(const char *app_id, uint32_t account, uint8_t network,
+                            const char *pairing_code, bool over_ble);
 #endif
 
 typedef enum {

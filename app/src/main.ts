@@ -22,7 +22,7 @@ import {
 import { initZcash, networkLabel, type ZcashView } from "./zcash-view.ts";
 import { initZcashWallet, type Key, type ZcashWallet } from "./zcash-wallet.ts";
 import { initWalletList, type WalletList } from "./wallet-list.ts";
-import { zErrorText, zGetFeatures, type ZFeatures } from "../packages/core/src/zcash.ts";
+import { BOARD_UPDATE_TEXT, firmwareOutdated, zErrorText, zGetFeatures, type ZFeatures } from "../packages/core/src/zcash.ts";
 import { BleTransport, scanBle, BLE_NOT_FOUND } from "./ble-transport.ts";
 import qrcodegen from "qrcode-generator";
 import { initFlasher, tauriFlashBridge } from "./flasher.ts";
@@ -1082,9 +1082,17 @@ async function connectOnce(remembered: RememberedBoard | null = null): Promise<b
    * is fine here: getFeatures describes the device, not the wallet. */
   deviceFeatures = await client.call("getFeatures").catch(() => null);
 
+  /* An old board: a suggestion, and the connection carries on. A board that
+   * does not answer here gets none. */
+  const connected = client;
+  const signer = kind === "mock"
+    ? null
+    : await zGetFeatures((m, p, t) => connected.call(m, p, t)).catch(() => null);
+  const boardUpdate = signer !== null && firmwareOutdated(signer) ? ` ${BOARD_UPDATE_TEXT}` : "";
+
   setConnection("connected", transport.label);
   $("devicehint").textContent = kind !== "mock"
-    ? `Connected over ${transport.label}. The device confirms everything it signs on its own screen.`
+    ? `Connected over ${transport.label}. The device confirms everything it signs on its own screen.${boardUpdate}`
     : "Connected to the mock. It models pairing, the PIN and the passphrase, and holds no keys: the Zcash screens need a board (or zdev, the simulated one).";
   busy(false);
   ($("connect") as HTMLButtonElement).disabled = true;
@@ -1623,6 +1631,7 @@ async function diagnosticsReport(): Promise<string> {
     }
     if (z !== null) {
       L.push(`Signer:     ${z.backend}, show address ${z.showAddress ? "yes" : "no"}`);
+      L.push(`Compat:     ${z.fwCompat ?? "not reported"}${firmwareOutdated(z) ? " (update suggested)" : ""}`);
       L.push(`Branch IDs: ${z.branchIds.map((b) => `0x${b.toString(16)}`).join(", ") || "none"}`);
       L.push(`Limits:     PCZT ${z.maxPczt} B, chunk ${z.maxChunk} B`);
     }
@@ -1635,11 +1644,15 @@ async function diagnosticsReport(): Promise<string> {
     ? "Network setting: not reported by this firmware; it refuses requests for the other network (0x0528)."
     : `Network setting: ${networkLabel(boardNetwork)} (getStatus)`);
   const acct = zcashView?.boardAccount ?? null;
+  const boardId = zcashView?.boardId ?? null;
   L.push(
-    acct === null
-      ? "Account:    not read"
-      : `Account:    ${acct.account} on ${networkLabel(acct.network)}, ZFP ${acct.seedFingerprint}, ` +
-        `birthday ${acct.birthday ?? "not set on the board"}`,
+    acct !== null
+      ? `Account:    ${acct.account} on ${networkLabel(acct.network)}, ZFP ${acct.seedFingerprint}, ` +
+        `birthday ${acct.birthday ?? "not set on the board"}`
+      : boardId !== null
+        ? `Account:    ${boardId.account} on ${networkLabel(boardId.network)}, ZFP ${boardId.seedFingerprint} ` +
+          "(seed only; the account was not read)"
+        : "Account:    not read",
   );
   L.push("");
 

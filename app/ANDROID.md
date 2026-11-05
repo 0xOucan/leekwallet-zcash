@@ -763,7 +763,7 @@ activity in the APK, and the decoder this app already used on both (README,
 
 ## In the background
 
-The wallet syncs every 75 s while the app is in front, and not at all in the
+The wallet syncs every 25 s (one NU7 block) while the app is in front, and not at all in the
 background (the webview's `visibilitychange`): no timer runs, the camera is
 released, and coming back syncs at once when the last sync is older than the
 interval. The board's Bluetooth or USB session is not touched by this.

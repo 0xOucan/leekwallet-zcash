@@ -3,7 +3,7 @@
 | Tool | Version | Install |
 |---|---|---|
 | PlatformIO platform | espressif32@6.12.0 (ESP-IDF 5.5.0, GCC 14.2.0) | pinned in `platformio.ini` |
-| Rust (host) | stable 1.97.1 | rustup |
+| Rust (host) | stable 1.97.1 (librustzcash's releases need at least 1.89) | rustup |
 | Rust (Xtensa) | esp 1.99.0.0 | `espup install --targets esp32s3 --toolchain-version 1.99.0.0` (espup 0.17.1) |
 | Rust target | `xtensa-esp32s3-none-elf`, `-Zbuild-std=core,alloc` | — |
 | QEMU | Espressif 9.2.2 (esp_develop_9.2.2_20260417) | release tarball → `~/.espressif/qemu`, linked into `~/.local/bin` |

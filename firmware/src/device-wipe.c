@@ -83,10 +83,15 @@ bool device_wipe_pending(void)
  * else here touches and which is why a wiped device used to be handed on with
  * the previous owner's settings still in place.
  *
- * A power cut in the middle leaves NVS unmountable, and `app_main()` already
- * answers that by erasing and re-initialising it. The end state of an
- * interrupted wipe is therefore a blank device, which is the end state the
- * wipe was asking for.
+ * A power cut in the middle leaves some pages erased and the rest holding
+ * only entries the entry-level erase above already deleted. NVS mounts that
+ * (a page with no valid header joins the free list), and the wipe marker -
+ * or, if its page went first, the absence of any vault - finishes the job.
+ * `app_main()` used to answer an unmountable partition by erasing it; it no
+ * longer does, because outside a wipe that partition is the vault
+ * (docs/AUDIT-SD-WRITES.md N1). A partition that would not mount after an
+ * interrupted wipe is shown as a storage fault, and holds nothing secret:
+ * every entry was erased before the pages were.
  */
 static void scrub_nvs_partition(void)
 {
@@ -107,11 +112,10 @@ static void scrub_nvs_partition(void)
 
     err = nvs_flash_init();
     if (err != ESP_OK) {
-        /* Leaving NVS down would brick the device until the next boot, and
-         * the next boot repairs it: app_main() erases and re-initialises when
-         * the partition will not mount. */
-        ESP_LOGE(TAG, "NVS did not come back up (%s); the next boot repairs it",
-                 esp_err_to_name(err));
+        /* Left down until the next boot, which mounts the freshly erased
+         * partition. If even that fails the device says so (storage fault)
+         * rather than erasing on its own - see the comment above. */
+        ESP_LOGE(TAG, "NVS did not come back up (%s)", esp_err_to_name(err));
     }
 }
 

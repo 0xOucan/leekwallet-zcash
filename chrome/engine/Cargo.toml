@@ -18,17 +18,17 @@ default = []
 threads = ["orchard/multicore", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
-# Same rev as host/zecz-core. `default-features = false` drops their
+# Same releases as host/zecz-core. `default-features = false` drops their
 # `multicore`, which needs the threads build on wasm32.
-zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["orchard", "transparent-inputs", "pczt", "sync"] }
-zcash_client_sqlite = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["orchard", "transparent-inputs", "serde"] }
-zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs"] }
-zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zcash_address = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["std", "circuits", "transparent-inputs"] }
-zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
-zip321 = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
+zcash_client_backend = { version = "=0.25.0", default-features = false, features = ["orchard", "transparent-inputs", "pczt", "sync"] }
+zcash_client_sqlite = { version = "=0.23.0", default-features = false, features = ["orchard", "transparent-inputs", "serde"] }
+zcash_keys = { version = "=0.17.0", features = ["orchard", "transparent-inputs"] }
+zcash_protocol = { version = "=0.11.0" }
+zcash_address = { version = "=0.14.0" }
+zcash_primitives = { version = "=0.31.0", default-features = false, features = ["std", "circuits", "transparent-inputs"] }
+zcash_transparent = { version = "=0.11.0", features = ["transparent-inputs"] }
+zip321 = { version = "=0.10.0" }
+pczt = { version = "=0.10.0", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
 orchard = { version = "0.16", default-features = false, features = ["std", "circuit"] }
 zip32 = "0.3"
 secp256k1 = "0.33"

@@ -29,7 +29,7 @@
  * room for many actions and stays a small slice of the 8 MB PSRAM. */
 #define ZCASH_PCZT_MAX (512u * 1024u)
 
-/* Errors of this layer. The signers' own refusals (ZS_E_*, -10..-23) pass
+/* Errors of this layer. The signers' own refusals (ZS_E_*, -10..-24) pass
  * through unchanged. */
 #define ZSIGN_E_STATE      (-30)   /* call out of order */
 #define ZSIGN_E_TOO_LARGE  (-31)   /* declared length 0 or above ZCASH_PCZT_MAX */

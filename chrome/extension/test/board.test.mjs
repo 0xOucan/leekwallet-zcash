@@ -18,7 +18,7 @@ await vendor();
 
 const { decodeCbor, encodeCbor } = await import('../src/board/cbor.js');
 const { BleReassembler, FRAME, UsbFrameDecoder, chunkForBle, encodeFrame, encodeUsbFrame } = await import('../src/board/framing.js');
-const { Device, DeviceError, ERR, toHex, fromHex: fromHexT, statusNetwork, wrongNetworkMessage } = await import('../src/board/device.js');
+const { APP_UPDATE_TEXT, Device, DeviceError, ERR, MIN_FIRMWARE_COMPAT, firmwareOutdated, toHex, fromHex: fromHexT, statusNetwork, wrongNetworkMessage } = await import('../src/board/device.js');
 const { BoardHost, BoardNeeds, passphraseComplaint } = await import('../src/board/host.js');
 const { BleLink } = await import('../src/board/ble-link.js');
 const { SerialLink } = await import('../src/board/serial-link.js');
@@ -157,8 +157,25 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
 
   test('zGetFeatures', async () => {
     const f = await dev.zGetFeatures();
+    assert.equal(f.fwCompat, MIN_FIRMWARE_COMPAT);
+    assert.equal(firmwareOutdated(f), false);
+    const { fwCompat: _, ...v010 } = f;
+    assert.equal(firmwareOutdated(v010), true, 'a board that reports no level is outdated');
+    assert.equal(new DeviceError(ERR.APP_OUTDATED, 'Update your app').message, APP_UPDATE_TEXT);
     assert.equal(f.showAddress, 1);
     assert.ok(f.spendPools.includes('transparent'));
+  });
+
+  test('zGetSeedFingerprint: the seed, on either network, with no question', async () => {
+    const asked = (z.out.match(/Share view key\?/g) ?? []).length;
+    for (const network of ['test', 'main']) {
+      await z.switchNetwork(network);
+      assert.equal(await dev.zGetSeedFingerprint(network), key(`${network}/abandon-art/pp0/acct0`).seed_fingerprint, network);
+      assert.equal(await dev.zGetSeedFingerprint(), key('test/abandon-art/pp0/acct0').seed_fingerprint, 'without a network');
+    }
+    await assert.rejects(dev.zGetSeedFingerprint('test'), (e) => e instanceof DeviceError && e.code === ERR.BOARD_NETWORK);
+    await z.switchNetwork('test');
+    assert.equal((z.out.match(/Share view key\?/g) ?? []).length, asked, 'the board asked');
   });
 
   test('zGetAccount: the testnet and mainnet accounts of the vectors', async () => {
@@ -278,6 +295,25 @@ describe('against zdev, answering on the "device"', { skip: !zdevOk && 'zdev cou
     }
   });
 
+  test('the viewing key only after a yes on the board, asked once per session', async () => {
+    const z = await startZdev({ yes: false });
+    const dev = new Device(new PtyLink(z.link));
+    try {
+      z.answer('y'); // pairing
+      await dev.pair();
+      z.answer('n'); // sharing the viewing key
+      await assert.rejects(dev.zGetAccount(0, 'test'), (e) => e.code === ERR.USER_REJECTED);
+      z.answer('y');
+      assert.equal((await dev.zGetAccount(0, 'test')).ufvk, key('test/abandon-art/pp0/acct0').ufvk);
+      z.answer('n'); // account 1's question, queued first: a second one for account 0 would take it
+      assert.equal((await dev.zGetAccount(0, 'test')).ufvk, key('test/abandon-art/pp0/acct0').ufvk);
+      await assert.rejects(dev.zGetAccount(1, 'test'), (e) => e.code === ERR.USER_REJECTED);
+    } finally {
+      await dev.link.close();
+      z.stop();
+    }
+  });
+
   test('pairing refused on the board never completes', async () => {
     const z = await startZdev({ yes: false });
     const dev = new Device(new PtyLink(z.link));
@@ -319,6 +355,8 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
       // Which wallet: the popup shows a device account only to its board.
       assert.equal(host.state.seedFingerprint, key('test/abandon-art/pp0/acct0').seed_fingerprint);
       assert.ok(states.some((s) => s.phase === 'unlocking' && s.waiting === 'wallet'));
+      // ...read with no question on the board: only the import asks.
+      assert.doesNotMatch(z.out, /Share view key\?/, 'connecting asked to share the viewing key');
 
       await assert.rejects(host.run('importAccount', { network: 'test' }), (e) => e instanceof BoardNeeds && e.need === 'birthday' && e.tip === 4_600_000);
       const k = key('test/abandon-art/pp0/acct0');
@@ -414,7 +452,7 @@ describe('BoardHost (the wallet flow) against zdev, with a stand-in engine', { s
     const z = await startZdev({ yes: false });
     const host = new BoardHost({ engine: fakeEngine('test').engine, openLink: async () => new PtyLink(z.link), watchMs: 0 });
     try {
-      z.answer('y'); // pairing
+      z.answer('y'); // pairing; reading which wallet the board holds asks nothing
       await host.run('connect', { kind: 'usb', network: 'test' });
       const fp = host.state.seedFingerprint;
       z.answer('n'); // the XFP screen

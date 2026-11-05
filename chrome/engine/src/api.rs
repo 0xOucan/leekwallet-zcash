@@ -60,7 +60,7 @@ pub async fn dispatch(state: &State, method: &str, params: Value, on_event: OnEv
             return Ok(json!({
                 "apiVersion": API_VERSION,
                 "engineVersion": env!("CARGO_PKG_VERSION"),
-                "librustzcash": "16f0723c385957cecc32b4f0c71bb411053b708b",
+                "librustzcash": "zcash_primitives 0.31.0",
                 "threads": cfg!(feature = "threads"),
                 "opfsFiles": store::files()?,
             }))
@@ -184,12 +184,16 @@ pub async fn dispatch(state: &State, method: &str, params: Value, on_event: OnEv
         }
         "finish" => {
             // zecz `finish`: apply, prove, extract, and broadcast if asked.
-            let (sha256, n) = w.apply_zsig(&hex_param(&params, "signerView")?, &hex_param(&params, "zsig")?)?;
+            let view = hex_param(&params, "signerView")?;
+            let broadcast = params.get("broadcast").and_then(Value::as_bool).unwrap_or(false);
+            if broadcast {
+                w.check_pending_current(&view).await?;
+            }
+            let (sha256, n) = w.apply_zsig(&view, &hex_param(&params, "zsig")?)?;
             on_event(json!({ "event": "finish", "phase": "signaturesApplied", "count": n }));
             let prove_ms = w.prove(&sha256, on_event)?;
             let x = w.extract(&sha256)?;
             on_event(json!({ "event": "finish", "phase": "stored", "txid": x.txid, "size": x.size }));
-            let broadcast = params.get("broadcast").and_then(Value::as_bool).unwrap_or(false);
             if broadcast {
                 w.broadcast(&x.txid).await?;
             }

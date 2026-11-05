@@ -49,6 +49,34 @@ pub const ERR_ZSIGN_BASE: u64 = 0x0500;
 /// The request named the other network than the board's own setting
 /// (Settings > Network on the board): refused before anything was derived.
 pub const ERR_BOARD_NETWORK: u64 = ERR_ZSIGN_BASE | 40;
+/// The board refused a NU6.3 PCZT whose expiry only an app without NU7's mainnet
+/// height builds (`ZS_E_APP_OUTDATED`).
+pub const ERR_APP_OUTDATED: u64 = ERR_ZSIGN_BASE | 25;
+
+/// What this host tells the board it is, as `hostCompat` with
+/// `zGetSeedFingerprint`, `zGetAccount` and `zSignBegin`. A board that expects
+/// more shows "Update your app" and carries on. Firmware before this ignores
+/// the field. Guidance, not a security boundary.
+pub const HOST_COMPAT: u32 = 2;
+
+/// The oldest firmware (its `fwCompat`) a host does not suggest updating.
+/// Firmware that reports no `fwCompat` counts as level 1. See
+/// [`firmware_outdated`].
+pub const MIN_FIRMWARE_COMPAT: u32 = 2;
+
+/// What to show when [`firmware_outdated`] is true.
+pub const BOARD_UPDATE_TEXT: &str =
+    "Update your board: its firmware is older than this app expects. It can still sign; the update has the NU7 checks.";
+
+/// What to show for [`ERR_APP_OUTDATED`].
+pub const APP_UPDATE_TEXT: &str =
+    "Update your app: it built this transaction for network rules that have ended. Nothing was signed.";
+
+/// A board's `fwCompat` is older than this host expects, or it reports none:
+/// suggest an update with [`BOARD_UPDATE_TEXT`]. Nothing is blocked.
+pub fn firmware_outdated(fw_compat: Option<u32>) -> bool {
+    fw_compat.unwrap_or(1) < MIN_FIRMWARE_COMPAT
+}
 
 /// An error frame from the device.
 #[derive(Debug)]
@@ -239,8 +267,9 @@ impl FramePort for leek_transport_serial::SerialTransport {
 pub struct Device {
     port: Box<dyn FramePort>,
     session: Option<Session>,
-    /// Whether a zGetAccount has been answered in this session; until then
-    /// a 0x0300 is retried once (see [`Device::z_get_account`]).
+    /// Whether a zGetAccount or zGetSeedFingerprint has been answered in
+    /// this session; until then a 0x0300 is retried once (see
+    /// [`Device::z_get_account`]).
     account_answered: bool,
     /// The pause before that retry.
     no_wallet_retry: Duration,
@@ -254,6 +283,15 @@ const SHORT: Duration = Duration::from_secs(10);
 /// first wait up to 10 s for its vault after the PIN; 10 s was not enough on
 /// the first board.
 const DERIVE: Duration = Duration::from_secs(90);
+/// `zGetAccount`: a derivation, then the user's answer on the board. The
+/// board asks before it shares a viewing key (once per session) and waits up
+/// to 120 s for the press, after the derivation; DERIVE alone would give up
+/// on a user still reading the question.
+const SHARE_VIEW_KEY: Duration = Duration::from_secs(90 + 120);
+/// `zGetStorageKey`: no derivation before the question (the board derives
+/// only after the yes), but it may first wait up to 10 s for its vault, then
+/// up to 120 s for the press.
+const STORAGE_KEY: Duration = Duration::from_secs(10 + 120 + 20);
 /// The pause before the one retry of a first zGetAccount refused with
 /// 0x0300: about the vault's own unlock (one PBKDF2 on the S3).
 pub const NO_WALLET_RETRY: Duration = Duration::from_millis(1500);
@@ -428,6 +466,12 @@ impl Device {
 
     /// `zGetAccount`: UFVK, UA, t-address and ZIP 32 seed fingerprint.
     ///
+    /// The board asks "Share view key?" and answers only after OK on the
+    /// board; a yes holds for the rest of the session, for that account,
+    /// network and seed. Tell the user to confirm on the board before
+    /// calling. A no is [`ERR_USER_REJECTED`], no answer in the board's 120 s
+    /// window [`ERR_USER_TIMEOUT`].
+    ///
     /// The first one of a session is asked again once, after
     /// [`NO_WALLET_RETRY`], if the device answers 0x0300. Right after
     /// connecting (over Bluetooth especially, and right after the PIN) a
@@ -441,19 +485,89 @@ impl Device {
         let fields = || vec![
             ("account", Value::Integer(account.into())),
             ("network", Value::Text(network.into())),
+            ("hostCompat", Value::Integer(HOST_COMPAT.into())),
         ];
-        let r = match self.call("zGetAccount", fields(), DERIVE) {
+        let r = match self.call("zGetAccount", fields(), SHARE_VIEW_KEY) {
             Err(e) if !self.account_answered && is_code(&e, ERR_NO_WALLET) => {
                 if std::env::var_os("ZECZ_DEBUG").is_some() {
                     eprintln!("[zecz] zGetAccount: {e:#}; asking again in {} ms", self.no_wallet_retry.as_millis());
                 }
                 std::thread::sleep(self.no_wallet_retry);
-                self.call("zGetAccount", fields(), DERIVE)
+                self.call("zGetAccount", fields(), SHARE_VIEW_KEY)
             }
             r => r,
         }?;
         self.account_answered = true;
         Ok(r)
+    }
+
+    /// `zGetStorageKey`: the app's Storage Key for `app_id` on `network`,
+    /// `account` (docs/zcash/zip-draft-app-storage-keys.md).
+    ///
+    /// The board shows the app identifier, account, network and pairing code
+    /// and answers only after OK there, every time: no yes is remembered. A
+    /// no is [`ERR_USER_REJECTED`], no answer in its 120 s window
+    /// [`ERR_USER_TIMEOUT`], an identifier it refuses 0x0001. The reply's
+    /// copy of the key is wiped before this returns; the caller wipes the
+    /// returned array.
+    pub fn z_get_storage_key(&mut self, app_id: &str, account: u32, network: &str) -> Result<[u8; 32]> {
+        use zeroize::Zeroize;
+        let mut r = self.call("zGetStorageKey", vec![
+            ("appId", Value::Text(app_id.into())),
+            ("account", Value::Integer(account.into())),
+            ("network", Value::Text(network.into())),
+        ], STORAGE_KEY)?;
+        let mut key = None;
+        if let Value::Map(m) = &mut r {
+            for (k, v) in m.iter_mut() {
+                if let (Value::Text(k), Value::Bytes(b)) = (k, v) {
+                    if k == "storageKey" {
+                        key = <[u8; 32]>::try_from(b.as_slice()).ok();
+                        b.zeroize();
+                    }
+                }
+            }
+        }
+        let key = key.ok_or_else(|| anyhow!("reply has no 32-byte storageKey"))?;
+        // The board echoes what it derived for; anything else is not this key.
+        if get_text(&r, "appId")? != app_id || get_text(&r, "network")? != network
+            || get_uint(&r, "account")? != u64::from(account)
+        {
+            let mut key = key;
+            key.zeroize();
+            bail!("the device answered for another app, account or network");
+        }
+        Ok(key)
+    }
+
+    /// `zGetSeedFingerprint`: the ZIP 32 seed fingerprint of the board's open
+    /// seed, and nothing else. No question on the board, so a companion can
+    /// tell which seed it is talking to on every connect without raising
+    /// "Share view key?". `network`, when given, is checked against the
+    /// board's setting (0x0528) but does not change the answer. Firmware
+    /// without it answers 0x0001.
+    ///
+    /// Retried once after [`NO_WALLET_RETRY`] on a first 0x0300 of the
+    /// session, as [`Device::z_get_account`] is and for the same reason.
+    pub fn z_get_seed_fingerprint(&mut self, network: Option<&str>) -> Result<[u8; 32]> {
+        let fields = || {
+            let mut f = vec![("hostCompat", Value::Integer(HOST_COMPAT.into()))];
+            if let Some(n) = network {
+                f.push(("network", Value::Text(n.into())));
+            }
+            f
+        };
+        let r = match self.call("zGetSeedFingerprint", fields(), DERIVE) {
+            Err(e) if !self.account_answered && is_code(&e, ERR_NO_WALLET) => {
+                std::thread::sleep(self.no_wallet_retry);
+                self.call("zGetSeedFingerprint", fields(), DERIVE)
+            }
+            r => r,
+        }?;
+        self.account_answered = true;
+        get_bytes(&r, "seedFingerprint")?
+            .try_into()
+            .map_err(|_| anyhow!("seedFingerprint is not 32 bytes"))
     }
 
     /// `zShowAddress`: the device shows its own unified address for the user
@@ -503,12 +617,20 @@ impl Device {
         Ok(get_uint(&r, "stored")? == 1)
     }
 
+    /// The board's `fwCompat` from `zGetFeatures`, or `None` when it reports
+    /// none, as firmware before the field does.
+    pub fn z_fw_compat(&mut self) -> Result<Option<u32>> {
+        let z = self.call("zGetFeatures", vec![], SHORT)?;
+        Ok(get_uint(&z, "fwCompat").ok().map(|v| v as u32))
+    }
+
     /// Upload a PCZT, let the user review it on the device, and return the
     /// sighash they approved with the device's signatures.
     pub fn z_sign(&mut self, pczt: &[u8], account: u32, network: &str,
                   progress: impl Fn(usize, usize)) -> Result<([u8; 32], Vec<Entry>)> {
         let sha: [u8; 32] = Sha256::digest(pczt).into();
         let begin = self.call("zSignBegin", vec![
+            ("hostCompat", Value::Integer(HOST_COMPAT.into())),
             ("len", Value::Integer((pczt.len() as u64).into())),
             ("sha256", Value::Bytes(sha.to_vec())),
             ("account", Value::Integer(account.into())),
@@ -649,6 +771,27 @@ mod tests {
 
     fn account_reply() -> Value {
         Value::Map(vec![(Value::Text("ufvk".into()), Value::Text("uviewtest1...".into()))])
+    }
+
+    #[test]
+    fn the_firmware_level_is_read_from_zgetfeatures() {
+        let level = Value::Map(vec![(Value::Text("fwCompat".into()), Value::Integer(2.into()))]);
+        let none = Value::Map(vec![(Value::Text("backend".into()), Value::Text("zcash".into()))]);
+        let (mut dev, asked) = scripted(vec![Ok(level), Ok(none)]);
+        assert_eq!(dev.z_fw_compat().unwrap(), Some(2));
+        assert!(!firmware_outdated(Some(MIN_FIRMWARE_COMPAT)));
+        // A v0.1.0 board answers with no fwCompat: level 1, so outdated.
+        assert_eq!(dev.z_fw_compat().unwrap(), None);
+        assert!(firmware_outdated(None));
+        assert!(firmware_outdated(Some(1)));
+        assert_eq!(asked.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_refusal_for_an_outdated_app_keeps_its_code() {
+        let (mut dev, _) = scripted(vec![Err((ERR_APP_OUTDATED, "app outdated"))]);
+        let e = dev.z_sign(&[0u8; 4], 0, "main", |_, _| {}).unwrap_err();
+        assert!(is_code(&e, ERR_APP_OUTDATED), "{e:#}");
     }
 
     #[test]

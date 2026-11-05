@@ -2,15 +2,18 @@
 
 FILE(GLOB app_sources ${CMAKE_SOURCE_DIR}/src/*.c)
 
-# One panel driver per board, and never two.
+# One panel driver per build, and never two.
 #
-# `oled.c` is the SSD1306 over I2C; `oled-pixie.c` is the ST7789 over SPI. Both
-# implement the same seven transport entry points, so building both would be a
-# duplicate-symbol link error — and the glob above would happily produce one.
-# `IDF_TARGET` rather than a CONFIG_* symbol, because component sources are
-# collected before sdkconfig is loaded.
+# `oled.c` (the I2C OLEDs) and `oled-st7789.c` (the SPI TFT) implement the
+# same transport entry points, so linking both would be a duplicate-symbol
+# error. Each one compiles to nothing unless board.h selected its panel
+# (BOARD_HAS_I2C_PANEL / BOARD_HAS_SPI_PANEL), so the choice is made once, in
+# the header every source already reads, and not again here.
+#
+# What the C3 cannot build is still removed by target. `IDF_TARGET` rather than
+# a CONFIG_* symbol, because component sources are collected before sdkconfig
+# is loaded.
 if(IDF_TARGET STREQUAL "esp32c3")
-  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled.c)
   # The Zcash signer is built for Xtensa only (components/zsign-rust).
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-account.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-worker.c)
@@ -18,16 +21,21 @@ if(IDF_TARGET STREQUAL "esp32c3")
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-review.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-receive.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-fp.c)
+  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-storage.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zcash-meta.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/sd-seed.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/sdcard.c)
   list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/zkv.c)
-else()
-  list(REMOVE_ITEM app_sources ${CMAKE_SOURCE_DIR}/src/oled-pixie.c)
 endif()
 
-set(app_requires driver nvs_flash esp_hw_support bootloader_support
-                 esp_driver_usb_serial_jtag trezor-crypto leek-wallet)
+# esp_driver_spi for st7789.c; ESP-IDF 5.x split the SPI master out of
+# `driver`. Unused code from it is not linked into an OLED build.
+set(app_requires driver esp_driver_spi nvs_flash esp_hw_support bootloader_support
+                 esp_driver_usb_serial_jtag trezor-crypto leek-wallet
+                 # The OPTIGA bring-up. Only se-bench.c calls it today, and
+                 # that file is empty outside the se-bench environment, so
+                 # the linker drops it from every other image.
+                 leek-se-optiga)
 if(NOT IDF_TARGET STREQUAL "esp32c3")
     # Both signer backends: BOTH mode requires them to agree (zcash-sign.c).
     list(APPEND app_requires zsign-rust zsign-c)
@@ -46,9 +54,6 @@ endif()
 idf_component_register(
     SRCS ${app_sources}
     REQUIRES ${app_requires}
-    # firefly-display is registered empty off the C3, so requiring it always is
-    # harmless and keeps this list from needing its own branch.
-    PRIV_REQUIRES firefly-display
 )
 
 if(LEEK_CAMERA_DRIVER)

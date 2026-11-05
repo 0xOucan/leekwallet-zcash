@@ -313,10 +313,21 @@ void session_set_on_reset(void (*callback)(void))
     on_reset = callback;
 }
 
+/* Outside `sess` for the same reason as the activity stamp: the wipe below
+ * must not take it back to a value an earlier session already had. Wraps
+ * after four billion sessions, which a device does not live to see. */
+static uint32_t session_generation_counter = 0;
+
+uint32_t session_generation(void)
+{
+    return session_generation_counter;
+}
+
 void session_reset(void)
 {
     memzero(&sess, sizeof(sess));
     sess.state = SESSION_IDLE;
+    session_generation_counter++;
 
     /* After the wipe, never before: the callback may look at the session, and
      * it must see one that is already gone. A callback that resets the session
