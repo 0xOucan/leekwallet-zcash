@@ -137,6 +137,10 @@ pub enum LeekError {
     /// The signed transaction is past its expiry height. Build the
     /// transaction again and sign it again.
     Expired,
+    /// The board refused the PCZT (0x0519): branch NU6.3 with an expiry that
+    /// only an app without NU7's mainnet height builds. Update the app, then
+    /// build the transaction again.
+    AppOutdated,
 
     // ---- signatures (6xx)
     /// The `.zsig` names other bytes than the PCZT that was sent.
@@ -234,6 +238,7 @@ impl LeekError {
             DuplicateRk => 517,
             WrongBranch => 518,
             Expired => 519,
+            AppOutdated => 520,
             ZsigHashMismatch => 600,
             ZsigMalformed => 601,
             SignatureInvalid => 602,
@@ -309,6 +314,7 @@ impl LeekError {
             DuplicateRk => "two spends in the transaction share one verification key",
             WrongBranch => "the transaction was signed for another network upgrade than the chain's next block; build and sign it again",
             Expired => "the transaction is past its expiry height; build and sign it again",
+            AppOutdated => "Update your app: it built this transaction for network rules that have ended. Nothing was signed.",
             ZsigHashMismatch => "the signatures were made for a different PCZT",
             ZsigMalformed => "the signature file is malformed",
             SignatureInvalid => "a signature from the board does not verify",
@@ -382,6 +388,8 @@ pub(crate) fn from_code(code: u64, ctx: Ctx) -> LeekError {
             21..=23 => DeviceInternal,
             // ZS_E_DUPLICATE_RK: two actions, both pools together, share an rk.
             24 => DuplicateRk,
+            // ZS_E_APP_OUTDATED: NU6.3, with an expiry past NU7 + 40.
+            25 => AppOutdated,
             // ZSIGN_E_* (zcash-sign.h)
             30 => Protocol,
             31 => TooLarge,
@@ -443,7 +451,7 @@ mod tests {
             NotFound, PermissionDenied, Disconnected, Timeout, Cancelled, PairingCodeMismatch, SessionExpired, Busy,
             Locked, NoWallet, FirmwareTooOld, Protocol, TransferCorrupted, DeviceInternal, UserRejected, UserTimeout,
             WrongNetwork, WrongAccount, SpendNotOurs, AddressNotOurs, AddressUncheckable, MissingDerivation, TooMany,
-            TooLarge, Parse, PcztVersion, ValueBalance, OutputMismatch, MissingData, DuplicateRk, WrongBranch, Expired, ZsigHashMismatch, ZsigMalformed,
+            TooLarge, Parse, PcztVersion, ValueBalance, OutputMismatch, MissingData, DuplicateRk, WrongBranch, AppOutdated, Expired, ZsigHashMismatch, ZsigMalformed,
             SignatureInvalid, SignatureMissing, SighashMismatch, InvalidAppId, InvalidStorageLabel,
             StorageKeyMismatch, StorageCorrupted, StorageKeyForgotten, InvalidSeed, QuickUnlockNotSecure,
             QuickUnlockInvalidated, QuickUnlockCancelled, QuickUnlockFailed, Device { code: 0x0599 },
@@ -490,6 +498,9 @@ mod tests {
         assert_eq!(from_code(0x0512, Ctx::Sign), LeekError::TooMany);
         assert_eq!(from_code(0x0521, Ctx::Sign), LeekError::TransferCorrupted);
         assert_eq!(from_code(0x0518, Ctx::Sign), LeekError::DuplicateRk);
+        assert_eq!(from_code(0x0519, Ctx::Sign), LeekError::AppOutdated);
+        assert_eq!(LeekError::AppOutdated.code(), 520);
+        assert_eq!(LeekError::AppOutdated.recovery(), Recovery::DoNotRetry);
         assert_eq!(LeekError::DuplicateRk.code(), 517);
         assert_eq!(LeekError::DuplicateRk.recovery(), Recovery::DoNotRetry);
         assert_eq!((LeekError::WrongBranch.code(), LeekError::WrongBranch.recovery()), (518, Recovery::DoNotRetry));

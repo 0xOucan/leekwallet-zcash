@@ -2685,6 +2685,16 @@ public struct Features {
      * `storage_zip_number()`.
      */
     public var storageKey: UInt16?
+    /**
+     * The firmware's compatibility level; `None` when it reports none, as
+     * firmware from before this field does.
+     */
+    public var fwCompat: UInt32?
+    /**
+     * The board is older than `min_firmware_compat()`: show
+     * `board_update_text()`. A suggestion: it can still sign.
+     */
+    public var firmwareOutdated: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2693,7 +2703,15 @@ public struct Features {
          * The ZIP number of the board's App Storage Keys, or `None` without
          * `zGetStorageKey`; offer "unlock with the board" only when it equals
          * `storage_zip_number()`.
-         */storageKey: UInt16?) {
+         */storageKey: UInt16?, 
+        /**
+         * The firmware's compatibility level; `None` when it reports none, as
+         * firmware from before this field does.
+         */fwCompat: UInt32?, 
+        /**
+         * The board is older than `min_firmware_compat()`: show
+         * `board_update_text()`. A suggestion: it can still sign.
+         */firmwareOutdated: Bool) {
         self.`protocol` = `protocol`
         self.firmware = firmware
         self.model = model
@@ -2704,6 +2722,8 @@ public struct Features {
         self.maxTransparentInputs = maxTransparentInputs
         self.showAddress = showAddress
         self.storageKey = storageKey
+        self.fwCompat = fwCompat
+        self.firmwareOutdated = firmwareOutdated
     }
 }
 
@@ -2744,6 +2764,12 @@ extension Features: Equatable, Hashable {
         if lhs.storageKey != rhs.storageKey {
             return false
         }
+        if lhs.fwCompat != rhs.fwCompat {
+            return false
+        }
+        if lhs.firmwareOutdated != rhs.firmwareOutdated {
+            return false
+        }
         return true
     }
 
@@ -2758,6 +2784,8 @@ extension Features: Equatable, Hashable {
         hasher.combine(maxTransparentInputs)
         hasher.combine(showAddress)
         hasher.combine(storageKey)
+        hasher.combine(fwCompat)
+        hasher.combine(firmwareOutdated)
     }
 }
 
@@ -2779,7 +2807,9 @@ public struct FfiConverterTypeFeatures: FfiConverterRustBuffer {
                 maxPcztBytes: FfiConverterUInt64.read(from: &buf), 
                 maxTransparentInputs: FfiConverterUInt64.read(from: &buf), 
                 showAddress: FfiConverterBool.read(from: &buf), 
-                storageKey: FfiConverterOptionUInt16.read(from: &buf)
+                storageKey: FfiConverterOptionUInt16.read(from: &buf), 
+                fwCompat: FfiConverterOptionUInt32.read(from: &buf), 
+                firmwareOutdated: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -2794,6 +2824,8 @@ public struct FfiConverterTypeFeatures: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.maxTransparentInputs, into: &buf)
         FfiConverterBool.write(value.showAddress, into: &buf)
         FfiConverterOptionUInt16.write(value.storageKey, into: &buf)
+        FfiConverterOptionUInt32.write(value.fwCompat, into: &buf)
+        FfiConverterBool.write(value.firmwareOutdated, into: &buf)
     }
 }
 
@@ -4459,6 +4491,15 @@ public func applyZsig(pczt: Data, sent: Data, zsig: Data)throws  -> Data  {
 })
 }
 /**
+ * What to show when `Features.firmware_outdated` is true.
+ */
+public func boardUpdateText() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_func_board_update_text($0
+    )
+})
+}
+/**
  * Whether a serialized transaction can still be mined in the block after
  * `tip`. `WrongBranch` (518) or `Expired` (519): stop retrying, build and
  * sign again.
@@ -4519,6 +4560,16 @@ public func finishSdSign(pczt: Data, sent: Data, zsig: Data)throws  -> SignResul
         FfiConverterData.lower(pczt),
         FfiConverterData.lower(sent),
         FfiConverterData.lower(zsig),$0
+    )
+})
+}
+/**
+ * The oldest firmware level this SDK does not suggest updating; firmware
+ * that reports none counts as 1. See `Features.firmware_outdated`.
+ */
+public func minFirmwareCompat() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_func_min_firmware_compat($0
     )
 })
 }
@@ -4641,6 +4692,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_func_board_update_text() != 21485) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_func_check_broadcast() != 14767) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4657,6 +4711,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_finish_sd_sign() != 59129) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_func_min_firmware_compat() != 2035) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_preflight() != 44384) {

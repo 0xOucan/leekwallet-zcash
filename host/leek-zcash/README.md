@@ -61,6 +61,10 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 | `validate_app_id(app_id)` | the board's App identifier rules, checked on the host first |
 | `classify(&anyhow::Error) -> LeekError` | maps `leek-device` errors (for example from `Device::pair`) |
 
+Old boards: `Features::firmware_outdated()` is true below `MIN_FIRMWARE_COMPAT`,
+and a board that reports no `fw_compat` counts as 1. Show `BOARD_UPDATE_TEXT`. It
+is a suggestion: such a board can still sign.
+
 `SignOptions { view, progress, cancel, features, verify_account }`:
 `progress` receives `Checking`, `Uploading { sent, total }`,
 `ReviewOnDevice`, `Applying`. `cancel` is a `CancelToken` checked between
@@ -75,7 +79,8 @@ seed before anything is uploaded.
 One `LeekError` for everything, `#[non_exhaustive]`. `code()` is stable (1xx
 link, 2xx session and board, 3xx user, 4xx account and network, 5xx PCZT,
 6xx signatures, 7xx stored app data and quick unlock (706 to 709, see "Stored app data"), 900 an unknown firmware code; `DuplicateRk`, the board's
-`ZS_E_DUPLICATE_RK` (0x0518), is 517). `recovery()` says
+`ZS_E_DUPLICATE_RK` (0x0518), is 517; `AppOutdated`, `ZS_E_APP_OUTDATED`
+(0x0519), is 520: show its text, update the app). `recovery()` says
 `RetrySameLink`, `Reconnect` or `DoNotRetry`. Every firmware code in
 `docs/PROTOCOL.md` §6, `ZS_E_*` and `ZSIGN_E_*` is mapped (a few by call:
 code 0x0E is `AddressNotOurs` for an address check and `OutputMismatch` for

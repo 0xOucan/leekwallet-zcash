@@ -355,6 +355,8 @@ fn stored_app_data_seals_and_refuses() {
     assert!(matches!(validate_app_id("Not Valid".into()).unwrap_err(), LeekError::Storage { code: 700, .. }));
     assert!(StorageKey::from_bytes(vec![0; 31], "a.b".into(), 0, Network::Main).is_err());
     assert_eq!(storage_zip_number(), 65535);
+    assert_eq!(min_firmware_compat(), 2);
+    assert!(board_update_text().starts_with("Update your board"));
 }
 
 /// A foreign KeyWrapper as Kotlin or Swift would implement it: XOR with a

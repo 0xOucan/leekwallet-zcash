@@ -946,6 +946,10 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -965,6 +969,8 @@ internal interface IntegrityCheckingUniffiLib : Library {
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_apply_zsig(
 ): Short
+fun uniffi_leek_zcash_ffi_checksum_func_board_update_text(
+): Short
 fun uniffi_leek_zcash_ffi_checksum_func_check_broadcast(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_check_mined(
@@ -976,6 +982,8 @@ fun uniffi_leek_zcash_ffi_checksum_func_disable_quick_unlock(
 fun uniffi_leek_zcash_ffi_checksum_func_encode_account_record(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_finish_sd_sign(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_min_firmware_compat(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_preflight(
 ): Short
@@ -1252,6 +1260,8 @@ fun uniffi_leek_zcash_ffi_fn_func_account_record_type(uniffi_out_err: UniffiRust
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_apply_zsig(`pczt`: RustBuffer.ByValue,`sent`: RustBuffer.ByValue,`zsig`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_board_update_text(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_check_broadcast(`tx`: RustBuffer.ByValue,`network`: RustBuffer.ByValue,`tip`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 fun uniffi_leek_zcash_ffi_fn_func_check_mined(`signedTx`: RustBuffer.ByValue,`minedTx`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1264,6 +1274,8 @@ fun uniffi_leek_zcash_ffi_fn_func_encode_account_record(`record`: RustBuffer.ByV
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_finish_sd_sign(`pczt`: RustBuffer.ByValue,`sent`: RustBuffer.ByValue,`zsig`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_min_firmware_compat(uniffi_out_err: UniffiRustCallStatus, 
+): Int
 fun uniffi_leek_zcash_ffi_fn_func_preflight(`pczt`: RustBuffer.ByValue,`account`: RustBuffer.ByValue,`features`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 fun uniffi_leek_zcash_ffi_fn_func_prepare_for_signer(`pczt`: RustBuffer.ByValue,`ufvk`: RustBuffer.ByValue,`seedFingerprint`: RustBuffer.ByValue,`index`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -1414,6 +1426,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_board_update_text() != 21485.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_check_broadcast() != 14767.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1430,6 +1445,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_finish_sd_sign() != 59129.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_min_firmware_compat() != 2035.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_preflight() != 44384.toShort()) {
@@ -4721,7 +4739,17 @@ data class Features (
      * `zGetStorageKey`; offer "unlock with the board" only when it equals
      * `storage_zip_number()`.
      */
-    var `storageKey`: kotlin.UShort?
+    var `storageKey`: kotlin.UShort?, 
+    /**
+     * The firmware's compatibility level; `None` when it reports none, as
+     * firmware from before this field does.
+     */
+    var `fwCompat`: kotlin.UInt?, 
+    /**
+     * The board is older than `min_firmware_compat()`: show
+     * `board_update_text()`. A suggestion: it can still sign.
+     */
+    var `firmwareOutdated`: kotlin.Boolean
 ) {
     
     companion object
@@ -4743,6 +4771,8 @@ public object FfiConverterTypeFeatures: FfiConverterRustBuffer<Features> {
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterOptionalUShort.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -4756,7 +4786,9 @@ public object FfiConverterTypeFeatures: FfiConverterRustBuffer<Features> {
             FfiConverterULong.allocationSize(value.`maxPcztBytes`) +
             FfiConverterULong.allocationSize(value.`maxTransparentInputs`) +
             FfiConverterBoolean.allocationSize(value.`showAddress`) +
-            FfiConverterOptionalUShort.allocationSize(value.`storageKey`)
+            FfiConverterOptionalUShort.allocationSize(value.`storageKey`) +
+            FfiConverterOptionalUInt.allocationSize(value.`fwCompat`) +
+            FfiConverterBoolean.allocationSize(value.`firmwareOutdated`)
     )
 
     override fun write(value: Features, buf: ByteBuffer) {
@@ -4770,6 +4802,8 @@ public object FfiConverterTypeFeatures: FfiConverterRustBuffer<Features> {
             FfiConverterULong.write(value.`maxTransparentInputs`, buf)
             FfiConverterBoolean.write(value.`showAddress`, buf)
             FfiConverterOptionalUShort.write(value.`storageKey`, buf)
+            FfiConverterOptionalUInt.write(value.`fwCompat`, buf)
+            FfiConverterBoolean.write(value.`firmwareOutdated`, buf)
     }
 }
 
@@ -6149,6 +6183,18 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
     
 
         /**
+         * What to show when `Features.firmware_outdated` is true.
+         */ fun `boardUpdateText`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_board_update_text(
+        _status)
+}
+    )
+    }
+    
+
+        /**
          * Whether a serialized transaction can still be mined in the block after
          * `tip`. `WrongBranch` (518) or `Expired` (519): stop retrying, build and
          * sign again.
@@ -6220,6 +6266,19 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
     uniffiRustCallWithError(LeekException) { _status ->
     UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_finish_sd_sign(
         FfiConverterByteArray.lower(`pczt`),FfiConverterByteArray.lower(`sent`),FfiConverterByteArray.lower(`zsig`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * The oldest firmware level this SDK does not suggest updating; firmware
+         * that reports none counts as 1. See `Features.firmware_outdated`.
+         */ fun `minFirmwareCompat`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_min_firmware_compat(
+        _status)
 }
     )
     }

@@ -50,7 +50,7 @@ mod storage;
 mod ua;
 
 pub use account::{
-    get_account, get_account_with, get_features, seed_fingerprint, set_birthday, show_address, Account, AccountMeta,
+    BOARD_UPDATE_TEXT, MIN_FIRMWARE_COMPAT, get_account, get_account_with, get_features, seed_fingerprint, set_birthday, show_address, Account, AccountMeta,
     AccountProgress, AddressCheck, Features, Network,
     KEY_SOURCE, KNOWN_BRANCH_IDS, MAX_PCZT_BYTES, MAX_TRANSPARENT_INPUTS,
 };

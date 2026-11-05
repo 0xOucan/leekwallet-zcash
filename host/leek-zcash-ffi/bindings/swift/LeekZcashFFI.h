@@ -649,6 +649,12 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_account_record_type(RustCallStatus *_No
 RustBuffer uniffi_leek_zcash_ffi_fn_func_apply_zsig(RustBuffer pczt, RustBuffer sent, RustBuffer zsig, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_BOARD_UPDATE_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_BOARD_UPDATE_TEXT
+RustBuffer uniffi_leek_zcash_ffi_fn_func_board_update_text(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_CHECK_BROADCAST
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_CHECK_BROADCAST
 void uniffi_leek_zcash_ffi_fn_func_check_broadcast(RustBuffer tx, RustBuffer network, uint32_t tip, RustCallStatus *_Nonnull out_status
@@ -677,6 +683,12 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_encode_account_record(RustBuffer record
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_FINISH_SD_SIGN
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_FINISH_SD_SIGN
 RustBuffer uniffi_leek_zcash_ffi_fn_func_finish_sd_sign(RustBuffer pczt, RustBuffer sent, RustBuffer zsig, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_MIN_FIRMWARE_COMPAT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_MIN_FIRMWARE_COMPAT
+uint32_t uniffi_leek_zcash_ffi_fn_func_min_firmware_compat(RustCallStatus *_Nonnull out_status
+    
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_PREFLIGHT
@@ -1017,6 +1029,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_apply_zsig(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_BOARD_UPDATE_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_BOARD_UPDATE_TEXT
+uint16_t uniffi_leek_zcash_ffi_checksum_func_board_update_text(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_CHECK_BROADCAST
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_CHECK_BROADCAST
 uint16_t uniffi_leek_zcash_ffi_checksum_func_check_broadcast(void
@@ -1050,6 +1068,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_encode_account_record(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_FINISH_SD_SIGN
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_FINISH_SD_SIGN
 uint16_t uniffi_leek_zcash_ffi_checksum_func_finish_sd_sign(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_MIN_FIRMWARE_COMPAT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_MIN_FIRMWARE_COMPAT
+uint16_t uniffi_leek_zcash_ffi_checksum_func_min_firmware_compat(void
     
 );
 #endif

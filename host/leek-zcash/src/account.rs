@@ -142,6 +142,19 @@ pub struct Features {
     /// app offers "unlock with the board" only when this is
     /// [`STORAGE_ZIP_NUMBER`](crate::STORAGE_ZIP_NUMBER).
     pub storage_key: Option<u16>,
+    /// The firmware's `fwCompat` from `zGetFeatures`; `None` when it reports
+    /// none, as firmware from before this field does.
+    pub fw_compat: Option<u32>,
+}
+
+impl Features {
+    /// True when the board's firmware is older than
+    /// [`MIN_FIRMWARE_COMPAT`]: suggest an update with [`BOARD_UPDATE_TEXT`].
+    /// A suggestion and not a refusal: such a board still signs what its
+    /// signers accept. Only meaningful for what [`get_features`] returned.
+    pub fn firmware_outdated(&self) -> bool {
+        self.fw_compat.unwrap_or(1) < MIN_FIRMWARE_COMPAT
+    }
 }
 
 impl Default for Features {
@@ -159,6 +172,7 @@ impl Default for Features {
             max_transparent_inputs: MAX_TRANSPARENT_INPUTS,
             show_address: true,
             storage_key: None,
+            fw_compat: None,
         }
     }
 }
@@ -308,6 +322,15 @@ pub fn set_birthday(device: &mut Device, index: u32, network: Network, height: u
     device.z_set_birthday(index, network.as_str(), height).map_err(|e| from_device(&e, Ctx::Other))
 }
 
+/// The oldest firmware (its `fwCompat`) this SDK does not suggest updating.
+/// Firmware that reports no `fwCompat` counts as level 1. See
+/// [`Features::firmware_outdated`].
+pub const MIN_FIRMWARE_COMPAT: u32 = 2;
+
+/// What to show when [`Features::firmware_outdated`] is true.
+pub const BOARD_UPDATE_TEXT: &str =
+    "Update your board: its firmware is older than this app expects. It can still sign; the update has the NU7 checks.";
+
 /// `getFeatures` and `zGetFeatures`: the firmware and what its signer
 /// accepts. Fields the firmware does not report keep their
 /// [`Features::default`] value.
@@ -340,5 +363,6 @@ pub fn get_features(device: &mut Device) -> Result<Features, LeekError> {
     }
     f.show_address = device::get_uint(&z, "showAddress").unwrap_or(0) == 1;
     f.storage_key = device::get_uint(&z, "storageKey").ok().and_then(|n| u16::try_from(n).ok());
+    f.fw_compat = device::get_uint(&z, "fwCompat").ok().and_then(|n| u32::try_from(n).ok());
     Ok(f)
 }

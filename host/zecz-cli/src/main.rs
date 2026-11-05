@@ -403,6 +403,9 @@ fn connect_device(port: &str) -> Result<Device> {
     })?;
     println!("Paired.");
     dev.ensure_unlocked()?;
+    if leek_zcash::get_features(&mut dev).is_ok_and(|f| f.firmware_outdated()) {
+        println!("{}", leek_zcash::BOARD_UPDATE_TEXT);
+    }
     Ok(dev)
 }
 

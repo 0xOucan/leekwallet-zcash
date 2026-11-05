@@ -4333,6 +4333,7 @@ dependencies = [
  "anyhow",
  "clap",
  "hex",
+ "leek-zcash",
  "tokio",
  "zecz-core",
 ]
