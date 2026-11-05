@@ -184,5 +184,32 @@ static const zv_pczt_vector ZV_PCZT[] = {
   { "r_duplicate_rk_cross_pool", "../../vectors/pczt/r_duplicate_rk_cross_pool.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -24,
     0, 0x00000000, 0, 0, { },
     0, { } },
+  { "main_iw_send_nu7", "../../vectors/pczt/main_iw_send_nu7.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "3fab475834ba49202f9167fce567c058fcf542663e8050dc401f42ad287910bf", 0x77190ad9, 10000, 2, {
+      { 2, 0, 100000, "u1yr0x0lh5svjdqqq20rfgwzkyzy3wv94740zjgr07yjkngmpquc4gjzlsp32kscwtw6z43rtx9xzvf96l597m7ctv3v93m87tkqwzs2m9", "LeekWallet Zcash NU7" },
+      { 2, 1, 890000, "", "" }, },
+    0, { } },
+  { "main_iw_send_nu7_compact", "../../vectors/pczt/main_iw_send_nu7_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "3fab475834ba49202f9167fce567c058fcf542663e8050dc401f42ad287910bf", 0x77190ad9, 10000, 2, {
+      { 2, 0, 100000, "u1yr0x0lh5svjdqqq20rfgwzkyzy3wv94740zjgr07yjkngmpquc4gjzlsp32kscwtw6z43rtx9xzvf96l597m7ctv3v93m87tkqwzs2m9", "LeekWallet Zcash NU7" },
+      { 2, 1, 890000, "", "" }, },
+    0, { } },
+  { "main_iw_send_last_nu6_3", "../../vectors/pczt/main_iw_send_last_nu6_3.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "4f44b0c4fc32678b722bdd38d1b21dd3865a051e6269f1639d2c3aae1e08ce7b", 0x37a5165b, 10000, 2, {
+      { 2, 0, 100000, "u1yr0x0lh5svjdqqq20rfgwzkyzy3wv94740zjgr07yjkngmpquc4gjzlsp32kscwtw6z43rtx9xzvf96l597m7ctv3v93m87tkqwzs2m9", "LeekWallet Zcash NU6.3" },
+      { 2, 1, 890000, "", "" }, },
+    0, { } },
+  { "main_t_shield_nu7", "../../vectors/pczt/main_t_shield_nu7.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "e9baa707ebe479855b11737fd7610f045c2cb7f529d5efa03f64ec9020fc1997", 0x77190ad9, 20000, 1, {
+      { 2, 1, 480000, "", "" }, },
+    2, {
+      { 300000, 0, 0, "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F", "58c8c6fb2136332a96e74e91c71595b605b59b894995dfa0bedf3c8174fa8e8e" },
+      { 200000, 1, 1, "t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v", "df93f3352f8d0a5db0d7567414f63ad99ef8439870f6824c8f2485ede0f30168" }, } },
+  { "main_t_shield_nu7_compact", "../../vectors/pczt/main_t_shield_nu7_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, 0,
+    "e9baa707ebe479855b11737fd7610f045c2cb7f529d5efa03f64ec9020fc1997", 0x77190ad9, 20000, 1, {
+      { 2, 1, 480000, "", "" }, },
+    2, {
+      { 300000, 0, 0, "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F", "58c8c6fb2136332a96e74e91c71595b605b59b894995dfa0bedf3c8174fa8e8e" },
+      { 200000, 1, 1, "t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v", "df93f3352f8d0a5db0d7567414f63ad99ef8439870f6824c8f2485ede0f30168" }, } },
 };
 #define ZV_PCZT_COUNT (sizeof ZV_PCZT / sizeof ZV_PCZT[0])

@@ -37,8 +37,14 @@ use zip32::{fingerprint::SeedFingerprint, AccountId};
 const H_NU6_2: u32 = 4_100_000;
 const H_NU6_3: u32 = 4_200_000;
 const H_NU7: u32 = 4_500_000;
-/// Mainnet: NU6.3 activates at 3,428,143; NU7 has no height yet.
+/// Mainnet: NU6.3 activates at 3,428,143 and NU7 at 3,543,405.
 const H_MAIN_NU6_3: u32 = 3_520_000;
+const H_MAIN_LAST_NU6_3: u32 = 3_543_404;
+const H_MAIN_NU7: u32 = 3_543_405;
+/// The expiry delta `iw_send_nu7` was generated with, before upstream made the
+/// default depend on the branch (120 blocks under NU7). Pinned so that vector
+/// stays byte-identical; `main_iw_send_nu7` carries the new default.
+const OLD_EXPIRY_DELTA: u32 = 40;
 
 const TEST: Network = Network::TestNetwork;
 const MAIN: Network = Network::MainNetwork;
@@ -205,11 +211,35 @@ fn build_send(tag: u64, height: u32, sender: &Account, input: u64, dest: Dest, a
     build_send_from(tag, height, sender, vec![(note, path)], anchor, dest, amount, memo, fee)
 }
 
+/// `build_send` with an explicit expiry height, not upstream's default.
+#[allow(clippy::too_many_arguments)]
+fn build_send_expiring(tag: u64, height: u32, expiry: u32, sender: &Account, input: u64, dest: Dest, amount: u64, memo: &str, fee: u64) -> Built {
+    let (note, anchor, path) = ironwood_note(&sender.fvk, input, tag);
+    build_send_with(tag, height, Some(expiry), sender, vec![(note, path)], anchor, dest, amount, memo, fee)
+}
+
 /// `build_send` spending the given notes of `sender`, all under `anchor`.
 #[allow(clippy::too_many_arguments)]
 fn build_send_from(
     tag: u64,
     height: u32,
+    sender: &Account,
+    notes: Vec<(orchard::Note, orchard::tree::MerklePath)>,
+    anchor: orchard::Anchor,
+    dest: Dest,
+    amount: u64,
+    memo: &str,
+    fee: u64,
+) -> Built {
+    build_send_with(tag, height, None, sender, notes, anchor, dest, amount, memo, fee)
+}
+
+/// `build_send_from` with an optional explicit expiry height.
+#[allow(clippy::too_many_arguments)]
+fn build_send_with(
+    tag: u64,
+    height: u32,
+    expiry: Option<u32>,
     sender: &Account,
     notes: Vec<(orchard::Note, orchard::tree::MerklePath)>,
     anchor: orchard::Anchor,
@@ -233,6 +263,9 @@ fn build_send_from(
             ironwood_padding: BundlePadding::DEFAULT,
         },
     );
+    if let Some(expiry) = expiry {
+        builder = builder.with_expiry_height(BlockHeight::from_u32(expiry));
+    }
     for (note, path) in notes {
         builder.add_ironwood_spend::<zip317::FeeRule>(sender.fvk.clone(), note, path).unwrap();
     }
@@ -767,7 +800,7 @@ fn main() {
     push_ok("iw_send_transparent", "Ironwood note to a tm address, change back to self (v6, NU6.3)", &b, &mut vs);
 
     // 3. The same kind of send under the NU7 branch id (v6, same rules).
-    let c = build_send(3, H_NU7, &sender, 1_000_000, Dest::Shielded(rcpt_ua.clone(), rcpt_addr), 250_000, "NU7 branch", 10_000);
+    let c = build_send_expiring(3, H_NU7, H_NU7 + OLD_EXPIRY_DELTA, &sender, 1_000_000, Dest::Shielded(rcpt_ua.clone(), rcpt_addr), 250_000, "NU7 branch", 10_000);
     push_ok("iw_send_nu7", "Ironwood note to an external UA under NU7 (v6, branch 0x77190ad9)", &c, &mut vs);
 
     // 4. An Orchard-pool note spent into Ironwood: the Orchard bundle carries
@@ -1019,6 +1052,22 @@ fn main() {
     let i_rk = *d.pczt.ironwood().actions()[0].spend().rk();
     let d_bytes = d.pczt.clone().serialize().unwrap();
     vs.push(refuse("r_duplicate_rk_cross_pool", "Vector orchard_to_ironwood with the Orchard spend's rk copied onto an Ironwood action", &patch_unique(&d_bytes, &i_rk, &o_rk), SENDER, "duplicate_rk"));
+
+    // NU7 on mainnet, either side of the activation height, with upstream's
+    // default expiry for each branch: target + 40 before, target + 120 from
+    // NU7 (ZIP 218). Released firmware has to sign these without a reflash.
+    let branch_expiry = |b: &Built| (u32::from(*b.pczt.global().consensus_branch_id()), *b.pczt.global().expiry_height());
+    let mn = build_send(60, H_MAIN_NU7, &m_sender, 1_000_000, Dest::Shielded(m_rcpt_ua.clone(), m_rcpt_addr), 100_000, "LeekWallet Zcash NU7", 10_000);
+    assert_eq!(branch_expiry(&mn), (0x7719_0ad9, H_MAIN_NU7 + 120));
+    push_ok_on(MAIN, "main_iw_send_nu7", "Mainnet: Ironwood send at the NU7 activation height (v6, branch 0x77190ad9, expiry target + 120)", &mn, &mut vs);
+    push_ok_on(MAIN, "main_iw_send_nu7_compact", "Vector main_iw_send_nu7 in the compact signer view (v2)", &compact_view(&mn), &mut vs);
+    let ml = build_send(61, H_MAIN_LAST_NU6_3, &m_sender, 1_000_000, Dest::Shielded(m_rcpt_ua.clone(), m_rcpt_addr), 100_000, "LeekWallet Zcash NU6.3", 10_000);
+    assert_eq!(branch_expiry(&ml), (0x37a5_165b, H_MAIN_LAST_NU6_3 + 40));
+    push_ok_on(MAIN, "main_iw_send_last_nu6_3", "Mainnet: Ironwood send one block below NU7 (v6, branch 0x37a5165b, expiry target + 40)", &ml, &mut vs);
+    let mns = build_t_send(62, H_MAIN_NU7, &m_sender, &m_coins, None, None, None, 20_000, TDeriv::Ours, None);
+    assert_eq!(branch_expiry(&mns), (0x7719_0ad9, H_MAIN_NU7 + 120));
+    push_ok_on(MAIN, "main_t_shield_nu7", "Mainnet: two transparent coins shielded at the NU7 activation height (v6, branch 0x77190ad9, m/44'/133')", &mns, &mut vs);
+    push_ok_on(MAIN, "main_t_shield_nu7_compact", "Vector main_t_shield_nu7 in the compact signer view (v2)", &compact_view(&mns), &mut vs);
 
     fs::write(format!("{dir}/pczt.json"), serde_json::to_string_pretty(&vs).unwrap() + "\n").unwrap();
     fs::write(format!("{dir}/pczt_vectors.h"), c_header(&vs)).unwrap();
