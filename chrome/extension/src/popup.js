@@ -18,6 +18,7 @@
 import { EngineClient } from './engine-client.js';
 import { formatZec, historyEntry } from './format.js';
 import { BLE_TAB_WHY, LocalBoard, RemoteBoard, USB_TAB_WHY, bluetoothHelp, grantUsb, inTab, usbPlan } from './board-client.js';
+import { BOARD_UPDATE_TEXT, firmwareOutdated } from './board/device.js';
 import { passphraseComplaint } from './board/host.js';
 
 const root = document.getElementById('root');
@@ -665,6 +666,7 @@ function boardSection() {
         s.kind === 'usb' ? h('button', { class: 'link', id: 'switch-ble', onclick: () => void switchToBluetooth(), disabled: busy }, 'Switch to Bluetooth') : null,
         h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, disconnectBoard), disabled: busy }, 'Disconnect'),
       ),
+      s.features && firmwareOutdated(s.features) ? h('p', { class: 'notice', id: 'board-update' }, BOARD_UPDATE_TEXT) : null,
       ui.usbTabOnly && ui.board?.kind === 'usb-tab'
         ? h('p', { class: 'notice', id: 'usb-tab-only' }, 'This browser gave the USB port to this tab only, so the board is connected from here: keep this tab open while you use it.')
         : null,
