@@ -124,7 +124,17 @@ impl FramePort for JniBlePort {
 }
 
 fn throw(env: &mut JNIEnv, e: &anyhow::Error) {
-    let _ = env.throw_new("java/lang/IllegalStateException", format!("{e:#}"));
+    let _ = env.throw_new("java/lang/IllegalStateException", error_text(e));
+}
+
+/// What the app shows for `e`: the device's reason, or the one sentence every
+/// host uses when the board refused a transaction only an outdated app builds.
+fn error_text(e: &anyhow::Error) -> String {
+    if device::is_code(e, device::ERR_APP_OUTDATED) {
+        device::APP_UPDATE_TEXT.to_string()
+    } else {
+        format!("{e:#}")
+    }
 }
 
 fn device<'a>(handle: jlong) -> &'a mut Device {
@@ -191,6 +201,37 @@ pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_ensureUnlock
 }
 
 /// JSON: {"account","network","ufvk","ua","tAddress","seedFingerprint"(hex),"birthday"?}
+/// The board's `fwCompat`; firmware that reports none counts as level 1.
+/// Reading it needs a session, so call it after `pair`.
+#[no_mangle]
+pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_fwCompat<'l>(
+    mut env: JNIEnv<'l>, _c: JClass<'l>, handle: jlong,
+) -> jint {
+    match device(handle).z_fw_compat() {
+        Ok(level) => level.unwrap_or(1) as jint,
+        Err(e) => { throw(&mut env, &e); 0 }
+    }
+}
+
+/// True when a board at this `fwCompat` should be told to update.
+#[no_mangle]
+pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_firmwareOutdated<'l>(
+    _env: JNIEnv<'l>, _c: JClass<'l>, fw_compat: jint,
+) -> jboolean {
+    device::firmware_outdated(Some(fw_compat as u32)) as jboolean
+}
+
+/// What to show when `firmwareOutdated` is true.
+#[no_mangle]
+pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_boardUpdateText<'l>(
+    env: JNIEnv<'l>, _c: JClass<'l>,
+) -> JString<'l> {
+    match env.new_string(device::BOARD_UPDATE_TEXT) {
+        Ok(s) => s,
+        Err(_) => JString::default(),
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_getAccount<'l>(
     mut env: JNIEnv<'l>, _c: JClass<'l>, handle: jlong, account: jint, network: JString<'l>,
@@ -255,5 +296,27 @@ pub extern "system" fn Java_io_leekwallet_zcash_hw_LeekDeviceNative_sign<'l>(
     match r.and_then(|z| Ok(env.byte_array_from_slice(&z)?)) {
         Ok(a) => a,
         Err(e) => { throw(&mut env, &e); JByteArray::default() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use leek_device::device::DeviceError;
+
+    #[test]
+    fn the_outdated_app_refusal_says_what_to_do() {
+        let e = anyhow::Error::new(DeviceError { code: device::ERR_APP_OUTDATED, message: "app outdated".into() });
+        assert_eq!(error_text(&e), device::APP_UPDATE_TEXT);
+        assert!(error_text(&e).starts_with("Update your app"));
+        // Through added context as well: the code still decides.
+        assert_eq!(error_text(&e.context("signing")), device::APP_UPDATE_TEXT);
+    }
+
+    #[test]
+    fn other_errors_keep_the_device_reason() {
+        let e = anyhow::Error::new(DeviceError { code: device::ERR_ZSIGN_BASE | 3, message: "wrong network".into() });
+        assert!(error_text(&e).contains("wrong network"));
+        assert!(error_text(&anyhow::anyhow!("link lost")).contains("link lost"));
     }
 }

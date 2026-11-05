@@ -59,6 +59,25 @@ pub const ERR_APP_OUTDATED: u64 = ERR_ZSIGN_BASE | 25;
 /// the field. Guidance, not a security boundary.
 pub const HOST_COMPAT: u32 = 2;
 
+/// The oldest firmware (its `fwCompat`) a host does not suggest updating.
+/// Firmware that reports no `fwCompat` counts as level 1. See
+/// [`firmware_outdated`].
+pub const MIN_FIRMWARE_COMPAT: u32 = 2;
+
+/// What to show when [`firmware_outdated`] is true.
+pub const BOARD_UPDATE_TEXT: &str =
+    "Update your board: its firmware is older than this app expects. It can still sign; the update has the NU7 checks.";
+
+/// What to show for [`ERR_APP_OUTDATED`].
+pub const APP_UPDATE_TEXT: &str =
+    "Update your app: it built this transaction for network rules that have ended. Nothing was signed.";
+
+/// A board's `fwCompat` is older than this host expects, or it reports none:
+/// suggest an update with [`BOARD_UPDATE_TEXT`]. Nothing is blocked.
+pub fn firmware_outdated(fw_compat: Option<u32>) -> bool {
+    fw_compat.unwrap_or(1) < MIN_FIRMWARE_COMPAT
+}
+
 /// An error frame from the device.
 #[derive(Debug)]
 pub struct DeviceError {
@@ -598,6 +617,13 @@ impl Device {
         Ok(get_uint(&r, "stored")? == 1)
     }
 
+    /// The board's `fwCompat` from `zGetFeatures`, or `None` when it reports
+    /// none, as firmware before the field does.
+    pub fn z_fw_compat(&mut self) -> Result<Option<u32>> {
+        let z = self.call("zGetFeatures", vec![], SHORT)?;
+        Ok(get_uint(&z, "fwCompat").ok().map(|v| v as u32))
+    }
+
     /// Upload a PCZT, let the user review it on the device, and return the
     /// sighash they approved with the device's signatures.
     pub fn z_sign(&mut self, pczt: &[u8], account: u32, network: &str,
@@ -745,6 +771,27 @@ mod tests {
 
     fn account_reply() -> Value {
         Value::Map(vec![(Value::Text("ufvk".into()), Value::Text("uviewtest1...".into()))])
+    }
+
+    #[test]
+    fn the_firmware_level_is_read_from_zgetfeatures() {
+        let level = Value::Map(vec![(Value::Text("fwCompat".into()), Value::Integer(2.into()))]);
+        let none = Value::Map(vec![(Value::Text("backend".into()), Value::Text("zcash".into()))]);
+        let (mut dev, asked) = scripted(vec![Ok(level), Ok(none)]);
+        assert_eq!(dev.z_fw_compat().unwrap(), Some(2));
+        assert!(!firmware_outdated(Some(MIN_FIRMWARE_COMPAT)));
+        // A v0.1.0 board answers with no fwCompat: level 1, so outdated.
+        assert_eq!(dev.z_fw_compat().unwrap(), None);
+        assert!(firmware_outdated(None));
+        assert!(firmware_outdated(Some(1)));
+        assert_eq!(asked.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_refusal_for_an_outdated_app_keeps_its_code() {
+        let (mut dev, _) = scripted(vec![Err((ERR_APP_OUTDATED, "app outdated"))]);
+        let e = dev.z_sign(&[0u8; 4], 0, "main", |_, _| {}).unwrap_err();
+        assert!(is_code(&e, ERR_APP_OUTDATED), "{e:#}");
     }
 
     #[test]
