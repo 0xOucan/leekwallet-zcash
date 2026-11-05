@@ -11,7 +11,9 @@ about 02:20 UTC on 2026-11-06.
   siblings) set the height.
 - **Update the boards too.** The new firmware is a suggestion, not a
   requirement: a v0.1.0 board signs NU7 in the simulator suites, and new apps
-  still use it. The new firmware adds the checks under "Version notices". It
+  still use it. The new firmware adds the checks under "Version notices", and
+  what v0.1.0 lacks: "Share view key?" before the UFVK, and the refusal of a
+  repeated rk (on v0.1.0 only the host's preflight stops that). It
   **has not been tested on a board yet**. The crates did not change the PCZT wire
   format: regenerating `vectors/` with them leaves all 42 existing vectors and
   `keys.json` byte-identical (with `iw_send_nu7`'s old 40-block expiry pinned).

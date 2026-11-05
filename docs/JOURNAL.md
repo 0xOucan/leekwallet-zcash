@@ -1836,3 +1836,53 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   the idle return with the PIN wiped and the tries kept.
 - Flashed on the board (2026-10-25): the owner confirmed the loop, the
   push to the PIN and the fallback.
+
+### NU7 (2026-11-05)
+- Mainnet NU7 (ZIP 259, branch `0x77190ad9`, block 3,543,405, about 02:20 UTC on
+  2026-11-06). The rev v0.1.0 used has no mainnet height for it, so past it the
+  hosts build NU6.3, the board signs, and nodes reject. All hosts moved to the
+  released crates: `zcash_primitives 0.31.0`, `zcash_client_backend 0.25.0`,
+  `zcash_client_sqlite 0.23.0`, `zcash_keys 0.17.0`, `zcash_protocol 0.11.0`,
+  `pczt 0.10.0`, Rust 1.89 or newer. The tip read 3,542,983, branch NU6.3, at
+  17:40 UTC (read-only).
+- PCZT format: unchanged. The 42 older vectors and `keys.json` regenerate
+  byte-identical with `iw_send_nu7`'s old expiry pinned. Without the pin only
+  that vector and its compact view change, 66 bytes: the expiry, and a dummy
+  spend's signature over the sighash, because the default delta is 120 from NU7.
+- Databases: same 75 migrations, no schema difference, and v0.1.0 code opens a
+  database the new code has opened (`tests/old_db.rs`, with a fixture written by
+  v0.1.0). So this step is not one-way. Going back is still useless past the
+  activation: that app builds NU6.3.
+- Spacing and expiry: the apps sync every 25 s, the birthday margin is 288 blocks,
+  and the review shows the upgrade and the real expiry (120 blocks from NU7, about
+  50 minutes, as 40 blocks were). No host retries a broadcast on its own. A
+  transaction for an older branch is refused before proving, storing and each
+  broadcast (`check_broadcastable`, SDK `check_broadcast`, 518 and 519). One
+  already stored stays pending, then "expired, never mined", and its coins return.
+- The release takes new firmware. Boards should be updated; it is a suggestion
+  (`fwCompat`, `MIN_FIRMWARE_COMPAT`). The board says "Update your app" for a
+  request without `hostCompat`, and refuses NU6.3 with expiry at or above NU7 + 40
+  in both signers (`ZS_E_APP_OUTDATED`, `0x0519`, SDK 520). See
+  [MAINNET.md](zcash/MAINNET.md). Pairing, "Share view key?" and the review are
+  untouched. Guidance only: either side can lie.
+- Run on the PC at `62b8f5f`, the commit before this entry (docs only since), with
+  clean `target/` directories after a power cut: `vectors/gen` 51 PCZTs, no diff;
+  host `cargo test --workspace` 157 passed, 6 ignored; `app/src-tauri` workspace 46
+  passed, 3 ignored; app typecheck, `pnpm test`, `pnpm test:zdev`; Chrome board test
+  44/44; the WASM engine and the spike build; `make -C firmware/sim test` (40
+  suites, 51 vectors through both signers); `pio run` for `esp32s3cam` and
+  `esp32s3cam-color`. The bindings were regenerated.
+- Chrome e2e, read-only testnet: 68/69. "The next sync finds the spends again"
+  fails: the balance recovers, but an earlier step stores the spend, so
+  `vanishedCoins` stays 0. The same check fails at v0.1.0 with the old crates, so
+  the crates did not cause it. `chrome/engine` has no native tests: it builds for
+  wasm32 only, so its NU7 checks are not unit tested.
+- Across versions, in the simulator. The v0.1.0 app's `test:zdev` against the new
+  zdev passes and gets the notice. The new SDK's `tests/zdev.rs` against a v0.1.0
+  zdev (`ZDEV_BIN`): 2 pass, including the signing flow, and that board reads as
+  outdated. 3 fail on what v0.1.0 lacks: `zGetSeedFingerprint`, `zGetStorageKey`,
+  the repeated-rk refusal.
+- **Not run:** anything on a board, including the new firmware, and anything on
+  mainnet past the activation. To do by hand: a send and a shield over USB, BLE
+  and SD after block 3,543,405, the board's `Upgrade: NU7`, "Update your app" on
+  both panels, a board update from v0.1.0, and sync cadence on a phone.
