@@ -690,7 +690,35 @@ static void send_wallet_error(WalletError err)
 
 static void send_zsign_refusal(int rc)
 {
+    if (rc == ZS_E_APP_OUTDATED) {
+        ui_notify_app_outdated();
+    }
     send_error((uint16_t)(ERR_ZSIGN_BASE | ((unsigned)-rc & 0xFF)), zcash_sign_strerror(rc));
+}
+
+/*
+ * Hosts send hostCompat with zGetSeedFingerprint, zGetAccount and zSignBegin;
+ * apps from before it send nothing, and every firmware ignores a field it does
+ * not know. Absent or too low: "Update your app" on the board, once a session.
+ * A notice and nothing more: the caller carries on, and no check depends on it.
+ */
+static uint32_t app_notice_session;
+static bool app_notice_shown;
+
+static void note_host_compat(const uint8_t *payload, size_t len)
+{
+    CborItem item;
+    if (cbor_map_find(payload, len, "hostCompat", &item) && item.type == CBOR_UINT &&
+        item.value >= LEEK_HOST_COMPAT_MIN) {
+        return;
+    }
+    const uint32_t now = session_generation();
+    if (app_notice_shown && app_notice_session == now) {
+        return;
+    }
+    app_notice_shown = true;
+    app_notice_session = now;
+    ui_notify_app_outdated();
 }
 
 static const char *network_title(uint8_t network)
@@ -942,6 +970,7 @@ static bool handle_zsign(const char *method, const uint8_t *payload, size_t len,
     int rc;
 
     if (strcmp(method, "zSignBegin") == 0) {
+        note_host_compat(payload, len);
         /* Before any upload: a PCZT for a wallet that is not open yet would
          * only be refused at the end, after every chunk had crossed. */
         WalletError werr = wait_for_wallet();
@@ -1384,6 +1413,7 @@ static void dispatch(const uint8_t *payload, size_t len)
             send_session_error(ERR_SESSION, "session required");
             return;
         }
+        note_host_compat(payload, len);
         if (!pin_is_unlocked()) {
             send_error(ERR_NOT_UNLOCKED, "device is locked");
             return;
@@ -1465,6 +1495,7 @@ static void dispatch(const uint8_t *payload, size_t len)
             send_session_error(ERR_SESSION, "session required");
             return;
         }
+        note_host_compat(payload, len);
         if (!pin_is_unlocked()) {
             send_error(ERR_NOT_UNLOCKED, "device is locked");
             return;
@@ -1506,7 +1537,10 @@ static void dispatch(const uint8_t *payload, size_t len)
          * before a session, like getFeatures. */
         cbor_write_map(&w, 1);
         cbor_write_text(&w, "result");
-        cbor_write_map(&w, 9);
+        cbor_write_map(&w, 10);
+        /* Lets a host suggest a board update; older firmware has no such field. */
+        cbor_write_text(&w, "fwCompat");
+        cbor_write_uint(&w, LEEK_FW_COMPAT);
         cbor_write_text(&w, "backend");
         cbor_write_text(&w, zcash_sign_backend_name(zcash_sign_backend()));
         cbor_write_text(&w, "branchIds");

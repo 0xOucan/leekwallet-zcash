@@ -29,8 +29,8 @@ tokio = { version = "1", features = ["rt"] }
 # Offline wallets for the tests (empty tree states, no lightwalletd) and a
 # real transaction to store in one, as host/zecz-core's tests build them
 # (the same pinned revision).
-pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
-zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+pczt = { version = "=0.10.0", features = ["orchard", "transparent", "signer", "prover", "tx-extractor"] }
+zcash_client_backend = { version = "=0.25.0" }
+zcash_primitives = { version = "=0.31.0" }
+zcash_protocol = { version = "=0.11.0" }
 rand = { version = "0.10", features = ["sys_rng"] }

@@ -22,6 +22,10 @@ use leek_zcash::{
 };
 
 fn zdev_binary() -> Option<PathBuf> {
+    // Another firmware's zdev, such as a v0.1.0 build: new host against old board.
+    if let Some(bin) = std::env::var_os("ZDEV_BIN") {
+        return Some(PathBuf::from(bin));
+    }
     static BUILT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let sim = repo().join("firmware/sim");
     let ok = *BUILT.get_or_init(|| {
@@ -91,6 +95,15 @@ fn a_wallet_imports_checks_and_signs() {
     assert!(f.spend_pools.iter().any(|p| p == "ironwood"), "{f:?}");
     assert_eq!(f.branch_ids, leek_zcash::KNOWN_BRANCH_IDS.to_vec());
     assert!(f.show_address);
+    // ZDEV_BIN may be an old board (see below); this firmware's level otherwise.
+    if std::env::var_os("ZDEV_BIN").is_none() {
+        assert_eq!(f.fw_compat, Some(leek_zcash::MIN_FIRMWARE_COMPAT), "{f:?}");
+        assert!(!f.firmware_outdated());
+    } else {
+        // Run with an old board's zdev: it reports no level, and is told to update.
+        assert_eq!(f.fw_compat, None, "{f:?}");
+        assert!(f.firmware_outdated());
+    }
 
     let k = key("test/abandon-art/pp0/acct0");
     let a = get_account(&mut dev, 0, Network::Test).expect("account");
@@ -161,6 +174,11 @@ fn refusals_are_typed() {
         let e = dev.z_sign(&v(name), 0, "test", |_, _| {}).expect_err("the board refuses it");
         assert_eq!(leek_zcash::classify(&e), LeekError::DuplicateRk, "{name}");
     }
+    // What an app without NU7 builds past it: the board refuses, 0x0519, and the
+    // SDK has one text for it. An old app shows the board's own "Update your app".
+    let e = dev.z_sign(&v("r_old_app_after_nu7"), 0, "test", |_, _| {}).expect_err("the board refuses it");
+    assert_eq!(leek_zcash::classify(&e), LeekError::AppOutdated);
+    assert!(e.to_string().contains("Update your app"), "{e}");
 }
 
 #[test]

@@ -62,8 +62,8 @@ suggests a paste problem.
 `libxdo-dev` and `libayatana-appindicator3-dev` are only needed for global
 shortcuts and a tray icon, neither of which this app uses.
 
-**Rust 1.88 or newer** is also required — Tauri's dependency tree moved past
-what Ubuntu's packaged `rustc` provides. `rustup default stable` is enough; a
+**Rust 1.89 or newer** is also required — Tauri's dependency tree and librustzcash's
+releases (MSRV 1.89) moved past what Ubuntu's packaged `rustc` provides. `rustup default stable` is enough; a
 distro Rust will fail with `rustc 1.85.1 is not supported by the following
 packages`.
 
@@ -288,9 +288,9 @@ board), and opens the wallet of that network, seed fingerprint and account.
 When this device has none it reads the account (`zGetAccount`: the board
 shares the viewing key only after OK on its "Share view key?", once per
 session, and the status line says so) and creates it (`src/zcash-auto.ts`): born at the board's birthday for that
-network, or, when the board has none, at the chain tip minus 100 blocks,
+network, or, when the board has none, at the chain tip minus 288 blocks (two hours of NU7 blocks),
 which is then written to the board with `zSetAccountMeta` as the desktop
-app does. Then it syncs (`src/sync-scheduler.ts`): on open, every 75 s while
+app does. Then it syncs (`src/sync-scheduler.ts`): on open, every 25 s (one NU7 block) while
 the app is in front, right after a send or a shield; never two at once, never
 between a proposal and its finish, and not in the background (Android, a
 minimised window). The home screen says *Synced at block N*, *Syncing X%* or

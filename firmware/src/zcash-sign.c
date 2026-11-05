@@ -356,6 +356,8 @@ const char *zcash_sign_strerror(int code)
         case ZS_E_SIGN:               return "signing failed";
         case ZS_E_INTERNAL:           return "internal error";
         case ZS_E_DUPLICATE_RK:       return "duplicate action key (rk)";
+        /* Short: the airgap screen shows 21 characters, an old app all of it. */
+        case ZS_E_APP_OUTDATED:       return "Update your app";
         case ZSIGN_E_STATE:           return "no upload in progress";
         case ZSIGN_E_TOO_LARGE:       return "PCZT too large";
         case ZSIGN_E_OFFSET:          return "chunk out of order";

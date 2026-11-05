@@ -298,6 +298,7 @@ fn transport_failures_keep_their_kind() {
 
 #[test]
 fn byte_api_errors_are_typed() {
+    assert_eq!(check_broadcast(vec![0; 4], Network::Main, 3_543_405).unwrap_err().code(), 512);
     let e = signer_view_bytes(b"nope".to_vec(), SignerView::Full).unwrap_err();
     assert!(matches!(e, LeekError::Pczt { code: 512, recovery: Recovery::DoNotRetry, .. }), "{e:?}");
     assert!(e.to_string().contains("512"));
@@ -354,6 +355,8 @@ fn stored_app_data_seals_and_refuses() {
     assert!(matches!(validate_app_id("Not Valid".into()).unwrap_err(), LeekError::Storage { code: 700, .. }));
     assert!(StorageKey::from_bytes(vec![0; 31], "a.b".into(), 0, Network::Main).is_err());
     assert_eq!(storage_zip_number(), 65535);
+    assert_eq!(min_firmware_compat(), 2);
+    assert!(board_update_text().starts_with("Update your board"));
 }
 
 /// A foreign KeyWrapper as Kotlin or Swift would implement it: XOR with a

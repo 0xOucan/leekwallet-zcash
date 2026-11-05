@@ -18,7 +18,7 @@ await vendor();
 
 const { decodeCbor, encodeCbor } = await import('../src/board/cbor.js');
 const { BleReassembler, FRAME, UsbFrameDecoder, chunkForBle, encodeFrame, encodeUsbFrame } = await import('../src/board/framing.js');
-const { Device, DeviceError, ERR, toHex, fromHex: fromHexT, statusNetwork, wrongNetworkMessage } = await import('../src/board/device.js');
+const { APP_UPDATE_TEXT, Device, DeviceError, ERR, MIN_FIRMWARE_COMPAT, firmwareOutdated, toHex, fromHex: fromHexT, statusNetwork, wrongNetworkMessage } = await import('../src/board/device.js');
 const { BoardHost, BoardNeeds, passphraseComplaint } = await import('../src/board/host.js');
 const { BleLink } = await import('../src/board/ble-link.js');
 const { SerialLink } = await import('../src/board/serial-link.js');
@@ -157,6 +157,11 @@ describe('against zdev over USB framing', { skip: !zdevOk && 'zdev could not be 
 
   test('zGetFeatures', async () => {
     const f = await dev.zGetFeatures();
+    assert.equal(f.fwCompat, MIN_FIRMWARE_COMPAT);
+    assert.equal(firmwareOutdated(f), false);
+    const { fwCompat: _, ...v010 } = f;
+    assert.equal(firmwareOutdated(v010), true, 'a board that reports no level is outdated');
+    assert.equal(new DeviceError(ERR.APP_OUTDATED, 'Update your app').message, APP_UPDATE_TEXT);
     assert.equal(f.showAddress, 1);
     assert.ok(f.spendPools.includes('transparent'));
   });

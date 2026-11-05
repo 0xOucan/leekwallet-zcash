@@ -9,8 +9,8 @@ description = "Native code for the LeekWallet Zcash Android app (JNI): the devic
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "signer"] }
-zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+pczt = { version = "=0.10.0", features = ["orchard", "signer"] }
+zcash_protocol = { version = "=0.11.0" }
 orchard = { version = "0.16", default-features = false, features = ["std"] }
 sha2 = "0.10"
 # DER signatures of transparent inputs (roadmap 10.1); already in the tree

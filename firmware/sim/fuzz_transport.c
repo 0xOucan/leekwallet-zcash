@@ -50,6 +50,7 @@ uint32_t ui_hd_account(void) { return 0; }
  * Zcash handlers on either network, and one of them past the guard. */
 uint8_t ui_zcash_network(void) { return 1; }
 void ui_notify_wrong_network(uint8_t asked) { (void)asked; }
+void ui_notify_app_outdated(void) { }
 void ui_request_session_confirm(void) { }
 /* Never mid-answer: the fuzzer's business is the parsers, and a handshake
  * refused halfway through a run would silence the one target that reaches

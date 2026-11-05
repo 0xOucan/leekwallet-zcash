@@ -198,6 +198,10 @@ int main(int argc, char **argv)
     ui__service_wrong_network_for_test();
     ui_render();
     snap("12-wrong-network");
+    ui_notify_app_outdated();
+    ui__service_wrong_network_for_test();
+    ui_render();
+    snap("12b-update-your-app");
     press(BUTTON_ACCEPT);
 
     go(SCREEN_WIPE_CONFIRM);

@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { DeviceError } from "../packages/core/src/transport.ts";
 import { parseStatus } from "../packages/core/src/device-state.ts";
 import {
-  encodeZsig, parseZsig, toHex, zErrorText, zGetAccount, zGetFeatures, zGetSeedFingerprint, ZErr, ZPool,
+  APP_UPDATE_TEXT, encodeZsig, firmwareOutdated, MIN_FIRMWARE_COMPAT, parseZsig, toHex, zErrorText, zGetAccount, zGetFeatures, zGetSeedFingerprint, ZErr, ZPool,
   zSetBirthday, zShowAddress, zSign, type ZNetwork,
 } from "../packages/core/src/zcash.ts";
 import { repo, startZdev, zdevBinary, ZdevClient } from "./zdev.ts";
@@ -78,6 +78,10 @@ group("an approving board");
     check(z.passkeys.at(-1) === passkey, `passkey ${passkey} is not the one zdev shows`);
 
     const f = await zGetFeatures(dev.call);
+    check(f.fwCompat === MIN_FIRMWARE_COMPAT && !firmwareOutdated(f), "this firmware is not called outdated");
+    check(firmwareOutdated({ ...f, fwCompat: null }), "a board that reports no level is outdated");
+    check(!z.out.includes("Update your app"), "a current host got the board's old-app notice");
+    check(zErrorText(new DeviceError(ZErr.AppOutdated, "Update your app")) === APP_UPDATE_TEXT, "0x0519 reads as the update text");
     check(f.showAddress && f.maxChunk > 0 && f.maxPczt > 0, `features ${JSON.stringify(f)}`);
 
     for (const network of ["test", "main"] as ZNetwork[]) {

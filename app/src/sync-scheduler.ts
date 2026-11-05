@@ -24,8 +24,8 @@ const realTimers: Timers = {
   now: () => Date.now(),
 };
 
-/** About Zodl's cadence: a block is 75 s. */
-export const SYNC_INTERVAL_MS = 75_000;
+/** One sync a block: a block is 25 s from NU7 (ZIP 218), 75 s before it. */
+export const SYNC_INTERVAL_MS = 25_000;
 
 export class SyncScheduler {
   private readonly run: () => Promise<void>;

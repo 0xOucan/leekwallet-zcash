@@ -280,11 +280,20 @@ pub struct Features {
     /// `zGetStorageKey`; offer "unlock with the board" only when it equals
     /// `storage_zip_number()`.
     pub storage_key: Option<u16>,
+    /// The firmware's compatibility level; `None` when it reports none, as
+    /// firmware from before this field does.
+    pub fw_compat: Option<u32>,
+    /// The board is older than `min_firmware_compat()`: show
+    /// `board_update_text()`. A suggestion: it can still sign.
+    pub firmware_outdated: bool,
 }
 
 impl From<lz::Features> for Features {
     fn from(f: lz::Features) -> Self {
+        let firmware_outdated = f.firmware_outdated();
         Features {
+            firmware_outdated,
+            fw_compat: f.fw_compat,
             protocol: f.protocol,
             firmware: f.firmware,
             model: f.model,
@@ -310,6 +319,7 @@ impl From<Features> for lz::Features {
             tx_versions: f.tx_versions,
             max_pczt_bytes: usize::try_from(f.max_pczt_bytes).unwrap_or(usize::MAX),
             max_transparent_inputs: usize::try_from(f.max_transparent_inputs).unwrap_or(usize::MAX),
+            fw_compat: f.fw_compat,
             show_address: f.show_address,
             storage_key: f.storage_key,
         }
@@ -548,6 +558,19 @@ pub fn validate_app_id(app_id: String) -> Result<()> {
     Ok(lz::validate_app_id(&app_id)?)
 }
 
+/// The oldest firmware level this SDK does not suggest updating; firmware
+/// that reports none counts as 1. See `Features.firmware_outdated`.
+#[uniffi::export]
+pub fn min_firmware_compat() -> u32 {
+    lz::MIN_FIRMWARE_COMPAT
+}
+
+/// What to show when `Features.firmware_outdated` is true.
+#[uniffi::export]
+pub fn board_update_text() -> String {
+    lz::BOARD_UPDATE_TEXT.to_string()
+}
+
 /// The ZIP number this SDK derives Storage Keys under (a placeholder until
 /// the draft is assigned one); compare with `Features.storage_key`.
 #[uniffi::export]
@@ -757,6 +780,14 @@ pub fn check_mined(signed_tx: Vec<u8>, mined_tx: Vec<u8>) -> Result<MinedCheck> 
         lz::MinedCheck::SameEffectsOtherAuth => MinedCheck::SameEffectsOtherAuth,
         lz::MinedCheck::Different => MinedCheck::Different,
     })
+}
+
+/// Whether a serialized transaction can still be mined in the block after
+/// `tip`. `WrongBranch` (518) or `Expired` (519): stop retrying, build and
+/// sign again.
+#[uniffi::export]
+pub fn check_broadcast(tx: Vec<u8>, network: Network, tip: u32) -> Result<()> {
+    Ok(lz::check_broadcast(&tx, network.into(), tip)?)
 }
 
 /// A serialized transaction's txid (32 bytes, internal order).

@@ -4,7 +4,7 @@ Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute
 
 The Chrome extension (roadmap Phase 9). The board signs; everything else
 (sync, PCZT, proving, extraction, broadcast) runs in the browser, on our
-own librustzcash rev compiled to WASM. Why this architecture, and the
+own build of the librustzcash crates, compiled to WASM. Why this architecture, and the
 numbers behind it: [docs/zcash/CHROME-ENGINE.md](../docs/zcash/CHROME-ENGINE.md).
 
 | Path | What it is |

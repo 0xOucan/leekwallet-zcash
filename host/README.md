@@ -4,8 +4,9 @@ Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute
 
 The Rust code that runs on the companion side: a phone or a computer. It
 syncs, builds PCZTs (ZIP 374), proves and broadcasts; the board only
-checks and signs. One Cargo workspace, with librustzcash pinned to a git
-commit (Ironwood, NU6.3, is newer than any release).
+checks and signs. One Cargo workspace, with the librustzcash crates pinned
+exactly to the releases that set the NU7 mainnet height (`zcash_primitives
+0.31.0` and siblings, MSRV 1.89).
 
 All six are ours (Apache-2.0). They are built on librustzcash, the
 official Zcash Rust libraries; they are not official Zcash tools.

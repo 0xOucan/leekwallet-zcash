@@ -1,7 +1,8 @@
 # engine-spike: the Zcash engine in a Chrome extension (Phase 9.1)
 
-The question: can the companion's work run inside Chrome as WASM, on our
-librustzcash rev (`16f0723c`, NU6.3, Ironwood, v6 transactions)? That work
+The question: can the companion's work run inside Chrome as WASM, on
+librustzcash (asked at rev `16f0723c`; now the released `zcash_primitives
+0.31.0` and siblings, with NU6.3, NU7, Ironwood and v6 transactions)? That work
 is sync, PCZT build, Orchard/Ironwood proving, extraction and broadcast.
 The board only signs.
 

@@ -6,7 +6,11 @@ and bench commands).
 The question: can the companion's whole job (sync, PCZT build, Orchard and
 Ironwood proving, extraction, broadcast) run inside a Chrome MV3
 extension, on our librustzcash rev `16f0723c` (NU6.3, Ironwood, v6
-transactions)? The board only signs.
+transactions)? The board only signs. The spike ran on that rev. Since the NU7
+update the engine and the spike build on the released crates
+(`zcash_primitives 0.31.0`, `zcash_client_sqlite 0.23.0` and siblings), which
+compile for wasm32 with no new fix; the numbers below were not re-measured on
+them.
 
 **Answer: yes, on our own librustzcash compiled to WASM, with threads,
 in a dedicated worker, through a gRPC-web endpoint.** WebZjs is not an
@@ -73,7 +77,8 @@ gRPC-web) and its public proxies. The code we use is our own.
 
 Built from `chrome/engine-spike`: the zecz-core crates (`zcash_client_backend`
 with `sync`, `zcash_client_sqlite`, `pczt`, `zcash_keys`, `orchard`
-with `circuit`) at `16f0723c`, for `wasm32-unknown-unknown`.
+with `circuit`) at `16f0723c` (the released 0.31.0 line since NU7), for
+`wasm32-unknown-unknown`.
 
 | Problem | Fix |
 |---|---|

@@ -18,6 +18,7 @@
 import { EngineClient } from './engine-client.js';
 import { formatZec, historyEntry } from './format.js';
 import { BLE_TAB_WHY, LocalBoard, RemoteBoard, USB_TAB_WHY, bluetoothHelp, grantUsb, inTab, usbPlan } from './board-client.js';
+import { BOARD_UPDATE_TEXT, firmwareOutdated } from './board/device.js';
 import { passphraseComplaint } from './board/host.js';
 
 const root = document.getElementById('root');
@@ -665,6 +666,7 @@ function boardSection() {
         s.kind === 'usb' ? h('button', { class: 'link', id: 'switch-ble', onclick: () => void switchToBluetooth(), disabled: busy }, 'Switch to Bluetooth') : null,
         h('button', { class: 'link', id: 'disconnect', onclick: () => void guarded(null, disconnectBoard), disabled: busy }, 'Disconnect'),
       ),
+      s.features && firmwareOutdated(s.features) ? h('p', { class: 'notice', id: 'board-update' }, BOARD_UPDATE_TEXT) : null,
       ui.usbTabOnly && ui.board?.kind === 'usb-tab'
         ? h('p', { class: 'notice', id: 'usb-tab-only' }, 'This browser gave the USB port to this tab only, so the board is connected from here: keep this tab open while you use it.')
         : null,
@@ -736,6 +738,8 @@ function reviewBlock() {
       {},
       p.payments.map((x) => h('tr', {}, h('td', {}, h('code', {}, shortAddr(x.recipient)), x.hasMemo ? ' (memo)' : ''), h('td', { class: 'num' }, formatZec(x.amountZat)))),
       h('tr', {}, h('td', {}, 'Fee'), h('td', { class: 'num', id: 'review-fee' }, formatZec(p.feeZat))),
+      h('tr', {}, h('td', {}, 'Rules'), h('td', { class: 'num', id: 'review-upgrade' }, p.upgrade)),
+      h('tr', {}, h('td', {}, 'Expires'), h('td', { class: 'num', id: 'review-expiry' }, `after block ${p.expiryHeight}, about ${Math.round(p.expiresInSecs / 60)} min`)),
       (p.change ?? []).map((c) => h('tr', { class: 'muted' }, h('td', {}, `Change back to you (${c.pool})`), h('td', { class: 'num' }, formatZec(c.valueZat)))),
       p.kind === 'shield' ? null : h('tr', {}, h('th', {}, 'Total out'), h('th', { class: 'num' }, formatZec(sent + p.feeZat))),
     ),

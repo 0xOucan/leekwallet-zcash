@@ -49,6 +49,15 @@ pub const ERR_ZSIGN_BASE: u64 = 0x0500;
 /// The request named the other network than the board's own setting
 /// (Settings > Network on the board): refused before anything was derived.
 pub const ERR_BOARD_NETWORK: u64 = ERR_ZSIGN_BASE | 40;
+/// The board refused a NU6.3 PCZT whose expiry only an app without NU7's mainnet
+/// height builds (`ZS_E_APP_OUTDATED`).
+pub const ERR_APP_OUTDATED: u64 = ERR_ZSIGN_BASE | 25;
+
+/// What this host tells the board it is, as `hostCompat` with
+/// `zGetSeedFingerprint`, `zGetAccount` and `zSignBegin`. A board that expects
+/// more shows "Update your app" and carries on. Firmware before this ignores
+/// the field. Guidance, not a security boundary.
+pub const HOST_COMPAT: u32 = 2;
 
 /// An error frame from the device.
 #[derive(Debug)]
@@ -457,6 +466,7 @@ impl Device {
         let fields = || vec![
             ("account", Value::Integer(account.into())),
             ("network", Value::Text(network.into())),
+            ("hostCompat", Value::Integer(HOST_COMPAT.into())),
         ];
         let r = match self.call("zGetAccount", fields(), SHARE_VIEW_KEY) {
             Err(e) if !self.account_answered && is_code(&e, ERR_NO_WALLET) => {
@@ -521,7 +531,13 @@ impl Device {
     /// Retried once after [`NO_WALLET_RETRY`] on a first 0x0300 of the
     /// session, as [`Device::z_get_account`] is and for the same reason.
     pub fn z_get_seed_fingerprint(&mut self, network: Option<&str>) -> Result<[u8; 32]> {
-        let fields = || network.map(|n| vec![("network", Value::Text(n.into()))]).unwrap_or_default();
+        let fields = || {
+            let mut f = vec![("hostCompat", Value::Integer(HOST_COMPAT.into()))];
+            if let Some(n) = network {
+                f.push(("network", Value::Text(n.into())));
+            }
+            f
+        };
         let r = match self.call("zGetSeedFingerprint", fields(), DERIVE) {
             Err(e) if !self.account_answered && is_code(&e, ERR_NO_WALLET) => {
                 std::thread::sleep(self.no_wallet_retry);
@@ -588,6 +604,7 @@ impl Device {
                   progress: impl Fn(usize, usize)) -> Result<([u8; 32], Vec<Entry>)> {
         let sha: [u8; 32] = Sha256::digest(pczt).into();
         let begin = self.call("zSignBegin", vec![
+            ("hostCompat", Value::Integer(HOST_COMPAT.into())),
             ("len", Value::Integer((pczt.len() as u64).into())),
             ("sha256", Value::Bytes(sha.to_vec())),
             ("account", Value::Integer(account.into())),

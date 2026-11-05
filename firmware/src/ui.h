@@ -271,6 +271,14 @@ uint8_t ui_zcash_network(void);
  */
 void ui_notify_wrong_network(uint8_t asked);
 
+/**
+ * The app is older than this firmware expects. "Update your app" on the board
+ * for a few seconds, over whatever is there, as ui_notify_wrong_network does;
+ * any button dismisses it and does nothing else. Changes no answer the board
+ * gives. Safe from the protocol task.
+ */
+void ui_notify_app_outdated(void);
+
 void ui_request_session_confirm(void);
 
 /**

@@ -12,7 +12,7 @@ session, the `z*` calls, `.zsig`) and has no transport of its own: every
 device call takes a `Device`, which runs over any `FramePort` (USB serial,
 Bluetooth, a Kotlin or JavaScript callback, the zdev simulator). The PCZT
 side is plain functions over bytes and `pczt::Pczt`, built on the same
-librustzcash commit as the rest of `host/`.
+librustzcash releases as the rest of `host/`.
 
 ```
 src/lib.rs        the public API (re-exports) and crate docs
@@ -51,6 +51,7 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 | `finish_sd_sign(&Pczt, sent, zsig) -> SignResult` | **experimental**: the board's `LEEKZ/signed.zsig` (hash checked against `sent`, the request or its bytes) into the same `SignResult` as `sign_pczt` |
 | `AccountRecord::{encode, decode, from_accounts}` | one seed's accounts as CBOR (below) |
 | `SignResult::{to_bytes, from_bytes, txid_hex}` | persist the signed result and its txid before broadcast |
+| `check_broadcast(tx, network, tip)`, `SignResult::check_broadcast(network, tip)` | Can it still be mined in the block after `tip`? `WrongBranch` (518, signed for another network upgrade) or `Expired` (519): stop retrying, build and sign again |
 | `check_mined(signed_tx, mined_tx) -> MinedCheck` | `Identical`, `SameEffectsOtherAuth` (same txid, other proofs or signatures) or `Different`; `tx_txid(tx)` |
 | `get_storage_key(&mut Device, app_id, index, Network) -> StorageKey` | `zGetStorageKey`: the app's Storage Key, after the user presses OK on the board, every time (below) |
 | `get_storage_key_with(.., progress) -> StorageKey` | the same, calling `progress(AccountProgress::ConfirmOnDevice)` first |
@@ -59,6 +60,10 @@ src/error.rs      LeekError (stable codes, Recovery), firmware code mapping
 | `QuickUnlock::{create, from_bytes, to_bytes, open, disable}` | quick unlock: the Storage Key wrapped by the app's `KeyWrapper` (hardware-backed, user-authenticated platform key); `app_id`, `account`, `network`, `label` read the record (below) |
 | `validate_app_id(app_id)` | the board's App identifier rules, checked on the host first |
 | `classify(&anyhow::Error) -> LeekError` | maps `leek-device` errors (for example from `Device::pair`) |
+
+Old boards: `Features::firmware_outdated()` is true below `MIN_FIRMWARE_COMPAT`,
+and a board that reports no `fw_compat` counts as 1. Show `BOARD_UPDATE_TEXT`. It
+is a suggestion: such a board can still sign.
 
 `SignOptions { view, progress, cancel, features, verify_account }`:
 `progress` receives `Checking`, `Uploading { sent, total }`,
@@ -74,7 +79,8 @@ seed before anything is uploaded.
 One `LeekError` for everything, `#[non_exhaustive]`. `code()` is stable (1xx
 link, 2xx session and board, 3xx user, 4xx account and network, 5xx PCZT,
 6xx signatures, 7xx stored app data and quick unlock (706 to 709, see "Stored app data"), 900 an unknown firmware code; `DuplicateRk`, the board's
-`ZS_E_DUPLICATE_RK` (0x0518), is 517). `recovery()` says
+`ZS_E_DUPLICATE_RK` (0x0518), is 517; `AppOutdated`, `ZS_E_APP_OUTDATED`
+(0x0519), is 520: show its text, update the app). `recovery()` says
 `RetrySameLink`, `Reconnect` or `DoNotRetry`. Every firmware code in
 `docs/PROTOCOL.md` §6, `ZS_E_*` and `ZSIGN_E_*` is mapped (a few by call:
 code 0x0E is `AddressNotOurs` for an address check and `OutputMismatch` for
@@ -237,7 +243,11 @@ whether it went out, and re-signing may spend other notes.
    re-derives the txid and sighash, and refuses a damaged record.
 2. **Broadcast idempotently.** Retry with the same transaction (same txid)
    until it is mined or expires; never re-sign the same intent while a txid
-   is pending.
+   is pending. Call `check_broadcast(tx, network, tip)` before each try: v5
+   and v6 transactions commit to their consensus branch, so one signed before
+   a network upgrade (NU7 on mainnet at 3,543,405) can never be mined after
+   it. `WrongBranch` or `Expired` means stop: nothing went out, the notes come
+   back at the expiry height, and the send is built and signed again.
 3. **After mining, fetch and compare.** `check_mined(&broadcast, &mined)`:
    `Identical`, `SameEffectsOtherAuth` (the approved payment, proved or
    signed again) or `Different` (not the wallet's transaction).
@@ -473,7 +483,7 @@ cargo test -p leek-zcash
 
 Also left for next slices: L2 device actions as a state stream
 (`ConfirmPairingCode`, `UnlockOnDevice`, `ReviewOnDevice`, ...);
-re-checking expiry against the chain height after the board returns; typed
+typed
 transport errors from `leek-device` instead of matching its wording;
 replacing `leek-android`'s hand-written `compact_view` with this crate (the
 vectors show they are byte-identical).

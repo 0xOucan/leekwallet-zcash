@@ -8,7 +8,7 @@ use common::*;
 use leek_device::zsig::sha256;
 use leek_zcash::pczt::Pczt;
 use leek_zcash::{
-    check_mined, finish_sd_sign, prepare_sd_sign, signer_view_bytes, tx_txid, LeekError, MinedCheck, Network,
+    check_broadcast, check_mined, finish_sd_sign, prepare_sd_sign, signer_view_bytes, tx_txid, LeekError, MinedCheck, Network,
     SignResult, SignerView, SD_UNSIGNED_PCZT,
 };
 
@@ -53,6 +53,41 @@ fn the_card_file_is_the_signer_view_and_its_zsig_applies() {
         assert_eq!(r.txid, txid, "{name}: the txid is final before proving");
         assert_eq!(tx_txid(&tx).unwrap(), txid);
     }
+}
+
+/// A transaction signed before NU7 and read back from storage after it: the
+/// SDK says so, every time, instead of letting a wallet retry into a node
+/// that cannot accept it.
+#[test]
+fn a_record_signed_before_nu7_is_refused_after_it() {
+    const NU7: u32 = 3_543_405;
+    let main = meta("main/abandon-art/pp0/acct0");
+    let pczt = parse(&v("main_iw_send_last_nu6_3"));
+    let req = prepare_sd_sign(&pczt, &main, SignerView::Compact).unwrap();
+    let r = finish_sd_sign(&pczt, &req, &soft_sign(&req.bytes, Network::Main)).unwrap();
+    let back = SignResult::from_bytes(&r.to_bytes().unwrap()).unwrap();
+
+    // The last block under NU6.3 can take it; the next one, NU7's first, cannot.
+    back.check_broadcast(Network::Main, NU7 - 2).unwrap();
+    for tip in [NU7 - 1, NU7, NU7 + 1_000] {
+        assert_eq!(back.check_broadcast(Network::Main, tip).unwrap_err(), LeekError::WrongBranch);
+    }
+    assert_eq!(LeekError::WrongBranch.recovery(), leek_zcash::Recovery::DoNotRetry);
+
+    // The extracted bytes answer the same.
+    let (tx, _) = extract(back.signed_pczt.clone());
+    check_broadcast(&tx, Network::Main, NU7 - 2).unwrap();
+    assert_eq!(check_broadcast(&tx, Network::Main, NU7 - 1).unwrap_err(), LeekError::WrongBranch);
+
+    // A NU7 transaction is good from the activation to its expiry, target
+    // + 120, and refused either side.
+    let nu7 = parse(&v("main_iw_send_nu7"));
+    let req = prepare_sd_sign(&nu7, &main, SignerView::Compact).unwrap();
+    let r = finish_sd_sign(&nu7, &req, &soft_sign(&req.bytes, Network::Main)).unwrap();
+    assert_eq!(r.check_broadcast(Network::Main, NU7 - 2).unwrap_err(), LeekError::WrongBranch);
+    r.check_broadcast(Network::Main, NU7 - 1).unwrap();
+    r.check_broadcast(Network::Main, NU7 + 119).unwrap();
+    assert_eq!(r.check_broadcast(Network::Main, NU7 + 120).unwrap_err(), LeekError::Expired);
 }
 
 #[test]

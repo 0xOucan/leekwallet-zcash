@@ -15,10 +15,10 @@ and follows the same flow over gRPC-web.
 
 It is built on librustzcash, the official Zcash Rust libraries
 (`zcash_client_backend`, `zcash_client_sqlite`, `zcash_keys`, `pczt`,
-`orchard` and the rest), pinned to one git commit, the same one as the
-firmware's Rust signer and the vector generators: Ironwood (NU6.3) is newer
-than any release. Nothing in the crate prints; long operations report
-progress through callbacks.
+`orchard` and the rest), pinned exactly to the releases that set the NU7
+mainnet height, like the vector generators. The firmware's Rust signer stays
+on `pczt 0.10.0-pre.2`, which has the same wire format. Nothing in the crate
+prints; long operations report progress through callbacks.
 
 ## Accounts
 
@@ -50,6 +50,9 @@ wait in `pending/`, finished transactions go to `sent/<txid>.tx`.
 (`check_chain`): a wallet synced from the wrong chain would store its blocks
 as its own, and a transaction broadcast there is lost. `tip()` only reports
 it. `broadcast_on(network, ..)` checks first; plain `broadcast` does not.
+`broadcast_on` and `finish` also refuse a transaction that can no longer be
+mined (`check_broadcastable`): one signed before a network upgrade, or past
+its expiry height. Expiry is upstream's for the branch, 120 blocks from NU7.
 
 ## API
 

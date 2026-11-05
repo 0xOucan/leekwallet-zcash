@@ -33,12 +33,13 @@ Swift use camelCase.
 | `prepare_sd_sign(pczt, AccountMeta, SignerView) -> SdRequest` | **experimental**: `{file_name, zsig_file_name, bytes, sent_hash, account, network}` |
 | `finish_sd_sign(pczt, sent, zsig) -> SignResult` | **experimental** |
 | `sign_result_from_bytes(record) -> SignResult` | read a persisted result back |
+| `check_broadcast(tx, network, tip)` | before each broadcast: `WrongBranch` (518) or `Expired` (519) means build and sign again |
 | `check_mined(signed_tx, mined_tx) -> MinedCheck`, `tx_txid(tx)` | after mining |
 | `encode_account_record(AccountRecord)`, `decode_account_record(bytes)`, `account_record_type()` | the `leek-zcash-accounts` record |
 | `LeekDevice(FrameTransport, LinkKind)` | a board over the app's link |
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
 | `.seed_fingerprint(network?)` | which seed the board holds (32 bytes), with no question on the board: call it on every connect, `get_account` only when the UFVK is needed. A stable identifier of the seed that every paired host can read |
-| `.get_features()`, `.get_account(index, network)`, `.show_address(..)`, `.set_birthday(..)` | |
+| `.get_features()`, `.get_account(index, network)`, `.show_address(..)`, `.set_birthday(..)` | `Features.firmware_outdated` true: show `board_update_text()`. A suggestion; `min_firmware_compat()` is the level. |
 | `.sign_pczt(pczt, AccountMeta, SignerView, verify_account, SignListener?) -> SignResult` | progress: `Checking`, `Uploading{sent,total}`, `ReviewOnDevice`, `Applying` |
 | `.get_storage_key(app_id, index, network) -> StorageKey` | the app's Storage Key, after "Unlock app data?" is answered OK on the board, every time |
 | `StorageKey.from_bytes(key, app_id, account, network)` | a key the app kept in secure storage ("remember on this device") |

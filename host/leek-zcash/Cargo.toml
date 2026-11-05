@@ -6,18 +6,18 @@ publish.workspace = true
 license = "Apache-2.0"
 description = "The LeekWallet SDK's Zcash kit (L3): host-side preflight, signer views, signing a PCZT on the board, and applying its .zsig as a signed PCZT a wallet combines and extracts as it does Keystone's. Transport-free: it drives leek-device over any FramePort."
 
-# The same librustzcash commit as zecz-core and leek-android, so the PCZT
+# The same librustzcash releases as zecz-core and leek-android, so the PCZT
 # encoding, the redaction and the Signer role are the ones the board checks.
 [dependencies]
-pczt = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent", "signer"] }
+pczt = { version = "=0.10.0", features = ["orchard", "transparent", "signer"] }
 # redact_pczt_for_signer (SignerView::Full | Compact).
-zcash_client_backend = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["orchard", "pczt"] }
-zcash_keys = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["orchard", "transparent-inputs"] }
-zcash_address = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
-zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b" }
+zcash_client_backend = { version = "=0.25.0", default-features = false, features = ["orchard", "pczt"] }
+zcash_keys = { version = "=0.17.0", features = ["orchard", "transparent-inputs"] }
+zcash_address = { version = "=0.14.0" }
+zcash_protocol = { version = "=0.11.0" }
 # The txid of a signed PCZT, and reading mined transactions (check_mined).
-zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", default-features = false, features = ["std"] }
-zcash_transparent = { git = "https://github.com/zcash/librustzcash", rev = "16f0723c385957cecc32b4f0c71bb411053b708b", features = ["transparent-inputs"] }
+zcash_primitives = { version = "=0.31.0", default-features = false, features = ["std"] }
+zcash_transparent = { version = "=0.11.0", features = ["transparent-inputs"] }
 orchard = { version = "0.16", default-features = false, features = ["std"] }
 secp256k1 = "0.33"
 anyhow = "1"

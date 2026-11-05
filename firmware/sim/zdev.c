@@ -155,6 +155,11 @@ static SignOutcome outcome = SIGN_PENDING;
 uint32_t ui_hd_account(void) { return 0; }
 uint8_t ui_zcash_network(void) { return (uint8_t)board_network; }
 
+void ui_notify_app_outdated(void)
+{
+    printf("\n[device] Update your app\n");
+}
+
 void ui_notify_wrong_network(uint8_t asked)
 {
     printf("\n[device] Wrong network: the app asked for %s; this device is set to %s.\n",
