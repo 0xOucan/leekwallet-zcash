@@ -1065,6 +1065,15 @@ void ui_notify_wrong_network(uint8_t asked)
     ui_invalidate();
 }
 
+/* The same notice slot, for "Update your app": never a network number. */
+#define NOTICE_APP_OUTDATED 2u
+
+void ui_notify_app_outdated(void)
+{
+    wrong_network_pending = (uint8_t)(NOTICE_APP_OUTDATED + 1);
+    ui_invalidate();
+}
+
 static void service_wrong_network(void)
 {
     const uint8_t pending = wrong_network_pending;
@@ -1085,6 +1094,16 @@ static void render_wrong_network(void)
 {
     oled_clear();
     oled_set_role(OLED_ROLE_WARN);
+    if (wrong_network_asked == NOTICE_APP_OUTDATED) {
+        oled_draw_string_centered(0, "Update your app");
+        oled_set_role(OLED_ROLE_AUTO);
+        oled_draw_string_centered(2, "This app is older");
+        oled_draw_string_centered(3, "than this board.");
+        oled_draw_string_centered(5, "Its payments may");
+        oled_draw_string_centered(6, "be refused.");
+        oled_draw_string(7, 0, HINT_OK);
+        return;
+    }
     oled_draw_string_centered(0, "Wrong network");
     oled_set_role(OLED_ROLE_AUTO);
     oled_draw_string_centered(2, wrong_network_asked ? "App: Testnet" : "App: Mainnet");

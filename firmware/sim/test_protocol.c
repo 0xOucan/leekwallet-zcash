@@ -44,6 +44,7 @@
 #include "ble-name.h"
 #include "nvs.h"
 #include "protocol.h"
+#include "version.h"
 #include "transport.h"
 #include "session.h"
 #include "ui.h"
@@ -126,6 +127,8 @@ static uint8_t stub_zcash_network = 1;
 uint8_t ui_zcash_network(void)        { return stub_zcash_network; }
 
 /* The board's notice of a refused network: how often, and for what. */
+static int     app_outdated_notices;
+void ui_notify_app_outdated(void) { app_outdated_notices++; }
 static int     wrong_network_notices;
 static uint8_t wrong_network_asked = 0xFF;
 void ui_notify_wrong_network(uint8_t asked)
@@ -2383,6 +2386,101 @@ static void test_zget_features(void)
     CHECK(cbor_map_find(body, body_len, "storage", &it) && it.type == CBOR_ARRAY &&
           it.value == (LEEK_HAS_SDCARD ? 3u : 2u), "storage modes");
     CHECK(cbor_map_find(body, body_len, "showAddress", &it) && it.value == 1, "showAddress");
+    CHECK(cbor_map_find(body, body_len, "fwCompat", &it) && it.type == CBOR_UINT &&
+          it.value == LEEK_FW_COMPAT, "fwCompat");
+}
+
+/* zGetSeedFingerprint on network "test", with or without hostCompat. */
+static size_t fingerprint_req(uint8_t *buf, size_t cap, int host_compat)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, host_compat >= 0 ? 2 : 1);
+    cbor_write_text(&w, "method");
+    cbor_write_text(&w, "zGetSeedFingerprint");
+    if (host_compat >= 0) {
+        cbor_write_text(&w, "hostCompat");
+        cbor_write_uint(&w, (uint32_t)host_compat);
+    }
+    return w.length;
+}
+
+static const zv_pczt_vector *vector_named(const char *name)
+{
+    for (size_t i = 0; i < sizeof ZV_PCZT / sizeof ZV_PCZT[0]; i++) {
+        if (strcmp(ZV_PCZT[i].name, name) == 0) return &ZV_PCZT[i];
+    }
+    return NULL;
+}
+
+static void test_old_and_new_hosts(void)
+{
+    printf("== an old host: told on the board, nothing else changes\n");
+    const zv_pczt_vector *v = vector_named("iw_send_shielded");
+    uint8_t req[128];
+    fresh_device();
+    pin_set("123456");
+    pin_verify("123456");
+    wallet_unlock("123456", 6);
+    fake_wallet_preload(v->mnemonic);
+    confirmed_session(61);
+    app_outdated_notices = 0;
+
+    /* A current host: no notice. */
+    send_encrypted(req, fingerprint_req(req, sizeof req, 2));
+    Frame f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "zGetSeedFingerprint with hostCompat 2");
+    CHECK(app_outdated_notices == 0, "a current host got the notice");
+
+    /* Too low, and absent: answered as before, one notice per session. */
+    send_encrypted(req, fingerprint_req(req, sizeof req, 1));
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "hostCompat 1 was not answered");
+    CHECK(app_outdated_notices == 1, "hostCompat 1: %d notices", app_outdated_notices);
+    send_encrypted(req, fingerprint_req(req, sizeof req, -1));
+    f = next_reply();
+    CHECK(f.present && f.type == T_ENC_RESPONSE, "no hostCompat was not answered");
+    CHECK(app_outdated_notices == 1, "a second notice in one session");
+
+    /* Still the question for the viewing key, with no hostCompat. */
+    int prompts = share_key_prompts;
+    scripted_outcome = SIGN_REJECTED;
+    send_encrypted(req, zget_account_request(req, sizeof req, 0, "test"));
+    expect_error(T_ENC_ERROR, E_REJECTED, "an old host's zGetAccount, no on the board");
+    CHECK(share_key_prompts == prompts + 1, "an old host skipped Share view key?");
+
+    /* The review is unchanged: an old host's good PCZT is shown and signed. */
+    size_t len = 0;
+    uint8_t *pczt = load_vector(v->file, &len);
+    uint8_t sha[32];
+    if (pczt) {
+        sha256_Raw(pczt, len, sha);
+        CHECK(zsign_upload(pczt, len, sha), "old host upload failed");
+        int reviews = zsign_reviews;
+        scripted_outcome = SIGN_APPROVED;
+        send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+        f = next_reply();
+        CHECK(f.present && f.type == T_ENC_RESPONSE, "an old host's good PCZT was refused");
+        CHECK(zsign_reviews == reviews + 1, "an old host's PCZT skipped the review");
+        free(pczt);
+    }
+
+    printf("== what an old app builds past NU7: refused, with the notice, no review\n");
+    v = vector_named("r_old_app_after_nu7");
+    CHECK(v != NULL, "the vector is missing");
+    pczt = v ? load_vector(v->file, &len) : NULL;
+    if (pczt) {
+        sha256_Raw(pczt, len, sha);
+        app_outdated_notices = 0;
+        CHECK(zsign_upload(pczt, len, sha), "upload failed");
+        int reviews = zsign_reviews;
+        send_encrypted(req, zsign_simple_req(req, sizeof req, "zSignFinish"));
+        expect_error(T_ENC_ERROR, E_ZSIGN(ZS_E_APP_OUTDATED), "a NU6.3 PCZT expiring past NU7 + 40");
+        CHECK(E_ZSIGN(ZS_E_APP_OUTDATED) == 0x0519, "the code apps map moved");
+        CHECK(zsign_reviews == reviews, "it reached the review");
+        CHECK(app_outdated_notices >= 1, "no notice with the refusal");
+        free(pczt);
+    }
 }
 
 static void test_zshow_address(void)
@@ -4052,6 +4150,7 @@ static int run_all_tests(void)
     test_zcash_waits_for_the_wallet();
     test_zcash_waits_for_the_seed();
     test_zget_features();
+    test_old_and_new_hosts();
     test_zshow_address();
     test_board_network();
     test_zsign();

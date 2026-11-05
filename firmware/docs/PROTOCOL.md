@@ -475,7 +475,8 @@ shows that such a seed was used.
 zGetFeatures  {}
            -> { backend: "both"|"rust"|"c", branchIds: [uint], txVersions: [6],
                 spendPools: ["orchard", "ironwood", "transparent"], maxPczt: uint, maxChunk: uint,
-                storage: ["vault","stateless","sd"?], showAddress: 1, storageKey: 65535 }
+                storage: ["vault","stateless","sd"?], showAddress: 1, storageKey: 65535,
+                fwCompat: 2 }
 zShowAddress  { account?: uint, network: "main"|"test" }
            -> { ua, tAddress }
 ```
@@ -484,6 +485,13 @@ A companion reads `zGetFeatures` before building a transaction. It can do so
 before pairing: it describes the firmware and says nothing about the wallet.
 `branchIds` is the list both signer backends accept. `test_zcash_sign` checks
 it against what they actually accept.
+
+`fwCompat` is the firmware's compatibility level. Firmware from before it
+reports none, which counts as 1; a host below its own minimum suggests updating
+the board and carries on. The other way, `zGetSeedFingerprint`, `zGetAccount` and
+`zSignBegin` take an optional `hostCompat: uint`. Absent or below 2, the board
+shows "Update your app" for a few seconds, once a session, and answers as usual.
+Neither is a security boundary: both sides can lie, and nothing depends on them.
 
 `storageKey` is present when the firmware answers `zGetStorageKey`; its value
 is the ZIP number the board derives App Storage Keys under (the draft's
@@ -589,7 +597,9 @@ input's ZIP 244 digest, which the host recomputes when it applies it.
 A refusal is error `0x05xx`, where the low byte is the reason: `-ZS_E_*`
 from the signers (`zsign_types.h`: 0x0A parse, 0x0B branch, 0x0C foreign
 spend, 0x0D output commitment, 0x0E user address, 0x0F value balance,
-0x10 unsupported bundle, 0x11 network, ..., 0x18 two actions with one rk)
+0x10 unsupported bundle, 0x11 network, ..., 0x18 two actions with one rk,
+0x19 built by an app without NU7: branch NU6.3 with expiry at or above the
+network's NU7 height + 40, and the board also says "Update your app")
 or `-ZSIGN_E_*` from the intake (`zcash-sign.h`: 0x1E out of order, 0x1F
 size, 0x20 offset, 0x21 hash, 0x22 incomplete, 0x23 backends disagree,
 ...). 0x11 is a PCZT for

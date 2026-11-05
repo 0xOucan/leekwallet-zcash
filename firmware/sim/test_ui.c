@@ -1199,6 +1199,16 @@ static void test_wrong_network_notice(void)
     CHECK(ui_zcash_network() == 1, "not set to testnet");
     go(SCREEN_MAIN_MENU);
 
+    /* An old app: told so, over the screen, and the press does nothing more. */
+    ui_notify_app_outdated();
+    ui__service_wrong_network_for_test();
+    idle_pump();
+    CHECK_SCREEN(fake_oled_contains("Update your app") && !fake_oled_contains("Wrong network"),
+                 "the old-app notice was not shown");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "the press reached the screen under the notice");
+    CHECK_SCREEN(!fake_oled_contains("Update your app"), "the old-app notice stayed");
+
     ui_notify_wrong_network(0);   /* a mainnet app, from the protocol task */
     ui__service_wrong_network_for_test();
     idle_pump();

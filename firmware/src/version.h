@@ -22,4 +22,12 @@
 /* Sacbeh: the Maya sak bej, "white road" (CHANGELOG.md). */
 #define LEEK_FW_CODENAME "Sacbeh"
 
+/* What zGetFeatures reports as fwCompat, and what a host must send as
+ * hostCompat for the board not to say "Update your app". Raise them only when
+ * the other side must change. Guidance, not a security boundary: either side
+ * can lie. Firmware before these fields reports no fwCompat: level 1.
+ *   2: the NU7 refusal (ZS_E_APP_OUTDATED), fwCompat and hostCompat. */
+#define LEEK_FW_COMPAT       2
+#define LEEK_HOST_COMPAT_MIN 2
+
 #endif /* LEEK_VERSION_H */
