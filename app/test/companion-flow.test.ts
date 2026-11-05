@@ -16,7 +16,7 @@ import type { ZCall, ZNetwork } from "../packages/core/src/zcash.ts";
 import type { Invoke } from "../src/tauri-transport.ts";
 import { boardLabel, forgetBoard, loadBoard, saveBoard, BOARD_KEY } from "../src/board-memory.ts";
 import { ReceiveModel } from "../src/receive-model.ts";
-import { SyncScheduler, type Timers } from "../src/sync-scheduler.ts";
+import { SyncScheduler, SYNC_INTERVAL_MS, type Timers } from "../src/sync-scheduler.ts";
 import { BIRTHDAY_MARGIN, ensureWallet, readAccountRetrying } from "../src/zcash-auto.ts";
 import { fakeWallet } from "./fake-wallet.ts";
 import { txHead, txKindLabel } from "../src/tx-labels.ts";
@@ -68,6 +68,7 @@ group("sync: on open, on the interval, never twice at once");
   let release: (() => void) | null = null;
   let concurrent = 0;
   let maxConcurrent = 0;
+  check(SYNC_INTERVAL_MS === 25_000, "the default cadence is one sync a NU7 block (25 s)");
   const s = new SyncScheduler(async () => {
     runs++;
     concurrent++;

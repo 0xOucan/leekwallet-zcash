@@ -26,10 +26,10 @@ import type { Invoke } from "./tauri-transport.ts";
 
 /**
  * Blocks below the tip a new wallet is born at, when the board has no
- * birthday: about 2 hours of blocks, so a payment made while the wallet was
- * being set up is still scanned.
+ * birthday: about 2 hours of 25 s blocks (ZIP 218), so a payment made while
+ * the wallet was being set up is still scanned.
  */
-export const BIRTHDAY_MARGIN = 100;
+export const BIRTHDAY_MARGIN = 288;
 
 /** How long to wait before asking again after 0x0300. */
 export const RETRY_0300_MS = 1500;
