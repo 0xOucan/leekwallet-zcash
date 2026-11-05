@@ -314,7 +314,7 @@ impl LeekError {
             DuplicateRk => "two spends in the transaction share one verification key",
             WrongBranch => "the transaction was signed for another network upgrade than the chain's next block; build and sign it again",
             Expired => "the transaction is past its expiry height; build and sign it again",
-            AppOutdated => "Update your app: it built this transaction for network rules that have ended. Nothing was signed.",
+            AppOutdated => leek_device::device::APP_UPDATE_TEXT,
             ZsigHashMismatch => "the signatures were made for a different PCZT",
             ZsigMalformed => "the signature file is malformed",
             SignatureInvalid => "a signature from the board does not verify",

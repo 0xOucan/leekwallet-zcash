@@ -153,7 +153,7 @@ impl Features {
     /// A suggestion and not a refusal: such a board still signs what its
     /// signers accept. Only meaningful for what [`get_features`] returned.
     pub fn firmware_outdated(&self) -> bool {
-        self.fw_compat.unwrap_or(1) < MIN_FIRMWARE_COMPAT
+        device::firmware_outdated(self.fw_compat)
     }
 }
 
@@ -322,14 +322,7 @@ pub fn set_birthday(device: &mut Device, index: u32, network: Network, height: u
     device.z_set_birthday(index, network.as_str(), height).map_err(|e| from_device(&e, Ctx::Other))
 }
 
-/// The oldest firmware (its `fwCompat`) this SDK does not suggest updating.
-/// Firmware that reports no `fwCompat` counts as level 1. See
-/// [`Features::firmware_outdated`].
-pub const MIN_FIRMWARE_COMPAT: u32 = 2;
-
-/// What to show when [`Features::firmware_outdated`] is true.
-pub const BOARD_UPDATE_TEXT: &str =
-    "Update your board: its firmware is older than this app expects. It can still sign; the update has the NU7 checks.";
+pub use leek_device::device::{BOARD_UPDATE_TEXT, MIN_FIRMWARE_COMPAT};
 
 /// `getFeatures` and `zGetFeatures`: the firmware and what its signer
 /// accepts. Fields the firmware does not report keep their
