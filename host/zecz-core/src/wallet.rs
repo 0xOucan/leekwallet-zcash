@@ -31,7 +31,10 @@ use zcash_client_sqlite::{wallet::init::init_wallet_db, AccountUuid, ReceivedNot
 use zcash_keys::address::Address;
 use zcash_keys::keys::{ReceiverRequirement, UnifiedAddressRequest, UnifiedFullViewingKey};
 use zcash_primitives::transaction::builder::BundlePadding;
-use zcash_protocol::consensus::{BlockHeight, NetworkConstants, NetworkType, NetworkUpgrade, Parameters};
+use zcash_primitives::transaction::Transaction;
+use zcash_protocol::consensus::{
+    target_time_between, BlockHeight, BranchId, NetworkConstants, NetworkType, NetworkUpgrade, Parameters,
+};
 use zcash_protocol::memo::{Memo, MemoBytes};
 use zcash_protocol::value::Zatoshis;
 use zcash_protocol::{PoolType, ShieldedPool};
@@ -363,6 +366,12 @@ pub struct ChangeSummary {
 #[derive(Clone, Debug)]
 pub struct SendProposal {
     pub target_height: u32,
+    /// The network upgrade whose rules the transaction commits to ("NU7").
+    pub upgrade: String,
+    /// The last height it can be mined at (upstream's default for its branch).
+    pub expiry_height: u32,
+    /// Target time from `target_height` to `expiry_height`, in seconds.
+    pub expires_in_secs: u64,
     pub payments: Vec<PaymentSummary>,
     pub change: Vec<ChangeSummary>,
     pub fee_zat: u64,
@@ -560,9 +569,98 @@ pub async fn broadcast(server: &str, raw: &[u8]) -> Result<()> {
 }
 
 /// Sends a raw transaction through lightwalletd, after checking that the
-/// server follows `network`.
+/// server follows `network` and that the transaction can still be mined
+/// ([`check_broadcastable`]).
 pub async fn broadcast_on(network: Network, server: &str, raw: &[u8]) -> Result<()> {
-    send_raw(connect_for(network, server).await?, raw).await
+    let mut client = connect_for(network, server).await?;
+    let tip = client.get_latest_block(ChainSpec {}).await.context("GetLatestBlock")?.into_inner().height;
+    // Bytes that do not parse are the server's to refuse.
+    if let Ok(tx) = Transaction::read(raw, BranchId::for_height(&network, BlockHeight::from_u32(tip as u32 + 1))) {
+        check_broadcastable(network, tx.consensus_branch_id(), u32::from(tx.expiry_height()), tip as u32)?;
+    }
+    send_raw(client, raw).await
+}
+
+/// A network upgrade's name, as the board shows it.
+pub fn upgrade_name(branch: BranchId) -> String {
+    match branch {
+        BranchId::Nu6_3 => "NU6.3".into(),
+        BranchId::Nu7 => "NU7".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Why a signed transaction cannot go out. Nothing was sent, and sending the
+/// same bytes again cannot help.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BroadcastRefused {
+    /// The transaction commits to an older upgrade's branch than the next
+    /// block's, as one signed before an activation does after it. It is built
+    /// and signed again.
+    OldBranch { signed: BranchId, chain: BranchId, tip: u32, expiry_height: u32 },
+    /// The transaction commits to a newer branch than the server's next block:
+    /// the server is behind, or has not upgraded.
+    ServerBehind { signed: BranchId, chain: BranchId, tip: u32 },
+    /// Past its expiry height. It is built and signed again.
+    Expired { tip: u32, expiry_height: u32 },
+}
+
+impl std::fmt::Display for BroadcastRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            BroadcastRefused::OldBranch { signed, chain, tip, expiry_height } => write!(
+                f,
+                "This transaction was signed for {}, but the network moved to {} (block {tip}), so no node will accept it. \
+                 It was not sent and no funds are lost. Anything it spends is free again after block {expiry_height}. \
+                 Build the send again and sign it on the board.",
+                upgrade_name(signed),
+                upgrade_name(chain),
+            ),
+            BroadcastRefused::ServerBehind { signed, chain, tip } => write!(
+                f,
+                "This transaction was signed for {}, but the server's chain is at block {tip}, still under {}. \
+                 It was not sent. Wait for the server to catch up, or choose another server.",
+                upgrade_name(signed),
+                upgrade_name(chain),
+            ),
+            BroadcastRefused::Expired { tip, expiry_height } => write!(
+                f,
+                "This transaction expired after block {expiry_height} (the chain is at {tip}). It was not sent and no funds \
+                 are lost. Build the send again and sign it on the board."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BroadcastRefused {}
+
+/// Whether a transaction with this branch and expiry height can be mined in
+/// the block after `tip`. v5 and later transactions commit to their branch, so
+/// one signed before an upgrade never survives its activation, and sending the
+/// same bytes again cannot help.
+pub fn check_broadcastable(network: Network, branch: BranchId, expiry_height: u32, tip: u32) -> Result<(), BroadcastRefused> {
+    let next = BlockHeight::from_u32(tip + 1);
+    let chain = BranchId::for_height(&network, next);
+    if branch != chain {
+        let newer = branch.height_bounds(&network).is_none_or(|(start, _)| start > next);
+        return Err(if newer {
+            BroadcastRefused::ServerBehind { signed: branch, chain, tip }
+        } else {
+            BroadcastRefused::OldBranch { signed: branch, chain, tip, expiry_height }
+        });
+    }
+    // Zero means it never expires.
+    if expiry_height != 0 && tip + 1 > expiry_height {
+        return Err(BroadcastRefused::Expired { tip, expiry_height });
+    }
+    Ok(())
+}
+
+/// [`check_broadcastable`] for an unsigned or signed PCZT.
+pub fn check_pczt_broadcastable(network: Network, pczt: &Pczt, tip: u32) -> Result<()> {
+    let g = pczt.global();
+    let branch = BranchId::try_from(*g.consensus_branch_id()).map_err(|_| anyhow!("the PCZT names an unknown consensus branch"))?;
+    Ok(check_broadcastable(network, branch, *g.expiry_height(), tip)?)
 }
 
 async fn send_raw(mut client: lwd::Client, raw: &[u8]) -> Result<()> {
@@ -575,6 +673,12 @@ async fn send_raw(mut client: lwd::Client, raw: &[u8]) -> Result<()> {
         bail!("lightwalletd rejected the transaction: code {} {}", resp.error_code, resp.error_message);
     }
     Ok(())
+}
+
+/// The server's chain tip height.
+async fn server_tip(network: Network, server: &str) -> Result<u32> {
+    let mut client = connect_for(network, server).await?;
+    Ok(client.get_latest_block(ChainSpec {}).await.context("GetLatestBlock")?.into_inner().height as u32)
 }
 
 /// An open wallet.
@@ -1313,6 +1417,7 @@ impl Wallet {
             bail!("PCZT has Sapling spends; refusing");
         }
 
+        let expiry_height = *pczt.global().expiry_height();
         let view = redact_pczt_for_signer(&pczt, if compact { SignerView::Compact } else { SignerView::Full });
         let view_bytes = view.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
         let full_bytes = pczt.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
@@ -1339,8 +1444,12 @@ impl Wallet {
             .iter()
             .map(|c| ChangeSummary { value_zat: u64::from(c.value()), pool: format!("{}", c.output_pool()) })
             .collect();
+        let branch = BranchId::for_height(&params, target_h);
         Ok(SendProposal {
             target_height: u32::from(target_h),
+            upgrade: upgrade_name(branch),
+            expiry_height,
+            expires_in_secs: target_time_between(&params, target_h, BlockHeight::from_u32(expiry_height)).as_secs(),
             payments,
             change,
             fee_zat: u64::from(step.balance().fee_required()),
@@ -1349,6 +1458,19 @@ impl Wallet {
             sha256: hash,
             pending_path: pending,
         })
+    }
+
+    /// Whether a signer view just built is still for the next block's rules,
+    /// asking the server for its tip. Before the board asks the user to review
+    /// it: a wallet last synced below an activation height builds for the old
+    /// branch. An unreachable server is not an answer, so it passes here and
+    /// [`Wallet::finish`] reports it.
+    pub async fn check_view_current(&self, view: &[u8]) -> Result<()> {
+        let pczt = Pczt::parse(view).map_err(|e| anyhow!("unsigned PCZT: {e:?}"))?;
+        match server_tip(self.profile.network, &self.profile.server).await {
+            Ok(tip) => check_pczt_broadcastable(self.profile.network, &pczt, tip),
+            Err(_) => Ok(()),
+        }
     }
 
     fn pending_path(&self, view_sha256: &[u8; 32]) -> PathBuf {
@@ -1380,6 +1502,13 @@ impl Wallet {
         let view = Pczt::parse(unsigned).map_err(|e| anyhow!("unsigned PCZT: {e:?}"))?;
         if !full.sapling().spends().is_empty() {
             bail!("PCZT has Sapling spends; not supported");
+        }
+        // Before proving and before storing it: a transaction the network no
+        // longer takes must not lock its notes as pending until it expires.
+        if broadcast {
+            if let Ok(tip) = server_tip(self.profile.network, &self.profile.server).await {
+                check_pczt_broadcastable(self.profile.network, &full, tip)?;
+            }
         }
         let sighash = Signer::new(full.clone()).map_err(|e| anyhow!("{e:?}"))?.shielded_sighash();
         if sighash != Signer::new(view).map_err(|e| anyhow!("{e:?}"))?.shielded_sighash() {

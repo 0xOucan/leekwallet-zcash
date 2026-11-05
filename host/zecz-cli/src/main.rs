@@ -368,7 +368,7 @@ fn cmd_shield(profile: Profile, out: &Path, compact: bool) -> Result<()> {
 fn write_proposal(p: &zecz::wallet::SendProposal, out: &Path) -> Result<()> {
     fs::write(out, &p.signer_view).with_context(|| format!("writing {}", out.display()))?;
 
-    println!("Proposal (target height {}):", p.target_height);
+    println!("Proposal (target height {}, {}, expires after block {}):", p.target_height, p.upgrade, p.expiry_height);
     for pay in &p.payments {
         println!(
             "  pay  {} to {} [{}]{}",

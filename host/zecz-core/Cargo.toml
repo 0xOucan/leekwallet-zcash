@@ -71,3 +71,6 @@ serial = ["leek-device/serial", "leek-transport-serial/serialport"]
 
 [dev-dependencies]
 serde_json = "1"
+# The SDK's preflight and broadcast check on what the propose path builds
+# (tests/nu7.rs).
+leek-zcash = { path = "../leek-zcash" }

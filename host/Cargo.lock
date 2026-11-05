@@ -4353,6 +4353,7 @@ dependencies = [
  "hmac 0.12.1",
  "leek-device",
  "leek-transport-serial",
+ "leek-zcash",
  "orchard",
  "pbkdf2",
  "pczt",
