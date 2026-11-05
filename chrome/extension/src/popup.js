@@ -736,6 +736,8 @@ function reviewBlock() {
       {},
       p.payments.map((x) => h('tr', {}, h('td', {}, h('code', {}, shortAddr(x.recipient)), x.hasMemo ? ' (memo)' : ''), h('td', { class: 'num' }, formatZec(x.amountZat)))),
       h('tr', {}, h('td', {}, 'Fee'), h('td', { class: 'num', id: 'review-fee' }, formatZec(p.feeZat))),
+      h('tr', {}, h('td', {}, 'Rules'), h('td', { class: 'num', id: 'review-upgrade' }, p.upgrade)),
+      h('tr', {}, h('td', {}, 'Expires'), h('td', { class: 'num', id: 'review-expiry' }, `after block ${p.expiryHeight}, about ${Math.round(p.expiresInSecs / 60)} min`)),
       (p.change ?? []).map((c) => h('tr', { class: 'muted' }, h('td', {}, `Change back to you (${c.pool})`), h('td', { class: 'num' }, formatZec(c.valueZat)))),
       p.kind === 'shield' ? null : h('tr', {}, h('th', {}, 'Total out'), h('th', { class: 'num' }, formatZec(sent + p.feeZat))),
     ),

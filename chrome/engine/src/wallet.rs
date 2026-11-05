@@ -41,7 +41,10 @@ use zcash_client_sqlite::{wallet::init::init_wallet_db, AccountUuid, ReceivedNot
 use zcash_keys::address::Address;
 use zcash_keys::keys::{ReceiverRequirement, UnifiedAddressRequest, UnifiedFullViewingKey};
 use zcash_primitives::transaction::builder::BundlePadding;
-use zcash_protocol::consensus::{BlockHeight, Network, NetworkConstants, NetworkType, NetworkUpgrade, Parameters};
+use zcash_primitives::transaction::Transaction;
+use zcash_protocol::consensus::{
+    target_time_between, BlockHeight, BranchId, Network, NetworkConstants, NetworkType, NetworkUpgrade, Parameters,
+};
 use zcash_protocol::memo::{Memo, MemoBytes};
 use zcash_protocol::value::Zatoshis;
 use zcash_protocol::{PoolType, ShieldedPool};
@@ -275,6 +278,12 @@ pub struct ChangeSummary {
 pub struct SendProposal {
     pub account: String,
     pub target_height: u32,
+    /// The network upgrade whose rules the transaction commits to ("NU7").
+    pub upgrade: String,
+    /// The last height it can be mined at (upstream's default for its branch).
+    pub expiry_height: u32,
+    /// Target time from `target_height` to `expiry_height`, in seconds.
+    pub expires_in_secs: u64,
     pub payments: Vec<PaymentSummary>,
     pub change: Vec<ChangeSummary>,
     pub fee_zat: u64,
@@ -415,6 +424,65 @@ pub async fn tip(server: &str) -> Result<TipInfo> {
         vendor: info.vendor,
         version: info.version,
     })
+}
+
+/// A network upgrade's name, as the board shows it.
+pub fn upgrade_name(branch: BranchId) -> String {
+    match branch {
+        BranchId::Nu6_3 => "NU6.3".into(),
+        BranchId::Nu7 => "NU7".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// zecz `check_broadcastable`: whether a transaction with this branch and
+/// expiry height can be mined in the block after `tip`. v5 and later commit to
+/// their branch, so one signed before an upgrade never survives its activation
+/// and sending the same bytes again cannot help.
+pub fn check_broadcastable(network: Network, branch: BranchId, expiry_height: u32, tip: u32) -> Result<()> {
+    let next = BlockHeight::from_u32(tip + 1);
+    let chain = BranchId::for_height(&network, next);
+    let (signed_n, chain_n) = (upgrade_name(branch), upgrade_name(chain));
+    if branch != chain {
+        if branch.height_bounds(&network).is_none_or(|(start, _)| start > next) {
+            bail!(
+                "This transaction was signed for {signed_n}, but the server's chain is at block {tip}, still under {chain_n}. \
+                 It was not sent. Wait for the server to catch up, or choose another server."
+            );
+        }
+        bail!(
+            "This transaction was signed for {signed_n}, but the network moved to {chain_n} (block {tip}), so no node will accept it. \
+             It was not sent and no funds are lost. Anything it spends is free again after block {expiry_height}. \
+             Build the send again and sign it on the board."
+        );
+    }
+    // Zero means it never expires.
+    if expiry_height != 0 && tip + 1 > expiry_height {
+        bail!(
+            "This transaction expired after block {expiry_height} (the chain is at {tip}). It was not sent and no funds \
+             are lost. Build the send again and sign it on the board."
+        );
+    }
+    Ok(())
+}
+
+/// [`check_broadcastable`] for a PCZT.
+pub fn check_pczt_broadcastable(network: Network, pczt: &Pczt, tip: u32) -> Result<()> {
+    let g = pczt.global();
+    let branch = BranchId::try_from(*g.consensus_branch_id()).map_err(|_| anyhow!("the PCZT names an unknown consensus branch"))?;
+    check_broadcastable(network, branch, *g.expiry_height(), tip)
+}
+
+/// zecz `broadcast_on`, over gRPC-web: refuses a transaction that can no
+/// longer be mined, and only then sends it.
+pub async fn broadcast_checked(network: Network, server: &str, raw: &[u8]) -> Result<()> {
+    let mut client = lwd::connect(server);
+    let tip = client.get_latest_block(ChainSpec {}).await.context("GetLatestBlock")?.into_inner().height as u32;
+    // Bytes that do not parse are the server's to refuse.
+    if let Ok(tx) = Transaction::read(raw, BranchId::for_height(&network, BlockHeight::from_u32(tip + 1))) {
+        check_broadcastable(network, tx.consensus_branch_id(), u32::from(tx.expiry_height()), tip)?;
+    }
+    broadcast_raw(server, raw).await
 }
 
 /// zecz `broadcast`, over gRPC-web.
@@ -852,7 +920,6 @@ impl Wallet {
     /// from the chain.
     fn store_chain_tx(&mut self, t: &lwd::ChainTx, tip: u32) -> Result<()> {
         use zcash_client_backend::data_api::wallet::decrypt_and_store_transaction;
-        use zcash_primitives::transaction::Transaction;
         use zcash_protocol::consensus::BranchId;
         let params = self.network;
         let height = BlockHeight::from_u32(t.mined_height.unwrap_or(tip + 1));
@@ -1067,6 +1134,7 @@ impl Wallet {
         if !pczt.sapling().spends().is_empty() {
             bail!("PCZT has Sapling spends; refusing");
         }
+        let expiry_height = *pczt.global().expiry_height();
         let view = redact_pczt_for_signer(&pczt, if compact { SignerView::Compact } else { SignerView::Full });
         let view_bytes = view.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
         let full_bytes = pczt.serialize().map_err(|e| anyhow!("PCZT encoding: {e:?}"))?;
@@ -1092,6 +1160,9 @@ impl Wallet {
         let proposal = SendProposal {
             account: account_id.expose_uuid().to_string(),
             target_height: u32::from(target_h),
+            upgrade: upgrade_name(BranchId::for_height(&params, target_h)),
+            expiry_height,
+            expires_in_secs: target_time_between(&params, target_h, BlockHeight::from_u32(expiry_height)).as_secs(),
             payments,
             change,
             fee_zat: u64::from(step.balance().fee_required()),
@@ -1140,6 +1211,21 @@ impl Wallet {
             out.push(v);
         }
         Ok(out)
+    }
+
+    /// Whether the pending PCZT of a signer view can still be mined, asking
+    /// the server for its tip. Before proving and before storing: a transaction
+    /// the network no longer takes must not lock its notes as pending until it
+    /// expires. An unreachable server is not an answer, so it passes here and
+    /// the broadcast reports it.
+    pub async fn check_pending_current(&self, signer_view: &[u8]) -> Result<()> {
+        let hash = zsig::sha256(signer_view);
+        let full_bytes = self.pending_blob(&hash, "full_pczt")?.ok_or_else(|| anyhow!("pending PCZT is empty"))?;
+        let full = Pczt::parse(&full_bytes).map_err(|e| anyhow!("pending PCZT: {e:?}"))?;
+        match tip(&self.server).await {
+            Ok(t) => check_pczt_broadcastable(self.network, &full, t.height as u32),
+            Err(_) => Ok(()),
+        }
     }
 
     /// The first step of zecz `Wallet::finish`: checks the `.zsig` against
@@ -1222,7 +1308,7 @@ impl Wallet {
             .query_row("SELECT raw FROM sent WHERE txid = ?1", [txid], |r| r.get(0))
             .optional()?
             .ok_or_else(|| anyhow!("no extracted transaction {txid}"))?;
-        let res = broadcast_raw(&self.server, &raw).await;
+        let res = broadcast_checked(self.network, &self.server, &raw).await;
         let err = res.as_ref().err().map(|e| format!("{e:#}"));
         self.leek.execute(
             "UPDATE sent SET broadcast_ms = ?2, broadcast_error = ?3 WHERE txid = ?1",
