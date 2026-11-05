@@ -211,5 +211,19 @@ static const zv_pczt_vector ZV_PCZT[] = {
     2, {
       { 300000, 0, 0, "t1dUDJ62ANtmebE8drFg7g2MWYwXHQ6Xu3F", "58c8c6fb2136332a96e74e91c71595b605b59b894995dfa0bedf3c8174fa8e8e" },
       { 200000, 1, 1, "t1VZkHQ44vp9utYhVg2eokmxuzojjX6qL9v", "df93f3352f8d0a5db0d7567414f63ad99ef8439870f6824c8f2485ede0f30168" }, } },
+  { "r_main_old_app_after_nu7", "../../vectors/pczt/r_main_old_app_after_nu7.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, -25,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "r_main_old_app_after_nu7_compact", "../../vectors/pczt/r_main_old_app_after_nu7_compact.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 0, -25,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
+  { "iw_send_last_nu6_3", "../../vectors/pczt/iw_send_last_nu6_3.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, 0,
+    "67cc3f659a2e780b5d89ae47a7c829cd6dc747719654f7c3d9206b9c5e7562c2", 0x37a5165b, 10000, 2, {
+      { 2, 0, 100000, "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3", "LeekWallet Zcash NU6.3" },
+      { 2, 1, 890000, "", "" }, },
+    0, { } },
+  { "r_old_app_after_nu7", "../../vectors/pczt/r_old_app_after_nu7.pczt", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art", "", 0, 1, -25,
+    0, 0x00000000, 0, 0, { },
+    0, { } },
 };
 #define ZV_PCZT_COUNT (sizeof ZV_PCZT / sizeof ZV_PCZT[0])

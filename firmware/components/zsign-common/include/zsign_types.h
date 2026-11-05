@@ -50,6 +50,7 @@ typedef struct {
 #define ZS_E_SIGN               (-22)
 #define ZS_E_INTERNAL           (-23)
 #define ZS_E_DUPLICATE_RK       (-24)   /* two Orchard/Ironwood actions share an rk */
+#define ZS_E_APP_OUTDATED       (-25)   /* NU6.3 branch, expiry only an app without NU7 builds */
 
 #define ZS_MAX_OUTPUTS 16
 #define ZS_MAX_SIGS    32

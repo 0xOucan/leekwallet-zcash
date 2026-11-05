@@ -39,6 +39,11 @@
 
 #define BRANCH_NU6_3 0x37a5165bu
 #define BRANCH_NU7   0x77190ad9u
+/* The first NU7 block on each network, and the expiry delta of an app without
+ * NU7's mainnet height: see built_by_old_app in zsign-rust. */
+#define NU7_HEIGHT_MAIN 3543405u
+#define NU7_HEIGHT_TEST 4465026u
+#define OLD_APP_EXPIRY_DELTA 40u
 #define V6_TX_VERSION 6u
 #define V6_VERSION_GROUP_ID 0xD884B698u
 #define MAX_MONEY 2100000000000000ull
@@ -738,6 +743,9 @@ static int32_t check(zc_ctx *c, const uint8_t seed[64], uint32_t account, uint8_
 
     if (branch != BRANCH_NU6_3 && branch != BRANCH_NU7) return ZS_E_UNSUPPORTED_BRANCH;
     if (z->g.coin_type != (net == ZS_NET_MAIN ? 133u : 1u)) return ZS_E_NETWORK;
+    if (branch == BRANCH_NU6_3 &&
+        z->g.expiry_height >= (net == ZS_NET_MAIN ? NU7_HEIGHT_MAIN : NU7_HEIGHT_TEST) + OLD_APP_EXPIRY_DELTA)
+        return ZS_E_APP_OUTDATED;
     if (zc_account_keys(seed, net == ZS_NET_MAIN ? 133 : 1, account, ask, &fvk) != 0)
         return ZS_E_INTERNAL;
     memzero(ask, sizeof ask);

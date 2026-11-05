@@ -38,6 +38,8 @@ const H_NU6_2: u32 = 4_100_000;
 const H_NU6_3: u32 = 4_200_000;
 const H_NU7: u32 = 4_500_000;
 /// Mainnet: NU6.3 activates at 3,428,143 and NU7 at 3,543,405.
+const H_TEST_LAST_NU6_3: u32 = 4_465_025;
+const H_TEST_NU7: u32 = 4_465_026;
 const H_MAIN_NU6_3: u32 = 3_520_000;
 const H_MAIN_LAST_NU6_3: u32 = 3_543_404;
 const H_MAIN_NU7: u32 = 3_543_405;
@@ -682,6 +684,7 @@ fn code(expect: &str) -> i32 {
         "network_mismatch" => -17,
         "missing_data" => -19,
         "duplicate_rk" => -24,
+        "app_outdated" => -25,
         other => panic!("unknown expectation {other}"),
     }
 }
@@ -1068,6 +1071,21 @@ fn main() {
     assert_eq!(branch_expiry(&mns), (0x7719_0ad9, H_MAIN_NU7 + 120));
     push_ok_on(MAIN, "main_t_shield_nu7", "Mainnet: two transparent coins shielded at the NU7 activation height (v6, branch 0x77190ad9, m/44'/133')", &mns, &mut vs);
     push_ok_on(MAIN, "main_t_shield_nu7_compact", "Vector main_t_shield_nu7 in the compact signer view (v2)", &compact_view(&mns), &mut vs);
+
+    // What an app without NU7's mainnet height builds once the chain is past
+    // it: branch NU6.3, expiry at least the activation height plus 40. Refused,
+    // on each network, also in the compact view. One block lower still passes
+    // (main_iw_send_last_nu6_3 and iw_send_last_nu6_3): that one can be mined.
+    let mo = build_send_expiring(63, H_MAIN_LAST_NU6_3, H_MAIN_NU7 + OLD_EXPIRY_DELTA, &m_sender, 1_000_000, Dest::Shielded(m_rcpt_ua.clone(), m_rcpt_addr), 100_000, "LeekWallet Zcash old app", 10_000);
+    assert_eq!(branch_expiry(&mo), (0x37a5_165b, H_MAIN_NU7 + OLD_EXPIRY_DELTA));
+    vs.push(refuse_on(MAIN, "r_main_old_app_after_nu7", "Mainnet: branch NU6.3 with expiry NU7 + 40: an app without NU7, past it", &mo.pczt.clone().serialize().unwrap(), SENDER, "app_outdated"));
+    vs.push(refuse_on(MAIN, "r_main_old_app_after_nu7_compact", "Vector r_main_old_app_after_nu7 in the compact signer view (v2)", &compact_view(&mo).pczt.serialize().unwrap(), SENDER, "app_outdated"));
+    let tl = build_send(64, H_TEST_LAST_NU6_3, &sender, 1_000_000, Dest::Shielded(rcpt_ua.clone(), rcpt_addr), 100_000, "LeekWallet Zcash NU6.3", 10_000);
+    assert_eq!(branch_expiry(&tl), (0x37a5_165b, H_TEST_NU7 + OLD_EXPIRY_DELTA - 1));
+    push_ok("iw_send_last_nu6_3", "Testnet: Ironwood send one block below NU7 (v6, branch 0x37a5165b, expiry target + 40)", &tl, &mut vs);
+    let to = build_send_expiring(65, H_TEST_LAST_NU6_3, H_TEST_NU7 + OLD_EXPIRY_DELTA, &sender, 1_000_000, Dest::Shielded(rcpt_ua.clone(), rcpt_addr), 100_000, "LeekWallet Zcash old app", 10_000);
+    assert_eq!(branch_expiry(&to), (0x37a5_165b, H_TEST_NU7 + OLD_EXPIRY_DELTA));
+    vs.push(refuse("r_old_app_after_nu7", "Testnet: branch NU6.3 with expiry NU7 + 40: an app without NU7, past it", &to.pczt.serialize().unwrap(), SENDER, "app_outdated"));
 
     fs::write(format!("{dir}/pczt.json"), serde_json::to_string_pretty(&vs).unwrap() + "\n").unwrap();
     fs::write(format!("{dir}/pczt_vectors.h"), c_header(&vs)).unwrap();

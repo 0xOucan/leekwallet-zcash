@@ -1082,5 +1082,76 @@
         "sighash": "df93f3352f8d0a5db0d7567414f63ad99ef8439870f6824c8f2485ede0f30168"
       }
     ]
+  },
+  {
+    "name": "r_main_old_app_after_nu7",
+    "description": "Mainnet: branch NU6.3 with expiry NU7 + 40: an app without NU7, past it",
+    "file": "pczt/r_main_old_app_after_nu7.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "app_outdated",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "r_main_old_app_after_nu7_compact",
+    "description": "Vector r_main_old_app_after_nu7 in the compact signer view (v2)",
+    "file": "pczt/r_main_old_app_after_nu7_compact.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "main",
+    "expect": "app_outdated",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
+  },
+  {
+    "name": "iw_send_last_nu6_3",
+    "description": "Testnet: Ironwood send one block below NU7 (v6, branch 0x37a5165b, expiry target + 40)",
+    "file": "pczt/iw_send_last_nu6_3.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "ok",
+    "sighash": "67cc3f659a2e780b5d89ae47a7c829cd6dc747719654f7c3d9206b9c5e7562c2",
+    "consensus_branch_id": "37a5165b",
+    "fee": 10000,
+    "outputs": [
+      {
+        "pool": "ironwood",
+        "kind": "external",
+        "address": "utest1lpcp9q0703pkz3g8cqn7gnedx35pfcps0uwm4a84cwz8sxpsm8yrgez2g0ncw9tf5a96fpazsftx8dqaqqaq0qdcwlmzsvds9uc4r9z3",
+        "value": 100000,
+        "memo": "LeekWallet Zcash NU6.3"
+      },
+      {
+        "pool": "ironwood",
+        "kind": "change",
+        "address": "",
+        "value": 890000,
+        "memo": ""
+      }
+    ]
+  },
+  {
+    "name": "r_old_app_after_nu7",
+    "description": "Testnet: branch NU6.3 with expiry NU7 + 40: an app without NU7, past it",
+    "file": "pczt/r_old_app_after_nu7.pczt",
+    "signer_mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signer_passphrase": "",
+    "account": 0,
+    "network": "test",
+    "expect": "app_outdated",
+    "sighash": null,
+    "consensus_branch_id": null,
+    "fee": null,
+    "outputs": []
   }
 ]
