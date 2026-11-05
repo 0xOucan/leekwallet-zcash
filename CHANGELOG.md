@@ -6,6 +6,25 @@ are released in
 [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android)
 (LEEKWALLET-RELEASE.md there).
 
+## Unreleased
+
+- **NU7 on mainnet** (block 3,543,405, about 02:20 UTC on 2026-11-06). Every
+  host (the app, `zecz`, the SDK, the Chrome engine, the Android library) moves
+  from a librustzcash git rev with no mainnet height to the released crates
+  that set it: `zcash_primitives 0.31.0`, `zcash_client_backend 0.25.0`,
+  `zcash_client_sqlite 0.23.0`, `pczt 0.10.0` and siblings. An app without this
+  builds transactions nodes reject after the activation. Rust 1.89 or newer.
+- **No firmware change, no reflash**: v0.1.0 already signs NU7. The PCZT format
+  did not change.
+- **Wallet databases do not change**: `zcash_client_sqlite 0.23.0` has the same
+  migrations as the rev v0.1.0 used.
+- The apps sync every 25 s (one NU7 block), new wallets start 288 blocks below
+  the tip when the board has no birthday, and the review shows the network
+  upgrade and the real expiry height (120 blocks from NU7, 40 before).
+- A transaction signed before an activation is refused with a clear message
+  before proving and before each broadcast (`check_broadcastable` in zecz,
+  `check_broadcast` in the SDK, new errors `WrongBranch` 518 and `Expired` 519).
+
 ## v0.1.0 "Sacbeh" (unreleased)
 
 *Sacbeh*: from the Maya *sak bej*, "white road", the raised limestone

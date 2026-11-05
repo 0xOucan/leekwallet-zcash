@@ -1,4 +1,42 @@
-# First mainnet test (roadmap 10.3)
+# Mainnet
+
+## NU7
+
+NU7 (ZIP 259, branch `0x77190ad9`) activates on mainnet at block 3,543,405,
+about 02:20 UTC on 2026-11-06.
+
+- **Apps must be updated before it.** The old host code has no mainnet height
+  for NU7, so past it it builds transactions for NU6.3, the board signs them,
+  and nodes reject them. The new crates (`zcash_primitives 0.31.0` and
+  siblings) set the height.
+- **Firmware needs no change.** v0.1.0 whitelists both branches. The crates
+  did not change the PCZT wire format: regenerating `vectors/` with them leaves
+  all 42 existing vectors and `keys.json` byte-identical (with
+  `iw_send_nu7`'s old 40-block expiry pinned), and the firmware's C and Rust
+  signers (still on `pczt 0.10.0-pre.2`) sign the five new mainnet NU7 vectors
+  in the simulator suites.
+- **Wallet databases do not change.** `zcash_client_sqlite 0.23.0` has the same
+  75 migrations as the rev v0.1.0 used, so a v0.1.0 database opens as it is
+  (`host/zecz-core/tests/old_db.rs`), and v0.1.0 can still open it afterwards.
+  Going back is still no use after the activation: that app builds for NU6.3.
+- **Blocks are 25 s** instead of 75 s. The apps sync every 25 s in front. A new
+  transaction expires 120 blocks after its target height, about 50 minutes,
+  the same time as 40 blocks before NU7. The review shows the rules (`NU7`) and
+  the expiry height.
+- **A transaction signed before block 3,543,405 can never be mined after it.**
+  It commits to its branch. The app checks before proving, before storing and
+  before each broadcast, and says so: nothing was sent, anything it spends is
+  free again after its expiry height, and the send is built and signed again. A
+  transaction already stored shows as pending, then "expired, never mined".
+- **v4 is invalid from NU7** (ZIP 2003). Nothing here builds v4: every PCZT is
+  v6 from NU6.3 on.
+
+**What has been run:** the suites in `docs/JOURNAL.md` under "NU7", on the PC.
+**Not run yet:** any of this on a real board, or against mainnet after the
+activation. A first send after block 3,543,405 has to be done by hand, with the
+checklist below.
+
+## First mainnet test (roadmap 10.3)
 
 A small amount of real ZEC through the board: receive, verify the address,
 send some back, shield a transparent coin. Once with `zecz`, once with the
@@ -11,8 +49,9 @@ watch-only mainnet sync); this checklist is for the board.
   10.1, commit `ad54431` or later) and the network guard (branch
   `board-network-guard`, 2026-10-17, or later). The network travels in
   every request, and the board answers only for its own: see the next
-  point. Its signers accept branch `0x37a5165b` (NU6.3), which mainnet is
-  on; NU7 (`0x77190ad9`) is testnet only.
+  point. Its signers accept branch `0x37a5165b` (NU6.3) and `0x77190ad9`
+  (NU7, on mainnet from block 3,543,405). See "NU7" above: no reflash, but the
+  apps must be updated.
 - **The board's network.** On the board, Settings → `Net Mainnet` (the
   out-of-the-box setting; it is persisted). The board refuses every
   request for the other network (error `0x0528`), and says so on its
