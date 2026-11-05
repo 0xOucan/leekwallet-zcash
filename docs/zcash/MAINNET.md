@@ -9,12 +9,12 @@ about 02:20 UTC on 2026-11-06.
   for NU7, so past it it builds transactions for NU6.3, the board signs them,
   and nodes reject them. The new crates (`zcash_primitives 0.31.0` and
   siblings) set the height.
-- **Firmware needs no change.** v0.1.0 whitelists both branches. The crates
-  did not change the PCZT wire format: regenerating `vectors/` with them leaves
-  all 42 existing vectors and `keys.json` byte-identical (with
-  `iw_send_nu7`'s old 40-block expiry pinned), and the firmware's C and Rust
-  signers (still on `pczt 0.10.0-pre.2`) sign the five new mainnet NU7 vectors
-  in the simulator suites.
+- **Update the boards too.** The new firmware is a suggestion, not a
+  requirement: a v0.1.0 board signs NU7 in the simulator suites, and new apps
+  still use it. The new firmware adds the checks under "Version notices". It
+  **has not been tested on a board yet**. The crates did not change the PCZT wire
+  format: regenerating `vectors/` with them leaves all 42 existing vectors and
+  `keys.json` byte-identical (with `iw_send_nu7`'s old 40-block expiry pinned).
 - **Wallet databases do not change.** `zcash_client_sqlite 0.23.0` has the same
   75 migrations as the rev v0.1.0 used, so a v0.1.0 database opens as it is
   (`host/zecz-core/tests/old_db.rs`), and v0.1.0 can still open it afterwards.
@@ -31,9 +31,34 @@ about 02:20 UTC on 2026-11-06.
 - **v4 is invalid from NU7** (ZIP 2003). Nothing here builds v4: every PCZT is
   v6 from NU6.3 on.
 
+### Version notices
+
+Guidance for the user, not a security boundary: either side can lie, and no
+check on the board depends on them. The 6-digit pairing code, "Share view key?",
+the review and the absence of remembered hosts do not change.
+
+| Who says it | What it says | When | What it means |
+|---|---|---|---|
+| Any new app, `zecz` | "Update your board: ..." | `zGetFeatures` reports no `fwCompat`, or less than `MIN_FIRMWARE_COMPAT` (2) | The board's firmware is older. It can still sign. Nothing is blocked. |
+| The new board, for a few seconds | "Update your app" | Once a session, when a request from the app has no `hostCompat`, or less than 2 | The app is older than the board. Everything carries on; any button dismisses the notice and does nothing else. |
+| The new board, and the app | "Update your app" and error `0x0519` (SDK code 520) | A PCZT on branch NU6.3 with expiry at or above NU7 + 40 | An app without NU7 built it. Nothing is signed. Update the app and build it again. |
+
+**How the refusal works.** The board has no clock, but a transaction carries its
+expiry. An app without NU7's mainnet height keeps building for NU6.3 past the
+activation, with expiry target height + 40. Target height A (the activation) gives
+A + 40, so both signers refuse NU6.3 from there: mainnet from expiry 3,543,445,
+testnet from 4,465,066. A transaction for the last NU6.3 block, A - 1, has expiry
+A + 39, can still be mined, and passes. It can miss: an old app whose view of the
+chain is behind builds a lower expiry and is not caught, and its transaction fails
+at the node as before. Expiry 0 (none) is not refused; no app here builds it.
+
+**How the levels travel.** `zGetFeatures` answers `fwCompat`. Hosts send
+`hostCompat` with `zGetSeedFingerprint`, `zGetAccount` and `zSignBegin`; old
+firmware ignores it. An old app sends nothing, which is how the board knows.
+
 **What has been run:** the suites in `docs/JOURNAL.md` under "NU7", on the PC.
-**Not run yet:** any of this on a real board, or against mainnet after the
-activation. A first send after block 3,543,405 has to be done by hand, with the
+**Not run yet:** any of this on a real board, including the new firmware, or
+against mainnet after the activation. A first send after block 3,543,405 has to be done by hand, with the
 checklist below.
 
 ## First mainnet test (roadmap 10.3)
@@ -50,8 +75,8 @@ watch-only mainnet sync); this checklist is for the board.
   `board-network-guard`, 2026-10-17, or later). The network travels in
   every request, and the board answers only for its own: see the next
   point. Its signers accept branch `0x37a5165b` (NU6.3) and `0x77190ad9`
-  (NU7, on mainnet from block 3,543,405). See "NU7" above: no reflash, but the
-  apps must be updated.
+  (NU7, on mainnet from block 3,543,405). See "NU7" above: the apps must be updated, and
+  the board should be.
 - **The board's network.** On the board, Settings → `Net Mainnet` (the
   out-of-the-box setting; it is persisted). The board refuses every
   request for the other network (error `0x0528`), and says so on its

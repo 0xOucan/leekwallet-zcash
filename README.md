@@ -112,8 +112,8 @@ sign.
   mainnet sends and a shield, from `zecz` and from the Chrome extension.
   Testnet stays the default. Checklist: [MAINNET.md](docs/zcash/MAINNET.md).
 - **NU7** activates on mainnet at block 3,543,405 (about 02:20 UTC on
-  2026-11-06). Update the apps before it; the firmware needs no change. Host
-  code moved to the releases that set the height, and the simulator suites
+  2026-11-06). Update the apps before it, and the board as well (new firmware,
+  not tested on a board yet; v0.1.0 still signs). Host code moved to the releases that set the height, and the simulator suites
   pass. It has not run on the board or on NU7 mainnet yet:
   [MAINNET.md](docs/zcash/MAINNET.md).
 - **NEAR Intents**, in the Zcash LeekWallet app on desktop and Android:

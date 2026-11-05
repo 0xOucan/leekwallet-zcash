@@ -14,8 +14,14 @@ are released in
   that set it: `zcash_primitives 0.31.0`, `zcash_client_backend 0.25.0`,
   `zcash_client_sqlite 0.23.0`, `pczt 0.10.0` and siblings. An app without this
   builds transactions nodes reject after the activation. Rust 1.89 or newer.
-- **No firmware change, no reflash**: v0.1.0 already signs NU7. The PCZT format
-  did not change.
+- **New firmware: boards should be updated.** Not tested on a board yet. v0.1.0
+  still signs NU7 in the simulator, so it is a suggestion and not a requirement.
+  The PCZT format did not change.
+- **Version notices, both ways** (guidance, not a security boundary). Apps and
+  `zecz` suggest updating a board that reports no `fwCompat` level. The board says
+  "Update your app" when a request has no `hostCompat`. It also refuses a NU6.3
+  PCZT with expiry at or above NU7 + 40, which only an app without NU7 builds:
+  error `0x0519`, `ZS_E_APP_OUTDATED`, SDK `AppOutdated` 520.
 - **Wallet databases do not change**: `zcash_client_sqlite 0.23.0` has the same
   migrations as the rev v0.1.0 used.
 - The apps sync every 25 s (one NU7 block), new wallets start 288 blocks below
