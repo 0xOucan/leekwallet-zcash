@@ -298,6 +298,7 @@ fn transport_failures_keep_their_kind() {
 
 #[test]
 fn byte_api_errors_are_typed() {
+    assert_eq!(check_broadcast(vec![0; 4], Network::Main, 3_543_405).unwrap_err().code(), 512);
     let e = signer_view_bytes(b"nope".to_vec(), SignerView::Full).unwrap_err();
     assert!(matches!(e, LeekError::Pczt { code: 512, recovery: Recovery::DoNotRetry, .. }), "{e:?}");
     assert!(e.to_string().contains("512"));

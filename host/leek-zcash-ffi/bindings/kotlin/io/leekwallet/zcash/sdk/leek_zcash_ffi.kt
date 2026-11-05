@@ -944,6 +944,8 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -962,6 +964,8 @@ internal interface IntegrityCheckingUniffiLib : Library {
     fun uniffi_leek_zcash_ffi_checksum_func_account_record_type(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_apply_zsig(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_check_broadcast(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_check_mined(
 ): Short
@@ -1248,6 +1252,8 @@ fun uniffi_leek_zcash_ffi_fn_func_account_record_type(uniffi_out_err: UniffiRust
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_apply_zsig(`pczt`: RustBuffer.ByValue,`sent`: RustBuffer.ByValue,`zsig`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_check_broadcast(`tx`: RustBuffer.ByValue,`network`: RustBuffer.ByValue,`tip`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 fun uniffi_leek_zcash_ffi_fn_func_check_mined(`signedTx`: RustBuffer.ByValue,`minedTx`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_decode_account_record(`bytes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1406,6 +1412,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_check_broadcast() != 14767.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_check_mined() != 1216.toShort()) {
@@ -6137,6 +6146,20 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
 }
     )
     }
+    
+
+        /**
+         * Whether a serialized transaction can still be mined in the block after
+         * `tip`. `WrongBranch` (518) or `Expired` (519): stop retrying, build and
+         * sign again.
+         */
+    @Throws(LeekException::class) fun `checkBroadcast`(`tx`: kotlin.ByteArray, `network`: Network, `tip`: kotlin.UInt)
+        = 
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_check_broadcast(
+        FfiConverterByteArray.lower(`tx`),FfiConverterTypeNetwork.lower(`network`),FfiConverterUInt.lower(`tip`),_status)
+}
+    
     
 
         /**

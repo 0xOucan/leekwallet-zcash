@@ -649,6 +649,11 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_account_record_type(RustCallStatus *_No
 RustBuffer uniffi_leek_zcash_ffi_fn_func_apply_zsig(RustBuffer pczt, RustBuffer sent, RustBuffer zsig, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_CHECK_BROADCAST
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_CHECK_BROADCAST
+void uniffi_leek_zcash_ffi_fn_func_check_broadcast(RustBuffer tx, RustBuffer network, uint32_t tip, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_CHECK_MINED
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_CHECK_MINED
 RustBuffer uniffi_leek_zcash_ffi_fn_func_check_mined(RustBuffer signed_tx, RustBuffer mined_tx, RustCallStatus *_Nonnull out_status
@@ -1009,6 +1014,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_account_record_type(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_APPLY_ZSIG
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_APPLY_ZSIG
 uint16_t uniffi_leek_zcash_ffi_checksum_func_apply_zsig(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_CHECK_BROADCAST
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_CHECK_BROADCAST
+uint16_t uniffi_leek_zcash_ffi_checksum_func_check_broadcast(void
     
 );
 #endif

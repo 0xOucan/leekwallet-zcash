@@ -33,6 +33,7 @@ Swift use camelCase.
 | `prepare_sd_sign(pczt, AccountMeta, SignerView) -> SdRequest` | **experimental**: `{file_name, zsig_file_name, bytes, sent_hash, account, network}` |
 | `finish_sd_sign(pczt, sent, zsig) -> SignResult` | **experimental** |
 | `sign_result_from_bytes(record) -> SignResult` | read a persisted result back |
+| `check_broadcast(tx, network, tip)` | before each broadcast: `WrongBranch` (518) or `Expired` (519) means build and sign again |
 | `check_mined(signed_tx, mined_tx) -> MinedCheck`, `tx_txid(tx)` | after mining |
 | `encode_account_record(AccountRecord)`, `decode_account_record(bytes)`, `account_record_type()` | the `leek-zcash-accounts` record |
 | `LeekDevice(FrameTransport, LinkKind)` | a board over the app's link |

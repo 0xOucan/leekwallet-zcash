@@ -22,8 +22,9 @@
 //!   (the key kept wrapped by the platform's secure hardware behind the
 //!   user's biometric or device PIN, through the app's [`KeyWrapper`]).
 //! - Records: [`AccountRecord`] (the import record as CBOR),
-//!   [`SignResult::to_bytes`] (persist before broadcast) and
-//!   [`check_mined`] (compare after mining).
+//!   [`SignResult::to_bytes`] (persist before broadcast),
+//!   [`check_broadcast`] (can it still be mined?) and [`check_mined`]
+//!   (compare after mining).
 //! - Errors: one [`LeekError`] with stable codes and a [`Recovery`] hint;
 //!   messages never contain amounts, addresses, keys or PCZT bytes.
 //!
@@ -55,7 +56,7 @@ pub use account::{
 };
 pub use apply::{apply_zsig, Signature};
 pub use error::{classify, LeekError, Recovery, Unsupported};
-pub use persist::{check_mined, tx_txid, MinedCheck};
+pub use persist::{check_broadcast, check_mined, tx_txid, MinedCheck};
 pub use preflight::preflight;
 pub use prepare::{prepare_for_signer, TRANSPARENT_SEARCH_LIMIT};
 pub use quick::{KeyWrapper, QuickUnlock, WrapFailure, WrapperInfo, MAX_WRAPPED_LEN};

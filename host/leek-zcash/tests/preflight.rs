@@ -24,8 +24,26 @@ fn every_vector_the_board_signs_passes() {
         let bare = leek_zcash::AccountMeta { ufvk: None, ..test.clone() };
         check(name, &bare).unwrap_or_else(|e| panic!("{name} without UFVK: {e}"));
     }
-    for name in ["main_iw_send_shielded", "main_iw_send_shielded_compact", "main_t_shield", "main_t_shield_compact"] {
+    for name in [
+        "main_iw_send_shielded", "main_iw_send_shielded_compact", "main_t_shield", "main_t_shield_compact",
+        "main_iw_send_last_nu6_3", "main_iw_send_nu7", "main_iw_send_nu7_compact", "main_t_shield_nu7",
+        "main_t_shield_nu7_compact",
+    ] {
         check(name, &main).unwrap_or_else(|e| panic!("{name}: {e}"));
+    }
+}
+
+/// The mainnet vectors either side of the activation: the branch ID and
+/// upstream's expiry for it, and what the SDK says about broadcasting them.
+#[test]
+fn mainnet_nu7_activation() {
+    let g = |name: &str| {
+        let p = parse(&v(name));
+        (*p.global().consensus_branch_id(), *p.global().expiry_height(), *p.global().tx_version())
+    };
+    assert_eq!(g("main_iw_send_last_nu6_3"), (0x37a5_165b, 3_543_404 + 40, 6));
+    for name in ["main_iw_send_nu7", "main_iw_send_nu7_compact", "main_t_shield_nu7", "main_t_shield_nu7_compact"] {
+        assert_eq!(g(name), (0x7719_0ad9, 3_543_405 + 120, 6), "{name}");
     }
 }
 

@@ -759,6 +759,14 @@ pub fn check_mined(signed_tx: Vec<u8>, mined_tx: Vec<u8>) -> Result<MinedCheck> 
     })
 }
 
+/// Whether a serialized transaction can still be mined in the block after
+/// `tip`. `WrongBranch` (518) or `Expired` (519): stop retrying, build and
+/// sign again.
+#[uniffi::export]
+pub fn check_broadcast(tx: Vec<u8>, network: Network, tip: u32) -> Result<()> {
+    Ok(lz::check_broadcast(&tx, network.into(), tip)?)
+}
+
 /// A serialized transaction's txid (32 bytes, internal order).
 #[uniffi::export]
 pub fn tx_txid(tx: Vec<u8>) -> Result<Vec<u8>> {

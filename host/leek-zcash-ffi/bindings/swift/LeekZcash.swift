@@ -4459,6 +4459,19 @@ public func applyZsig(pczt: Data, sent: Data, zsig: Data)throws  -> Data  {
 })
 }
 /**
+ * Whether a serialized transaction can still be mined in the block after
+ * `tip`. `WrongBranch` (518) or `Expired` (519): stop retrying, build and
+ * sign again.
+ */
+public func checkBroadcast(tx: Data, network: Network, tip: UInt32)throws   {try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_func_check_broadcast(
+        FfiConverterData.lower(tx),
+        FfiConverterTypeNetwork_lower(network),
+        FfiConverterUInt32.lower(tip),$0
+    )
+}
+}
+/**
  * The extracted transaction against the one fetched after mining.
  */
 public func checkMined(signedTx: Data, minedTx: Data)throws  -> MinedCheck  {
@@ -4626,6 +4639,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_func_check_broadcast() != 14767) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_check_mined() != 1216) {

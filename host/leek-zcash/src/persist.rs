@@ -4,17 +4,18 @@
 //! cannot tell whether it went out; one that re-signs may build a second
 //! spend of different notes. So: persist [`SignResult::to_bytes`] (it
 //! carries the txid) before broadcasting, broadcast idempotently (the same
-//! bytes again, never a re-signed transaction, until the txid is mined or
-//! expired), and after mining fetch the transaction and compare it with
-//! [`check_mined`].
+//! bytes again, never a re-signed transaction, until the txid is mined,
+//! expired, or [`check_broadcast`] says the network has moved on), and after
+//! mining fetch the transaction and compare it with [`check_mined`].
 
 use pczt::Pczt;
 use zcash_primitives::transaction::txid::{to_txid, TxIdDigester};
 use zcash_primitives::transaction::{Transaction, TxId};
-use zcash_protocol::consensus::BranchId;
+use zcash_protocol::consensus::{BlockHeight, BranchId};
 
 use leek_device::zsig::{sha256, Zsig, ZsigError};
 
+use crate::account::Network;
 use crate::apply::{parse_pczt, shielded_sighash, Signature};
 use crate::error::LeekError;
 use crate::sign::SignResult;
@@ -124,6 +125,42 @@ impl SignResult {
             zsig,
             txid,
         })
+    }
+}
+
+fn check_branch_and_expiry(branch: u32, expiry_height: u32, network: Network, tip: u32) -> Result<(), LeekError> {
+    let next = tip.saturating_add(1);
+    if branch != u32::from(BranchId::for_height(&network.params(), BlockHeight::from_u32(next))) {
+        return Err(LeekError::WrongBranch);
+    }
+    // Zero means it never expires.
+    if expiry_height != 0 && next > expiry_height {
+        return Err(LeekError::Expired);
+    }
+    Ok(())
+}
+
+/// Whether a serialized transaction (v5 or later) can still be mined in the
+/// block after `tip`, on `network`. Call it before every broadcast, the first
+/// and the retries alike: the transaction commits to its consensus branch, so
+/// one signed before a network upgrade never survives the activation, and
+/// sending the same bytes again only fails again.
+///
+/// [`LeekError::WrongBranch`] and [`LeekError::Expired`] both mean: stop
+/// retrying, build the transaction again and have it signed again. Nothing
+/// went out, and whatever it spends comes back once the wallet passes its
+/// expiry height.
+pub fn check_broadcast(tx: &[u8], network: Network, tip: u32) -> Result<(), LeekError> {
+    let tx = read_tx(tx)?;
+    check_branch_and_expiry(u32::from(tx.consensus_branch_id()), u32::from(tx.expiry_height()), network, tip)
+}
+
+impl SignResult {
+    /// [`check_broadcast`] for a result read back from storage, before the
+    /// wallet spends time proving it.
+    pub fn check_broadcast(&self, network: Network, tip: u32) -> Result<(), LeekError> {
+        let g = self.signed_pczt.global();
+        check_branch_and_expiry(*g.consensus_branch_id(), *g.expiry_height(), network, tip)
     }
 }
 
