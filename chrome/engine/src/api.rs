@@ -60,7 +60,7 @@ pub async fn dispatch(state: &State, method: &str, params: Value, on_event: OnEv
             return Ok(json!({
                 "apiVersion": API_VERSION,
                 "engineVersion": env!("CARGO_PKG_VERSION"),
-                "librustzcash": "16f0723c385957cecc32b4f0c71bb411053b708b",
+                "librustzcash": "zcash_primitives 0.31.0",
                 "threads": cfg!(feature = "threads"),
                 "opfsFiles": store::files()?,
             }))

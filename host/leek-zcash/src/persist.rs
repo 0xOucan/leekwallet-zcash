@@ -28,7 +28,10 @@ const HEADER_LEN: usize = 4 + 1 + 32 + 32;
 pub(crate) fn pczt_txid(pczt: &Pczt) -> Result<[u8; 32], LeekError> {
     let data = pczt.clone().into_effects().map_err(|_| LeekError::Parse)?;
     let digests = data.digest(TxIdDigester);
-    Ok(*to_txid(data.version(), data.consensus_branch_id(), &digests).as_ref())
+    // None only for a version ZIP 244 has no txid for; the board signs v5 and
+    // v6, and a PCZT is v5 or later by construction.
+    let txid = to_txid(data.version(), data.consensus_branch_id(), &digests).ok_or(LeekError::Parse)?;
+    Ok(*txid.as_ref())
 }
 
 fn put(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), LeekError> {
