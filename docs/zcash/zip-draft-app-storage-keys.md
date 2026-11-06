@@ -78,7 +78,13 @@ The App stores only ciphertext and forgets the key when it closes.
 Storage Keys for different Apps, networks or accounts are unrelated to each
 other and to every spending and viewing key. The same seed always gives the
 same Storage Keys, so a user who restores the seed onto a new Signer can open
-the data the App stored before.
+a copy of the data the App stored before. The seed restores the keys, not the
+data: the encrypted data is recovered only if a copy of it was kept.
+
+This ZIP protects wallet data at rest. It does not protect it from the App
+itself, or from malware, while the App is open, and it does nothing for the
+integrity of what is signed. [Storage modes](#storage-modes) sets out what
+each way of opening the data protects and what it does not.
 
 
 # Motivation
@@ -123,6 +129,34 @@ another's data.
   screen learns which App the user is opening.
 
 
+# Storage modes
+
+An App chooses which of these modes to offer; this ZIP does not mandate a
+default. All three keep the wallet database encrypted at rest. They differ in
+what opens it, and so in what protects a lost or stolen host:
+
+| Mode | Opens with | A lost or stolen host is protected by | Suits |
+|---|---|---|---|
+| [Remembered](#remembered-mode) | nothing beyond the host's lock screen | the host's lock screen and secure storage | everyday watch-only use, as with today's wallets |
+| [Local quick unlock](#local-quick-unlock-non-normative) | a biometric or the device PIN, after one unlock with the Signer | the platform's secure hardware and its attempt limits | everyday use behind the user |
+| Signer every time ([usage flow](#usage-flow-non-normative)) | the Signer, its PIN and an approval on it, at every opening | the Signer | savings, or setups that trust the host less |
+
+What no mode protects against, because the App holds the Storage Key, the UFVK
+and the decrypted data while it is open:
+
+- a malicious App, or malware running in the App's process or as the user,
+  which can keep the Storage Key, the UFVK and the data it sees;
+- a UFVK that has already been exposed. It reveals the account's history up
+  to that point and keeps revealing new transactions. The only remedy is a new
+  seed and moving the funds to it, which stops future observation but cannot
+  undo what was already seen.
+
+No mode verifies what is signed either. Spending authority stays on the
+Signer, and checking a transaction independently of the App (for example
+decoding it on a second device and comparing what the Signer shows) is a
+separate problem outside this ZIP.
+
+
 # Requirements
 
 - The seed never leaves the Signer. Releasing a Storage Key reveals nothing
@@ -143,8 +177,14 @@ another's data.
 # Non-requirements
 
 - Authenticating the App. A Signer cannot tell which software is asking; any
-  App can claim any App identifier. The protection rests on the user's
-  approval and on the authenticated session.
+  App can claim any App identifier. The identifier shown on the Signer names
+  the key being released, not the software requesting it, and the pairing
+  authenticates the session, not the App or its integrity. The protection
+  rests on the user's approval and on the authenticated session.
+- Verifying what is signed. This ZIP is about data at rest; transaction
+  review stays with the Signer and any independent checker.
+- Signers without a single seed, such as a FROST threshold group whose keys
+  no one device holds. This ZIP assumes one seed held by one Signer.
 - Protecting data from the App itself, or from malware running in the App's
   process or with the user's privileges on the host while the App is open.
 - Rotating a Storage Key without changing the seed.
@@ -311,10 +351,12 @@ An App implementing this ZIP:
 
 ### Remembered mode
 
-An App MAY offer the user a choice between:
+An App MAY offer the user a choice between the modes in
+[Storage modes](#storage-modes), which this ZIP ranks only by what they
+protect, not as defaults:
 
-- "Don't remember" (the default this ZIP is written for): every opening
-  needs the Signer and the user's approval, as above.
+- "Don't remember": every opening needs the Signer and the user's approval,
+  as above.
 - "Remember the viewing key on this device": the App keeps the Storage Key,
   or the UFVK, in the platform's secure storage (for example a key held by
   Android Keystore or the Apple Keychain), and its database stays encrypted
@@ -330,14 +372,30 @@ deletes what was remembered.
 Quick unlock is a form of remembered mode for an App that wants to open
 without the Signer but still behind the user. After the App has obtained the
 Storage Key from the Signer once, it can keep the Storage Key encrypted
-("wrapped") under a platform key that:
+("wrapped") under a platform key with these properties:
 
-- is generated in and never leaves secure hardware (for example Android
-  Keystore in StrongBox or a TEE, the Apple Secure Enclave, a TPM through
-  Windows Hello, or a WebAuthn authenticator through its PRF extension); and
-- is usable only after the user authenticates to that hardware with a
+- it is generated in secure hardware and cannot be exported from it;
+- it is bound to that one device: it is not synced, backed up or copied to
+  other devices, by the platform or by a credential provider;
+- it is usable only after the user authenticates to that hardware with a
   biometric or the device PIN, with attempt limits that the hardware
   enforces.
+
+Platforms that can meet them include Android Keystore in StrongBox or a TEE,
+the Apple Secure Enclave, and a TPM through Windows Hello. A WebAuthn
+credential used through its PRF extension meets them only if it is
+device-bound: a synced passkey is copied to the user's other devices through
+its provider. An App MUST NOT use a credential whose authenticator data has
+the BE (backup eligible) flag set. A clear BE flag alone is not enough: the
+App still needs the other properties, from the authenticator or the platform.
+The WebAuthn specification also does not promise the same PRF output on
+another device.
+
+A wrapped key can stop opening, even on the device that made it, for
+example after an operating system update, a change of enrolled biometrics,
+or a platform key being invalidated. When unwrapping fails, the App should
+fall back to the Signer, obtain the Storage Key again, and wrap it afresh.
+It should not retry in a loop, and must not delete the encrypted data.
 
 The App then opens after that prompt instead of after an approval on the
 Signer. A stolen host is protected by the platform's secure hardware and its
@@ -566,7 +624,9 @@ Rotation
   and the data were exposed, and a new Storage Key would not undo that: the
   remedy is a new seed, moving the funds to it, and re-encrypting under the
   new seed's Storage Key. Rotation within one seed is not provided (see
-  [Open issues](#open-issues)).
+  [Open issues](#open-issues)). Because the key is deterministic, someone who
+  obtains a Storage Key can also open every older copy of the data encrypted
+  under it, such as old backups, even after the host is wiped.
 
 Cross-App linkability
 : Storage Keys of different App identifiers, networks and accounts are
@@ -604,8 +664,11 @@ Local quick unlock
 
 # Deployment
 
-This ZIP needs no consensus change. Signers and Apps adopt it independently;
-an App works with any Signer that implements it. Before public deployment the
+This ZIP needs no consensus change. Signers and Apps adopt it independently.
+Any conforming Signer derives the same Storage Keys, which the test vectors
+check, but an App works with a given Signer only if they also agree on the
+wire format, the session and error handling, which this ZIP leaves out (see
+[Open issues](#open-issues)). Before public deployment the
 ZIP number must be assigned, since it is an input to the derivation and every
 Storage Key changes with it.
 
@@ -735,6 +798,11 @@ label, empty labels, over 64 bytes).
   `“Zcash_AppStorage_v1”` are proposals.
 - Rotation within one seed (for example a generation index in the path) was
   left out because the user would have to remember the generation to restore.
+  A later version could add a key epoch, or a defined way to migrate
+  ciphertext to a new key.
+- Whether Signer-released keys add enough to existing watch-only workflows to
+  be worth adopting. Feedback from wallet developers is the most useful input
+  here.
 - Whether a Signer should be allowed to release keys for an account of the
   other network than the one it is set to.
 - A standard wire format for the request and response between Signer and App
