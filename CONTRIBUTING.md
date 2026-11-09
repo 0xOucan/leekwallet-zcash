@@ -173,8 +173,8 @@ merged:
 - **The pairing code on every connection.** The board remembers no hosts.
 - **The board asks before it shares.** The viewing key, a storage key and
   every signature need an explicit approval on the board.
-- **What the board shows is what it signs.** Every field shown is checked
-  against the transaction, or it is labelled as not checked.
+- **What the board shows is what it signs.** Don't show the user a field the
+  board hasn't checked against the transaction it signs.
 - **No secrets in the repository**: no seeds, keys, keystores or passwords,
   even for testnet. Use the public test vectors.
 - **No eFuse burning** in scripts or docs without an explicit, documented
