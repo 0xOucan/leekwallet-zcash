@@ -31,11 +31,16 @@
 #include "zcash-review.h"
 #include "leek-wallet.h"
 #include "button.h"
+#include "camera.h"
+#include "qrcode.h"
+#include "ur-encoder.h"
 
 void pin__reset_static_state_for_test(void);
 void ui__reset_static_state_for_test(void);
 void ui__service_wrong_network_for_test(void);
 void fake_input_reset(void);
+void ui__service_scan_for_test(void);
+void ui__scan_feed_for_test(const char *ur);
 
 #define W 240
 #define H 240
@@ -54,6 +59,7 @@ esp_err_t oled_clear_panel_now(void) { return oled_clear(); }
 esp_err_t oled_draw_raw(const uint8_t *d, size_t n) { (void)d; (void)n; return ESP_FAIL; }
 bool oled_present(void) { return true; }
 uint8_t oled_panel_rows(void) { return H; }
+esp_err_t oled_set_backlight(uint8_t pct) { (void)pct; return ESP_OK; }
 
 /* One image: the colour panel on the left; the SH1107's 128x128 at 2x
  * (white on black) on the right, both on a grey card. */
@@ -69,6 +75,9 @@ static void snap(const char *name)
         .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
+    const OledPanelGray g = oled_core_panel_gray();
+    f.gray = g.px;
+    f.gray_x = g.x; f.gray_y = g.y; f.gray_w = g.w; f.gray_h = g.h;
     panel_color_render(&f, panel_color_palette(), W, H, 0, H, colour);
     panel128_compose(oled_core_framebuffer(), oled_core_panel_picture(), f.qr,
                      f.qr_inverted, mono);
@@ -130,6 +139,31 @@ static void boot(bool with_seed)
                             "legal winner thank yellow");
     }
     ui_render();
+}
+
+/* A synthetic camera frame: a dim room with a lit phone held at an angle's
+ * worth of offset, a QR on its screen, a little sensor noise. Only for
+ * looking at; the suites test the arithmetic. */
+static uint8_t cam[320 * 240];
+static void camera_scene(int dim)
+{
+    uint32_t seed = 12345;
+    for (int y = 0; y < 240; y++)
+        for (int x = 0; x < 320; x++) {
+            seed = seed * 1103515245u + 12345u;
+            const int room = 0x18 + x / 16 + y / 20 + (int)((seed >> 16) & 7);
+            cam[y * 320 + x] = (uint8_t)(room / dim);
+        }
+    static uint8_t mod[200];
+    QRCode qr;
+    qrcode_initText(&qr, mod, 3, 0, "UR:LEEK-PCZT/1-9/LPADAXCFAXHL");
+    const int s = 4, side = qr.size * s, ox = 120, oy = 50;
+    for (int y = oy - 24; y < oy + side + 30; y++)
+        for (int x = ox - 18; x < ox + side + 18; x++) cam[y * 320 + x] = (uint8_t)(0xC8 / dim);
+    for (int y = 0; y < side; y++)
+        for (int x = 0; x < side; x++)
+            if (qrcode_getModule(&qr, (uint8_t)(x / s), (uint8_t)(y / s)))
+                cam[(oy + y) * 320 + ox + x] = (uint8_t)(0x30 / dim);
 }
 
 int main(int argc, char **argv)
@@ -237,5 +271,66 @@ int main(int argc, char **argv)
     snap("16-storage-key-long");
     press(BUTTON_CANCEL);
     ui_sign_clear();
+
+    /* The viewfinder: a QR on a phone in a dim room, auto-levelled. */
+    camera_scene(1);
+    camera__set_frame_for_test(cam, 320, 240);
+    camera__set_located_for_test(4, 0);
+    go(SCREEN_SCAN);
+    ui__service_scan_for_test();
+    fake_clock_advance_us(1000 * 1000);
+    ui__service_scan_for_test();
+    ui_render();
+    snap("17-scan");
+    /* An animated UR part way in: the progress bar. */
+    static uint8_t cbor[1200];
+    for (size_t i = 0; i < sizeof cbor; i++) cbor[i] = (uint8_t)(i * 7);
+    cbor[0] = 0x59; cbor[1] = (sizeof cbor - 3) >> 8; cbor[2] = (sizeof cbor - 3) & 0xFF;
+    static UrEncoder enc;
+    char part[600];
+    ur_encoder_init(&enc, "leek-pczt", cbor, sizeof cbor, 200);
+    for (int i = 0; i < 3; i++) {
+        ur_encoder_next_part(&enc, part, sizeof part);
+        ui__scan_feed_for_test(part);
+    }
+    ui_render();
+    snap("18-scan-progress");
+    press(BUTTON_CANCEL);
+    /* Too dark: the same scene at a quarter the light, still visible. */
+    camera_scene(5);
+    camera__set_located_for_test(0, 0);
+    go(SCREEN_SCAN);
+    ui__service_scan_for_test();
+    ui_render();
+    snap("19-scan-dark");
+    press(BUTTON_CANCEL);
+    /* And as the decoder sees it: Settings > Preview True. */
+    camera_set_preview_true_exposure(true);
+    go(SCREEN_SCAN);
+    ui__service_scan_for_test();
+    ui_render();
+    snap("20-scan-true-exposure");
+    press(BUTTON_CANCEL);
+    camera_set_preview_true_exposure(false);
+    camera__set_frame_for_test(NULL, 0, 0);
+
+    /* Settings > Screen, being turned. */
+    go(SCREEN_SETTINGS);
+    for (int i = 0; i < 40; i++) {
+        press(BUTTON_DOWN);
+        /* Stop on the Screen line: row 2, 4 or 6 starting with "> S". */
+        bool found = false;
+        for (int r = 2; r <= 6; r += 2) {
+            const uint8_t *g = oled_core_glyphs() + r * 128;
+            if (g[0] == '>' && g[12] == 'S' && g[18] == 'c') found = true;
+        }
+        if (found) break;
+    }
+    press(BUTTON_ACCEPT);
+    press(BUTTON_DOWN);
+    press(BUTTON_DOWN);
+    press(BUTTON_DOWN);
+    snap("21-settings-screen");
+    press(BUTTON_CANCEL);
     return 0;
 }

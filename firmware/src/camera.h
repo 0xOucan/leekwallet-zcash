@@ -19,6 +19,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "viewfinder.h"
+
 /** Power the sensor and start capturing. False on a board without one. */
 bool camera_start(void);
 
@@ -82,6 +84,22 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len);
 const uint8_t *camera_preview_take(void);
 
 /**
+ * The colour kit's counterpart: the newest grayscale preview
+ * (VIEWFINDER_GRAY_W x VIEWFINDER_GRAY_H, viewfinder.h) and its frame
+ * statistics, if one has been rendered since the last call; NULL otherwise,
+ * and always NULL on a monochrome build, whose camera_preview_take() is the
+ * one that renders. The buffer is the camera's own (PSRAM on the board) and
+ * stays valid, holding the last preview, until the next camera_next_qr().
+ * Raw sensor pixels only, like the bitmap.
+ */
+const uint8_t *camera_preview_gray_take(ViewfinderStats *stats);
+
+/** Show the true exposure rather than the auto-levelled view (colour kit,
+ *  Settings > Preview). Off by default. */
+void camera_set_preview_true_exposure(bool on);
+bool camera_preview_true_exposure(void);
+
+/**
  * Frames captured and QR symbols decoded since camera_start().
  *
  * For the on-device decode-rate bench (research/qr-spike). Counted in the same
@@ -96,5 +114,16 @@ const uint8_t *camera_preview_take(void);
  * is seen but its modules are not resolved.
  */
 void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located);
+
+#ifdef LEEK_HOST_TEST
+/*
+ * The host build has no sensor; these stand one in for the UI suites. With a
+ * frame set, camera_start() succeeds and every camera_next_qr() "captures"
+ * it, renders the previews and counts a frame; nothing ever decodes. NULL
+ * puts the board back to having no camera.
+ */
+void camera__set_frame_for_test(const uint8_t *frame, uint16_t w, uint16_t h);
+void camera__set_located_for_test(uint32_t located, uint32_t decodes);
+#endif
 
 #endif /* LEEK_CAMERA_H */

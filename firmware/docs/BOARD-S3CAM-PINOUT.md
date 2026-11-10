@@ -116,6 +116,7 @@ After camera, SD, PSRAM, USB and strapping pins, these are free:
 | Button K3, Cancel | **14** | the one GPIO in 4-18 the camera does not take |
 | Encoder push, OK (K4) | **42** | MTMS, free with native USB JTAG |
 | Encoder CLK / DT | **44 / 43** | UART0's pins; see WIRING-S3CAM.md. **Colour kit:** **3 / 46** instead (strapping pins, safe here; see WIRING-S3CAM-COLOR.md) |
+| TFT backlight BLK (colour kit only) | **43** | UART0 TX, free there: LEDC PWM for Settings → Screen. The ROM banner toggles it ~100 ms at reset (one flicker). 44 (RX) is not usable as an output: the USB-serial chip drives it |
 | K1 / K2 (optional four-button module only) | **1 / 41** | ADC1_CH0 / MTDI; unconnected on the default kit, held high by internal pull-ups. **Colour kit:** SPI clock / MOSI of the TFT |
 | Status LED | **48** | onboard WS2812. **Colour kit:** the TFT's CS, so no LED |
 | Spare | **2** | free, but it also drives LED_ON — see boards/s3cam.h before using it as an input. **Colour kit:** the TFT's DC, an output |

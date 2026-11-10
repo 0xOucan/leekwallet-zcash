@@ -51,6 +51,14 @@ const uint8_t *oled_core_panel_picture(void);
  *  since a clear. Colour panels only (BOARD_HAS_SPI_PANEL). */
 const uint8_t *oled_core_panel_tint(void);
 
+/** The grayscale picture set by oled_show_panel_gray(), or px NULL since a
+ *  clear. Colour panels only (BOARD_HAS_SPI_PANEL). */
+typedef struct {
+    const uint8_t *px;
+    uint16_t x, y, w, h;
+} OledPanelGray;
+OledPanelGray oled_core_panel_gray(void);
+
 /** Five columns of a 5x7 glyph, bit 0 the top row. Unprintables render blank. */
 const uint8_t *font_5x7_glyph(char c);
 

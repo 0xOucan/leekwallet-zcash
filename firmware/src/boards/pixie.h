@@ -59,6 +59,7 @@
 #define PIN_DISPLAY_CS          GPIO_NUM_NC
 #define PIN_DISPLAY_DC          GPIO_NUM_4
 #define PIN_DISPLAY_RESET       GPIO_NUM_5
+#define PIN_DISPLAY_BLK         GPIO_NUM_NC   /* backlight not on a pin */
 #define ST7789_PROFILE_PIXIE    1
 
 /* Four addressable LEDs, one beside each button. */

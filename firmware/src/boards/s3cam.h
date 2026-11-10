@@ -68,7 +68,15 @@
  * stayed black, because nothing re-synced it to byte boundaries, and the
  * panel bench drew colour only once CS framed each command (2026-11-10).
  * RES is tied to 3V3 through 10k and takes no pin; st7789.c resets the
- * controller with SWRESET instead. BLK goes to 3V3: always on.
+ * controller with SWRESET instead.
+ *
+ * BLK goes to GPIO43, UART0's TX, free on this kit since the encoder left
+ * UART0 for GPIO3/46 and the console is USB Serial/JTAG: LEDC PWM there is
+ * the backlight, Settings > Screen (oled-st7789.c). Not GPIO44: the board's
+ * USB-serial chip drives RX. The ROM's boot banner toggles TX for about
+ * 100 ms after reset, so the backlight may flicker once at boot, which is
+ * harmless. A kit with BLK still on 3V3 is simply always at full brightness;
+ * the PWM then drives a pin nothing is connected to.
  */
 #define PIN_BUTTON_UP           GPIO_NUM_NC
 #define PIN_BUTTON_DOWN         GPIO_NUM_NC
@@ -77,6 +85,7 @@
 #define PIN_DISPLAY_DC          GPIO_NUM_2
 #define PIN_DISPLAY_CS          GPIO_NUM_48   /* the WS2812's pin, see above */
 #define PIN_DISPLAY_RESET       GPIO_NUM_NC
+#define PIN_DISPLAY_BLK         GPIO_NUM_43   /* TX; backlight PWM */
 #else
 #define PIN_BUTTON_UP           GPIO_NUM_1    /* K1 */
 #define PIN_BUTTON_DOWN         GPIO_NUM_41   /* K2 - MTDI */

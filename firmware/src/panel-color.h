@@ -66,6 +66,10 @@ typedef struct {
     /* The picture's colour layer (oled.h, OLED_TINT_*): the splash's key,
        its sparkles and the halo around the key, as the website draws them. */
     uint16_t picture_key, picture_spark, picture_halo;
+    /* 64 grays, black to white, for the camera viewfinder: index v >> 2 of
+       an 8-bit level. RGB565 has six bits of green and five of red and blue,
+       so 64 is every gray it can show. */
+    uint16_t gray[64];
 } PanelPalette;
 
 /** LeekWallet's palette: leek green on near-black. Native RGB565. */
@@ -80,6 +84,10 @@ typedef struct {
     const uint8_t *tint;      /* its colour layer (oled.h), or NULL: all `picture` */
     const QRCode  *qr;        /* last code drawn, or NULL */
     bool           qr_inverted;
+    /* A grayscale picture over the text (oled_show_panel_gray()), 1:1 in
+       panel pixels at (gray_x, gray_y), or gray NULL. */
+    const uint8_t *gray;
+    int            gray_x, gray_y, gray_w, gray_h;
 } PanelFrame;
 
 /** Module size of a `modules`-wide code on a width x height panel; 0 if none fits. */

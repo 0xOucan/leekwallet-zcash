@@ -55,6 +55,8 @@ static const uint8_t *panel_picture;
 #if BOARD_HAS_SPI_PANEL
 /* Its colour layer (oled.h), for the colour panel; same lifetime. */
 static const uint8_t *panel_tint;
+/* The viewfinder's grayscale picture (oled.h); same lifetime. */
+static OledPanelGray panel_gray;
 #endif
 
 static uint8_t cursor_page = 0;
@@ -100,6 +102,14 @@ const uint8_t *oled_core_panel_picture(void) { return panel_picture; }
 void oled_show_panel_tint(const uint8_t *tint) { panel_tint = tint; }
 
 const uint8_t *oled_core_panel_tint(void) { return panel_picture ? panel_tint : NULL; }
+
+void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
+                          uint16_t w, uint16_t h)
+{
+    panel_gray = (OledPanelGray){ .px = px, .x = x, .y = y, .w = w, .h = h };
+}
+
+OledPanelGray oled_core_panel_gray(void) { return panel_gray; }
 #endif
 
 void oled_blit_page(uint8_t page, const uint8_t *cols, size_t len)
@@ -126,6 +136,7 @@ esp_err_t oled_clear(void)
     panel_picture = NULL;
 #if BOARD_HAS_SPI_PANEL
     panel_tint = NULL;
+    panel_gray.px = NULL;
 #endif
     return ESP_OK;
 }

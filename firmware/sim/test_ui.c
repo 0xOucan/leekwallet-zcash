@@ -35,6 +35,8 @@ bool fake_protocol_rx_enabled(void);
 #include "session.h"
 #include "qr-out.h"
 #include "airgap.h"
+#include "camera.h"
+#include "viewfinder.h"
 #include "ur-encoder.h"
 #include "zcash-account.h"
 #include "sdcard.h"
@@ -65,6 +67,7 @@ void        ui__service_host_lock_for_test(void);
 void        ui__service_qr_out_for_test(void);
 void        ui__scan_feed_for_test(const char *ur);
 const char *ui__scan_status_for_test(void);
+void        ui__service_scan_for_test(void);
 const char *ui__master_xfp_for_test(void);
 const char *ui__master_zfp_for_test(void);
 int ui__receive_page_for_test(void);
@@ -1477,6 +1480,233 @@ static void test_qr_airgap_signing(void)
     CHECK(ui_get_screen() == SCREEN_QR_OUT, "no signature QR (%d)", ui_get_screen());
     CHECK(strncmp(fake_oled_qr_data(), "UR:LEEK-ZSIG/", 13) == 0, "QR shows \"%.20s\"", fake_oled_qr_data());
     CHECK(ui_sign_outcome() == SIGN_PENDING, "a QR signature answered a host");
+}
+
+
+/* ============================================================================
+ * The colour kit: Scan is a grayscale viewfinder; Settings > Screen, Preview
+ * ============================================================================ */
+
+static uint8_t scan_frame[320 * 240];
+
+/* A power cycle that keeps flash, on the colour panel (240 rows). */
+static void reboot_colour(void)
+{
+    fake_clock_reset();
+    fake_oled_reset();
+    fake_oled_set_panel_rows(240);
+    fake_input_reset();
+    fake_wallet_reset();
+    pin__reset_static_state_for_test();
+    ui__reset_static_state_for_test();
+    pin_init();
+    wallet_init();
+    ui_init();
+    ui_render();
+}
+
+static void scan_frame_scene(void)
+{
+    /* A dim room and a bright screen in the middle-left of the view. */
+    memset(scan_frame, 0x20, sizeof scan_frame);
+    for (int y = 60; y < 180; y++)
+        for (int x = 40; x < 160; x++) scan_frame[y * 320 + x] = 0xE0;
+}
+
+static void test_colour_scan_is_a_grayscale_viewfinder(void)
+{
+    printf("== colour kit: Scan shows a grayscale picture and three feedback rows\n");
+    boot_unlocked_with_seed();
+    fake_oled_set_panel_rows(240);
+    camera_set_exposure_bias(-4);
+    scan_frame_scene();
+    camera__set_frame_for_test(scan_frame, 320, 240);
+    camera__set_located_for_test(0, 0);
+
+    go(SCREEN_SCAN);
+    CHECK(fake_oled_panel_gray(NULL, NULL, NULL, NULL) == NULL, "a viewfinder before any frame");
+    CHECK_SCREEN(fake_oled_contains("Point at the QR"), "the camera did not start");
+
+    ui__service_scan_for_test();
+    ui_render();
+    uint16_t x = 0, y = 0, w = 0, h = 0;
+    const uint8_t *g = fake_oled_panel_gray(&x, &y, &w, &h);
+    CHECK(g != NULL, "no grayscale picture on the colour panel");
+    CHECK(x == 20 && y == 0 && w == VIEWFINDER_GRAY_W && h == VIEWFINDER_GRAY_H,
+          "the picture is at %u,%u %ux%u, not 20,0 200x150", x, y, w, h);
+    if (g) {
+        /* The screen sits at x 25..100, y 37..112 of 200x150: lit there, dark
+           at the far side, so the panel is not mirrored. */
+        CHECK(g[75 * 200 + 60] == 255, "the bright screen is not lit (%u)", g[75 * 200 + 60]);
+        CHECK(g[75 * 200 + 180] == 0, "the view is mirrored (%u)", g[75 * 200 + 180]);
+    }
+    for (int r = 0; r < 5; r++) {
+        CHECK_SCREEN(fake_oled_row(r)[0] == '\0', "row %d under the picture holds text", r);
+    }
+    CHECK_SCREEN(strncmp(fake_oled_row(5), "Light <=O----> -4", 17) == 0,
+                 "row 5 is not the exposure bar: \"%s\"", fake_oled_row(5));
+    CHECK_SCREEN(fake_oled_row_contains(6, "QVGA --fps s:0 r:0"),
+                 "row 6 is not the counters: \"%s\"", fake_oled_row(6));
+    /* A bright screen, small in frame, nothing located. */
+    CHECK_SCREEN(fake_oled_row_contains(7, "Move closer"),
+                 "row 7 gives no hint: \"%s\"", fake_oled_row(7));
+
+    /* Turn: exposure, on the bar at once. */
+    press(BUTTON_UP);
+    CHECK(camera_exposure_bias() == -3, "UP did not brighten (%d)", camera_exposure_bias());
+    CHECK_SCREEN(strncmp(fake_oled_row(5), "Light <==O---> -3", 17) == 0,
+                 "the bar did not follow the knob: \"%s\"", fake_oled_row(5));
+    for (int i = 0; i < 8; i++) press(BUTTON_DOWN);
+    CHECK_SCREEN(strncmp(fake_oled_row(5), "Light <O-----> -5", 17) == 0,
+                 "the bar does not stop at -5: \"%s\"", fake_oled_row(5));
+    camera_set_exposure_bias(-4);
+
+    /* A second later, codes located and one read: the rate and the counts,
+       and no "Move closer" once a code is being seen. */
+    camera__set_located_for_test(3, 1);
+    fake_clock_advance_us(1000 * 1000);
+    ui__service_scan_for_test();
+    ui_render();
+    CHECK_SCREEN(fake_oled_row_contains(6, "QVGA 1fps s:3 r:1"),
+                 "row 6 is \"%s\"", fake_oled_row(6));
+    CHECK_SCREEN(fake_oled_row_contains(7, "Point at the QR"),
+                 "row 7 is \"%s\"", fake_oled_row(7));
+
+    /* Parts of an animated UR: a progress bar of the decoder's own counts. */
+    static uint8_t cbor[1200];
+    for (size_t i = 0; i < sizeof cbor; i++) cbor[i] = (uint8_t)(i * 7);
+    cbor[0] = 0x59; cbor[1] = (sizeof cbor - 3) >> 8; cbor[2] = (sizeof cbor - 3) & 0xFF;
+    static UrEncoder enc;
+    CHECK(ur_encoder_init(&enc, "leek-pczt", cbor, sizeof cbor, 200), "encoder");
+    char part[600];
+    ur_encoder_next_part(&enc, part, sizeof part);
+    ui__scan_feed_for_test(part);
+    ui_render();
+    const uint32_t total = airgap_scan_total(), left = airgap_scan_remaining();
+    CHECK(total > 1 && left == total - 1, "decoder counts %u of %u", left, total);
+    char want[VIEWFINDER_LINE];
+    viewfinder_progress_line(total, left, want);
+    CHECK_SCREEN(fake_oled_row_contains(7, want), "row 7 is \"%s\", not \"%s\"",
+                 fake_oled_row(7), want);
+    CHECK_SCREEN(fake_oled_row(7)[0] == '[' || fake_oled_row(7)[1] == '[',
+                 "no progress bar: \"%s\"", fake_oled_row(7));
+
+    /* Nothing scanned is ever on the panel. */
+    CHECK_SCREEN(!fake_oled_contains("ur:") && !fake_oled_contains("UR:") &&
+                 !fake_oled_contains("leek"), "scanned text reached the screen");
+
+    /* Cancel leaves; the picture goes with the screen. */
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not leave Scan");
+    CHECK(fake_oled_panel_gray(NULL, NULL, NULL, NULL) == NULL, "the picture outlived Scan");
+    camera__set_frame_for_test(NULL, 0, 0);
+}
+
+/* The OLED kits keep their 1-bit preview and its status line exactly. */
+static void test_oled_scan_is_unchanged(void)
+{
+    printf("== OLED kits: Scan keeps the 1-bit preview and its status line\n");
+    boot_unlocked_with_seed();
+    camera_set_exposure_bias(-4);
+    scan_frame_scene();
+    camera__set_frame_for_test(scan_frame, 320, 240);
+    camera__set_located_for_test(2, 0);
+
+    go(SCREEN_SCAN);
+    ui__service_scan_for_test();
+    ui_render();
+    CHECK(fake_oled_panel_gray(NULL, NULL, NULL, NULL) == NULL, "a grayscale picture on an OLED");
+    CHECK_SCREEN(fake_oled_row_contains(7, "320 e-4 f1 s2 r0"),
+                 "the status line is \"%s\"", fake_oled_row(7));
+    /* The bitmap: lit where the bright screen is (x 40..160 of 320 -> panel
+       16..64 after the letterbox at 17), dark at the far right. */
+    CHECK(fake_oled_pixel(17 + 30, 28), "the 1-bit preview is not drawn");
+    CHECK(!fake_oled_pixel(17 + 70, 28), "the 1-bit preview is lit where it should not be");
+    press(BUTTON_CANCEL);
+    camera__set_frame_for_test(NULL, 0, 0);
+}
+
+static void test_colour_screen_brightness(void)
+{
+    printf("== colour kit: Settings > Screen sets the backlight live, saves on OK\n");
+    boot_unlocked_with_seed();
+    reboot_colour();
+    CHECK(fake_oled_backlight() == 100, "the backlight did not start full (%u)", fake_oled_backlight());
+
+    settings_goto("Screen 100%");
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_contains("> Screen < 100% >"), "OK did not open the adjustment");
+    CHECK_SCREEN(fake_oled_row_contains(7, HINT_ADJUST), "no adjust hint: \"%s\"", fake_oled_row(7));
+    for (int i = 0; i < 4; i++) press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight() == 60, "four turns down gave %u%%, not 60", fake_oled_backlight());
+    CHECK_SCREEN(fake_oled_contains("> Screen < 60% >"), "the line does not follow the knob");
+    CHECK(!fake_nvs_has("leek_ui", "backlight"), "saved before OK");
+
+    /* Cancel puts the old level back, unsaved. */
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_SETTINGS, "Cancel left Settings while adjusting");
+    CHECK(fake_oled_backlight() == 100, "Cancel kept %u%%", fake_oled_backlight());
+    CHECK_SCREEN(fake_oled_contains("> Screen 100%"), "Cancel did not restore the line");
+    CHECK(!fake_nvs_has("leek_ui", "backlight"), "Cancel saved");
+
+    /* Bounded at 10% and 100%. */
+    press(BUTTON_ACCEPT);
+    for (int i = 0; i < 15; i++) press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight() == 10, "the floor is %u%%, not 10", fake_oled_backlight());
+    for (int i = 0; i < 15; i++) press(BUTTON_UP);
+    CHECK(fake_oled_backlight() == 100, "the ceiling is %u%%, not 100", fake_oled_backlight());
+    for (int i = 0; i < 4; i++) press(BUTTON_DOWN);
+    press(BUTTON_ACCEPT);
+    CHECK(fake_nvs_has("leek_ui", "backlight"), "OK did not save");
+    CHECK_SCREEN(fake_oled_contains("> Screen 60%"), "the saved level is not shown");
+    CHECK(ui_get_screen() == SCREEN_SETTINGS, "OK left Settings");
+
+    /* And the OLED's levels were never touched for it. */
+    reboot_colour();
+    CHECK(fake_oled_backlight() == 60, "the backlight came back at %u%%, not 60", fake_oled_backlight());
+    settings_goto("Screen 60%");
+}
+
+/* On an OLED the entry is the contrast levels it always was. */
+static void test_oled_brightness_is_unchanged(void)
+{
+    printf("== OLED kits: Settings > Bright still cycles contrast levels\n");
+    boot_unlocked_with_seed();
+    settings_goto("Bright Dim");
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_contains("> Bright Low"), "Bright did not cycle");
+    CHECK(fake_oled_backlight_calls() == 0, "an OLED set a backlight");
+    CHECK(!fake_nvs_has("leek_ui", "backlight"), "an OLED saved a backlight");
+}
+
+static void test_colour_preview_true_exposure(void)
+{
+    printf("== colour kit: Settings > Preview shows the true exposure, and persists\n");
+    boot_unlocked_with_seed();
+    reboot_colour();
+    CHECK(!camera_preview_true_exposure(), "the preview did not start auto-levelled");
+    settings_goto("Preview Auto");
+    press(BUTTON_ACCEPT);
+    CHECK(camera_preview_true_exposure(), "OK did not switch to true exposure");
+    CHECK_SCREEN(fake_oled_contains("> Preview True"), "the line does not say True");
+    CHECK(fake_nvs_has("leek_ui", "pv_true"), "not saved");
+
+    camera_set_preview_true_exposure(false);   /* RAM lost in the reboot */
+    reboot_colour();
+    CHECK(camera_preview_true_exposure(), "Preview reverted across a reboot");
+
+    /* What it changes: the room's raw level, not stretched to black. */
+    scan_frame_scene();
+    camera__set_frame_for_test(scan_frame, 320, 240);
+    go(SCREEN_SCAN);
+    ui__service_scan_for_test();
+    ui_render();
+    const uint8_t *g = fake_oled_panel_gray(NULL, NULL, NULL, NULL);
+    CHECK(g && g[5 * 200 + 190] == 0x20 && g[75 * 200 + 60] == 0xE0,
+          "true exposure shows %u/%u, not 32/224", g ? g[5 * 200 + 190] : 0, g ? g[75 * 200 + 60] : 0);
+    press(BUTTON_CANCEL);
+    camera__set_frame_for_test(NULL, 0, 0);
+    camera_set_preview_true_exposure(false);
 }
 
 /* ============================================================================
@@ -3396,6 +3626,11 @@ int main(void)
     test_a_wipe_resets_the_account();
     test_the_knob_direction_flips_the_encoder();
     test_the_knob_direction_survives_a_reboot();
+    test_colour_scan_is_a_grayscale_viewfinder();
+    test_oled_scan_is_unchanged();
+    test_colour_screen_brightness();
+    test_oled_brightness_is_unchanged();
+    test_colour_preview_true_exposure();
     test_clockwise_raises_the_pin_digit();
 
     test_a_tap_on_back_does_not_lock();

@@ -51,6 +51,15 @@ static const PanelPalette LEEK_PALETTE = {
     .picture_spark = PANEL_RGB565(255, 236, 150),    /* SPARK */
     .picture_halo  = PANEL_RGB565(OVER(255, PANEL_BG_R), OVER(236, PANEL_BG_G),
                                   OVER(150, PANEL_BG_B)),
+    .gray = {
+#define GRAY1(i) PANEL_RGB565((i) * 255 / 63, (i) * 255 / 63, (i) * 255 / 63)
+#define GRAY8(i) GRAY1(i), GRAY1((i) + 1), GRAY1((i) + 2), GRAY1((i) + 3), \
+                 GRAY1((i) + 4), GRAY1((i) + 5), GRAY1((i) + 6), GRAY1((i) + 7)
+        GRAY8(0), GRAY8(8), GRAY8(16), GRAY8(24),
+        GRAY8(32), GRAY8(40), GRAY8(48), GRAY8(56),
+#undef GRAY8
+#undef GRAY1
+    },
 };
 
 const PanelPalette *panel_color_palette(void) { return &LEEK_PALETTE; }
@@ -264,6 +273,28 @@ static void render_text(const PanelFrame *f, const PanelPalette *pal,
     }
 }
 
+/* ---------------------------------------------------------- viewfinder */
+
+/* The camera's preview, 1:1, over whatever the text pass drew there. Clipped
+ * to the panel and to this band, so a rectangle that hangs off either is
+ * drawn as far as it fits. */
+static void render_gray(const PanelFrame *f, const PanelPalette *pal,
+                        int width, int height, int y0, int rows, uint16_t *out)
+{
+    const int x0 = f->gray_x < 0 ? 0 : f->gray_x;
+    int x1 = f->gray_x + f->gray_w;
+    if (x1 > width) x1 = width;
+    for (int r = 0; r < rows; r++) {
+        const int y = y0 + r;
+        if (y < f->gray_y || y >= f->gray_y + f->gray_h || y >= height) continue;
+        const uint8_t *src = f->gray + (size_t)(y - f->gray_y) * f->gray_w;
+        uint16_t *row = out + (size_t)r * width;
+        for (int x = x0; x < x1; x++) {
+            row[x] = pal->gray[src[x - f->gray_x] >> 2];
+        }
+    }
+}
+
 void panel_color_render(const PanelFrame *f, const PanelPalette *pal,
                         int width, int height, int y0, int rows, uint16_t *out)
 {
@@ -277,4 +308,7 @@ void panel_color_render(const PanelFrame *f, const PanelPalette *pal,
         return;
     }
     render_text(f, pal, width, height, y0, rows, out);
+    if (f->gray && f->gray_w > 0 && f->gray_h > 0) {
+        render_gray(f, pal, width, height, y0, rows, out);
+    }
 }

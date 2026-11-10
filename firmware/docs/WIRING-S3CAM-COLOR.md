@@ -30,7 +30,7 @@ and the ESP32-S3 is not 5 V tolerant.
 | DC | GPIO2 | also drives the onboard LED, which may flicker with traffic; fine as an output |
 | CS | GPIO48 | **required**: with CS on GND the panel stays black (it never re-syncs to byte boundaries). GPIO48 is the onboard RGB LED's pin, which the firmware does not use |
 | RES | 3V3 through 10 kΩ | the driver resets the panel in software (SWRESET) |
-| BLK | 3V3 | backlight always on |
+| BLK | GPIO43 (header **TX**) | backlight PWM, **Settings → Screen** (10–100 %). Optional: on 3V3 it is simply always full |
 | TRA / TRB | GPIO3 / GPIO46 | encoder A / B, wired straight (no resistor). **Not** RX/TX (44/43): the module's encoder could not pull those low |
 | PSH (OK) | GPIO42 | the knob's push, as on the knob kit |
 | K0 (Cancel) | GPIO14 | as on the knob kit |
@@ -44,6 +44,25 @@ TX (GPIO44/43) never read low with the module's encoder on them, since both
 also go to the board's USB-serial chip, so UART0 is left unused. Don't move
 anything to GPIO45: a pull-up there changes the flash voltage at boot.
 
+### The backlight on TX (GPIO43)
+
+GPIO43 is UART0's TX, free on this kit: the console is USB Serial/JTAG and
+the encoder moved to GPIO3/46. The firmware drives it with LEDC PWM (5 kHz,
+13-bit, LEDC timer 1 / channel 1; the camera's XCLK keeps timer 0 /
+channel 0), and **Settings → Screen** sets it in steps of 10 % from 10 % to
+100 %: turn to change it live, OK keeps it (saved in NVS, not secret),
+Cancel puts back the old level. The default is 100 %.
+
+- **Wire it straight**: module BLK to the header pin marked TX. The module's
+  BLK normally drives a transistor on the module, so the pin only supplies a
+  base or gate current. The old 1 kΩ that sat on TX for the encoder may stay
+  in series if the backlight is still bright enough with it.
+- **Not GPIO44 (RX):** the board's USB-serial chip drives it.
+- The ROM prints its boot banner on TX, so for about 100 ms after a reset the
+  backlight may flicker once. Harmless.
+- **BLK left on 3V3** also works: the PWM then drives a pin nothing is
+  connected to, and the setting changes nothing.
+
 If the encoder module has no pull-ups of its own, the firmware's internal
 ones are enough for short wires.
 
@@ -55,6 +74,25 @@ the whole panel, with every character redrawn crisply at exactly 2×3 pixels
 item sits on a green bar, warnings (`!TRANSPARENT: public`, *Wrong network*)
 are amber and destructive or failed things red. The words are the same as on
 a monochrome board, so nothing depends on seeing the colour.
+
+**Scan** is a real camera view: a 200×150 grayscale picture across the top
+five rows (box-averaged from the capture, the camera's 4:3, drawn 1:1, not
+mirrored), auto-levelled per frame so a dim scene is still visible (gain
+capped at about 4×, so turning the exposure down still looks darker). Below
+it, three rows, all numbers or fixed strings, never anything decoded:
+
+| Row | Example | Meaning |
+|---|---|---|
+| 5 | `Light <=O----> -4 23%` | the exposure bias (−5…0) as a bar, and the view's mean level |
+| 6 | `QVGA 12fps s:3 r:1` | capture size, frames a second, codes located (s) and read (r) |
+| 7 | `[####------] 6 left` | an animated UR's parts; otherwise a message from the decoder, a hint (`Too dark`, `Too bright`, `Hold steady`, `Move closer`) or `Point at the QR` |
+
+Turn = exposure, press = next capture size, press-and-turn = PC stream, as
+on the knob kit. **Settings → Preview** switches the picture from *Auto*
+(auto-levelled, for aiming) to *True*: the raw exposure the decoder gets,
+for judging camera settings. The preview is drawn from one frame in four
+(`CAMERA_PREVIEW_EVERY`) and lives in PSRAM (30 KB); each update repaints
+the panel, about 23 ms of SPI at 40 MHz.
 
 QR codes are redrawn square at native resolution with a four-module quiet
 zone. A `.zsig` reply (~108 bytes) is **one still QR** (version 8, 4 px per
