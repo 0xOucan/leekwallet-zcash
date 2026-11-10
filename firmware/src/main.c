@@ -226,24 +226,30 @@ void app_main(void)
 #endif
 
 #if LEEK_HAS_CAMERA
-    const uint32_t ui_stack = 20480;
+#  define UI_STACK 20480
 #else
-    const uint32_t ui_stack = 8192;
+#  define UI_STACK 8192
 #endif
-    /* The UI stack is internal RAM, the scarcest kind on this chip: say how
-     * much is left, so a build that runs short shows it in the boot log. */
-    ESP_LOGI(TAG, "Internal RAM before UI: %u free, largest block %u, UI stack %u",
+    /* Static, not from the heap, for the reason the Zcash worker's is
+     * (zcash-worker.c): on the colour kit with Bluetooth on, 27 KB of internal
+     * RAM was free at this point but no single block reached 20 KB, and the
+     * UI task could not be created (board, 2026-11-10). In .bss the linker
+     * reserves it in one piece, so the task cannot fail to start. */
+    static StackType_t ui_stack_mem[UI_STACK / sizeof(StackType_t)];
+    static StaticTask_t ui_tcb;
+    ESP_LOGI(TAG, "Internal RAM after start-up: %u free, largest block %u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-             (unsigned)ui_stack);
-    BaseType_t task_ret = xTaskCreate(
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    TaskHandle_t ui_handle = xTaskCreateStatic(
         ui_task,
         "ui_task",
-        ui_stack,
+        UI_STACK,
         NULL,
         5,
-        NULL
+        ui_stack_mem,
+        &ui_tcb
     );
+    BaseType_t task_ret = ui_handle ? pdPASS : pdFAIL;
 
     if (task_ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create UI task");
