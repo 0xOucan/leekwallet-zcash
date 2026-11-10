@@ -18,6 +18,12 @@
  * writes to the chip, and that absence is the point. A bring-up that cannot
  * express a write cannot perform one by mistake — including the lifecycle
  * state change that is permanent.
+ *
+ * One exception, off by default: built with LEEK_SE_CONTAINER_WRITES=1 there
+ * is a SetDataObject builder for the DATA (never the metadata) of exactly one
+ * object, 0xF1E0, the development-only "Level 1 SE container" described in
+ * docs/RESEARCH-SECURE-ELEMENT.md. With the flag at 0, the default, none of
+ * it is compiled and the paragraph above holds word for word.
  */
 
 #ifndef OPTIGA_PROTO_H
@@ -159,6 +165,43 @@ size_t optiga_apdu_get_error(uint8_t *out);
 
 /** GetRandom from the TRNG (Param 0x00). Returns 0 outside 8..256. */
 size_t optiga_apdu_get_random(uint8_t *out, uint16_t len);
+
+/* ---------------------------------- the one write (LEEK_SE_CONTAINER_WRITES) */
+
+#ifndef LEEK_SE_CONTAINER_WRITES
+#define LEEK_SE_CONTAINER_WRITES 0
+#endif
+
+#if LEEK_SE_CONTAINER_WRITES
+/*
+ * SetDataObject: Cmd 0x02 | Param | InLen(2) | OID(2) | Offset(2) | Data.
+ * Param 0x00 writes data at Offset; 0x40 erases the object first, then
+ * writes. Param 0x01 (metadata) and 0x02 (counter) exist in the manual and
+ * are NOT expressible here: the builder takes a bool, not a Param byte.
+ *
+ * The object is fixed. 0xF1E0 is the first of the Trust M's two 1500-byte
+ * arbitrary data objects (type 2); it is not part of Trezor's or BitBox's PIN
+ * layouts, nor pre-provisioned on Express/MTR parts. The OID is still an
+ * argument, so a caller states what it means to write and a wrong one is
+ * refused here, before any byte is built, rather than "corrected".
+ */
+#define OPTIGA_CMD_SET_DATA         0x02
+#define OPTIGA_SET_PARAM_WRITE      0x00
+#define OPTIGA_SET_PARAM_ERASE      0x40    /* erase, then write */
+#define OPTIGA_OID_CONTAINER        0xF1E0
+#define OPTIGA_CONTAINER_OBJ_SIZE   1500
+#define OPTIGA_SET_CHUNK_MAX        256     /* data bytes per command */
+#define OPTIGA_SET_HEADER           8       /* Cmd Param InLen OID Offset */
+#define OPTIGA_APDU_SET_MAX         (OPTIGA_SET_HEADER + OPTIGA_SET_CHUNK_MAX)
+
+/** SetDataObject on the data of `oid` at `offset`. Returns the APDU length,
+ *  or 0 (nothing built) unless `oid` is OPTIGA_OID_CONTAINER, `len` is
+ *  1..OPTIGA_SET_CHUNK_MAX, the write ends inside the object, and `out` has
+ *  room. */
+size_t optiga_apdu_set_data(uint8_t *out, size_t cap, uint16_t oid,
+                            bool erase_first, uint16_t offset,
+                            const uint8_t *data, size_t len);
+#endif
 
 enum {
     OPTIGA_APDU_OK = 0,

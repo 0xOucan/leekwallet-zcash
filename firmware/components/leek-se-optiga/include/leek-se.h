@@ -2,8 +2,10 @@
  * Secure element bring-up: an Infineon OPTIGA Trust M on the shared I2C bus.
  *
  * RESEARCH AND TESTING ONLY. Nothing here stores a key, a PIN or a seed, and
- * nothing here can: the layers below have no way to express a write to the
- * chip (see optiga-proto.h). What this API does is find the chip, identify
+ * in the default build nothing here can: the layers below have no way to
+ * express a write to the chip (see optiga-proto.h). The one exception is the
+ * development-only container at the end of this file, compiled only with
+ * LEEK_SE_CONTAINER_WRITES=1. What this API does is find the chip, identify
  * it, report its state and prove the link works, so that the design in
  * docs/RESEARCH-SECURE-ELEMENT.md can be built on a part that is known to
  * answer.
@@ -29,6 +31,7 @@
 #include "esp_err.h"
 
 #include "optiga-proto.h"
+#include "optiga-container.h"
 
 typedef struct {
     uint16_t data_reg_len;          /* link: frame size the chip reported */
@@ -91,5 +94,31 @@ const char *leek_se_last_error(void);
 #define LEEK_SE_LINE_LEN    22
 size_t leek_se_summary_lines(const leek_se_info_t *info,
                              char lines[][LEEK_SE_LINE_LEN], size_t max);
+
+#if LEEK_SE_CONTAINER_WRITES
+/*
+ * The Level 1 SE container (optiga-container.h): one opaque blob in data
+ * object 0xF1E0. DEVELOPMENT ONLY, compiled only with
+ * LEEK_SE_CONTAINER_WRITES=1, and not called by the wallet. Storage, not
+ * security: the object keeps its factory access rules, so anyone on the I2C
+ * bus can read or rewrite it. Pass only data that is already encrypted.
+ * Nothing here logs the blob, and every buffer it crosses is wiped.
+ */
+
+/** Largest blob the container holds: 1500 bytes less a 16-byte header. */
+size_t leek_se_container_capacity(void);
+
+/** Read the blob. `*state` says what the object holds; `*len` is non-zero
+ *  only when it is OPTIGA_CONTAINER_OK. */
+esp_err_t leek_se_container_read(uint8_t *out, size_t cap, size_t *len,
+                                 optiga_container_state_t *state);
+
+/** Replace the blob (1..capacity bytes), then read it back. Refused, with
+ *  nothing written, if the object holds data that is not a container. */
+esp_err_t leek_se_container_write(const uint8_t *data, size_t len);
+
+/** Overwrite the whole object with zeros; it then reads as EMPTY. */
+esp_err_t leek_se_container_erase(void);
+#endif
 
 #endif /* LEEK_SE_H */

@@ -359,12 +359,25 @@ $(BUILD)/test_ble_chunk: test_ble_chunk.c ../src/ble-chunk.c | $(BUILD)
 SE_OPTIGA := ../components/leek-se-optiga
 SE_OPTIGA_SRC := test_se_optiga.c $(SE_OPTIGA)/optiga-proto.c $(SE_OPTIGA)/optiga-link.c $(SE_OPTIGA)/optiga-cmd.c
 
-$(BUILD)/test_se_optiga: $(SE_OPTIGA_SRC) | $(BUILD)
+# optiga-container.c is in the default build too, where it must compile to
+# nothing (the suite also #errors if any write-path name is visible).
+$(BUILD)/test_se_optiga: $(SE_OPTIGA_SRC) $(SE_OPTIGA)/optiga-container.c | $(BUILD)
 	$(CC) $(CFLAGS) -I$(SE_OPTIGA)/include -fsanitize=address,undefined -fno-sanitize-recover=all \
 	      -fno-omit-frame-pointer -o $@ $^ -lm
 
 TESTS += test_se_optiga
 all: $(BUILD)/test_se_optiga
+
+# The same suite with the development-only Level 1 SE container compiled in
+# (LEEK_SE_CONTAINER_WRITES=1): every check above, then the container's, with
+# the simulated chip counting any command outside its one allowed write.
+$(BUILD)/test_se_container: $(SE_OPTIGA_SRC) $(SE_OPTIGA)/optiga-container.c | $(BUILD)
+	$(CC) $(CFLAGS) -DLEEK_SE_CONTAINER_WRITES=1 -I$(SE_OPTIGA)/include \
+	      -fsanitize=address,undefined -fno-sanitize-recover=all \
+	      -fno-omit-frame-pointer -o $@ $^ -lm
+
+TESTS += test_se_container
+all: $(BUILD)/test_se_container
 
 # SLIP-39. The core has no ESP-IDF dependency, so the host drives it directly;
 # entropy.c comes along because share values must come from the entropy gate.

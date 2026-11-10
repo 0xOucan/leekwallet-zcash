@@ -6,8 +6,9 @@
  * chip refuses a command, the reason is fetched from 0xF1C2 straight away,
  * before anything else can overwrite it.
  *
- * There is intentionally no optiga_cmd_set_* and no way to send an arbitrary
- * APDU. See optiga-proto.h.
+ * There is no way to send an arbitrary APDU, and by default no
+ * optiga_cmd_set_*. Built with LEEK_SE_CONTAINER_WRITES=1 there is exactly
+ * one, for the data of 0xF1E0 (see optiga-proto.h and optiga-container.h).
  */
 
 #ifndef OPTIGA_CMD_H
@@ -32,5 +33,19 @@ int optiga_cmd_get_data(optiga_link_t *l, uint16_t oid, bool metadata,
 /** `len` (8..256) bytes from the chip's TRNG, for the self-test only. */
 int optiga_cmd_get_random(optiga_link_t *l, uint8_t *out, uint16_t len,
                           uint8_t *chip_err);
+
+#if LEEK_SE_CONTAINER_WRITES
+/** Write `len` (1..OPTIGA_SET_CHUNK_MAX) bytes of the data of `oid` at
+ *  `offset`, erasing the object first if `erase_first`. Any `oid` other than
+ *  OPTIGA_OID_CONTAINER, or a length or offset outside the object, returns
+ *  OPTIGA_E_PARAM without a byte on the bus. */
+int optiga_cmd_set_data(optiga_link_t *l, uint16_t oid, bool erase_first,
+                        uint16_t offset, const uint8_t *data, size_t len,
+                        uint8_t *chip_err);
+
+/** Zero the response buffer here and the link's frame buffers, after
+ *  container data has passed through them. */
+void optiga_cmd_wipe(optiga_link_t *l);
+#endif
 
 #endif /* OPTIGA_CMD_H */

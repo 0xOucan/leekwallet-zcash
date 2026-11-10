@@ -98,3 +98,35 @@ int optiga_cmd_get_random(optiga_link_t *l, uint8_t *out, uint16_t want,
     memset(resp, 0, sizeof resp);
     return OPTIGA_OK;
 }
+
+#if LEEK_SE_CONTAINER_WRITES
+int optiga_cmd_set_data(optiga_link_t *l, uint16_t oid, bool erase_first,
+                        uint16_t offset, const uint8_t *data, size_t len,
+                        uint8_t *chip_err)
+{
+    if (chip_err)
+        *chip_err = 0;
+    uint8_t cmd[OPTIGA_APDU_SET_MAX];
+    size_t n = optiga_apdu_set_data(cmd, sizeof cmd, oid, erase_first, offset,
+                                    data, len);
+    if (n == 0)
+        return OPTIGA_E_PARAM;
+    const uint8_t *out;
+    size_t out_len;
+    int err = run(l, cmd, n, &out, &out_len, chip_err);
+    memset(cmd, 0, sizeof cmd);
+    if (err)
+        return err;
+    return out_len == 0 ? OPTIGA_OK : OPTIGA_E_REPLY;
+}
+
+void optiga_cmd_wipe(optiga_link_t *l)
+{
+    memset(resp, 0, sizeof resp);
+    if (l) {
+        memset(l->tx, 0, sizeof l->tx);
+        memset(l->rx, 0, sizeof l->rx);
+        l->rx_len = 0;
+    }
+}
+#endif
