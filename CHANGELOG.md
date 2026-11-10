@@ -29,8 +29,10 @@ are released in
   that set it: `zcash_primitives 0.31.0`, `zcash_client_backend 0.25.0`,
   `zcash_client_sqlite 0.23.0`, `pczt 0.10.0` and siblings. An app without this
   builds transactions nodes reject after the activation. Rust 1.89 or newer.
-- **New firmware: boards should be updated.** Not tested on a board yet. v0.1.0
-  still signs NU7 in the simulator, so it is a suggestion and not a requirement.
+- **New firmware: boards should be updated.** Tested on a board: a NU7 testnet
+  send over USB, signed on the colour kit and mined in block 4,606,165
+  (txid `8676ee562b8066b8…`). v0.1.0 still signs NU7 in the simulator, so it is a
+  suggestion and not a requirement.
   The PCZT format did not change.
 - **Version notices, both ways** (guidance, not a security boundary). Apps and
   `zecz` suggest updating a board that reports no `fwCompat` level. The board says

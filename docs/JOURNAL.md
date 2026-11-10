@@ -1886,3 +1886,16 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   mainnet past the activation. To do by hand: a send and a shield over USB, BLE
   and SD after block 3,543,405, the board's `Upgrade: NU7`, "Update your app" on
   both panels, a board update from v0.1.0, and sync cadence on a phone.
+
+## 2026-11-10: first NU7 signature on a board
+
+- Colour kit (ST7789, knob on GPIO3/GPIO46, CS on GPIO48), `main` at `79eb3a0`,
+  `zecz` rebuilt on that commit, testnet wallet, USB.
+- Pairing code matched (6 digits), PIN on the board, review on the board, OK.
+  `send` built a PCZT on branch NU7 `77190ad9`, target height 4,606,162, expiry
+  4,606,282 (120 blocks): 0.001 ZEC to the wallet's own address with a memo,
+  fee 0.0001. The board signed 2 Ironwood actions; all signatures verified
+  against rk; proving and broadcast OK.
+- Txid `8676ee562b8066b8c9fb720706551f2a57f8176066380bfd29d5edf50abd0151`, mined in block 4,606,165.
+- Still to do by hand: mainnet past the activation, Bluetooth, SD, a shield,
+  "Update your app" on both panels, and an update from a v0.1.0 board.

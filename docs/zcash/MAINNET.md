@@ -13,8 +13,10 @@ about 02:20 UTC on 2026-11-06.
   requirement: a v0.1.0 board signs NU7 in the simulator suites, and new apps
   still use it. The new firmware adds the checks under "Version notices", and
   what v0.1.0 lacks: "Share view key?" before the UFVK, and the refusal of a
-  repeated rk (on v0.1.0 only the host's preflight stops that). It
-  **has not been tested on a board yet**. The crates did not change the PCZT wire
+  repeated rk (on v0.1.0 only the host's preflight stops that). **Tested on a
+  board on testnet** (2026-11-10): a NU7 send over USB from `zecz`, txid
+  `8676ee562b8066b8c9fb720706551f2a57f8176066380bfd29d5edf50abd0151`, mined in block 4,606,165. Not yet: mainnet,
+  Bluetooth, SD and a shield on NU7. The crates did not change the PCZT wire
   format: regenerating `vectors/` with them leaves all 42 existing vectors and
   `keys.json` byte-identical (with `iw_send_nu7`'s old 40-block expiry pinned).
 - **Wallet databases do not change.** `zcash_client_sqlite 0.23.0` has the same
