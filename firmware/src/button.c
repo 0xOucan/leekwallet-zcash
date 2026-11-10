@@ -132,8 +132,20 @@ static Encoder encoder;
 
 static void encoder_poll_once(int64_t now)
 {
-    int step = encoder_feed(&encoder, (uint8_t)gpio_get_level(PIN_ENC_CLK),
-                            (uint8_t)gpio_get_level(PIN_ENC_DT));
+    const uint8_t clk = (uint8_t)gpio_get_level(PIN_ENC_CLK);
+    const uint8_t dt = (uint8_t)gpio_get_level(PIN_ENC_DT);
+#ifdef LEEK_ENC_TRACE
+    /* Bring-up only (-DLEEK_ENC_TRACE): log every change of the two pins. */
+    static int last = -1;
+    if ((clk << 1 | dt) != last) {
+        last = clk << 1 | dt;
+        ESP_LOGI(TAG, "enc raw: CLK(GPIO%d)=%u DT(GPIO%d)=%u", PIN_ENC_CLK, clk, PIN_ENC_DT, dt);
+    }
+#endif
+    int step = encoder_feed(&encoder, clk, dt);
+#ifdef LEEK_ENC_TRACE
+    if (step != 0) ESP_LOGI(TAG, "enc step %d", step);
+#endif
     if (step == 0) {
         return;
     }
@@ -265,11 +277,18 @@ esp_err_t button_init(void)
     ESP_LOGI(TAG, "Encoder: CLK=%d DT=%d, push on K4", PIN_ENC_CLK, PIN_ENC_DT);
 #endif
 
-    /* Start button polling task */
+    /* Start button polling task. Its stack must hold an ESP_LOG call (queue
+     * full, stuck pin): 2 KB overflowed on the colour kit when logging every
+     * encoder edge (board, 2026-11-10), so 3 KB, and 4 KB with the trace. */
+#ifdef LEEK_ENC_TRACE
+#define BTN_POLL_STACK 4096
+#else
+#define BTN_POLL_STACK 3072
+#endif
     BaseType_t ret = xTaskCreate(
         button_poll_task,
         "btn_poll",
-        2048,
+        BTN_POLL_STACK,
         NULL,
         6,  /* Higher priority than UI task */
         NULL

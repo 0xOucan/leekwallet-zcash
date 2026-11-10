@@ -28,17 +28,21 @@ and the ESP32-S3 is not 5 V tolerant.
 | SCL (SPI clock) | GPIO1 | was K1, unused on the knob kit |
 | SDA (SPI MOSI) | GPIO41 | was K2, unused on the knob kit |
 | DC | GPIO2 | also drives the onboard LED, which may flicker with traffic; fine as an output |
-| CS | GND | the panel is the only device on the bus; the driver runs without a CS pin |
+| CS | GPIO48 | **required**: with CS on GND the panel stays black (it never re-syncs to byte boundaries). GPIO48 is the onboard RGB LED's pin, which the firmware does not use |
 | RES | 3V3 through 10 kΩ | the driver resets the panel in software (SWRESET) |
 | BLK | 3V3 | backlight always on |
-| TRA / TRB | GPIO44 / GPIO43 | encoder A / B, as on the knob kit; **keep the 1 kΩ resistor in series on GPIO43** |
+| TRA / TRB | GPIO3 / GPIO46 | encoder A / B, wired straight (no resistor). **Not** RX/TX (44/43): the module's encoder could not pull those low |
 | PSH (OK) | GPIO42 | the knob's push, as on the knob kit |
 | K0 (Cancel) | GPIO14 | as on the knob kit |
 | OPTIGA SDA / SCL | GPIO47 / GPIO21 | the I2C bus, now free of the OLED; for the secure element |
 
-No strapping pin (0, 3, 45, 46) is used. GPIO43 is UART0 TX, where the ROM
-prints its boot banner; the 1 kΩ resistor is what protects it if the encoder
-contact happens to be closed at that moment (same reasoning as the knob kit).
+The encoder sits on two strapping pins, the only free pins left, and both
+are harmless here: GPIO3 picks the JTAG source only with `EFUSE_STRAP_JTAG_SEL`
+burned (this project burns no eFuses), and GPIO46 matters only in download
+mode, which also needs BOOT (GPIO0) held low. On the first colour kit RX and
+TX (GPIO44/43) never read low with the module's encoder on them, since both
+also go to the board's USB-serial chip, so UART0 is left unused. Don't move
+anything to GPIO45: a pull-up there changes the flash voltage at boot.
 
 If the encoder module has no pull-ups of its own, the firmware's internal
 ones are enough for short wires.
@@ -69,12 +73,21 @@ change.
 | Red and blue swapped (the green is fine, warnings look blue) | `-DST7789_BGR=1` |
 | Upside down or sideways | `-DST7789_ROTATION=1`, `2` or `3` (a quarter turn each) |
 | Picture shifted, a band of noise on one edge | the RAM offset: rotations 2 and 3 already add 80; otherwise `-DST7789_X_OFFSET=` / `-DST7789_Y_OFFSET=` |
-| Nothing at all, backlight on | check SCL/SDA are not swapped and DC is on GPIO2; then try `-DST7789_SPI_MODE=0` |
+| Nothing at all, backlight on | CS must be on GPIO48, not GND; check SCL/SDA are not swapped and DC is on GPIO2. Then run the panel bench (below) |
 | Speckles or random pixels | long jumper wires: `-DST7789_SPI_HZ=20000000` |
 | Knob runs the wrong way | **Settings → Knob direction** on the device, or `-DBOARD_ENC_REVERSE=1` |
 
 The boot log names the panel's settings in one line
 (`st7789: 240x240 at (0,0), MADCTL 00, inverted, 40 MHz, SPI mode 3`).
+
+## The panel bench
+
+`pio run -e esp32s3cam-panel-bench -t upload` flashes a test image with no
+wallet and no vault access. It drives SCL, SDA, DC and CS by hand (no SPI
+peripheral), cycles SPI modes 3, 0, 2 and 1, and fills the screen red, green
+and blue in each, logging each step on USB serial. Colour on the screen proves
+the wiring and the panel; flash `esp32s3cam-color` again afterwards. This is
+how the CS requirement above was found on the first kit (2026-11-10).
 
 ## Seeing the screens without a board
 

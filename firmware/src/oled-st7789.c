@@ -140,7 +140,8 @@ static const uint8_t PIXIE_INIT[] = {
 #  define ST7789_SPI_HZ         40000000
 #endif
 #ifndef ST7789_SPI_MODE
-#  define ST7789_SPI_MODE       3    /* CS grounded: the controller syncs on the clock */
+   /* With a CS pin, mode 0, the controller's own; with CS grounded, mode 3. */
+#  define ST7789_SPI_MODE       (PIN_DISPLAY_CS == GPIO_NUM_NC ? 3 : 0)
 #endif
 
 /* The palette as the bus wants it: swapped to big-endian unless the profile

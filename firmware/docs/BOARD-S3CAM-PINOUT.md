@@ -115,11 +115,12 @@ After camera, SD, PSRAM, USB and strapping pins, these are free:
 | I2C SCL (OLED + secure element) | **21** | free; likewise |
 | Button K3, Cancel | **14** | the one GPIO in 4-18 the camera does not take |
 | Encoder push, OK (K4) | **42** | MTMS, free with native USB JTAG |
-| Encoder CLK / DT | **44 / 43** | UART0's pins; see WIRING-S3CAM.md |
+| Encoder CLK / DT | **44 / 43** | UART0's pins; see WIRING-S3CAM.md. **Colour kit:** **3 / 46** instead (strapping pins, safe here; see WIRING-S3CAM-COLOR.md) |
 | K1 / K2 (optional four-button module only) | **1 / 41** | ADC1_CH0 / MTDI; unconnected on the default kit, held high by internal pull-ups. **Colour kit:** SPI clock / MOSI of the TFT |
-| Status LED | **48** | onboard WS2812 |
+| Status LED | **48** | onboard WS2812. **Colour kit:** the TFT's CS, so no LED |
 | Spare | **2** | free, but it also drives LED_ON — see boards/s3cam.h before using it as an input. **Colour kit:** the TFT's DC, an output |
 
-No strapping pin is used. The Zcash board's full wiring, with the screen,
+The knob kit uses no strapping pin; the colour kit's encoder uses 3 and 46,
+never 45 or 0. The Zcash board's full wiring, with the screen,
 encoder and buttons, is in [WIRING-S3CAM.md](WIRING-S3CAM.md); the colour
 screen kit's is in [WIRING-S3CAM-COLOR.md](WIRING-S3CAM-COLOR.md).

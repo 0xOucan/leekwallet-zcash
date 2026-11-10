@@ -14,6 +14,15 @@ are released in
   sits in internal RAM, and the Zcash worker's stack is 16 KB instead of 24 KB
   on every board. The boot log now shows the internal RAM left for the UI, and
   the worker logs its lowest free stack after each job.
+- **Colour kit: the screen, the knob and a crash.** The panel needs its CS
+  line: on GND it stays black, so CS goes to GPIO48 (the onboard RGB LED's
+  pin, unused) and the driver uses SPI mode 0. The module's encoder could not
+  pull RX/TX low, so on the colour kit it moves to GPIO3 and GPIO46, wired
+  straight with no resistor (strapping pins, harmless without eFuses burned or
+  BOOT held). The button task's stack grows from 2 KB to 3 KB: a log call from
+  it could overflow and restart the board. Bring-up aids: the
+  `esp32s3cam-panel-bench` env (bit-banged panel test, no wallet) and
+  `-DLEEK_ENC_TRACE=1` (logs every encoder edge).
 - **NU7 on mainnet** (block 3,543,405, about 02:20 UTC on 2026-11-06). Every
   host (the app, `zecz`, the SDK, the Chrome engine, the Android library) moves
   from a librustzcash git rev with no mainnet height to the released crates

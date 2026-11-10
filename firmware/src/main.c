@@ -50,6 +50,7 @@
 #include "airgap.h"
 #include "qr-bench.h"
 #include "se-bench.h"
+#include "panel-bench.h"
 
 static const char *TAG = "leekwallet";
 
@@ -66,6 +67,13 @@ void app_main(void)
        number it prints is what research/qr-spike could not measure without a
        board; see research/qr-spike/README.md. */
     qr_bench_start();
+    return;
+#endif
+
+#if LEEK_PANEL_BENCH
+    /* The colour panel bench: bit-bangs the panel's pins to test the wiring,
+       and the wallet never starts. See panel-bench.h. */
+    panel_bench_start();
     return;
 #endif
 
