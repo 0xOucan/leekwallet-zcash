@@ -1887,7 +1887,7 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
   and SD after block 3,543,405, the board's `Upgrade: NU7`, "Update your app" on
   both panels, a board update from v0.1.0, and sync cadence on a phone.
 
-## 2026-11-10: first NU7 signature on a board
+### First NU7 signature on a board (2026-11-10)
 
 - Colour kit (ST7789, knob on GPIO3/GPIO46, CS on GPIO48), `main` at `79eb3a0`,
   `zecz` rebuilt on that commit, testnet wallet, USB.
