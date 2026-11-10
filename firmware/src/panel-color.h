@@ -63,6 +63,9 @@ typedef struct {
     uint16_t rule;                   /* the line under a title */
     uint16_t qr_dark, qr_light;      /* always black and white: a camera reads them */
     uint16_t picture;                /* lit pixels of a full-panel picture */
+    /* The picture's colour layer (oled.h, OLED_TINT_*): the splash's key,
+       its sparkles and the halo around the key, as the website draws them. */
+    uint16_t picture_key, picture_spark, picture_halo;
 } PanelPalette;
 
 /** LeekWallet's palette: leek green on near-black. Native RGB565. */
@@ -74,6 +77,7 @@ typedef struct {
     const uint8_t *glyphs;    /* [OLED_PAGES][OLED_WIDTH]: character starting there, or 0 */
     const uint8_t *roles;     /* same shape: the oled_role_t it was drawn in */
     const uint8_t *picture;   /* 128x128 page format (splash), or NULL */
+    const uint8_t *tint;      /* its colour layer (oled.h), or NULL: all `picture` */
     const QRCode  *qr;        /* last code drawn, or NULL */
     bool           qr_inverted;
 } PanelFrame;

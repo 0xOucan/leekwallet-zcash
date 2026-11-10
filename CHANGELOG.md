@@ -36,6 +36,9 @@ are released in
 - A transaction signed before an activation is refused with a clear message
   before proving and before each broadcast (`check_broadcastable` in zecz,
   `check_broadcast` in the SDK, new errors `WrongBranch` 518 and `Expired` 519).
+- The colour screen's boot logo now has the website's colours: a bright green
+  pot and lid, the key turning pale as it glows, gold sparkles and a dim gold
+  halo round the key. The OLED boards show the same picture as before.
 
 ## v0.1.0 "Sacbeh" (unreleased)
 

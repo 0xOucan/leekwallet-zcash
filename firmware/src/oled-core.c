@@ -33,6 +33,7 @@
 
 #include "oled.h"
 #include "oled-core.h"
+#include "board.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -51,6 +52,10 @@ static bool   last_qr_inverted;
 
 /* A full-panel picture for a tall panel (oled.h), until the next clear. */
 static const uint8_t *panel_picture;
+#if BOARD_HAS_SPI_PANEL
+/* Its colour layer (oled.h), for the colour panel; same lifetime. */
+static const uint8_t *panel_tint;
+#endif
 
 static uint8_t cursor_page = 0;
 static uint8_t cursor_col = 0;
@@ -91,6 +96,12 @@ void oled_show_panel_picture(const uint8_t *picture) { panel_picture = picture; 
 
 const uint8_t *oled_core_panel_picture(void) { return panel_picture; }
 
+#if BOARD_HAS_SPI_PANEL
+void oled_show_panel_tint(const uint8_t *tint) { panel_tint = tint; }
+
+const uint8_t *oled_core_panel_tint(void) { return panel_picture ? panel_tint : NULL; }
+#endif
+
 void oled_blit_page(uint8_t page, const uint8_t *cols, size_t len)
 {
     if (cols == NULL || page >= OLED_PAGES) {
@@ -113,6 +124,9 @@ esp_err_t oled_clear(void)
     cursor_col = 0;
     last_qr_valid = false;
     panel_picture = NULL;
+#if BOARD_HAS_SPI_PANEL
+    panel_tint = NULL;
+#endif
     return ESP_OK;
 }
 

@@ -47,6 +47,10 @@ const uint8_t *oled_core_roles(void);
 /** The picture set by oled_show_panel_picture(), or NULL since a clear. */
 const uint8_t *oled_core_panel_picture(void);
 
+/** Its colour layer (oled_show_panel_tint()), or NULL with no picture or
+ *  since a clear. Colour panels only (BOARD_HAS_SPI_PANEL). */
+const uint8_t *oled_core_panel_tint(void);
+
 /** Five columns of a 5x7 glyph, bit 0 the top row. Unprintables render blank. */
 const uint8_t *font_5x7_glyph(char c);
 
