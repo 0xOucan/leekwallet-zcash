@@ -29,6 +29,9 @@
 #include "esp_timer.h"
 #include "qr-out.h"
 #include "splash.h"
+#ifndef LEEK_HOST_TEST
+#include "esp_heap_caps.h"
+#endif
 #include "version.h"
 #include "airgap.h"
 #if LEEK_HAS_ZCASH
@@ -1493,10 +1496,23 @@ static void screen_boot_render(void)
         splash_render_tall(boot_splash_shown.frame, prompt, tall);
         oled_show_panel_picture(tall);
 #if BOARD_HAS_SPI_PANEL
-        /* The colour panel also gets the website's colours for the logo. */
-        static uint8_t tint[SPLASH_TINT_BYTES];
-        splash_render_tall_tint(boot_splash_shown.frame, tint);
-        oled_show_panel_tint(tint);
+        /* The colour panel also gets the website's colours for the logo.
+         * The layer is logo pixels only, never key material, so on the board
+         * it lives in PSRAM: internal RAM is what the UI and the signer's
+         * stacks need. Without it the logo is drawn in one green. */
+        static uint8_t *tint;
+        if (tint == NULL) {
+#ifdef LEEK_HOST_TEST
+            static uint8_t host_tint[SPLASH_TINT_BYTES];
+            tint = host_tint;
+#else
+            tint = heap_caps_malloc(SPLASH_TINT_BYTES, MALLOC_CAP_SPIRAM);
+#endif
+        }
+        if (tint != NULL) {
+            splash_render_tall_tint(boot_splash_shown.frame, tint);
+            oled_show_panel_tint(tint);
+        }
 #endif
     } else {
         splash_render_wide(boot_splash_shown.frame, prompt, wide);
