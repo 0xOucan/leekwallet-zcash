@@ -33,8 +33,11 @@ static const char *TAG = "st7789";
 #define CMD_MADCTL    0x36
 #define CMD_COLMOD    0x3A
 
-/* 24 rows: a factor of 240, and 11.5 KB a buffer at 240 wide. */
-#define BAND_ROWS     24
+/* 8 rows: a factor of 240, and 3.75 KB a buffer at 240 wide. The two
+   buffers must be internal DMA memory, which the Zcash worker's stack, BLE
+   and the UI task's stack also need; at 24 rows (23 KB for both) the UI
+   task could not be created on the board with BLE on. */
+#define BAND_ROWS     8
 /* Six transactions a band: CASET, its data, RASET, its data, RAMWR, pixels. */
 #define TX_PER_BAND   6
 

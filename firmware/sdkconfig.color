@@ -1,0 +1,13 @@
+# ESP32-S3 CAM, colour kit (esp32s3cam-color): applied on top of
+# sdkconfig.defaults and sdkconfig.s3cam.
+#
+# The ST7789 panel is the only SPI master on this board, and with the SPI
+# master ISR in IRAM it pulls about 8.6 KB of driver code into IRAM, which on
+# the S3 comes out of the same internal SRAM as the heap. With Bluetooth on,
+# that left too little internal RAM for the UI task's 20 KB stack and the
+# board booted to a dark UI ("Failed to create UI task", 2026-11-10).
+#
+# Out of IRAM, the panel's transfers simply wait while flash is being written
+# (NVS saves): a screen update can be a few milliseconds late, nothing more.
+# The panel's pre-transfer callback stays IRAM_ATTR; it is a few bytes.
+CONFIG_SPI_MASTER_ISR_IN_IRAM=n

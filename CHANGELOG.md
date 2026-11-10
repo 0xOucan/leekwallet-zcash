@@ -8,6 +8,12 @@ are released in
 
 ## Unreleased
 
+- **Colour kit: the screen stayed dark with Bluetooth on.** The colour build
+  ran out of internal RAM before the UI task started ("Failed to create UI
+  task"). The panel's buffers are smaller, its SPI interrupt code no longer
+  sits in internal RAM, and the Zcash worker's stack is 16 KB instead of 24 KB
+  on every board. The boot log now shows the internal RAM left for the UI, and
+  the worker logs its lowest free stack after each job.
 - **NU7 on mainnet** (block 3,543,405, about 02:20 UTC on 2026-11-06). Every
   host (the app, `zecz`, the SDK, the Chrome engine, the Android library) moves
   from a librustzcash git rev with no mainnet height to the released crates

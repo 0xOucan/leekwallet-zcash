@@ -31,6 +31,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "leek-wallet.h"
 #include "vault-kdf.h"
@@ -229,6 +230,12 @@ void app_main(void)
 #else
     const uint32_t ui_stack = 8192;
 #endif
+    /* The UI stack is internal RAM, the scarcest kind on this chip: say how
+     * much is left, so a build that runs short shows it in the boot log. */
+    ESP_LOGI(TAG, "Internal RAM before UI: %u free, largest block %u, UI stack %u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)ui_stack);
     BaseType_t task_ret = xTaskCreate(
         ui_task,
         "ui_task",
