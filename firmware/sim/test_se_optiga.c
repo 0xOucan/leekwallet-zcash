@@ -24,6 +24,16 @@
  * every command code it receives and every register written, and the suite
  * fails if anything other than OpenApplication, GetDataObject, GetRandom, the
  * warm reset and frames ever reaches it.
+ *
+ * The same file is built twice (sim/Makefile). test_se_optiga is the default
+ * build, where the rule above is absolute and the container's write path must
+ * not even compile. test_se_container is built with
+ * -DLEEK_SE_CONTAINER_WRITES=1: it runs every check above unchanged, then the
+ * Level 1 container's (optiga-container.h), against a simulated 0xF1E0 with
+ * factory metadata. There the rule widens by exactly one command:
+ * SetDataObject, data only (Param 0x00 or 0x40), on 0xF1E0 only. Anything
+ * else - another object, metadata, a counter, any other command - is counted
+ * as forbidden and fails the suite.
  */
 
 #include <stdio.h>
@@ -33,6 +43,16 @@
 #include "optiga-proto.h"
 #include "optiga-link.h"
 #include "optiga-cmd.h"
+#include "optiga-container.h"
+
+/* The default build has no write path to test, and must not have one to
+   call: these names exist only when the flag is on. */
+#if !LEEK_SE_CONTAINER_WRITES
+#  if defined(OPTIGA_CMD_SET_DATA) || defined(OPTIGA_OID_CONTAINER) || \
+      defined(OPTIGA_APDU_SET_MAX) || defined(OPTIGA_CONTAINER_CAPACITY)
+#    error "write path visible with LEEK_SE_CONTAINER_WRITES=0"
+#  endif
+#endif
 
 static int failures = 0;
 
@@ -321,7 +341,10 @@ static void test_rng(void)
 
 /* ======================================================= simulated chip */
 
-#define Q_MAX 64
+/* Enough frames for a 1504-byte response at DATA_REG_LEN 16 (151). */
+#define Q_MAX 256
+
+#define SIM_F1E0_SIZE 1500
 
 typedef struct {
     /* registers */
@@ -354,6 +377,17 @@ typedef struct {
     uint8_t cmds_seen[64];
     int ncmds;
     int host_acks_bad;
+    /* every command, not just the first 64 */
+    int total_cmds;
+    int forbidden;          /* anything outside the allowed set, ever */
+    int set_ok;             /* SetDataObject on 0xF1E0 data, accepted */
+    int q_overflow;
+    /* 0xF1E0, the container object: 1500 bytes, factory metadata */
+    uint8_t f1e0[SIM_F1E0_SIZE];
+    size_t f1e0_len;
+    bool f1e0_locked;       /* refuse writes as a locked object would (0x07) */
+    int cut_after_sets;     /* > 0: power is lost on that SetDataObject */
+    bool bad_store;         /* accept writes but store the last byte wrong */
 } fake_t;
 
 static fake_t chip;
@@ -369,6 +403,8 @@ static void fake_reset(uint16_t reg_len)
 
 static void q_push(const uint8_t *f, size_t n)
 {
+    if ((chip.qtail + 1) % Q_MAX == chip.qhead)
+        chip.q_overflow++;
     memcpy(chip.q[chip.qtail], f, n);
     chip.qlen[chip.qtail] = n;
     chip.qtail = (chip.qtail + 1) % Q_MAX;
@@ -422,6 +458,7 @@ static void fake_execute(uint8_t *out, size_t *on)
     const uint8_t *c = chip.cmd;
     if (chip.ncmds < 64)
         chip.cmds_seen[chip.ncmds++] = c[0];
+    chip.total_cmds++;
     if (c[0] & 0x80)
         chip.err = 0;
     size_t in_len = ((size_t)c[2] << 8) | c[3];
@@ -452,9 +489,21 @@ static void fake_execute(uint8_t *out, size_t *on)
         uint16_t oid = (uint16_t)((c[4] << 8) | c[5]);
         static uint8_t obj[2048];
         size_t n = 0;
-        if (c[1] == 0x01) {
+        if (c[1] == 0x01 && oid == 0xF1E0) {
+            /* Factory metadata of an arbitrary data object on a V3 part:
+               LcsO creation, max 1500, used size, change LcsO<op, read
+               Always. */
+            const uint8_t meta[] = {
+                0x20, 0x13, 0xC0, 0x01, 0x01, 0xC4, 0x02, 0x05, 0xDC,
+                0xC5, 0x02, (uint8_t)(chip.f1e0_len >> 8), (uint8_t)chip.f1e0_len,
+                0xD0, 0x03, 0xE1, 0xFC, 0x07, 0xD1, 0x01, 0x00,
+            };
+            memcpy(obj, meta, sizeof meta); n = sizeof meta;
+        } else if (c[1] == 0x01) {
             static const uint8_t meta[] = { 0x20, 0x06, 0xC0, 0x01, 0x07, 0xD1, 0x01, 0x00 };
             memcpy(obj, meta, sizeof meta); n = sizeof meta;
+        } else if (oid == 0xF1E0) {
+            memcpy(obj, chip.f1e0, chip.f1e0_len); n = chip.f1e0_len;
         } else {
             switch (oid) {
             case 0xE0C2: memcpy(obj, SAMPLE_UID, sizeof SAMPLE_UID); n = sizeof SAMPLE_UID; break;
@@ -472,6 +521,53 @@ static void fake_execute(uint8_t *out, size_t *on)
         reply(0x00, obj, n, out, on);
         return;
     }
+    if (code == 0x02) {
+        /* SetDataObject: OID(2) | Offset(2) | Data. Modelled so the
+           container can be exercised, and policed so nothing else can. */
+        if (in_len < 5) {
+            chip.forbidden++;
+            chip.err = 0x04;
+            reply(0xFF, NULL, 0, out, on);
+            return;
+        }
+        uint16_t oid = (uint16_t)((c[4] << 8) | c[5]);
+        size_t off = ((size_t)c[6] << 8) | c[7];
+        size_t dn = in_len - 4;
+        if (oid != 0xF1E0 || (c[1] != 0x00 && c[1] != 0x40)) {
+            /* Another object, metadata (0x01), a counter (0x02), anything. */
+            chip.forbidden++;
+            chip.err = 0x07;
+            reply(0xFF, NULL, 0, out, on);
+            return;
+        }
+        if (chip.cut_after_sets > 0 && --chip.cut_after_sets == 0) {
+            /* Power lost as the command arrived: nothing applied, no answer. */
+            *on = 0;
+            return;
+        }
+        if (chip.f1e0_locked) {
+            chip.err = 0x07;
+            reply(0xFF, NULL, 0, out, on);
+            return;
+        }
+        if (c[1] == 0x40) {
+            memset(chip.f1e0, 0, sizeof chip.f1e0);
+            chip.f1e0_len = 0;
+        }
+        if (off > chip.f1e0_len || off + dn > SIM_F1E0_SIZE) {
+            chip.err = 0x08;
+            reply(0xFF, NULL, 0, out, on);
+            return;
+        }
+        memcpy(&chip.f1e0[off], &c[8], dn);
+        if (chip.bad_store)
+            chip.f1e0[off + dn - 1] ^= 0x01;
+        if (off + dn > chip.f1e0_len)
+            chip.f1e0_len = off + dn;
+        chip.set_ok++;
+        reply(0x00, NULL, 0, out, on);
+        return;
+    }
     if (code == 0x0C && in_len == 2) {
         size_t n = ((size_t)c[4] << 8) | c[5];
         uint8_t r[256];
@@ -482,6 +578,7 @@ static void fake_execute(uint8_t *out, size_t *on)
         reply(0x00, r, n, out, on);
         return;
     }
+    chip.forbidden++;
     chip.err = 0x0A;
     reply(0xFF, NULL, 0, out, on);
 }
@@ -491,6 +588,8 @@ static void fake_respond(void)
     static uint8_t out[2100];
     size_t on = 0;
     fake_execute(out, &on);
+    if (on == 0)
+        return;     /* the chip lost power mid-command */
     size_t per = (size_t)chip.data_reg_len - 6;
     if (per > OPTIGA_MAX_FRAME - 6) per = OPTIGA_MAX_FRAME - 6;
     size_t off = 0;
@@ -626,6 +725,9 @@ static void check_read_only(const char *what)
     }
     CHECK(chip.len_writes == 0 && chip.other_reg_writes == 0,
           "%s: unexpected register writes", what);
+    CHECK(chip.forbidden == 0 && chip.set_ok == 0,
+          "%s: %d forbidden command(s), %d write(s)", what, chip.forbidden, chip.set_ok);
+    CHECK(chip.q_overflow == 0, "%s: simulated queue overflowed", what);
 }
 
 static optiga_link_t link_;
@@ -804,6 +906,354 @@ static void test_link_faults(void)
     check_read_only("faults");
 }
 
+#if LEEK_SE_CONTAINER_WRITES
+/* ================================================ Level 1 SE container */
+
+/* The widened rule: SetDataObject on 0xF1E0's data, and nothing else new. */
+static void check_container_only(const char *what)
+{
+    for (int i = 0; i < chip.ncmds; i++) {
+        uint8_t c = chip.cmds_seen[i];
+        CHECK(c == 0xF0 || c == 0x81 || c == 0x01 || c == 0x8C || c == 0x82,
+              "%s: command 0x%02X is outside the container's set", what, c);
+    }
+    CHECK(chip.forbidden == 0, "%s: %d forbidden command(s)", what, chip.forbidden);
+    CHECK(chip.len_writes == 0 && chip.other_reg_writes == 0,
+          "%s: unexpected register writes", what);
+    CHECK(chip.host_acks_bad == 0, "%s: frame numbering", what);
+    CHECK(chip.q_overflow == 0, "%s: simulated queue overflowed", what);
+}
+
+static bool link_wiped(const optiga_link_t *l)
+{
+    for (size_t i = 0; i < sizeof l->tx; i++)
+        if (l->tx[i]) return false;
+    for (size_t i = 0; i < sizeof l->rx; i++)
+        if (l->rx[i]) return false;
+    return true;
+}
+
+static void fill(uint8_t *p, size_t n, uint32_t seed)
+{
+    for (size_t i = 0; i < n; i++) {
+        seed = seed * 1103515245u + 12345u;
+        p[i] = (uint8_t)(seed >> 16);
+    }
+}
+
+/* A valid container image, built here independently of the code under test. */
+static size_t make_container(uint8_t *obj, const uint8_t *p, size_t n)
+{
+    memset(obj, 0, 16);
+    memcpy(obj, "LKSC", 4);
+    obj[4] = 1;
+    obj[6] = (uint8_t)(n >> 8); obj[7] = (uint8_t)n;
+    uint32_t crc = 0xFFFFFFFFu;     /* bytewise CRC-32, written out again */
+    for (size_t i = 0; i < n; i++) {
+        crc ^= p[i];
+        for (int b = 0; b < 8; b++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1)));
+    }
+    crc = ~crc;
+    obj[8] = (uint8_t)(crc >> 24); obj[9] = (uint8_t)(crc >> 16);
+    obj[10] = (uint8_t)(crc >> 8); obj[11] = (uint8_t)crc;
+    memcpy(&obj[16], p, n);
+    return 16 + n;
+}
+
+static void test_container_apdus(void)
+{
+    printf("container: SetDataObject builder\n");
+    uint8_t a[OPTIGA_APDU_SET_MAX];
+    static const uint8_t d2[] = { 0xAA, 0xBB };
+
+    static const uint8_t want_w[] = { 0x82, 0x00, 0x00, 0x06, 0xF1, 0xE0, 0x00, 0x10, 0xAA, 0xBB };
+    size_t n = optiga_apdu_set_data(a, sizeof a, 0xF1E0, false, 0x0010, d2, 2);
+    CHECK(n == sizeof want_w && memcmp(a, want_w, n) == 0, "write bytes");
+    static const uint8_t want_e[] = { 0x82, 0x40, 0x00, 0x06, 0xF1, 0xE0, 0x00, 0x00, 0xAA, 0xBB };
+    n = optiga_apdu_set_data(a, sizeof a, 0xF1E0, true, 0, d2, 2);
+    CHECK(n == sizeof want_e && memcmp(a, want_e, n) == 0, "erase-and-write bytes");
+
+    /* Every OID but one, both modes: nothing built. */
+    int built = 0;
+    for (uint32_t oid = 0; oid <= 0xFFFF; oid++)
+        for (int e = 0; e < 2; e++) {
+            memset(a, 0xEE, sizeof a);
+            size_t m = optiga_apdu_set_data(a, sizeof a, (uint16_t)oid, e, 0, d2, 2);
+            if (m) {
+                built++;
+                CHECK(oid == 0xF1E0, "built for OID %04X", (unsigned)oid);
+            } else {
+                CHECK(a[0] == 0xEE, "refused OID %04X still wrote", (unsigned)oid);
+            }
+        }
+    CHECK(built == 2, "exactly one OID, two modes (%d)", built);
+
+    /* Whatever the inputs, the command is SetDataObject and the Param is a
+       data write: never metadata (0x01), never a counter (0x02). */
+    static uint8_t big[OPTIGA_SET_CHUNK_MAX];
+    for (size_t len = 0; len <= OPTIGA_SET_CHUNK_MAX + 1; len++)
+        for (uint32_t off = 0; off <= 1600; off += 37)
+            for (int e = 0; e < 2; e++) {
+                size_t m = optiga_apdu_set_data(a, sizeof a, 0xF1E0, e, (uint16_t)off, big, len);
+                bool fits = len >= 1 && len <= OPTIGA_SET_CHUNK_MAX && off + len <= 1500;
+                CHECK((m != 0) == fits, "len %zu off %u: built=%zu", len, (unsigned)off, m);
+                if (m)
+                    CHECK(a[0] == 0x82 && (a[1] == 0x00 || a[1] == 0x40) &&
+                          a[4] == 0xF1 && a[5] == 0xE0 && m == 8 + len,
+                          "shape at len %zu off %u", len, (unsigned)off);
+            }
+    CHECK(optiga_apdu_set_data(a, sizeof a, 0xF1E0, false, 1499, d2, 1) == 9, "last byte");
+    CHECK(optiga_apdu_set_data(a, sizeof a, 0xF1E0, false, 1499, d2, 2) == 0, "past the end");
+    CHECK(optiga_apdu_set_data(a, 9, 0xF1E0, false, 0, d2, 2) == 0, "caller cap honoured");
+    CHECK(optiga_apdu_set_data(a, sizeof a, 0xF1E0, false, 0, NULL, 2) == 0, "NULL data");
+}
+
+static void test_container_format(void)
+{
+    printf("container: format\n");
+    CHECK(optiga_container_crc32((const uint8_t *)"123456789", 9) == 0xCBF43926u,
+          "CRC-32 check value");
+    CHECK(OPTIGA_CONTAINER_CAPACITY == 1484, "capacity");
+
+    static uint8_t obj[1500], pay[1484];
+    const uint8_t *p;
+    size_t pl;
+    fill(pay, sizeof pay, 7);
+
+    CHECK(optiga_container_parse(obj, 0, &p, &pl) == OPTIGA_CONTAINER_EMPTY, "no bytes");
+    memset(obj, 0, sizeof obj);
+    CHECK(optiga_container_parse(obj, 1500, &p, &pl) == OPTIGA_CONTAINER_EMPTY, "all zero");
+
+    size_t n = make_container(obj, pay, 100);
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_OK &&
+          pl == 100 && p == obj + 16 && memcmp(p, pay, 100) == 0, "valid");
+    /* Zero padding after the payload (an object erased to 1500) is fine. */
+    CHECK(optiga_container_parse(obj, 1500, &p, &pl) == OPTIGA_CONTAINER_OK && pl == 100,
+          "valid with zero tail");
+    n = make_container(obj, pay, 1484);
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_OK && pl == 1484, "full");
+    n = make_container(obj, pay, 0);
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_OK && pl == 0, "zero-length payload");
+
+    n = make_container(obj, pay, 100);
+    obj[16 + 50] ^= 0x01;
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_DAMAGED && !p && pl == 0,
+          "payload bit flip");
+    n = make_container(obj, pay, 100);
+    obj[5] = 1;
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_DAMAGED, "flags set");
+    n = make_container(obj, pay, 100);
+    obj[13] = 1;
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_DAMAGED, "reserved set");
+    n = make_container(obj, pay, 100);
+    CHECK(optiga_container_parse(obj, n - 1, &p, &pl) == OPTIGA_CONTAINER_DAMAGED, "truncated");
+    CHECK(optiga_container_parse(obj, 10, &p, &pl) == OPTIGA_CONTAINER_DAMAGED, "short header");
+
+    n = make_container(obj, pay, 100);
+    memset(obj, 0, 4);
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_INCOMPLETE, "no magic yet");
+    obj[4] = 9;
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_FOREIGN,
+          "zero prefix, not our header");
+
+    n = make_container(obj, pay, 100);
+    obj[4] = 2;
+    CHECK(optiga_container_parse(obj, n, &p, &pl) == OPTIGA_CONTAINER_FOREIGN, "newer version");
+    memcpy(obj, "hello, world", 12);
+    CHECK(optiga_container_parse(obj, 12, &p, &pl) == OPTIGA_CONTAINER_FOREIGN, "someone's text");
+    CHECK(optiga_container_parse(obj, 2, &p, &pl) == OPTIGA_CONTAINER_FOREIGN, "two bytes");
+}
+
+static void open_chip(uint16_t reg_len)
+{
+    fake_reset(reg_len);
+    uint8_t e;
+    CHECK(optiga_link_init(&link_, &FAKE_BUS) == OPTIGA_OK, "init");
+    CHECK(optiga_cmd_open_app(&link_, &e) == OPTIGA_OK, "open");
+}
+
+static void test_container_round_trip(uint16_t reg_len)
+{
+    printf("container: round trips, DATA_REG_LEN=%u\n", reg_len);
+    optiga_link_t *l = &link_;
+    open_chip(reg_len);
+    static uint8_t data[1600], back[1600];
+    size_t n = 99;
+    uint8_t e = 0xEE;
+    optiga_container_state_t st = OPTIGA_CONTAINER_OK;
+
+    /* A factory object is empty. */
+    CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK &&
+          st == OPTIGA_CONTAINER_EMPTY && n == 0, "fresh object reads empty");
+
+    size_t sizes[] = { 1, 16, 240, 241, 256, 257, 700, 1484, 33 };
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        size_t len = sizes[i];
+        fill(data, len, (uint32_t)(len * 977 + reg_len));
+        int err = optiga_container_write(l, data, len, &e);
+        CHECK(err == OPTIGA_OK, "write %zu: %s (chip %02X)", len, optiga_container_err_name(err), e);
+        CHECK(link_wiped(l), "link buffers wiped after write %zu", len);
+        CHECK(chip.f1e0_len == 16 + len, "object holds exactly %zu+16 (has %zu): no stale tail",
+              len, chip.f1e0_len);
+        memset(back, 0, sizeof back);
+        err = optiga_container_read(l, back, sizeof back, &n, &st, &e);
+        CHECK(err == OPTIGA_OK && st == OPTIGA_CONTAINER_OK && n == len &&
+              memcmp(back, data, len) == 0, "read back %zu (st %d n %zu)", len, st, n);
+        CHECK(link_wiped(l), "link buffers wiped after read %zu", len);
+    }
+
+    /* Oversize and empty writes go nowhere. */
+    int before = chip.total_cmds;
+    CHECK(optiga_container_write(l, data, 1485, &e) == OPTIGA_E_PARAM, "1485 refused");
+    CHECK(optiga_container_write(l, data, 0, &e) == OPTIGA_E_PARAM, "0 refused");
+    CHECK(chip.total_cmds == before, "and nothing reached the chip");
+    CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK &&
+          st == OPTIGA_CONTAINER_OK && n == 33, "previous blob intact");
+
+    /* A buffer too small for the blob. */
+    CHECK(optiga_container_read(l, back, 32, &n, &st, &e) == OPTIGA_E_SIZE && n == 0,
+          "read cap honoured");
+
+    /* Erase: zeros over the whole object, then it reads as empty. */
+    CHECK(optiga_container_erase(l, &e) == OPTIGA_OK, "erase");
+    CHECK(link_wiped(l), "link buffers wiped after erase");
+    bool zero = chip.f1e0_len == 1500;
+    for (size_t i = 0; i < SIM_F1E0_SIZE; i++)
+        zero = zero && chip.f1e0[i] == 0;
+    CHECK(zero, "every byte of the object is zero (len %zu)", chip.f1e0_len);
+    CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK &&
+          st == OPTIGA_CONTAINER_EMPTY && n == 0, "erased object reads empty");
+    /* And can be written again. */
+    fill(data, 500, 3);
+    CHECK(optiga_container_write(l, data, 500, &e) == OPTIGA_OK, "write after erase");
+
+    check_container_only("round trip");
+}
+
+static void test_container_refusals(void)
+{
+    optiga_link_t *l = &link_;
+    static uint8_t data[1500], back[1500];
+    size_t n;
+    uint8_t e;
+    optiga_container_state_t st;
+
+    printf("container: other objects never reach the chip\n");
+    open_chip(277);
+    static const uint16_t others[] = {
+        0xF1E1, 0xF1D0, 0xF1D4, 0xF1D8, 0xF1DB, 0xE140, 0xE120, 0xE121, 0xE122,
+        0xE0F0, 0xE0F1, 0xE0E0, 0xE0E8, 0xE200, 0xE0C0, 0xF1C0, 0xE0C9, 0x0000, 0xFFFF,
+    };
+    int before = chip.total_cmds;
+    for (size_t i = 0; i < sizeof others / sizeof others[0]; i++)
+        for (int er = 0; er < 2; er++)
+            CHECK(optiga_cmd_set_data(l, others[i], er, 0, data, 16, &e) == OPTIGA_E_PARAM,
+                  "OID %04X refused", others[i]);
+    CHECK(chip.total_cmds == before && chip.set_ok == 0, "no command sent for them");
+
+    /* Random calls through the real command path: only 0xF1E0 data writes
+       ever arrive, and the simulated chip never sees a forbidden one. */
+    uint32_t r = 99;
+    int sent = 0;
+    for (int i = 0; i < 3000; i++) {
+        r = r * 1664525u + 1013904223u;
+        uint16_t oid = (r & 0x30000000) ? (uint16_t)(r >> 8) : 0xF1E0;
+        uint16_t off = (uint16_t)((r >> 3) % 1600);
+        size_t len = (r >> 13) % 300;
+        int before_set = chip.set_ok;
+        int err = optiga_cmd_set_data(l, oid, r & 1, off, data, len, &e);
+        if (err != OPTIGA_E_PARAM)
+            sent++;     /* reached the chip: accepted, or refused on bounds */
+        CHECK(err == OPTIGA_OK || err == OPTIGA_E_PARAM || err == OPTIGA_E_CHIP,
+              "random call %d: %d", i, err);
+        if (oid != 0xF1E0)
+            CHECK(err == OPTIGA_E_PARAM && chip.set_ok == before_set, "oid %04X went out", oid);
+    }
+    CHECK(sent > 100, "some random writes reached the chip (%d)", sent);
+    check_container_only("random calls");
+
+    printf("container: another program's data is not overwritten\n");
+    open_chip(277);
+    memcpy(chip.f1e0, "someone else's data", 19);
+    chip.f1e0_len = 19;
+    CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK &&
+          st == OPTIGA_CONTAINER_FOREIGN && n == 0, "reads as foreign");
+    int sets = chip.set_ok;
+    CHECK(optiga_container_write(l, data, 64, &e) == OPTIGA_E_FOREIGN, "write refused");
+    CHECK(chip.set_ok == sets && chip.f1e0_len == 19 &&
+          memcmp(chip.f1e0, "someone else's data", 19) == 0, "and nothing written");
+    CHECK(strcmp(optiga_container_err_name(OPTIGA_E_FOREIGN),
+                 "object holds other data; erase it first") == 0, "error text");
+    CHECK(optiga_container_erase(l, &e) == OPTIGA_OK, "an explicit erase clears it");
+    CHECK(optiga_container_write(l, data, 64, &e) == OPTIGA_OK, "then a write succeeds");
+
+    printf("container: damaged blob is reported, then replaced\n");
+    chip.f1e0[16 + 10] ^= 0x40;
+    CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK &&
+          st == OPTIGA_CONTAINER_DAMAGED && n == 0, "CRC catches a flipped bit");
+    fill(data, 64, 11);
+    CHECK(optiga_container_write(l, data, 64, &e) == OPTIGA_OK, "overwrite a damaged blob");
+    CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK &&
+          st == OPTIGA_CONTAINER_OK && n == 64 && memcmp(back, data, 64) == 0, "and read it");
+
+    printf("container: power lost mid-write\n");
+    /* Cut on each command of a 3-chunk write in turn (chunks 1-3, then the
+       magic). The old blob is gone from the first command on, but no cut
+       may ever leave something that reads as a valid blob. */
+    for (int cut = 1; cut <= 4; cut++) {
+        open_chip(64);
+        fill(data, 300, 1);
+        CHECK(optiga_container_write(l, data, 300, &e) == OPTIGA_OK, "old blob");
+        fill(data, 600, 2);
+        chip.cut_after_sets = cut;
+        CHECK(optiga_container_write(l, data, 600, &e) != OPTIGA_OK, "cut %d reported", cut);
+        chip.cut_after_sets = 0;
+        chip.silent = false;
+        optiga_cmd_wipe(l);
+        /* After a power cut: a fresh link and application. */
+        CHECK(optiga_link_init(l, &FAKE_BUS) == OPTIGA_OK, "re-init");
+        CHECK(optiga_cmd_open_app(l, &e) == OPTIGA_OK, "re-open");
+        CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK, "read");
+        if (cut == 1)
+            CHECK(st == OPTIGA_CONTAINER_OK && n == 300, "cut before anything: old blob (%d)", st);
+        else
+            CHECK(st == OPTIGA_CONTAINER_INCOMPLETE && n == 0, "cut %d: incomplete (%d)", cut, st);
+        CHECK(optiga_container_write(l, data, 600, &e) == OPTIGA_OK, "retry after cut %d", cut);
+        CHECK(optiga_container_read(l, back, sizeof back, &n, &st, &e) == OPTIGA_OK &&
+              st == OPTIGA_CONTAINER_OK && n == 600 && memcmp(back, data, 600) == 0,
+              "retry reads back");
+        check_container_only("power cut");
+    }
+
+    printf("container: a chip that refuses the write\n");
+    open_chip(277);
+    chip.f1e0_locked = true;
+    CHECK(optiga_container_write(l, data, 64, &e) == OPTIGA_E_CHIP && e == 0x07,
+          "refusal and its reason (0x%02X)", e);
+    CHECK(optiga_container_erase(l, &e) == OPTIGA_E_CHIP && e == 0x07, "erase refused too");
+    CHECK(link_wiped(l), "buffers wiped on the error path");
+    CHECK(optiga_cmd_get_data(l, OPTIGA_OID_SEC, false, back, sizeof back, &n, &e) == OPTIGA_OK,
+          "link still in step");
+
+    printf("container: read-back catches a chip that stores the wrong bytes\n");
+    open_chip(277);
+    chip.bad_store = true;
+    CHECK(optiga_container_write(l, data, 64, &e) == OPTIGA_E_VERIFY, "write not verified");
+    CHECK(optiga_container_erase(l, &e) == OPTIGA_E_VERIFY, "erase not verified");
+    CHECK(strcmp(optiga_container_err_name(OPTIGA_E_VERIFY), "read-back did not match") == 0,
+          "error text");
+    check_container_only("bad store");
+
+    printf("container: metadata of 0xF1E0 is factory and untouched\n");
+    open_chip(277);
+    CHECK(optiga_container_write(l, data, 64, &e) == OPTIGA_OK, "write");
+    CHECK(optiga_cmd_get_data(l, OPTIGA_OID_CONTAINER, true, back, sizeof back, &n, &e) == OPTIGA_OK &&
+          n == 21 && back[2] == 0xC0 && back[4] == 0x01, "LcsO still creation");
+    check_container_only("metadata");
+}
+#endif /* LEEK_SE_CONTAINER_WRITES */
+
 int main(void)
 {
     test_crc();
@@ -816,11 +1266,24 @@ int main(void)
     test_link_happy(64);
     test_link_happy(32);
     test_link_faults();
+#if LEEK_SE_CONTAINER_WRITES
+    test_container_apdus();
+    test_container_format();
+    test_container_round_trip(277);
+    test_container_round_trip(64);
+    test_container_round_trip(32);
+    test_container_round_trip(16);
+    test_container_refusals();
+#endif
 
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;
     }
+#if LEEK_SE_CONTAINER_WRITES
+    printf("all OPTIGA checks passed, container build\n");
+#else
     printf("all OPTIGA checks passed\n");
+#endif
     return 0;
 }
