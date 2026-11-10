@@ -42,7 +42,15 @@ static void worker(void *arg)
         if (job_fn) job_fn(job_ctx);
         job_fn = NULL;
         job_ctx = NULL;
-        ESP_LOGD(TAG, "job done, stack left %u", (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        /* The lowest the stack has been since boot, logged when it drops, so a
+         * board test shows the real margin of ZCASH_WORKER_STACK. */
+        static UBaseType_t lowest = ~(UBaseType_t)0;
+        const UBaseType_t left = uxTaskGetStackHighWaterMark(NULL);
+        if (left < lowest) {
+            lowest = left;
+            ESP_LOGI(TAG, "stack low-water: %u of %u bytes free",
+                     (unsigned)left, (unsigned)ZCASH_WORKER_STACK);
+        }
         xSemaphoreGive(done);
     }
 }

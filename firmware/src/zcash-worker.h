@@ -20,11 +20,16 @@
  * Bluetooth up a 64 KB internal-RAM stack no longer fits: the worker failed
  * to start on the first board and every derivation failed. 24 KB leaves the
  * C backend and trezor-crypto's BIP32 work wide margins. A build that runs
- * BOTH on the device (LEEK_ZCASH_BACKEND_BOTH) still gets 64 KB. */
+ * BOTH on the device (LEEK_ZCASH_BACKEND_BOTH) still gets 64 KB.
+ *
+ * 16 KB since 2026-11-10: the colour kit's panel buffers and SPI driver left
+ * the UI task no room with Bluetooth on, and 16 KB is still about three times
+ * the C backend's peak. The worker logs its lowest free stack after each job
+ * (zcash-worker.c), and the FreeRTOS canary stops the board on an overflow. */
 #if defined(LEEK_ZCASH_BACKEND_BOTH) || defined(LEEK_HOST_TEST)
 #define ZCASH_WORKER_STACK (64 * 1024)
 #else
-#define ZCASH_WORKER_STACK (24 * 1024)
+#define ZCASH_WORKER_STACK (16 * 1024)
 #endif
 
 typedef void (*ZcashJobFn)(void *ctx);

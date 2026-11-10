@@ -63,16 +63,19 @@
  * The colour kit. K1's and K2's pins carry the panel's SPI, so those keys do
  * not exist: GPIO_NUM_NC, which button.c leaves unconfigured. GPIO2 is D/C:
  * an output, where the onboard LED that ruled it out as an input above only
- * flickers with the traffic. CS is grounded on the module and RES is tied to
- * 3V3 through 10k, so neither takes a pin; st7789.c resets the controller
- * with SWRESET instead. BLK goes to 3V3: always on.
+ * flickers with the traffic. CS is on GPIO48, the onboard WS2812's pin (the
+ * firmware never drives that pixel): with CS grounded the panel on the board
+ * stayed black, because nothing re-synced it to byte boundaries, and the
+ * panel bench drew colour only once CS framed each command (2026-11-10).
+ * RES is tied to 3V3 through 10k and takes no pin; st7789.c resets the
+ * controller with SWRESET instead. BLK goes to 3V3: always on.
  */
 #define PIN_BUTTON_UP           GPIO_NUM_NC
 #define PIN_BUTTON_DOWN         GPIO_NUM_NC
 #define PIN_DISPLAY_SCLK        GPIO_NUM_1    /* module SCL, was K1 */
 #define PIN_DISPLAY_MOSI        GPIO_NUM_41   /* module SDA, was K2 - MTDI */
 #define PIN_DISPLAY_DC          GPIO_NUM_2
-#define PIN_DISPLAY_CS          GPIO_NUM_NC
+#define PIN_DISPLAY_CS          GPIO_NUM_48   /* the WS2812's pin, see above */
 #define PIN_DISPLAY_RESET       GPIO_NUM_NC
 #else
 #define PIN_BUTTON_UP           GPIO_NUM_1    /* K1 */
@@ -89,8 +92,22 @@
  * the pin, takes it. Both lines also have the module's 10k pull-ups, which
  * is why its "+" must go to 3V3, never 5V.
  */
+#if LEEK_DISPLAY == LEEK_DISPLAY_ST7789
+/* Colour kit: CLK on GPIO3, DT on GPIO46, nothing on UART0. On the first
+ * colour kit the module's encoder lines could not reliably pull RX or TX low
+ * (both are also wired to the board's USB-serial chip, and TX had the 1k):
+ * whichever channel sat on RX, and later on TX, never read 0, while GPIO3
+ * toggled at once (board, 2026-11-10). Every non-strapping pin is taken by
+ * the camera, SD, PSRAM, USB, panel and SE, so these two are straps, and
+ * harmless ones here: GPIO3 selects the JTAG source only with
+ * EFUSE_STRAP_JTAG_SEL burned, which this project never does, and GPIO46
+ * matters only for download mode, which also needs GPIO0 (BOOT) held low. */
+#define PIN_ENC_CLK             GPIO_NUM_3
+#define PIN_ENC_DT              GPIO_NUM_46
+#else
 #define PIN_ENC_CLK             GPIO_NUM_44
 #define PIN_ENC_DT              GPIO_NUM_43
+#endif
 
 /* The I2C bus: the OLED at 0x3C, and the secure element when one is fitted.
    On the colour kit the bus is the secure element's alone. */
@@ -124,8 +141,13 @@
 #define PIN_SD_D0               GPIO_NUM_40
 #define BOARD_SD_BUS_WIDTH      1
 
-/* Onboard WS2812, freed by moving I2C off GPIO48. One pixel, not four. */
+/* Onboard WS2812, freed by moving I2C off GPIO48. One pixel, not four. On the
+   colour kit the pin is the panel's CS instead. */
+#if LEEK_DISPLAY == LEEK_DISPLAY_ST7789
+#define PIN_PIXELS              GPIO_NUM_NC
+#else
 #define PIN_PIXELS              GPIO_NUM_48
+#endif
 #define PIXEL_COUNT             1
 
 #define LEEK_HAS_CAMERA         1

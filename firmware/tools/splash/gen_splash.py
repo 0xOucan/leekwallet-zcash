@@ -13,9 +13,26 @@ being checked out. Everything after that is a pure function of that file:
 
   - the pose of each frame (lid open, key rise, glow) is the website's
     pose() from src/game/logo-anim.ts, sampled at fixed times;
-  - each pose is drawn with that file's render(), ported to one bit per pixel
-    (no colours, so the key's halo is left out; the sparkles stay);
-  - the frames are cropped to the union of what any of them lights.
+  - each pose is drawn with that file's render(), in that file's colours:
+    GREEN for the pot and lid, KEY for the key once it glows (glow > 0.5),
+    SPARK for the sparkles, and under the key, while it glows at all, a soft
+    halo of SPARK at alpha round(90 * glow) that the key, the pot and the
+    solid lid paint over;
+  - the frames are cropped to the union of what any of them lights (the
+    halo never moves the crop).
+
+Two tables come out of each frame, over the same crop:
+
+  - SPLASH_LOGO, one bit per pixel: lit is anything but the halo. This is
+    what every panel shows (the OLEDs, and the colour panel's shape), and it
+    is the same picture the one-bit port drew before the colours came in.
+  - SPLASH_TINT, two bits per pixel, for the colour panel only (compiled
+    when splash.c defines SPLASH_WANT_TINT): 0 = the pixel as SPLASH_LOGO
+    has it (GREEN when lit), 1 = KEY, 2 = SPARK, 3 = HALO. HALO marks the
+    pixels only the halo lights, so they are off in SPLASH_LOGO; the panel
+    gives them one dim gold, SPARK over the background at the full halo's
+    alpha (SPLASH_HALO_ALPHA). A frame with no colour has no table:
+    SPLASH_TINT_OF[frame] is its row in SPLASH_TINT, or -1.
 
 No clock, no randomness: the same grids give the same header, byte for byte,
 which the reproducible firmware build (docs/RELEASE.md) relies on.
@@ -129,6 +146,17 @@ def turn(p, c, a):
     return (cx + (x - cx) * co - (y - cy) * si, cy + (x - cx) * si + (y - cy) * co)
 
 
+# What render() paints a pixel with. OFF and GREEN are the one-bit picture;
+# KEY and SPARK are lit too; HALO is unlit in one bit.
+OFF, GREEN, KEY, SPARK, HALO = range(5)
+LIT = (GREEN, KEY, SPARK)
+# The two-bit tint code of each, in SPLASH_TINT.
+TINT = {OFF: 0, GREEN: 0, KEY: 1, SPARK: 2, HALO: 3}
+HALO_ALPHA = 90          # logo-anim.ts: round(90 * glow), at full glow
+HALO_OFFSETS = ((1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, -2))
+RIM_CUT = 43
+
+
 class Logo:
     PAD_X, PAD_TOP = 6, 14
     TILT, SWAP = 0.3, 0.45
@@ -172,25 +200,33 @@ class Logo:
         W, H = self.W, self.H
         img = [[0] * W for _ in range(H)]
 
-        def put(x, y, on):
+        def put(x, y, c):
             x, y = jround(x), jround(y)
             if 0 <= x < W and 0 <= y < H:
-                img[y][x] = on
+                img[y][x] = c
 
         ox, oy = self.PAD_X, self.PAD_TOP
         if opn <= 0 and self.shut:
             for x, y in self.shut:
-                put(x + ox, y + oy, 1)
+                put(x + ox, y + oy, GREEN)
             return img
         early = bool(self.shut) and opn < self.SWAP
         lift = -3 * key + 8 * (1 - key)
         if key > 0.02 and not early:
+            # the halo first, so the key and everything after paint over it
+            if glow > 0:
+                for x, y in self.keyc:
+                    ky = y + lift
+                    if ky >= RIM_CUT:
+                        continue
+                    for ddx, ddy in HALO_OFFSETS:
+                        put(x + ddx + ox, ky + ddy + oy, HALO)
             for x, y in self.keyc:
                 ky = y + lift
-                if ky < 43:
-                    put(x + ox, ky + oy, 1)
+                if ky < RIM_CUT:
+                    put(x + ox, ky + oy, KEY if glow > 0.5 else GREEN)
         for x, y in (self.shut_body if early else self.pot):
-            put(x + ox, y + oy, 1)
+            put(x + ox, y + oy, GREEN)
         a, dx, dy = self.swing(opn)
         rows = self.p["CLOSED_LID"] if early else self.p["LID"]
         sil = self.shut_sil if early else self.lid_sil
@@ -203,7 +239,7 @@ class Logo:
                 span = sil.get(sy)
                 if not span or sx < span[0] or sx > span[1]:
                     continue
-                img[y][x] = 1 if rows[sy][sx] == "#" else 0
+                img[y][x] = GREEN if rows[sy][sx] == "#" else OFF   # solid
         if glow > 0.3:
             for x, y, phase in self.SPARKS:
                 k = ((t / 900 + phase) % 1) * 2 * math.pi
@@ -211,10 +247,10 @@ class Logo:
                 if b < 0.2:
                     continue
                 cx, cy = x + ox, y + oy
-                put(cx, cy, 1)
+                put(cx, cy, SPARK)
                 if b > 0.6:
                     for ddx, ddy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                        put(cx + ddx, cy + ddy, 1)
+                        put(cx + ddx, cy + ddy, SPARK)
         return img
 
 
@@ -225,9 +261,16 @@ def frames():
     logo = Logo(parts, hinge, fit)
     sched = SCHEDULE + [HOLD]
     imgs = [logo.render(*pose(t)) for t, _ in sched]
-    ys = [y for im in imgs for y, r in enumerate(im) if any(r)]
-    xs = [x for im in imgs for r in im for x, v in enumerate(r) if v]
+    # The crop is what the one-bit picture lights, so the halo cannot move it;
+    # nor may it be cut off by it.
+    ys = [y for im in imgs for y, r in enumerate(im) if any(v in LIT for v in r)]
+    xs = [x for im in imgs for r in im for x, v in enumerate(r) if v in LIT]
     x0, x1, y0, y1 = min(xs), max(xs) + 1, min(ys), max(ys) + 1
+    for im in imgs:
+        for y, r in enumerate(im):
+            for x, v in enumerate(r):
+                if v == HALO and not (x0 <= x < x1 and y0 <= y < y1):
+                    sys.exit(f"halo pixel ({x}, {y}) falls outside the crop")
     crop = [[r[x0:x1] for r in im[y0:y1]] for im in imgs]
     return crop, sched
 
@@ -265,14 +308,61 @@ def header() -> str:
                 v = 0
                 for k in range(8):
                     x = b * 8 + k
-                    if x < w and row[x]:
+                    if x < w and row[x] in LIT:
                         v |= 0x80 >> k
                 bs.append(f"0x{v:02x}")
-            art = "".join("#" if v else "." for v in row)
+            art = "".join("#" if v in LIT else "." for v in row)
             lines.append("        " + ",".join(bs) + f",  /* {art} */")
         lines.append("    },")
-    lines += ["};", "", "#endif /* LEEK_SPLASH_FRAMES_H */", ""]
+    lines.append("};")
+    lines += tint_lines(crop, sched, w)
+    lines += ["", "#endif /* LEEK_SPLASH_FRAMES_H */", ""]
     return "\n".join(lines)
+
+
+def tint_lines(crop, sched, w):
+    """The colour layer, SPLASH_TINT, for the frames that have any colour."""
+    tstride = (w * 2 + 7) // 8
+    tinted = [i for i, im in enumerate(crop) if any(TINT[v] for r in im for v in r)]
+    index = [tinted.index(i) if i in tinted else -1 for i in range(len(crop))]
+    lines = [
+        "",
+        "/* The colour layer (see gen_splash.py), for the colour panel only. */",
+        "#ifdef SPLASH_WANT_TINT",
+        "",
+        f"#define SPLASH_TINT_STRIDE {tstride}   /* bytes per row, 2 bits a pixel, MSB pair leftmost */",
+        f"#define SPLASH_TINTS       {len(tinted)}",
+        "#define SPLASH_TINT_MONO   0   /* the pixel as SPLASH_LOGO has it */",
+        "#define SPLASH_TINT_KEY    1",
+        "#define SPLASH_TINT_SPARK  2",
+        "#define SPLASH_TINT_HALO   3   /* lit by the halo alone: unlit in SPLASH_LOGO */",
+        f"#define SPLASH_HALO_ALPHA  {HALO_ALPHA}  /* of 255: SPARK over the background */",
+        "",
+        "/* Each frame's row in SPLASH_TINT, or -1 when it has no colour. */",
+        "static const int8_t SPLASH_TINT_OF[SPLASH_FRAMES] = {",
+        "    " + ", ".join(str(i) for i in index) + ",",
+        "};",
+        "",
+        "static const uint8_t SPLASH_TINT[SPLASH_TINTS][SPLASH_LOGO_H * SPLASH_TINT_STRIDE] = {",
+    ]
+    glyph = {0: ".", 1: "K", 2: "*", 3: "o"}
+    for i in tinted:
+        lines.append(f"    /* frame {i}: the website's logo at t = {sched[i][0]} ms */")
+        lines.append("    {")
+        for row in crop[i]:
+            bs = []
+            for b in range(tstride):
+                v = 0
+                for k in range(4):
+                    x = b * 4 + k
+                    if x < w:
+                        v |= TINT[row[x]] << (6 - 2 * k)
+                bs.append(f"0x{v:02x}")
+            art = "".join(glyph[TINT[v]] for v in row)
+            lines.append("        " + ",".join(bs) + f",  /* {art} */")
+        lines.append("    },")
+    lines += ["};", "", "#endif /* SPLASH_WANT_TINT */"]
+    return lines
 
 
 def main() -> None:

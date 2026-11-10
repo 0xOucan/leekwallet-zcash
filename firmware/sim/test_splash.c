@@ -3,12 +3,17 @@
  *   build/test_splash              the checks
  *   build/test_splash --pgm DIR    also write every frame, tall and wide, as
  *                                  PGM images at 4x into DIR, to look at
+ *
+ * Built twice: test_splash for a monochrome board, test_splash_color for the
+ * colour kit (BOARD_HAS_SPI_PANEL), which also checks the colour layer.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "board.h"
 #include "splash.h"
+#include "splash-frames.h"   /* the sizes only; splash.c reads the tables */
 #include "version.h"
 #include "oled.h"
 
@@ -140,6 +145,103 @@ static void test_loop(void)
     CHECK(splash_loop_input(&s, quiet, false, false) == SPLASH_INPUT_WOKE, "4 keys: a key dismissed a blank panel");
 }
 
+/* The one-bit logo is what the OLEDs show; the colour layer must not have
+ * changed a bit of it. FNV-1a of SPLASH_LOGO as it was before the colours. */
+#define SPLASH_LOGO_FNV 0x8864088du
+
+static void test_mono_unchanged(void)
+{
+    printf("== the one-bit logo\n");
+    uint32_t h = 0x811c9dc5u;
+    unsigned bytes = 0;
+    for (unsigned f = 0; f < SPLASH_FRAMES; f++)
+        for (int y = 0; y < SPLASH_LOGO_H; y++)
+            for (int b = 0; b < SPLASH_LOGO_STRIDE; b++) {
+                uint8_t v = 0;
+                for (int k = 0; k < 8; k++)
+                    if (splash_logo_pixel(f, b * 8 + k, y)) v |= (uint8_t)(0x80u >> k);
+                h = (h ^ v) * 0x01000193u;
+                bytes++;
+            }
+    CHECK(h == SPLASH_LOGO_FNV, "SPLASH_LOGO changed: FNV %08x over %u bytes", (unsigned)h, bytes);
+}
+
+#if BOARD_HAS_SPI_PANEL
+static unsigned tint_px(const uint8_t *t, int x, int y)
+{
+    return (t[y * OLED_TINT_ROW + x / 4] >> (6 - 2 * (x % 4))) & 3u;
+}
+
+/* The colour layer: the website's colours, never at odds with the shape. */
+static void test_tint(void)
+{
+    printf("== the colour layer\n");
+    const unsigned n = splash_frame_count();
+    static unsigned count[SPLASH_FRAMES][4];
+    for (unsigned f = 0; f < n; f++) {
+        for (int y = -2; y < SPLASH_LOGO_H + 2; y++)
+            for (int x = -2; x < SPLASH_LOGO_W + 2; x++) {
+                const unsigned t = splash_logo_tint(f, x, y);
+                const bool on = splash_logo_pixel(f, x, y);
+                count[f][t]++;
+                CHECK(t != OLED_TINT_HALO || !on, "frame %u (%d,%d): halo on a lit pixel", f, x, y);
+                CHECK((t != OLED_TINT_KEY && t != OLED_TINT_SPARK) || on,
+                      "frame %u (%d,%d): a coloured pixel that is not lit", f, x, y);
+            }
+    }
+    /* The website: closed, the lid opens, the key rises green (glow 0 until
+       t = 1900); the halo comes in with the glow, the key turns pale past
+       glow 0.5 and the sparkles blink from 0.3. Frames 0-8 run to t = 1900,
+       9 is t = 2050 (glow 0.32), 10 on are past 0.5. */
+    CHECK(n == 14, "%u frames; the checks below expect the 14 of gen_splash.py", n);
+    for (unsigned f = 0; f <= 8; f++)
+        CHECK(count[f][OLED_TINT_KEY] + count[f][OLED_TINT_SPARK] + count[f][OLED_TINT_HALO] == 0,
+              "frame %u has colour before the glow", f);
+    CHECK(count[9][OLED_TINT_KEY] == 0, "frame 9: the key is pale at glow 0.32");
+    CHECK(count[9][OLED_TINT_HALO] > 20, "frame 9: no halo (%u px)", count[9][OLED_TINT_HALO]);
+    for (unsigned f = 10; f < n; f++) {
+        CHECK(count[f][OLED_TINT_KEY] > 100, "frame %u: the key is not pale (%u px)", f, count[f][OLED_TINT_KEY]);
+        CHECK(count[f][OLED_TINT_HALO] > 40, "frame %u: no halo (%u px)", f, count[f][OLED_TINT_HALO]);
+    }
+    unsigned sparks = 0;
+    for (unsigned f = 9; f < n; f++) sparks += count[f][OLED_TINT_SPARK];
+    CHECK(sparks > 0, "no sparkles in any glowing frame");
+    printf("  frame 9: %u halo px, key green; last frame: %u key, %u spark, %u halo px\n",
+           count[9][OLED_TINT_HALO], count[n - 1][OLED_TINT_KEY],
+           count[n - 1][OLED_TINT_SPARK], count[n - 1][OLED_TINT_HALO]);
+
+    /* The key itself in frame 9: lit, untinted (GREEN), right beside its
+       halo. In the last frame those places are pale KEY. */
+    unsigned green_key = 0;
+    for (int y = 0; y < SPLASH_LOGO_H; y++)
+        for (int x = 0; x < SPLASH_LOGO_W; x++)
+            if (splash_logo_pixel(9, x, y) && splash_logo_tint(9, x, y) == OLED_TINT_PICTURE &&
+                (splash_logo_tint(9, x + 1, y) == OLED_TINT_HALO ||
+                 splash_logo_tint(9, x - 1, y) == OLED_TINT_HALO))
+                green_key++;
+    CHECK(green_key > 10, "frame 9: no green key beside its halo (%u px)", green_key);
+
+    /* Composed for the tall panel: at the logo's place, nothing on the text,
+       and never at odds with the tall picture. */
+    static uint8_t tall[SPLASH_TALL_BYTES], tint[SPLASH_TINT_BYTES];
+    for (unsigned f = 0; f < n; f++) {
+        splash_render_tall(f, "Push the knob", tall);
+        splash_render_tall_tint(f, tint);
+        const unsigned logo = count[f][1] + count[f][2] + count[f][3];
+        unsigned colour = 0;
+        for (int y = 0; y < 128; y++)
+            for (int x = 0; x < 128; x++) {
+                const unsigned t = tint_px(tint, x, y);
+                if (t == OLED_TINT_PICTURE) continue;
+                colour++;
+                CHECK(t != OLED_TINT_HALO || !px(tall, x, y), "tall frame %u (%d,%d): halo on a lit pixel", f, x, y);
+                CHECK(t == OLED_TINT_HALO || px(tall, x, y), "tall frame %u (%d,%d): colour on an unlit pixel", f, x, y);
+            }
+        CHECK(colour == logo, "tall frame %u: %u coloured px for a logo with %u", f, colour, logo);
+    }
+}
+#endif
+
 int main(int argc, char **argv)
 {
     const char *pgm = (argc == 3 && strcmp(argv[1], "--pgm") == 0) ? argv[2] : NULL;
@@ -256,6 +358,10 @@ int main(int argc, char **argv)
     }
 
     test_loop();
+    test_mono_unchanged();
+#if BOARD_HAS_SPI_PANEL
+    test_tint();
+#endif
 
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

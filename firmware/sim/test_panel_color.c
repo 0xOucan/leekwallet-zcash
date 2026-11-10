@@ -32,6 +32,7 @@ static void render(void)
         .glyphs = oled_core_glyphs(),
         .roles = oled_core_roles(),
         .picture = oled_core_panel_picture(),
+        .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
     /* In uneven bands, as a transport might, to prove bands join up. */
@@ -164,6 +165,30 @@ int main(void)
     oled_show_panel_picture(picture);
     render();
     CHECK(at(0, 0) == pal->picture && at(239, 239) == pal->picture, "the picture is not full-panel");
+    CHECK(pal->picture == PANEL_RGB565(57, 255, 122), "the splash is not the website's GREEN");
+
+    /* Its colour layer: one code per band of 32 rows, the top band also
+       unlit to show the halo. A lit pixel takes its code's colour, an unlit
+       one is the background unless the code is the halo. */
+    static uint8_t tint[OLED_TINT_BYTES];
+    for (int y = 0; y < 128; y++) memset(tint + y * OLED_TINT_ROW, 0x55 * (y / 32), OLED_TINT_ROW);
+    for (int x = 0; x < 128; x++) picture[x] = 0xFE;   /* row 0 unlit */
+    oled_show_panel_tint(tint);
+    CHECK(oled_core_panel_tint() == tint, "the tint was not kept");
+    render();
+    CHECK(at(0, 0) == pal->bg, "an unlit, untinted pixel is not the background");
+    CHECK(at(0, 10) == pal->picture, "code 0 is not the picture colour");
+    CHECK(at(100, 70) == pal->picture_key, "code 1 is not the key");
+    CHECK(at(100, 130) == pal->picture_spark, "code 2 is not a sparkle");
+    CHECK(at(100, 200) == pal->picture, "a lit halo pixel is not the picture colour");
+    for (int x = 0; x < 128; x++) picture[15 * 128 + x] = 0x7F;   /* row 127 unlit */
+    render();
+    CHECK(at(10, 239) == pal->picture_halo, "an unlit halo pixel is not lit dim");
+    CHECK(pal->picture_halo != pal->bg && pal->picture_halo != pal->picture_spark, "the halo has no colour of its own");
+    oled_clear();
+    CHECK(oled_core_panel_tint() == NULL, "the tint outlived a clear");
+    oled_show_panel_tint(tint);
+    CHECK(oled_core_panel_tint() == NULL, "a tint without a picture");
 
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

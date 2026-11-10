@@ -8,6 +8,21 @@ are released in
 
 ## Unreleased
 
+- **Colour kit: the screen stayed dark with Bluetooth on.** The colour build
+  ran out of internal RAM before the UI task started ("Failed to create UI
+  task"). The panel's buffers are smaller, its SPI interrupt code no longer
+  sits in internal RAM, and the Zcash worker's stack is 16 KB instead of 24 KB
+  on every board. The boot log now shows the internal RAM left for the UI, and
+  the worker logs its lowest free stack after each job.
+- **Colour kit: the screen, the knob and a crash.** The panel needs its CS
+  line: on GND it stays black, so CS goes to GPIO48 (the onboard RGB LED's
+  pin, unused) and the driver uses SPI mode 0. The module's encoder could not
+  pull RX/TX low, so on the colour kit it moves to GPIO3 and GPIO46, wired
+  straight with no resistor (strapping pins, harmless without eFuses burned or
+  BOOT held). The button task's stack grows from 2 KB to 3 KB: a log call from
+  it could overflow and restart the board. Bring-up aids: the
+  `esp32s3cam-panel-bench` env (bit-banged panel test, no wallet) and
+  `-DLEEK_ENC_TRACE=1` (logs every encoder edge).
 - **NU7 on mainnet** (block 3,543,405, about 02:20 UTC on 2026-11-06). Every
   host (the app, `zecz`, the SDK, the Chrome engine, the Android library) moves
   from a librustzcash git rev with no mainnet height to the released crates
@@ -30,6 +45,9 @@ are released in
 - A transaction signed before an activation is refused with a clear message
   before proving and before each broadcast (`check_broadcastable` in zecz,
   `check_broadcast` in the SDK, new errors `WrongBranch` 518 and `Expired` 519).
+- The colour screen's boot logo now has the website's colours: a bright green
+  pot and lid, the key turning pale as it glows, gold sparkles and a dim gold
+  halo round the key. The OLED boards show the same picture as before.
 
 ## v0.1.0 "Sacbeh" (unreleased)
 

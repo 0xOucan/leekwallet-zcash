@@ -20,6 +20,12 @@
  *     stretched 128x64 frame, so the logo keeps its proportions.
  *   - wide, the 128x64 frame every other panel shows: the logo at half
  *     size on the left, the text on the right.
+ *
+ * A colour panel (BOARD_HAS_SPI_PANEL) shows the tall picture, and beside it
+ * a colour layer for it (splash_render_tall_tint(), oled_show_panel_tint()):
+ * the key turning pale as it glows, the gold sparkles and the dim gold halo
+ * round the key, as the website draws them. Only those builds compile it;
+ * the one-bit picture is the same on every panel.
  */
 #ifndef LEEK_SPLASH_H
 #define LEEK_SPLASH_H
@@ -35,6 +41,7 @@
 
 #define SPLASH_TALL_BYTES (128 * 128 / 8)
 #define SPLASH_WIDE_BYTES (128 * 64 / 8)
+#define SPLASH_TINT_BYTES (128 * 128 / 4)   /* OLED_TINT_BYTES */
 
 /* ---------------------------------------------------------------- looping
  *
@@ -124,6 +131,18 @@ bool splash_logo_pixel(unsigned frame, int x, int y);
  * fourth line under the text (text frames only); at most 21 characters.
  */
 void splash_render_tall(unsigned frame, const char *prompt, uint8_t out[SPLASH_TALL_BYTES]);
+
+/**
+ * Frame `frame`'s colour layer, for the picture splash_render_tall() draws:
+ * 128x128, two bits a pixel in oled.h's OLED_TINT_* codes, the logo's at the
+ * logo's place and OLED_TINT_PICTURE everywhere else (the text included).
+ * Colour panels only (BOARD_HAS_SPI_PANEL); elsewhere it is not defined.
+ */
+void splash_render_tall_tint(unsigned frame, uint8_t out[SPLASH_TINT_BYTES]);
+
+/** One pixel of the logo's colour layer in frame `frame`, an OLED_TINT_*
+ *  code; OLED_TINT_PICTURE outside it. Colour panels only, as above. */
+uint8_t splash_logo_tint(unsigned frame, int x, int y);
 
 /** Frame `frame` for a 128x64 panel; the prompt goes under the text, in at
  *  most 15 characters (the room beside the logo). */
