@@ -188,6 +188,26 @@ uint8_t oled_panel_rows(void);
  */
 void oled_show_panel_picture(const uint8_t *picture);
 
+/*
+ * A colour layer for that picture, for a colour panel (panel-color.h): 128x128,
+ * two bits a pixel, row-major, 32 bytes a row, the leftmost pixel in the top
+ * two bits of its byte. Each pixel says which colour a lit pixel of the
+ * picture takes, or, for OLED_TINT_HALO, that an unlit one is faintly lit.
+ * Kept by pointer, like the picture, until the next oled_clear().
+ *
+ * Defined only where BOARD_HAS_SPI_PANEL (board.h): a monochrome build has
+ * nothing to show it on, so calling it there fails to link.
+ */
+#define OLED_TINT_BYTES (128 * 128 / 4)
+#define OLED_TINT_ROW   (128 / 4)
+enum {
+    OLED_TINT_PICTURE = 0,   /* as the picture has it */
+    OLED_TINT_KEY     = 1,   /* the logo's key, glowing */
+    OLED_TINT_SPARK   = 2,   /* a sparkle */
+    OLED_TINT_HALO    = 3,   /* unlit in the picture, lit by the key's halo */
+};
+void oled_show_panel_tint(const uint8_t *tint);
+
 /**
  * What text means, for a panel that can show it in colour.
  *

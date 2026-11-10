@@ -18,9 +18,20 @@
  * much darker than the greens, so WARN and DANGER differ in brightness as
  * well as hue. Neither depends on colour alone anyway; the words that carry
  * them ("!Has public output", "Wrong network") say the same thing in mono.
+ *
+ * The boot splash is the exception to the leek greens: it is the website's
+ * logo animation (leekwallet-zcash-web src/game/logo-anim.ts), so it takes
+ * that file's colours - GREEN for the pot and lid, KEY for the glowing key,
+ * SPARK for the sparkles, and the halo, SPARK laid over the background at
+ * the halo's alpha (SPLASH_HALO_ALPHA, 90 of 255, at full glow).
  */
+#define PANEL_BG_R 0x08
+#define PANEL_BG_G 0x0B
+#define PANEL_BG_B 0x08
+#define HALO_ALPHA 90   /* gen_splash.py HALO_ALPHA, SPLASH_HALO_ALPHA */
+#define OVER(src, dst) ((dst) + ((src) - (dst)) * HALO_ALPHA / 255)
 static const PanelPalette LEEK_PALETTE = {
-    .bg        = PANEL_RGB565(0x08, 0x0B, 0x08),
+    .bg        = PANEL_RGB565(PANEL_BG_R, PANEL_BG_G, PANEL_BG_B),
     .fg = {
         [OLED_ROLE_AUTO]   = PANEL_RGB565(0xEE, 0xE8, 0xD6),
         [OLED_ROLE_TEXT]   = PANEL_RGB565(0xEE, 0xE8, 0xD6),   /* logo cream, lifted */
@@ -35,7 +46,11 @@ static const PanelPalette LEEK_PALETTE = {
     .rule      = PANEL_RGB565(0x3F, 0x6E, 0x31),
     .qr_dark   = PANEL_RGB565(0x00, 0x00, 0x00),
     .qr_light  = PANEL_RGB565(0xFF, 0xFF, 0xFF),
-    .picture   = PANEL_RGB565(0x7A, 0xBF, 0x6A),
+    .picture       = PANEL_RGB565(57, 255, 122),     /* logo-anim.ts GREEN */
+    .picture_key   = PANEL_RGB565(236, 255, 240),    /* KEY */
+    .picture_spark = PANEL_RGB565(255, 236, 150),    /* SPARK */
+    .picture_halo  = PANEL_RGB565(OVER(255, PANEL_BG_R), OVER(236, PANEL_BG_G),
+                                  OVER(150, PANEL_BG_B)),
 };
 
 const PanelPalette *panel_color_palette(void) { return &LEEK_PALETTE; }
@@ -96,18 +111,29 @@ static void render_qr(const QRCode *qr, bool inverted, uint8_t scale,
 
 /* ------------------------------------------------------------- picture */
 
-static void render_picture(const uint8_t *pic, const PanelPalette *pal,
+static void render_picture(const uint8_t *pic, const uint8_t *tint, const PanelPalette *pal,
                            int width, int height, int y0, int rows, uint16_t *out)
 {
     /* Nearest-neighbour from 128x128. A picture is the one thing with no
-       glyphs to redraw, and the splash is a logo, not text. */
+       glyphs to redraw, and the splash is a logo, not text. The colour
+       layer, when there is one, picks each pixel's colour (oled.h). */
+    const uint16_t lit[4] = {
+        [OLED_TINT_PICTURE] = pal->picture, [OLED_TINT_KEY] = pal->picture_key,
+        [OLED_TINT_SPARK] = pal->picture_spark, [OLED_TINT_HALO] = pal->picture,
+    };
     for (int r = 0; r < rows; r++) {
         const int ly = (y0 + r) * 128 / height;
         uint16_t *row = out + (size_t)r * width;
+        const uint8_t *trow = tint ? tint + (size_t)ly * OLED_TINT_ROW : NULL;
         for (int x = 0; x < width; x++) {
             const int lx = x * 128 / width;
             const bool on = (pic[(ly / 8) * 128 + lx] >> (ly % 8)) & 1;
-            row[x] = on ? pal->picture : pal->bg;
+            const unsigned t = trow ? (trow[lx / 4] >> (6 - 2 * (lx % 4))) & 3u : OLED_TINT_PICTURE;
+            if (on) {
+                row[x] = lit[t];
+            } else {
+                row[x] = t == OLED_TINT_HALO ? pal->picture_halo : pal->bg;
+            }
         }
     }
 }
@@ -242,7 +268,7 @@ void panel_color_render(const PanelFrame *f, const PanelPalette *pal,
                         int width, int height, int y0, int rows, uint16_t *out)
 {
     if (f->picture) {
-        render_picture(f->picture, pal, width, height, y0, rows, out);
+        render_picture(f->picture, f->tint, pal, width, height, y0, rows, out);
         return;
     }
     const uint8_t scale = f->qr ? panel_color_qr_scale(f->qr->size, width, height) : 0;

@@ -5,7 +5,15 @@
 
 #include <string.h>
 
+#include "board.h"
+#include "oled.h"
 #include "oled-core.h"
+
+/* The colour layer is compiled only where there is a colour panel to show
+   it, so the monochrome images keep exactly the bytes they had. */
+#if BOARD_HAS_SPI_PANEL
+#  define SPLASH_WANT_TINT 1
+#endif
 #include "splash-frames.h"
 
 /* Tall panel: the logo centred near the top, the three lines beneath it,
@@ -252,3 +260,38 @@ void splash_render_wide(unsigned frame, const char *prompt, uint8_t out[SPLASH_W
         }
     }
 }
+
+/* ---------------------------------------------------------------- colour */
+
+#if BOARD_HAS_SPI_PANEL
+
+_Static_assert(SPLASH_TINT_BYTES == OLED_TINT_BYTES, "splash and panel disagree on the tint size");
+_Static_assert(SPLASH_TINT_MONO == OLED_TINT_PICTURE && SPLASH_TINT_KEY == OLED_TINT_KEY &&
+               SPLASH_TINT_SPARK == OLED_TINT_SPARK && SPLASH_TINT_HALO == OLED_TINT_HALO,
+               "gen_splash.py and oled.h disagree on the tint codes");
+
+uint8_t splash_logo_tint(unsigned frame, int x, int y)
+{
+    if (frame >= SPLASH_FRAMES || x < 0 || y < 0 || x >= SPLASH_LOGO_W || y >= SPLASH_LOGO_H ||
+        SPLASH_TINT_OF[frame] < 0) {
+        return OLED_TINT_PICTURE;
+    }
+    const uint8_t b = SPLASH_TINT[SPLASH_TINT_OF[frame]][y * SPLASH_TINT_STRIDE + x / 4];
+    return (uint8_t)((b >> (6 - 2 * (x % 4))) & 3u);
+}
+
+void splash_render_tall_tint(unsigned frame, uint8_t out[SPLASH_TINT_BYTES])
+{
+    memset(out, 0, SPLASH_TINT_BYTES);
+    for (int y = 0; y < SPLASH_LOGO_H; y++) {
+        for (int x = 0; x < SPLASH_LOGO_W; x++) {
+            const uint8_t t = splash_logo_tint(frame, x, y);
+            if (t != OLED_TINT_PICTURE) {
+                const int px = TALL_LOGO_X + x, py = TALL_LOGO_Y + y;
+                out[py * OLED_TINT_ROW + px / 4] |= (uint8_t)(t << (6 - 2 * (px % 4)));
+            }
+        }
+    }
+}
+
+#endif /* BOARD_HAS_SPI_PANEL */

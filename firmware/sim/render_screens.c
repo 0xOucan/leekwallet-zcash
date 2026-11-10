@@ -66,6 +66,7 @@ static void snap(const char *name)
         .glyphs = oled_core_glyphs(),
         .roles = oled_core_roles(),
         .picture = oled_core_panel_picture(),
+        .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
     panel_color_render(&f, panel_color_palette(), W, H, 0, H, colour);
@@ -139,6 +140,15 @@ int main(int argc, char **argv)
     boot(false);
     go(SCREEN_BOOT);
     snap("01-splash");
+    /* The key risen and glowing, the sparkles out: 1.2 s in, frame 11
+       (the website at t = 2400 ms). */
+    fake_clock_advance_us(1200 * 1000);
+    ui_render();
+    snap("01b-splash-key");
+    /* The held frame, text and prompt under the logo. */
+    fake_clock_advance_us(600 * 1000);
+    ui_render();
+    snap("01c-splash-text");
     go(SCREEN_PIN_SETUP);
     snap("02-pin-setup");
 

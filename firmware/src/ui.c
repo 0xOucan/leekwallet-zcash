@@ -1492,6 +1492,12 @@ static void screen_boot_render(void)
     if (oled_panel_rows() >= 128) {
         splash_render_tall(boot_splash_shown.frame, prompt, tall);
         oled_show_panel_picture(tall);
+#if BOARD_HAS_SPI_PANEL
+        /* The colour panel also gets the website's colours for the logo. */
+        static uint8_t tint[SPLASH_TINT_BYTES];
+        splash_render_tall_tint(boot_splash_shown.frame, tint);
+        oled_show_panel_tint(tint);
+#endif
     } else {
         splash_render_wide(boot_splash_shown.frame, prompt, wide);
         for (uint8_t page = 0; page < OLED_PAGES; page++) {

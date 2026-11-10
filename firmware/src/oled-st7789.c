@@ -163,6 +163,9 @@ static void build_wire_palette(void)
     wire_palette.qr_dark = to_wire(p->qr_dark);
     wire_palette.qr_light = to_wire(p->qr_light);
     wire_palette.picture = to_wire(p->picture);
+    wire_palette.picture_key = to_wire(p->picture_key);
+    wire_palette.picture_spark = to_wire(p->picture_spark);
+    wire_palette.picture_halo = to_wire(p->picture_halo);
 }
 
 /* -------------------------------------------------------------------- API */
@@ -218,6 +221,7 @@ esp_err_t oled_flush(void)
         .glyphs = oled_core_glyphs(),
         .roles = oled_core_roles(),
         .picture = oled_core_panel_picture(),
+        .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
 
