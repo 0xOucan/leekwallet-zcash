@@ -8,6 +8,14 @@ are released in
 
 ## Unreleased
 
+- **Secure element research, and a development-only SE container.** How
+  Trezor and BitBox use the OPTIGA Trust M, and a design for using it here
+  (`firmware/docs/RESEARCH-SECURE-ELEMENT.md`,
+  `firmware/docs/RESEARCH-OPTIGA-WALLETS.md`). The driver can now store one
+  blob in data object `0xF1E0`, a reversible test of the write path that adds
+  no security, behind `LEEK_SE_CONTAINER_WRITES`. The flag is off by default,
+  so every image, the bench included, stays read-only. The container is not
+  wired to the wallet, and nothing has been written to any chip.
 - **Colour kit: the screen stayed dark with Bluetooth on.** The colour build
   ran out of internal RAM before the UI task started ("Failed to create UI
   task"). The panel's buffers are smaller, its SPI interrupt code no longer
