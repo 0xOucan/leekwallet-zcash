@@ -8,6 +8,21 @@ are released in
 
 ## Unreleased
 
+- **CAM kits: camera tuning for faster QR scanning (not yet measured on a
+  board).** The AGC gain ceiling was effectively 1/16x (the driver wrote its
+  enum value into a real-gain register), so all brightness came from shutter
+  time and blur; it is now a real 4x. Banding is 60 Hz (was 50 Hz). The
+  shutter is capped at 96 lines and metering is centre-weighted, with the
+  knob's -5..0 bias kept. The knob push now zooms on the sensor, 1x → 2x → 3x
+  (2.67x) → 1x, always captured at QVGA and opening at 1x; VGA and SVGA are
+  gone from the Scan screen and stay in the bench image. Row 6 shows the zoom
+  (`1x 12fps s:3 r:1`), and the colour kit shows the light level's percentage
+  in green, amber or red. The CPU runs at 240 MHz only while scanning (160
+  otherwise), and decoding runs on core 1. Once a second the serial log shows
+  per-stage times, exposure, gain and the CPU clock, and each animated UR logs
+  its time to complete. Every change has a build define to switch it off;
+  JOURNAL.md "Camera tuning" has the board checklist. Delete
+  `firmware/sdkconfig.esp32s3cam*` before building.
 - **Colour kit: a real camera view, and a backlight setting.** Scan showed
   the OLED's 1-bit preview stretched to a few bars; it is now a 200×150
   grayscale picture, auto-levelled per frame, with rows for the exposure
