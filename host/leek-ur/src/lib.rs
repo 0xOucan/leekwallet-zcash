@@ -169,7 +169,7 @@ pub fn bytewords_encode(data: &[u8]) -> String {
 /// payload over `max` bytes.
 pub fn bytewords_decode(text: &str, max: usize) -> Result<Vec<u8>, UrError> {
     let t = text.as_bytes();
-    if t.len() % 2 != 0 || t.len() < 8 {
+    if !t.len().is_multiple_of(2) || t.len() < 8 {
         return Err(UrError::Bytewords);
     }
     let total = t.len() / 2;

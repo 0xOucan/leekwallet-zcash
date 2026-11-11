@@ -46,7 +46,7 @@ fn reference_parts(file: &str) -> Vec<String> {
 fn bytewords_match_bc_ur() {
     let src = sim("test_ur.c");
     let v = quoted(c_block(&src, "VECTORS[] = {"));
-    assert!(v.len() >= 8 && v.len() % 2 == 0);
+    assert!(v.len() >= 8 && v.len().is_multiple_of(2));
     for pair in v.chunks(2) {
         let data = unhex(&pair[0]);
         assert_eq!(bytewords_encode(&data), pair[1], "encode {}", pair[0]);
