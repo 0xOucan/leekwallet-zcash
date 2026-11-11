@@ -10,7 +10,8 @@
 # LEEK_SE_CONTAINER_WRITES: the development-only Level 1 SE container, the one
 # write this component can make (data of 0xF1E0; see README.md). Off unless
 # CMake is given -DLEEK_SE_CONTAINER_WRITES=1, e.g. through an env's
-# board_build.cmake_extra_args. No env in platformio.ini sets it. PUBLIC so a
+# board_build.cmake_extra_args. Only the development env esp32s3cam-color-se
+# sets it. PUBLIC so a
 # caller's view of leek-se.h agrees with the library it links.
 
 set(srcs "optiga-proto.c" "optiga-link.c" "optiga-cmd.c" "leek-se.c")

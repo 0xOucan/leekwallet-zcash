@@ -186,8 +186,8 @@ up: Infineon's own host library uses both.
 Only volatile or read-only operations, and the component has no code path
 for anything else (no `SetDataObject`, no metadata writes, no key
 generation, no shielded-connection handshake, no arbitrary APDU). The one
-exception is compiled only with `LEEK_SE_CONTAINER_WRITES=1`, which no env
-sets: data writes to `0xF1E0`, the [Level 1 container](#level-1-reversible-development-only).
+exception is compiled only with `LEEK_SE_CONTAINER_WRITES=1`, which only the
+development env `esp32s3cam-color-se` sets: data writes to `0xF1E0`, the [Level 1 container](#level-1-reversible-development-only).
 The default build, including the bench, does only this:
 
 - I2C scan; ACK probe at `0x30`.
@@ -325,7 +325,7 @@ moved out of NVS or off a card. The third is new.
 | Attempt limit | 3, in firmware; a reflash removes it | none: the card can be copied | Level 1: none beyond the NVS vault's. Level 2: a counter in the chip a reflash cannot reset |
 | What a thief with the board gets | the ciphertext (flash dump) and an offline PIN search | the ciphertext, if they also have the card | Level 1: the same as NVS. Level 2: every guess must go through the chip |
 | Capacity | 30 seeds | one seed per file | 1484 bytes: about five GCM mnemonic blobs |
-| Status | shipped | shipped | Level 1 code and simulator tests, flag off, not wired. Level 2 design only |
+| Status | shipped | shipped | Level 1 wired to a Settings screen in one development env (`esp32s3cam-color-se`), simulator-tested, not yet run on a chip. Level 2 design only |
 
 ### SE container vault slot
 
@@ -392,16 +392,59 @@ command layer's response buffer and the link's frame buffers are wiped after
 every read, write and erase, on error paths too. All of them are static, in
 internal RAM, and under 2 KB; none is allocated, so none can land in PSRAM.
 
-**Not wired yet.** Nothing in `src/` calls the container and `LEEK_HAS_SE`
-is unchanged. The natural hook, for a development image built with the flag:
-a "Secure element" screen under Settings (the info screen in the component
-README) gains three entries, shown only in that build — *Copy vault to SE*,
-*Compare SE copy* and *Erase SE copy*. Turn the knob to choose, push to
-confirm, Cancel to back out; each asks for the PIN first. *Copy* writes the
-current wallet's GCM blob exactly as NVS holds it; *Compare* reads it back
-and reports match or mismatch, never the contents; *Erase* zeroes the
-object. Restoring a wallet from the container is deliberately not part of
-Level 1.
+**What was built** (development image `esp32s3cam-color-se` only; every
+other env compiles none of it). The user-facing description and the restore
+rules are in [BACKUP.md](BACKUP.md#the-devices-own-copies-vault-sd-card-secure-element);
+this is the design record.
+
+- **Wiring.** `-DLEEK_SE=LEEK_SE_OPTIGA` makes `LEEK_HAS_SE` 1, and
+  `src/se-optiga.c` supplies the `se.h` hook: `se_probe()` (already called once
+  from `main.c` after the panel) installs the legacy I2C driver on I2C0
+  (GPIO47/21) because on the colour kit no I2C panel did, attaches the
+  component, probes `0x30` and opens the application. The camera's SCCB stays
+  on I2C1. On an OLED kit the panel's install would be reused.
+- **Settings > Secure element**, knob and Cancel only: *Info*, *Copy seed to
+  SE*, *Compare SE copy*, *SE copy -> session*, *SE copy -> vault*, *Erase SE
+  copy*, *SD file -> SE*, *SD file -> vault*. Each asks for the PIN first,
+  checked by `pin_verify()` as at unlock (an attempt spent when wrong, the wipe
+  at the last one).
+- **What the container holds** is not the vault's NVS blob verbatim, as first
+  proposed above: that blob is keyed through the vault's per-device salt in
+  NVS, so it would die with the vault it is meant to back up. The copy
+  (`src/se-backup.h`, payload magic `LKSV` inside the `LKSC` container) carries
+  its own salt and KDF parameters and is sealed with the vault's own code:
+  `vault_derive_key_with()` (PBKDF2-HMAC-SHA512, the vault's default 2250
+  iterations, domain `leek-enc-v2`) over the PIN, and `vault_encrypt()`
+  (AES-256-GCM, fresh nonce). No new crypto. Inside the ciphertext: the ZIP 32
+  seed fingerprint (no passphrase), then the `.zkv` payload v1 (BIP39 entropy,
+  birthday, account, flags, label), so the SD file and the SE copy carry one
+  seed format. The header sits outside the AEAD (`vault_encrypt()` takes no
+  associated data), so its parameter block must be the canonical encoding and
+  the work factor within 2250-100000, or the copy is refused before any KDF.
+  Total size at most 180 bytes of the 1484.
+- **Copy** reads back and *opens* the copy with the same PIN before reporting
+  success, on top of the container's own byte compare. It refuses to write
+  over data that is not a LeekWallet copy, and asks before replacing a copy of
+  a different seed or one the PIN does not open.
+- **Restore.** *SE copy -> session* makes it the temporary seed (as an SD
+  load). *SE copy -> vault* and *SD file -> vault* go through one new vault
+  call, `wallet_store_mnemonic_if_new()`: every slot is decrypted and compared
+  first; a slot holding the seed means nothing is written; otherwise the seed
+  is appended after the last slot; a full vault or a slot that will not
+  decrypt refuses. No backup path can overwrite or delete a vault seed.
+- **A copy made under another PIN** (an earlier PIN, another board) is
+  opened by typing that PIN when asked. It is checked against the copy only,
+  with no attempt counter: at Level 1 the blob can be read off the bus and
+  attacked offline anyway, so the KDF is the only throttle, here as there.
+- **RAM.** No new static buffer above 200 bytes: the screen reuses the SD
+  screen's passphrase entry and file list, the copy is at most 180 bytes on the
+  UI task's stack, and the component's own buffers are unchanged.
+- **Tests.** `sim/test_se_backup.c` (ASan/UBSan) runs copy, compare, erase and
+  restore through the real vault on the fake NVS and the real container format
+  on a fake chip, with the wrong-PIN, foreign, damaged, cut, tampered,
+  read-back and full-vault cases. `make screens` draws the screens
+  (`render_screens_se`). The link to a real chip is `test_se_container`'s, and
+  only the board can confirm it.
 
 #### Level 2: hardened, future, spare chip first
 
@@ -510,11 +553,13 @@ For the user to decide before any of this moves forward:
 1. **Object choice.** `0xF1E0` alone (1484 bytes, about five wallets), or
    also `0xF1E1` for 30 wallets? A second object widens the allowed write
    list from one entry to two.
-2. **What Level 1 stores.** A copy of the current wallet's NVS blob (the
-   hook described above), or a separate slot with its own wallets?
-3. **Blob format.** Is the 16-byte header (magic, version, length, CRC-32)
-   enough, or should it carry the vault's salt or a device identifier so a
-   container moved to another board is recognised as foreign?
+2. **What Level 1 stores.** *Answered for now:* one seed, the one the user
+   copies, sealed with its own salt (see "What was built"), not the NVS blob.
+   Still open: more than one seed in the container?
+3. **Blob format.** *Answered for now:* the copy carries its own salt and KDF
+   parameters, so a container moved to another board opens there with the PIN
+   it was made under, by design: it is a backup. A device identifier was not
+   added.
 4. **N for Level 2.** The firmware wipes after 3 today; Trezor allows 16,
    BitBox 10. A hardware limit is permanent for the secret it guards, so this
    wants deciding with the backup flow in view (as for the 608 above).
