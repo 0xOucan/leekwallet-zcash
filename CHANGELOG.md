@@ -79,6 +79,18 @@ are released in
   other network and follows a switched sender. It also gains `QrEncoder`
   (`ur:leek-pczt` frames) and `qr_defaults()` with the bench's settings. No
   wallet ships it yet.
+- **SDK: ready for Android wallets.**
+  - `leek-zcash-ffi/scripts/build-android.sh` builds the library for
+    arm64-v8a and x86_64 with 16 KB page alignment, which Android 15 needs.
+    It refuses bindings that don't match the library, and it ships R8 and
+    JNA keep rules.
+  - New tests: a PCZT built the way the Zodl SDK builds one passes
+    `preflight` and signs on the simulated board, and the SDK matches the
+    Zodl fork's JNI library byte for byte.
+  - New `firmware_outdated()`.
+  - When the board refuses the network, the error now says which network
+    the board is on: `BoardNetwork`, still code 400.
+  - Nothing has run on a phone yet.
 - **Secure element research, and a development-only SE container.** How
   Trezor and BitBox use the OPTIGA Trust M, and a design for using it here
   (`firmware/docs/RESEARCH-SECURE-ELEMENT.md`,
