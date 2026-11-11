@@ -56,6 +56,9 @@ impl From<lz::Recovery> for Recovery {
 /// `code` is `leek_zcash::LeekError::code` (the README lists them),
 /// `recovery` its `Recovery`, `reason` a fixed sentence per code that never
 /// carries an amount, an address, a key or PCZT bytes, so it can go to logs.
+/// Show `reason` to the user: for the board's outdated-app refusal (520) it
+/// is "Update your app: ...", for a board set to the other network (400)
+/// "The board is set to Testnet, but this app is on Mainnet. Switch ...".
 /// `device_code` is the firmware's code when the board refused with one this
 /// version does not know (`code` 900).
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Error)]
@@ -566,6 +569,14 @@ pub fn validate_app_id(app_id: String) -> Result<()> {
 #[uniffi::export]
 pub fn min_firmware_compat() -> u32 {
     lz::MIN_FIRMWARE_COMPAT
+}
+
+/// Whether a board at this `fw_compat` (`Features.fw_compat`; `None` counts
+/// as 1) should be told to update: what `Features.firmware_outdated` says,
+/// for a level the app kept (the JNI library's `firmwareOutdated(level)`).
+#[uniffi::export]
+pub fn firmware_outdated(fw_compat: Option<u32>) -> bool {
+    lz::leek_device::device::firmware_outdated(fw_compat)
 }
 
 /// What to show when `Features.firmware_outdated` is true.
@@ -1105,6 +1116,16 @@ impl LeekDevice {
     }
 
     /// Preflight, upload, review on the board, verify and apply.
+    ///
+    /// `pczt` is the wallet's PCZT: the one it built, or its own
+    /// `redact_pczt_for_signer` copy (Zodl's `redactPcztForSigner`).
+    /// `signed_pczt` is that PCZT with the signatures: hand it to the
+    /// wallet's combine (Zodl's `createTransactionFromPczt(pcztWithProofs,
+    /// signed)`). If the wallet's account may lack its ZIP 32 derivation
+    /// (imported without one), pass the PCZT through
+    /// [`prepare_for_signer`] first; it changes nothing when the paths are
+    /// there. `verify_account` refuses another seed on the board before any
+    /// upload (code 401).
     pub fn sign_pczt(
         &self,
         pczt: Vec<u8>,

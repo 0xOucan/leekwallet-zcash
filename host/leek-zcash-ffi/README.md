@@ -43,6 +43,7 @@ Swift use camelCase.
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
 | `.seed_fingerprint(network?)` | which seed the board holds (32 bytes), with no question on the board: call it on every connect, `get_account` only when the UFVK is needed. A stable identifier of the seed that every paired host can read |
 | `.get_features()`, `.get_account(index, network)`, `.show_address(..)`, `.set_birthday(..)` | `Features.firmware_outdated` true: show `board_update_text()`. A suggestion; `min_firmware_compat()` is the level. |
+| `firmware_outdated(fw_compat?)` | the same answer for a level the app kept (`None` counts as 1) |
 | `.sign_pczt(pczt, AccountMeta, SignerView, verify_account, SignListener?) -> SignResult` | progress: `Checking`, `Uploading{sent,total}`, `ReviewOnDevice`, `Applying` |
 | `.get_storage_key(app_id, index, network) -> StorageKey` | the app's Storage Key, after "Unlock app data?" is answered OK on the board, every time |
 | `StorageKey.from_bytes(key, app_id, account, network)` | a key the app kept in secure storage ("remember on this device") |
@@ -58,6 +59,39 @@ record }`: `record` is `SignResult::to_bytes`. **Persist it before
 broadcasting**, broadcast idempotently, and compare after mining
 ([leek-zcash: Persist before broadcast](../leek-zcash/README.md#persist-before-broadcast)).
 
+### Signing a wallet's PCZT: the call order
+
+For a wallet that already signs with Keystone through the Zcash SDK's PCZT
+calls (Zodl's `KeystoneProposalRepository`), on a background thread:
+
+1. `createPcztFromProposal(account, proposal)`: the proposal PCZT. Start
+   `addProofsToPczt` on a copy of it, as for Keystone.
+2. `redactPcztForSigner(pczt)`: the signer PCZT. This is what the board
+   signs.
+3. `prepareForSigner(signerPczt, ufvk, seedFingerprint, index)`. When the
+   account was imported with its ZIP 32 derivation
+   (`AccountPurpose.Spending(seedFingerprint, index)`), the SDK has already
+   written every path and this returns the same bytes. Without it, the
+   transparent inputs have no BIP 44 path, and `preflight` refuses them
+   with `Account` 405. Calling it every time is safe.
+4. `LeekDevice` → `pair` → `ensureUnlocked` → `getFeatures`. Then
+   `signPczt(prepared, AccountMeta(seedFingerprint, index, network, ufvk),
+   SignerView.COMPACT, verifyAccount = true, listener)`. This runs
+   `preflight` and checks the board's seed before uploading. It also
+   verifies every signature that comes back.
+5. `setPcztWithSignatures(Pczt(result.signedPczt))`, then
+   `createTransactionFromPczt(pcztWithProofs, signed)`, as for Keystone.
+   `result.txid` is already the transaction's ID. Persist `result.record`
+   first if the app can.
+
+Over QR, replace step 4 with `QrEncoder.pczt(signerViewBytes(prepared, view), …)`
+and `QrScanner(ZSIG)`. Then `applyZsig(prepared, sent, zsig)` gives the
+signed PCZT for step 5; run `preflight(prepared, …)` before showing the
+code. A PCZT that the Zcash SDK 6.0.0 builds this way (a transparent shield
+to Ironwood) passes `preflight` unchanged, signs on the simulated board in
+both views, and combines with the proven PCZT into a transaction with that
+txid (`tests/zodl.rs`).
+
 ### Errors
 
 One error type, `LeekError` (Kotlin `LeekException`, Swift `LeekError`),
@@ -72,6 +106,16 @@ with the firmware's `device_code`). Each carries `code` (the stable
 `DoNotRetry`) and `reason`, a fixed sentence per code with no amounts,
 addresses, keys or PCZT bytes. A malformed argument (a seed fingerprint
 that is not 32 bytes) is `Pczt` 512.
+
+Show `reason` to the user. It carries the sentences that the JNI library
+(`leek-android`) wrote in Kotlin:
+
+| Case | `code` | `reason` |
+|---|---|---|
+| The board refused a PCZT that only an app without NU7 builds (0x0519) | `Pczt` 520 | "Update your app: it built this transaction for network rules that have ended. Nothing was signed." |
+| The board is set to the other network (0x0528) | `Account` 400 | "The board is set to Testnet, but this app is on Mainnet. Switch the board to Mainnet in Settings → Network, or use the Testnet app." (or the reverse) |
+| The PCZT or the UFVK is for the other network than the account | `Account` 400 | "the board or the transaction is on the other network" |
+| The board's firmware lacks the call, or speaks another protocol | `Session` 205 | "the board's firmware does not support this; update it" |
 
 ### The transport
 

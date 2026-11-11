@@ -29,14 +29,18 @@ fn json(file: &str, name: &str) -> Value {
     all.into_iter().find(|e| e["name"] == name).expect("vector")
 }
 
-fn test0() -> AccountMeta {
-    let k = json("keys.json", "test/abandon-art/pp0/acct0");
+fn meta(name: &str, network: Network) -> AccountMeta {
+    let k = json("keys.json", name);
     AccountMeta {
         seed_fingerprint: hex::decode(k["seed_fingerprint"].as_str().unwrap()).unwrap(),
         index: 0,
-        network: Network::Test,
+        network,
         ufvk: Some(k["ufvk"].as_str().unwrap().into()),
     }
+}
+
+fn test0() -> AccountMeta {
+    meta("test/abandon-art/pp0/acct0", Network::Test)
 }
 
 // ---------------------------------------------------------------- zdev
@@ -226,6 +230,46 @@ fn a_host_reads_the_account_over_a_stream_link() {
     assert!(matches!(e, LeekError::Account { code: 400, recovery: Recovery::RetrySameLink, .. }), "{e:?}");
 }
 
+/// The sentences the JNI library showed, now in `reason`: the board's
+/// refusals as they come back from the simulated board (set to Testnet).
+#[test]
+fn the_board_refusals_say_what_to_do() {
+    let z = zdev_or_skip!("texts");
+    let port = SerialTransport::open(z.link.to_str().unwrap()).expect("open zdev");
+    let dev = paired(Arc::new(FramesHost(Mutex::new(port))), LinkKind::Frames);
+    let switch = leek_zcash::leek_device::device::wrong_network_message("main");
+
+    // A Mainnet app: the board says which way to switch, for every call
+    // that names the network, before anything is derived or uploaded.
+    let main0 = meta("main/abandon-art/pp0/acct0", Network::Main);
+    let e = dev.get_account(0, Network::Main).unwrap_err();
+    assert_eq!(e, LeekError::Account { code: 400, recovery: Recovery::RetrySameLink, reason: switch.clone() });
+    assert!(e.to_string().starts_with("The board is set to Testnet, but this app is on Mainnet."), "{e}");
+    assert_eq!(dev.seed_fingerprint(Some(Network::Main)).unwrap_err(), e);
+    let ua = json("keys.json", "main/abandon-art/pp0/acct0")["ua"].as_str().unwrap().to_string();
+    assert_eq!(dev.show_address(0, Network::Main, ua).unwrap_err(), e);
+    for verify in [true, false] {
+        let r = dev.sign_pczt(v("main_iw_send_shielded"), main0.clone(), SignerView::Compact, verify, None);
+        assert_eq!(r.unwrap_err(), e, "verify_account {verify}");
+    }
+    // The PCZT on the other network than the account is the host's own
+    // finding, with the general text.
+    let e = dev.sign_pczt(v("r_main_on_test"), test0(), SignerView::Full, false, None).unwrap_err();
+    assert!(matches!(&e, LeekError::Account { code: 400, reason, .. } if reason.as_str() != switch), "{e:?}");
+
+    // What only an app without NU7 builds past it: preflight cannot tell
+    // it from a valid PCZT, the board refuses it (0x0519), and the reason
+    // is the JNI library's "Update your app" sentence.
+    preflight(v("r_old_app_after_nu7"), test0(), None).expect("not a host-side check");
+    let e = dev.sign_pczt(v("r_old_app_after_nu7"), test0(), SignerView::Full, true, None).unwrap_err();
+    let update = leek_zcash::leek_device::device::APP_UPDATE_TEXT.to_string();
+    assert_eq!(e, LeekError::Pczt { code: 520, recovery: Recovery::DoNotRetry, reason: update });
+    assert!(e.to_string().starts_with("Update your app"), "{e}");
+
+    // The session survives all of these: the board still signs.
+    dev.sign_pczt(v("iw_send_shielded"), test0(), SignerView::Compact, true, None).expect("signs after the refusals");
+}
+
 /// Cancels the device once the upload starts.
 struct CancelOnUpload(Mutex<Option<Arc<LeekDevice>>>);
 
@@ -355,8 +399,34 @@ fn stored_app_data_seals_and_refuses() {
     assert!(matches!(validate_app_id("Not Valid".into()).unwrap_err(), LeekError::Storage { code: 700, .. }));
     assert!(StorageKey::from_bytes(vec![0; 31], "a.b".into(), 0, Network::Main).is_err());
     assert_eq!(storage_zip_number(), 65535);
-    assert_eq!(min_firmware_compat(), 2);
+}
+
+/// The JNI library's texts and helpers, one for one: `boardUpdateText()`,
+/// `firmwareOutdated(level)`, and the refusals it reworded.
+#[test]
+fn the_user_facing_texts_match_the_jni() {
+    use leek_zcash::leek_device::device::{wrong_network_message, APP_UPDATE_TEXT, BOARD_UPDATE_TEXT};
+    assert_eq!(board_update_text(), BOARD_UPDATE_TEXT);
     assert!(board_update_text().starts_with("Update your board"));
+    assert_eq!(min_firmware_compat(), 2);
+    assert!(firmware_outdated(None), "a board that reports no level counts as 1");
+    assert!(firmware_outdated(Some(1)));
+    assert!(!firmware_outdated(Some(min_firmware_compat())));
+    assert!(!firmware_outdated(Some(min_firmware_compat() + 1)));
+
+    // ERR_APP_OUTDATED: the JNI replaced the board's text with this one.
+    let e = LeekError::from(leek_zcash::LeekError::AppOutdated);
+    assert_eq!(e, LeekError::Pczt { code: 520, recovery: Recovery::DoNotRetry, reason: APP_UPDATE_TEXT.into() });
+    // ERR_BOARD_NETWORK: the JNI showed leek-device's sentence; so does reason.
+    for (board, asked) in [(leek_zcash::Network::Test, "main"), (leek_zcash::Network::Main, "test")] {
+        let e = LeekError::from(leek_zcash::LeekError::BoardNetwork { board });
+        let reason = wrong_network_message(asked);
+        assert_eq!(e, LeekError::Account { code: 400, recovery: Recovery::RetrySameLink, reason });
+    }
+    // A protocol the board does not speak, or a call it lacks: the JNI said
+    // "update the older side"; reason says to update the board.
+    let e = LeekError::from(leek_zcash::LeekError::FirmwareTooOld);
+    assert!(matches!(&e, LeekError::Session { code: 205, recovery: Recovery::DoNotRetry, reason } if reason.contains("update")), "{e:?}");
 }
 
 /// A foreign KeyWrapper as Kotlin or Swift would implement it: XOR with a
