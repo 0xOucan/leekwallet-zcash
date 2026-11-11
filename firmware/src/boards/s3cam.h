@@ -86,6 +86,10 @@
 #define PIN_DISPLAY_CS          GPIO_NUM_48   /* the WS2812's pin, see above */
 #define PIN_DISPLAY_RESET       GPIO_NUM_NC
 #define PIN_DISPLAY_BLK         GPIO_NUM_43   /* TX; backlight PWM */
+/* The camera sits a quarter turn from the panel on the colour kit: without
+   this the preview is upright only with the board turned 90 degrees right
+   (board, 2026-11-10). Preview only; decoding is orientation-free. */
+#define BOARD_VIEWFINDER_ROTATE 1             /* quarter turns counter-clockwise */
 #else
 #define PIN_BUTTON_UP           GPIO_NUM_1    /* K1 */
 #define PIN_BUTTON_DOWN         GPIO_NUM_41   /* K2 - MTDI */

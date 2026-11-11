@@ -73,6 +73,13 @@ void viewfinder_render(const uint8_t *frame, uint16_t fw, uint16_t fh,
 
 static uint8_t clamp_u8(int v) { return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
 
+static uint8_t gray_rotation;   /* quarter turns counter-clockwise, 0..3 */
+
+void viewfinder_set_rotation(uint8_t quarter_turns_ccw)
+{
+    gray_rotation = (uint8_t)(quarter_turns_ccw & 3);
+}
+
 void viewfinder_render_gray(const uint8_t *frame, uint16_t fw, uint16_t fh,
                             uint8_t *out, ViewfinderStats *st,
                             bool true_exposure)
@@ -81,14 +88,20 @@ void viewfinder_render_gray(const uint8_t *frame, uint16_t fw, uint16_t fh,
         return;
     }
 
-    /* Letterboxed to the frame's aspect ratio, in whichever axis it needs.
-       Every mode this camera has is 4:3, so in practice the image is the
-       whole 200x150. */
+    /* The picture as shown: the frame turned by gray_rotation. A quarter turn
+       swaps its width and height, so a 4:3 frame becomes 3:4. */
+    const uint8_t rot = gray_rotation;
+    const uint16_t lw = (rot & 1) ? fh : fw;
+    const uint16_t lh = (rot & 1) ? fw : fh;
+
+    /* Letterboxed to that aspect ratio, in whichever axis it needs. Unrotated,
+       every mode this camera has is 4:3, so the image is the whole 200x150;
+       turned a quarter, it is 112x150 with bars at the sides. */
     uint16_t vw = VIEWFINDER_GRAY_W;
-    uint16_t vh = (uint16_t)((uint32_t)VIEWFINDER_GRAY_W * fh / fw);
+    uint16_t vh = (uint16_t)((uint32_t)VIEWFINDER_GRAY_W * lh / lw);
     if (vh > VIEWFINDER_GRAY_H) {
         vh = VIEWFINDER_GRAY_H;
-        vw = (uint16_t)((uint32_t)VIEWFINDER_GRAY_H * fw / fh);
+        vw = (uint16_t)((uint32_t)VIEWFINDER_GRAY_H * lw / lh);
         if (vw > VIEWFINDER_GRAY_W) { vw = VIEWFINDER_GRAY_W; }
     }
     if (vw == 0 || vh == 0) {
@@ -117,15 +130,24 @@ void viewfinder_render_gray(const uint8_t *frame, uint16_t fw, uint16_t fh,
             continue;
         }
         const uint16_t iy = (uint16_t)(y - vy0);
-        const uint32_t sy0 = (uint32_t)iy * fh / vh;
-        uint32_t sy1 = (uint32_t)(iy + 1) * fh / vh;
-        if (sy1 <= sy0) { sy1 = sy0 + 1; }
+        const uint32_t v0 = (uint32_t)iy * lh / vh;
+        uint32_t v1 = (uint32_t)(iy + 1) * lh / vh;
+        if (v1 <= v0) { v1 = v0 + 1; }
         memset(orow, 0, vx0);
         memset(orow + vx0 + vw, 0, (size_t)(VIEWFINDER_GRAY_W - vx0 - vw));
         for (uint16_t x = 0; x < vw; x++) {
-            const uint32_t sx0 = (uint32_t)x * fw / vw;
-            uint32_t sx1 = (uint32_t)(x + 1) * fw / vw;
-            if (sx1 <= sx0) { sx1 = sx0 + 1; }
+            const uint32_t u0 = (uint32_t)x * lw / vw;
+            uint32_t u1 = (uint32_t)(x + 1) * lw / vw;
+            if (u1 <= u0) { u1 = u0 + 1; }
+            /* The frame rectangle under the shown pixel [u0,u1) x [v0,v1).
+               Counter-clockwise by one: shown (u, v) is frame (fw-1-v, u). */
+            uint32_t sx0, sx1, sy0, sy1;
+            switch (rot) {
+            case 1:  sx0 = fw - v1; sx1 = fw - v0; sy0 = u0;      sy1 = u1;      break;
+            case 2:  sx0 = fw - u1; sx1 = fw - u0; sy0 = fh - v1; sy1 = fh - v0; break;
+            case 3:  sx0 = v0;      sx1 = v1;      sy0 = fh - u1; sy1 = fh - u0; break;
+            default: sx0 = u0;      sx1 = u1;      sy0 = v0;      sy1 = v1;      break;
+            }
             uint32_t acc = 0;
             for (uint32_t sy = sy0; sy < sy1; sy++) {
                 const uint8_t *row = frame + sy * fw;

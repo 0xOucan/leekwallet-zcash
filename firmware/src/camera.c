@@ -230,8 +230,13 @@ static bool sccb_recover(void)
     return ok;
 }
 
+#ifndef BOARD_VIEWFINDER_ROTATE
+#define BOARD_VIEWFINDER_ROTATE 0
+#endif
+
 bool camera_start(void)
 {
+    viewfinder_set_rotation(BOARD_VIEWFINDER_ROTATE);
     if (running) {
         return true;
     }

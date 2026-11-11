@@ -117,6 +117,14 @@ typedef struct {
  * them, so a person tuning exposure can judge it from the panel (Settings >
  * Preview). The statistics are the same either way.
  */
+/**
+ * Turn the grayscale viewfinder by `quarter_turns_ccw` x 90 degrees counter-
+ * clockwise (0..3), for a camera mounted at an angle to the panel. Only the
+ * preview turns: quirc reads a code in any orientation, and a turn is never a
+ * mirror. Default 0.
+ */
+void viewfinder_set_rotation(uint8_t quarter_turns_ccw);
+
 void viewfinder_render_gray(const uint8_t *frame, uint16_t fw, uint16_t fh,
                             uint8_t *out, ViewfinderStats *st,
                             bool true_exposure);

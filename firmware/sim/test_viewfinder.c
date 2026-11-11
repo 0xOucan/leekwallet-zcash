@@ -467,6 +467,62 @@ static void test_gray_guards(void)
     printf("  (no crash)\n");
 }
 
+/* A quarter turn: the preview shows the frame turned, never mirrored, and
+   letterboxed to 3:4 (112x150 in the middle of 200x150). Each turn is checked
+   pixel by pixel against the frame point under the pixel's centre; pixels
+   whose box straddles the bright quadrant's edge may be any gray. */
+static void test_gray_rotation(void)
+{
+    printf("Grayscale rotation\n");
+    for (int rot = 0; rot < 4; rot++) {
+        viewfinder_set_rotation((uint8_t)rot);
+        const int lw = (rot & 1) ? FH : FW, lh = (rot & 1) ? FW : FH;
+        int vw = GW, vh = GW * lh / lw;
+        if (vh > GH) { vh = GH; vw = GH * lw / lh; }
+        const int vx0 = (GW - vw) / 2, vy0 = (GH - vh) / 2;
+        frame_fill(0x20);
+        frame_rect(FW / 2, 0, FW, FH / 2, 0xF0);   /* top-right of the frame */
+        ViewfinderStats st = fresh_stats();
+        viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+        int wrong = 0, mixed = 0, bars = 0;
+        for (int y = 0; y < GH; y++) {
+            for (int x = 0; x < GW; x++) {
+                const uint8_t v = gpx(x, y);
+                if (x < vx0 || x >= vx0 + vw || y < vy0 || y >= vy0 + vh) {
+                    if (v != 0) bars++;
+                    continue;
+                }
+                const double u = (x - vx0 + 0.5) * lw / vw;
+                const double w = (y - vy0 + 0.5) * lh / vh;
+                double fx, fy;
+                switch (rot) {
+                case 1:  fx = FW - w; fy = u;      break;
+                case 2:  fx = FW - u; fy = FH - w; break;
+                case 3:  fx = w;      fy = FH - u; break;
+                default: fx = u;      fy = w;      break;
+                }
+                const bool want = fx >= FW / 2 && fy < FH / 2;
+                if (v != 0 && v != 255) { mixed++; continue; }
+                if ((v == 255) != want) wrong++;
+            }
+        }
+        CHECK(wrong == 0, "turn %d: %d pixels wrong", rot, wrong);
+        CHECK(mixed <= 2 * (vw + vh), "turn %d: %d edge pixels", rot, mixed);
+        CHECK(bars == 0, "turn %d: %d bar pixels lit", rot, bars);
+        CHECK(vw == ((rot & 1) ? 112 : 200) && vh == 150,
+              "turn %d: view %dx%d", rot, vw, vh);
+    }
+    /* Counter-clockwise by one: the frame's top-right lands top-left. */
+    viewfinder_set_rotation(1);
+    frame_fill(0x20);
+    frame_rect(FW / 2, 0, FW, FH / 2, 0xF0);
+    ViewfinderStats st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(gpx(44 + 10, 10) == 255 && gpx(44 + 100, 10) == 0 &&
+          gpx(44 + 10, 140) == 0, "turn 1: top-right is not shown top-left");
+    viewfinder_set_rotation(0);
+}
+
 int main(void)
 {
     printf("=== viewfinder ===\n");
@@ -477,6 +533,7 @@ int main(void)
     test_guards();
     test_gray_orientation();
     test_gray_quadrants();
+    test_gray_rotation();
     test_gray_autolevel();
     test_gray_gain_cap();
     test_gray_motion();
