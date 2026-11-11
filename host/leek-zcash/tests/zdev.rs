@@ -192,7 +192,12 @@ fn the_viewing_key_takes_a_press() {
     // is used up (if it asked, it would take account 0's "no").
     let fp = seed_fingerprint(&mut dev, Some(Network::Test)).expect("fingerprint, no press");
     assert_eq!(seed_fingerprint(&mut dev, None).unwrap(), fp);
-    assert_eq!(seed_fingerprint(&mut dev, Some(Network::Main)).unwrap_err(), LeekError::WrongNetwork);
+    // A board set to Testnet refuses a Mainnet request, and the error says
+    // which way to switch, in the words every LeekWallet host uses.
+    let e = seed_fingerprint(&mut dev, Some(Network::Main)).unwrap_err();
+    assert_eq!(e, LeekError::BoardNetwork { board: Network::Test });
+    assert_eq!(e.code(), 400);
+    assert_eq!(e.to_string(), leek_zcash::leek_device::device::wrong_network_message("main"));
     let steps = Mutex::new(Vec::new());
     let record = |p: AccountProgress| steps.lock().unwrap().push(p);
     assert_eq!(get_account_with(&mut dev, 0, Network::Test, &record).unwrap_err(), LeekError::UserRejected);

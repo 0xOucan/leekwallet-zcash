@@ -28,7 +28,7 @@ use zip32::registered::{cryptovalue_from_subpath, PathElement};
 use zip32::ChildIndex;
 
 use crate::account::{AccountProgress, Network};
-use crate::error::{from_device, Ctx, LeekError};
+use crate::error::{from_device_on, Ctx, LeekError};
 
 /// The ZIP number the draft would be assigned. A placeholder: it is an input
 /// to the derivation, so every Storage Key changes when the real one is
@@ -339,7 +339,7 @@ pub fn get_storage_key_with(
     progress(AccountProgress::ConfirmOnDevice);
     let key = device
         .z_get_storage_key(app_id, account, network.as_str())
-        .map_err(|e| from_device(&e, Ctx::Other))?;
+        .map_err(|e| from_device_on(&e, Ctx::Other, network))?;
     StorageKey::from_bytes(key, app_id, account, network)
 }
 

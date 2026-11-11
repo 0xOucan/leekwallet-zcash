@@ -12,7 +12,7 @@ use pczt::Pczt;
 
 use crate::account::{get_account, get_features, seed_fingerprint, AccountMeta, Features};
 use crate::apply::{apply_entries, shielded_sighash, Signature};
-use crate::error::{from_device, Ctx, LeekError};
+use crate::error::{from_device_on, Ctx, LeekError};
 use crate::preflight::preflight;
 use crate::redact::{signer_view_bytes, SignerView};
 
@@ -179,7 +179,8 @@ pub fn sign_pczt(
     };
     let cancelled = || opts.cancel.as_ref().is_some_and(CancelToken::is_cancelled);
     let check = || if cancelled() { Err(LeekError::Cancelled) } else { Ok(()) };
-    let dev_err = |e: anyhow::Error, ctx| if cancelled() { LeekError::Cancelled } else { from_device(&e, ctx) };
+    let dev_err =
+        |e: anyhow::Error, ctx| if cancelled() { LeekError::Cancelled } else { from_device_on(&e, ctx, account.network) };
 
     progress(SignProgress::Checking);
     let features = match opts.features {

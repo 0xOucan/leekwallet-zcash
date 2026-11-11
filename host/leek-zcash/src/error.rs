@@ -9,9 +9,11 @@
 use std::fmt;
 
 use leek_device::device::{
-    DeviceError, ERR_BOARD_NETWORK, ERR_BUSY, ERR_NOT_UNLOCKED, ERR_NO_WALLET, ERR_SESSION, ERR_USER_REJECTED,
+    is_code, DeviceError, ERR_BOARD_NETWORK, ERR_BUSY, ERR_NOT_UNLOCKED, ERR_NO_WALLET, ERR_SESSION, ERR_USER_REJECTED,
     ERR_USER_TIMEOUT, ERR_ZSIGN_BASE,
 };
+
+use crate::account::Network;
 
 /// What a wallet can do about an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +98,14 @@ pub enum LeekError {
     /// The PCZT or the request is for the other network than the board's
     /// setting or the account's.
     WrongNetwork,
+    /// The board refused a request for one network because its own setting
+    /// (Settings → Network on the board) is `board`, the other one. The same
+    /// code as [`WrongNetwork`](Self::WrongNetwork), 400; its message tells
+    /// the user which way to switch, as every LeekWallet host words it.
+    BoardNetwork {
+        /// The board's network setting.
+        board: Network,
+    },
     /// The PCZT names another account (or another seed) than the one asked.
     WrongAccount,
     /// A spend or transparent input is not this account's.
@@ -214,7 +224,7 @@ impl LeekError {
             DeviceInternal => 208,
             UserRejected => 300,
             UserTimeout => 301,
-            WrongNetwork => 400,
+            WrongNetwork | BoardNetwork { .. } => 400,
             WrongAccount => 401,
             SpendNotOurs => 402,
             AddressNotOurs => 403,
@@ -263,7 +273,7 @@ impl LeekError {
         use LeekError::*;
         use Recovery::*;
         match self {
-            Busy | Locked | NoWallet | UserRejected | UserTimeout | WrongNetwork | TransferCorrupted
+            Busy | Locked | NoWallet | UserRejected | UserTimeout | WrongNetwork | BoardNetwork { .. } | TransferCorrupted
             | QuickUnlockCancelled => RetrySameLink,
             NotFound | PermissionDenied | Disconnected | Timeout | Cancelled | PairingCodeMismatch | SessionExpired
             | Protocol => Reconnect,
@@ -291,6 +301,17 @@ impl LeekError {
             UserRejected => "rejected on the board",
             UserTimeout => "no answer on the board in time",
             WrongNetwork => "the board or the transaction is on the other network",
+            // leek_device::device::wrong_network_message, word for word
+            // (a test keeps them equal): what the Android app, the
+            // companion and the Chrome wallet show.
+            BoardNetwork { board: Network::Test } => {
+                "The board is set to Testnet, but this app is on Mainnet. Switch the board to Mainnet in \
+                 Settings → Network, or use the Testnet app."
+            }
+            BoardNetwork { board: Network::Main } => {
+                "The board is set to Mainnet, but this app is on Testnet. Switch the board to Testnet in \
+                 Settings → Network, or use the Mainnet app."
+            }
             WrongAccount => "the transaction is for another account or seed than the board's",
             SpendNotOurs => "the transaction spends funds this account does not hold",
             AddressNotOurs => "the board says this address is not from its wallet",
@@ -435,6 +456,16 @@ pub(crate) fn from_device(e: &anyhow::Error, ctx: Ctx) -> LeekError {
     }
 }
 
+/// [`from_device`] for a request that named the network `asked`: the
+/// board's refusal for its own network setting (0x0528) becomes
+/// [`LeekError::BoardNetwork`], which says which way to switch.
+pub(crate) fn from_device_on(e: &anyhow::Error, ctx: Ctx, asked: Network) -> LeekError {
+    match from_device(e, ctx) {
+        LeekError::WrongNetwork if is_code(e, ERR_BOARD_NETWORK) => LeekError::BoardNetwork { board: asked.other() },
+        l => l,
+    }
+}
+
 /// Any error from `leek-device` (for example from `Device::pair`) as a
 /// [`LeekError`].
 pub fn classify(e: &anyhow::Error) -> LeekError {
@@ -455,6 +486,7 @@ mod tests {
             SignatureInvalid, SignatureMissing, SighashMismatch, InvalidAppId, InvalidStorageLabel,
             StorageKeyMismatch, StorageCorrupted, StorageKeyForgotten, InvalidSeed, QuickUnlockNotSecure,
             QuickUnlockInvalidated, QuickUnlockCancelled, QuickUnlockFailed, Device { code: 0x0599 },
+            BoardNetwork { board: Network::Main }, BoardNetwork { board: Network::Test },
         ];
         use super::Unsupported as U;
         for u in [U::Pool, U::Version, U::Sapling, U::Multistep, U::Branch, U::Network] {
@@ -465,7 +497,9 @@ mod tests {
 
     #[test]
     fn codes_are_unique() {
-        let mut codes: Vec<u16> = all().iter().map(LeekError::code).collect();
+        // BoardNetwork shares WrongNetwork's 400: one code, a more precise text.
+        let mut codes: Vec<u16> =
+            all().iter().filter(|e| !matches!(e, LeekError::BoardNetwork { .. })).map(LeekError::code).collect();
         let n = codes.len();
         codes.sort_unstable();
         codes.dedup();
@@ -527,5 +561,26 @@ mod tests {
         // Context added by leek-device keeps the DeviceError underneath.
         let e = anyhow::Error::from(DeviceError { code: 0x0528, message: "x".into() }).context("The board is set to");
         assert_eq!(classify(&e), LeekError::WrongNetwork);
+    }
+
+    #[test]
+    fn the_board_network_refusal_says_which_way_to_switch() {
+        use leek_device::device::wrong_network_message;
+        let refusal = || anyhow::Error::from(DeviceError { code: ERR_BOARD_NETWORK, message: "x".into() });
+        for asked in [Network::Main, Network::Test] {
+            let e = from_device_on(&refusal(), Ctx::Other, asked);
+            assert_eq!(e, LeekError::BoardNetwork { board: asked.other() });
+            assert_eq!(e.to_string(), wrong_network_message(asked.as_str()), "the hosts' sentence");
+            assert_eq!((e.code(), e.recovery()), (400, Recovery::RetrySameLink));
+            // Through leek-device's own context too.
+            let ctx = refusal().context(wrong_network_message(asked.as_str()));
+            assert_eq!(from_device_on(&ctx, Ctx::Sign, asked), e);
+        }
+        // The PCZT's network against the request (ZS_E_NETWORK) is not the
+        // board's setting: it keeps the general text.
+        let e = anyhow::Error::from(DeviceError { code: 0x0511, message: "x".into() });
+        assert_eq!(from_device_on(&e, Ctx::Sign, Network::Test), LeekError::WrongNetwork);
+        // Without a network, as for `classify`: the general text.
+        assert_eq!(classify(&refusal()), LeekError::WrongNetwork);
     }
 }
