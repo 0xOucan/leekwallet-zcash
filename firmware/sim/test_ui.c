@@ -24,6 +24,7 @@
 #include "ble.h"
 #include "transport.h"
 #include "ui.h"
+#include "zcash-meta.h"
 #include "zcash-review.h"
 #include "pin.h"
 #include "button.h"
@@ -163,6 +164,7 @@ static void boot_device(void)
     fake_wallet_reset();
     pin__reset_static_state_for_test();
     ui__reset_static_state_for_test();
+    zmeta__reset_for_test();
 
     pin_init();
     wallet_init();
@@ -3840,6 +3842,39 @@ static void test_scan_assembles_then_refuses_every_type(void)
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not leave the scanner");
 }
 
+/* Read SCREEN_QR_OUT's animated UR to the end; the message or NULL. */
+static const uint8_t *view_key_assemble(size_t *n)
+{
+    static uint8_t frags[4096], mixed[4096];
+    static UrDecoder d;
+    ur_decoder_init(&d, frags, sizeof frags, mixed, sizeof mixed);
+    for (int i = 0; i < 200 && !ur_decoder_complete(&d); i++) {
+        const char *part = fake_oled_qr_data();
+        (void)ur_decoder_receive(&d, part, strlen(part));
+        fake_clock_advance_us(1000000);
+        ui__service_qr_out_for_test();
+        idle_pump();
+    }
+    CHECK(ur_decoder_complete(&d), "the record did not assemble");
+    *n = 0;
+    return ur_decoder_complete(&d) ? ur_decoder_message(&d, n) : NULL;
+}
+
+/* {1: fp, 2: [{1: UFVK, 2: 0 ...}]} up to the account index, with the
+ * account map's head `map` (0xA2 plain, 0xA4 with label and birthday). */
+static size_t view_key_expected(const zv_key_vector *v, uint8_t map, uint8_t *want)
+{
+    size_t k = 0;
+    const size_t ul = strlen(v->ufvk);
+    want[k++] = 0xA2; want[k++] = 0x01; want[k++] = 0x58; want[k++] = 32;
+    memcpy(want + k, v->seed_fingerprint, 32); k += 32;
+    want[k++] = 0x02; want[k++] = 0x81; want[k++] = map; want[k++] = 0x01;
+    want[k++] = 0x79; want[k++] = (uint8_t)(ul >> 8); want[k++] = (uint8_t)ul;
+    memcpy(want + k, v->ufvk, ul); k += ul;
+    want[k++] = 0x02; want[k++] = 0x00;
+    return k;
+}
+
 /* Main menu -> View key: a warning, then the account as an animated
  * ur:leek-zcash-accounts whose message is exactly host/leek-zcash's
  * AccountRecord CBOR for this seed's account. Cancel on the warning shows
@@ -3864,19 +3899,8 @@ static void test_view_key_qr(void)
     CHECK(strncmp(fake_oled_qr_data(), "UR:LEEK-ZCASH-ACCOUNTS/", 23) == 0,
           "the QR is \"%.30s\"", fake_oled_qr_data());
 
-    static uint8_t frags[4096], mixed[4096];
-    static UrDecoder d;
-    ur_decoder_init(&d, frags, sizeof frags, mixed, sizeof mixed);
-    for (int i = 0; i < 200 && !ur_decoder_complete(&d); i++) {
-        const char *part = fake_oled_qr_data();
-        (void)ur_decoder_receive(&d, part, strlen(part));
-        fake_clock_advance_us(1000000);
-        ui__service_qr_out_for_test();
-        idle_pump();
-    }
-    CHECK(ur_decoder_complete(&d), "the record did not assemble");
     size_t n = 0;
-    const uint8_t *m = ur_decoder_message(&d, &n);
+    const uint8_t *m = view_key_assemble(&n);
 
     const zv_key_vector *v = NULL;
     for (size_t i = 0; i < ZV_KEYS_COUNT; i++)
@@ -3885,17 +3909,33 @@ static void test_view_key_qr(void)
             break;
         }
     CHECK(v != NULL, "no vector for the fake account");
+    uint8_t want[600];
+    size_t k = 0;
     if (v && m) {
-        uint8_t want[600];
-        size_t k = 0;
-        const size_t ul = strlen(v->ufvk);
-        want[k++] = 0xA2; want[k++] = 0x01; want[k++] = 0x58; want[k++] = 32;
-        memcpy(want + k, v->seed_fingerprint, 32); k += 32;
-        want[k++] = 0x02; want[k++] = 0x81; want[k++] = 0xA2; want[k++] = 0x01;
-        want[k++] = 0x79; want[k++] = (uint8_t)(ul >> 8); want[k++] = (uint8_t)ul;
-        memcpy(want + k, v->ufvk, ul); k += ul;
-        want[k++] = 0x02; want[k++] = 0x00;
+        k = view_key_expected(v, 0xA2, want);
         CHECK(n == k && memcmp(m, want, k) == 0, "the record is not {1: fp, 2: [{1: UFVK, 2: 0}]} (%zu B, want %zu)", n, k);
+    }
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not finish the QR");
+
+    /* With a label and a birthday on the board (a companion set them),
+     * the record carries both: {..., 3: "spend", 4: 3500000}. */
+    ZcashMeta zm = { .birthday = 3500000u };
+    strcpy(zm.label, "spend");
+    const ZcashMetaResult zr = zmeta_set(0, ui_zcash_network(), &zm);
+    ZcashMeta back;
+    CHECK(zr <= ZMETA_OK_SESSION && zmeta_get(0, ui_zcash_network(), &back) && back.birthday == 3500000u,
+          "setup: zmeta_set %d", (int)zr);
+    go(SCREEN_VIEW_KEY);
+    press(BUTTON_ACCEPT);
+    m = view_key_assemble(&n);
+    if (v && m) {
+        k = view_key_expected(v, 0xA4, want);
+        const uint8_t tail[] = { 0x03, 0x65, 's', 'p', 'e', 'n', 'd', 0x04, 0x1A, 0x00, 0x35, 0x67, 0xE0 };
+        memcpy(want + k, tail, sizeof tail);
+        k += sizeof tail;
+        CHECK(n == k && memcmp(m, want, k) == 0,
+              "the record lacks the label and birthday (%zu B, want %zu)", n, k);
     }
     press(BUTTON_CANCEL);
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not finish the QR");

@@ -7148,9 +7148,14 @@ static void screen_view_key_render(void)
     oled_draw_string(7, 0, HINT_NO_YES);
 }
 
-/* The record's CBOR into `buf`; its length, or 0 if it did not fit. */
-static size_t view_key_cbor(const ZcashAccount *a, uint8_t *buf, size_t cap)
+/* The record's CBOR into `buf`; its length, or 0 if it did not fit.
+ * The label (key 3) and birthday (key 4) go in when the board knows them
+ * (zmeta: set by a companion over USB or Bluetooth), so a wallet that
+ * imports by QR scans from the right height instead of asking for it. */
+static size_t view_key_cbor(const ZcashAccount *a, const ZcashMeta *m, uint8_t *buf, size_t cap)
 {
+    const bool label = m != NULL && m->label[0] != '\0';
+    const bool birthday = m != NULL && m->birthday != 0;
     CborWriter w;
     cbor_writer_init(&w, buf, cap);
     cbor_write_map(&w, 2);
@@ -7158,11 +7163,19 @@ static size_t view_key_cbor(const ZcashAccount *a, uint8_t *buf, size_t cap)
     cbor_write_bytes(&w, a->keys.seed_fingerprint, sizeof a->keys.seed_fingerprint);
     cbor_write_uint(&w, 2);
     cbor_write_array(&w, 1);
-    cbor_write_map(&w, 2);
+    cbor_write_map(&w, 2u + (label ? 1u : 0u) + (birthday ? 1u : 0u));
     cbor_write_uint(&w, 1);
     cbor_write_text(&w, a->keys.ufvk);
     cbor_write_uint(&w, 2);
     cbor_write_uint(&w, a->account);
+    if (label) {
+        cbor_write_uint(&w, 3);
+        cbor_write_text(&w, m->label);
+    }
+    if (birthday) {
+        cbor_write_uint(&w, 4);
+        cbor_write_uint(&w, m->birthday);
+    }
     return cbor_writer_ok(&w) ? w.length : 0;
 }
 
@@ -7180,7 +7193,12 @@ static void screen_view_key_on_button(button_id_t btn)
     size_t n = 0;
     if (ensure_wallet_unlocked() &&
         zcash_account_derive(hd_account, zcash_network, &recv_account) == WALLET_OK) {
-        n = view_key_cbor(&recv_account, cbor, sizeof cbor);
+        ZcashMeta zm = { 0 };
+        const bool known = zmeta_get(hd_account, zcash_network, &zm);
+        n = view_key_cbor(&recv_account, known ? &zm : NULL, cbor, sizeof cbor);
+        if (n > 0) {
+            ESP_LOGI(TAG, "View key: birthday %s", zm.birthday ? "included" : "unknown");
+        }
     }
     memzero(&recv_account, sizeof recv_account);
     recv_ready = false;
