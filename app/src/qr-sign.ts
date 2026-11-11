@@ -106,6 +106,15 @@ export function bigQrAvail(width: number, height: number): number {
   return Math.floor(Math.min(width * 0.96, height * 0.7));
 }
 
+/**
+ * Full screen: the whole of the smaller side, less `reserve` px of the
+ * height for the captions under the code. drawQr then fits a whole number
+ * of pixels per module, quiet zone included, inside it.
+ */
+export function fullQrAvail(width: number, height: number, reserve: number): number {
+  return Math.max(1, Math.floor(Math.min(width, height - Math.max(0, reserve))));
+}
+
 /** `manual`: one frame per Next (button or Space), for debugging a camera. */
 export interface QrSettings { fragment: number; interval: number; manual?: boolean }
 

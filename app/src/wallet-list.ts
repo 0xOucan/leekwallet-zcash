@@ -8,12 +8,18 @@
  * (the first Companion builds, or one copied from the old desktop app on
  * the first start) under the account it holds. Opening one hands its key
  * to the wallet screens (src/zcash-wallet.ts, openWithoutBoard).
+ *
+ * And the board's account read off its own screen (EXPERIMENTAL, Main menu
+ * → View key; src/qr-accounts.ts): a normal board wallet for a board kept
+ * off USB and Bluetooth, a one-way import that never pairs.
  */
 
 import { zErrorText, type ZNetwork } from "../packages/core/src/zcash.ts";
 import type { Invoke } from "./tauri-transport.ts";
 import { networkLabel } from "./zcash-view.ts";
 import type { Key } from "./zcash-wallet.ts";
+import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
+import { accountsCaption, recordRows, QrAccountImport } from "./qr-accounts.ts";
 
 /** A wallet, as zw_wallets lists it. */
 export interface WalletInfo {
@@ -125,6 +131,120 @@ export function initWalletList(deps: WalletListDeps): WalletList {
       deps.log(`zcash: imported a ${network} viewing key (watch-only)`);
       deps.open({ network, wallet: r.wallet, account: 0 });
     }, (e) => say("wimportstatus", zErrorText(e))).finally(() => { btn.disabled = false; });
+  });
+
+  /* ------------------------------------- import from the board's QR */
+
+  const qr = new QrAccountImport(deps.invoke);
+  let camera: QrScan | null = null;
+
+  const stopCamera = (): void => {
+    camera?.stop();
+    camera = null;
+    $("wqrscanbox").hidden = true;
+  };
+
+  const renderQr = (): void => {
+    const scanning = qr.phase === "scanning";
+    $<HTMLButtonElement>("wqrscan").disabled = scanning || qr.phase === "importing";
+    $<HTMLSelectElement>("wqrnet").disabled = scanning || qr.phase === "found" || qr.phase === "importing";
+    const bar = $<HTMLProgressElement>("wqrbar");
+    bar.max = Math.max(1, qr.total);
+    bar.value = qr.received;
+    const r = qr.record;
+    $("wqrfound").hidden = !(r && (qr.phase === "found" || qr.phase === "importing"));
+    $<HTMLButtonElement>("wqrimport").disabled = qr.phase === "importing";
+    if (r) {
+      const kv = $("wqrinfo");
+      kv.replaceChildren(...recordRows(r, networkLabel).flatMap(([k, v]) => {
+        const dt = document.createElement("dt");
+        dt.textContent = k;
+        const dd = document.createElement("dd");
+        dd.textContent = v;
+        return [dt, dd];
+      }));
+    }
+    if (scanning) say("wqrstatus", accountsCaption(qr));
+    else if (qr.phase === "found") say("wqrstatus", qr.error ?? "Read. Check the seed fingerprint against the board (ZFP), choose the birthday, then Import.");
+    else if (qr.phase === "failed") say("wqrstatus", qr.error ?? "The board's QR could not be read.");
+  };
+  qr.onChange = renderQr;
+
+  $("wqrscan").addEventListener("click", () => {
+    if (!qrScanningAvailable()) {
+      say("wqrstatus", "This window cannot reach a camera. Connect the board over USB or Bluetooth instead.");
+      return;
+    }
+    stopCamera();
+    const network = $<HTMLSelectElement>("wqrnet").value as ZNetwork;
+    void (async () => {
+      await qr.start(network);
+      $("wqrscanbox").hidden = false;
+      try {
+        camera = await scanQr<never>(
+          $<HTMLVideoElement>("wqrvideo"),
+          /* Every code goes to the decoder; the camera stops from here. */
+          (t) => {
+            void qr.feed(t).then((stop) => { if (stop) stopCamera(); }, (e) => { stopCamera(); qr.fail(e); });
+            return undefined;
+          },
+          () => undefined,
+          (m) => { stopCamera(); qr.fail(new Error(m)); },
+          { animated: true },
+        );
+        /* Read whole before the camera was even up. */
+        if (qr.phase !== "scanning") stopCamera();
+      } catch (e) {
+        stopCamera();
+        const name = (e as { name?: string }).name;
+        qr.fail(new Error(name === "NotAllowedError"
+          ? "The camera was not allowed. Allow it for Zcash LeekWallet in the system settings."
+          : name === "NotFoundError" ? "No camera found." : `The camera did not start: ${(e as Error).message ?? String(e)}`));
+      }
+    })().catch((e) => { stopCamera(); qr.fail(e); });
+  });
+
+  /* No camera left running behind another screen. */
+  const leave = () => { if (camera) { stopCamera(); qr.cancel(); say("wqrstatus", ""); } };
+  $("walletsback").addEventListener("click", leave);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) leave(); });
+
+  $("wqrstop").addEventListener("click", () => {
+    stopCamera();
+    qr.cancel();
+    say("wqrstatus", "Stopped. Nothing was imported.");
+  });
+
+  $("wqrdiscard").addEventListener("click", () => {
+    qr.cancel();
+    $<HTMLInputElement>("wqrbday").value = "";
+    say("wqrstatus", "Discarded. Nothing was imported.");
+  });
+
+  $("wqrtip").addEventListener("click", () => {
+    const network = qr.record?.network ?? ($<HTMLSelectElement>("wqrnet").value as ZNetwork);
+    void deps.invoke<{ height: number }>("zw_tip", { network }).then(
+      (t) => { $<HTMLInputElement>("wqrbday").value = String(t.height); },
+      (e) => say("wqrstatus", zErrorText(e)),
+    );
+  });
+
+  $("wqrimport").addEventListener("click", () => {
+    const typed = $<HTMLInputElement>("wqrbday").value;
+    const a = qr.account();
+    if (!a) return;
+    say("wqrstatus", typed.trim()
+      ? `Importing account ${a.account}, born at block ${typed.trim()}…`
+      : `Importing account ${a.account}: asking the server for the chain tip for its birthday…`);
+    void qr.importFound(typed).then((r) => {
+      $<HTMLInputElement>("wqrbday").value = "";
+      say("wqrstatus", r.alreadyImported
+        ? `This account was already on this device (born at block ${r.birthday}). Opening it…`
+        : `Imported, born at block ${r.birthday}. Opening it…`);
+      deps.log(`zcash: imported account ${r.key.account} of ZFP ${r.key.wallet.slice(0, 8).toUpperCase()} into the ${r.key.network} wallet from the board's QR`);
+      deps.open(r.key);
+      void refresh();
+    }, (e) => say("wqrstatus", zErrorText(e)));
   });
 
   return { refresh };

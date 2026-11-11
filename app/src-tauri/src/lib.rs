@@ -40,6 +40,10 @@ mod zwallet;
 // ur:leek-pczt, the board's ur:leek-zsig read back from the camera. The UR
 // is host/leek-ur, the one zecz uses.
 mod airgap;
+// The board's viewing key off its "View key" QR (EXPERIMENTAL), for a wallet
+// set up without USB or Bluetooth: a one-way account import, never pairing.
+#[cfg(feature = "zcash-wallet")]
+mod qr_accounts;
 
 // The board's output to disk: the `.zsig` of a PCZT signed on the board,
 // written where the user can pick it up (the webviews cannot save a file).
@@ -182,6 +186,7 @@ pub fn run() {
                 use tauri::Manager;
                 _app.manage(zwallet::ZState::new(_app.handle())?);
                 _app.manage(swaps::SwapState::default());
+                _app.manage(qr_accounts::QrAccountsState::default());
             }
             #[cfg(target_os = "linux")]
             {
@@ -211,6 +216,10 @@ pub fn run() {
             airgap::qr_pczt_frames,
             airgap::qr_scan_reset,
             airgap::qr_scan_feed,
+            #[cfg(feature = "zcash-wallet")]
+            qr_accounts::qr_accounts_reset,
+            #[cfg(feature = "zcash-wallet")]
+            qr_accounts::qr_accounts_feed,
             #[cfg(feature = "zcash-wallet")]
             zwallet::zw_available,
             #[cfg(feature = "zcash-wallet")]

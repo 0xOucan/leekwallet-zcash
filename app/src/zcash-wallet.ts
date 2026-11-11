@@ -47,7 +47,7 @@ import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
 import qrcodegen from "qrcode-generator";
-import { benchTable, bigQrAvail, drawQr, frameCaption, scanCaption, timingCaption, QR_BENCH_CONFIGS, QrSigner } from "./qr-sign.ts";
+import { benchTable, bigQrAvail, drawQr, frameCaption, fullQrAvail, scanCaption, timingCaption, QR_BENCH_CONFIGS, QrSigner } from "./qr-sign.ts";
 import { txHead } from "./tx-labels.ts";
 import { initSwapView, type Proposal } from "./swap-view.ts";
 
@@ -806,7 +806,42 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     $("zwqrscanbox").hidden = true;
   }
 
+  /* Full screen: the loop on a white overlay as large as the window allows
+   * (src/qr-sign.ts fullQrAvail), with the Fullscreen API when the webview
+   * has it. `fsEntered`: the API really went full screen, so leaving it
+   * (the browser's own Esc) leaves the overlay too. */
+  let qrFull = false;
+  let fsEntered = false;
+
+  function enterQrFull(): void {
+    if (qrFull || qrSign?.phase !== "showing") return;
+    qrFull = true;
+    fsEntered = false;
+    const fs = $("zwqrfs");
+    fs.hidden = false;
+    fs.focus?.({ preventScroll: true });
+    const req = (fs as HTMLElement & { requestFullscreen?: () => Promise<void> }).requestFullscreen;
+    /* The fixed overlay is already the fallback, whatever the API says. */
+    if (typeof req === "function") void req.call(fs).catch(() => undefined);
+    renderQrSign();
+  }
+
+  function exitQrFull(): void {
+    if (!qrFull) return;
+    qrFull = false;
+    $("zwqrfs").hidden = true;
+    if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+    fsEntered = false;
+    if (qrSign?.phase === "showing") renderQrSign();
+  }
+
+  function sayQrTimer(t: string): void {
+    say("zwqrtimer", t);
+    if (qrFull) say("zwqrfstimer", t);
+  }
+
   function stopQrSign(): void {
+    exitQrFull();
     if (qrTick) clearInterval(qrTick);
     qrTick = null;
     stopQrCamera();
@@ -838,9 +873,19 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       $("zwqrbenchrows").textContent = benchTable(bench.rows)
         + (running ? `\n\nNext: ${q.settings.fragment} B / ${q.settings.interval} ms (${bench.at + 1} of ${QR_BENCH_CONFIGS.length}). Cancel on the board, then Scan.` : "\n\nSweep done.");
     }
-    say("zwqrtimer", timingCaption(q.timing()));
+    if (!showing) exitQrFull();
+    sayQrTimer(timingCaption(q.timing()));
     const f = q.frame();
-    if (f) {
+    if (f && qrFull) {
+      say("zwqrfscount", frameCaption(f));
+      $("zwqrfsmanual").hidden = !q.settings.manual;
+      const fs = $("zwqrfs");
+      /* The captions' own height, measured, plus the gaps between them. */
+      const reserve = ["zwqrfscount", "zwqrfstimer", "zwqrfshint"].reduce((h, id) => h + $(id).offsetHeight, 0) + 16;
+      const avail = fullQrAvail(fs.clientWidth || window.innerWidth, fs.clientHeight || window.innerHeight, reserve);
+      drawQr($<HTMLCanvasElement>("zwqrfscanvas"), qrcodegen as never, f.text, f.version, avail, window.devicePixelRatio || 1);
+      say("zwqrcount", frameCaption(f));
+    } else if (f) {
       const box = $("zwqrsign");
       const avail = bigQrAvail(box.clientWidth || window.innerWidth, window.innerHeight);
       drawQr($<HTMLCanvasElement>("zwqrcanvas"), qrcodegen as never, f.text, f.version, avail, window.devicePixelRatio || 1);
@@ -876,7 +921,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     qrSign = q;
     q.onChange = () => { if (qrSign === q) renderQrSign(); };
     qrTick = setInterval(() => {
-      if (qrSign === q && (q.phase === "showing" || q.phase === "scanning")) say("zwqrtimer", timingCaption(q.timing()));
+      if (qrSign === q && (q.phase === "showing" || q.phase === "scanning")) sayQrTimer(timingCaption(q.timing()));
     }, 200);
     $("zwqrsign").hidden = false;
     $<HTMLButtonElement>("zwsignsend").disabled = true;
@@ -1296,6 +1341,19 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   $("zwqrbenchcopy").addEventListener("click", () => {
     const rows = qrSign?.bench?.rows;
     if (rows?.length) void navigator.clipboard?.writeText(benchTable(rows)).catch(() => undefined);
+  });
+  $("zwqrfull").addEventListener("click", () => enterQrFull());
+  $("zwqrcanvas").addEventListener("click", () => enterQrFull());
+  $("zwqrfs").addEventListener("click", () => exitQrFull());
+  document.addEventListener("fullscreenchange", () => {
+    const fs = $("zwqrfs");
+    if (document.fullscreenElement === fs) { fsEntered = true; renderQrSign(); return; }
+    /* Left by the browser (its own Esc): leave the overlay too. A webview
+     * that never really entered keeps the fixed overlay. */
+    if (fsEntered) exitQrFull();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (qrFull && e.key === "Escape") { e.preventDefault(); exitQrFull(); }
   });
   /* Manual mode: Space steps the parts while the code is up, unless typing. */
   document.addEventListener("keydown", (e) => {

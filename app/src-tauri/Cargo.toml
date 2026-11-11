@@ -28,7 +28,7 @@ default = ["zcash-wallet"]
 # board tools (account, address check, PCZT signing) is a meaningful thing
 # to ship. Without it the Zcash section offers those and says nothing of a
 # wallet; the webview asks `zw_available`.
-zcash-wallet = ["dep:zecz-core", "dep:anyhow", "dep:leek-zcash-wallet", "dep:leek-near-intents", "dep:time"]
+zcash-wallet = ["dep:zecz-core", "dep:anyhow", "dep:leek-zcash-wallet", "dep:leek-near-intents", "dep:time", "dep:leek-zcash"]
 
 # The USB firmware flasher (T65). Behind a feature because espflash pulls in a
 # sizeable dependency tree for something most builds do not need, and because a
@@ -64,6 +64,11 @@ hex = "0.4"
 # The QR air gap (src/airgap.rs, EXPERIMENTAL): BC-UR for ur:leek-pczt and
 # ur:leek-zsig, the implementation zecz uses (host/leek-ur, sha2 only).
 leek-ur = { path = "../../host/leek-ur" }
+
+# The board's account record (AccountRecord, ur:leek-zcash-accounts) read
+# off its "View key" QR for an air-gapped import (src/qr_accounts.rs). The
+# LeekWallet SDK's Zcash kit; its librustzcash releases are zecz-core's.
+leek-zcash = { path = "../../host/leek-zcash", optional = true }
 
 # The wallet engine. `default-features = false` drops its serial port: the
 # board is reached through the webview's session, never from here, and the

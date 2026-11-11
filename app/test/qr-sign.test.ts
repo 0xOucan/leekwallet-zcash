@@ -13,6 +13,9 @@ import {
   QrSigner, QR_BATCH, QR_BENCH_CONFIGS, QR_FRAGMENTS, QR_PRESETS, QR_INTERVALS, QR_SETTINGS_KEY, type Clock, type ScanProgress,
 } from "../src/qr-sign.ts";
 import type { Invoke } from "../src/tauri-transport.ts";
+import { fullQrAvail } from "../src/qr-sign.ts";
+import { accountsCaption, recordRows, resolveBirthday, QrAccountImport, type AccountsProgress, type QrAccountRecord } from "../src/qr-accounts.ts";
+import { BIRTHDAY_MARGIN } from "../src/zcash-auto.ts";
 
 let failures = 0;
 const check = (c: boolean, m: string) => { if (!c) { console.log(`  FAIL: ${m}`); failures++; } };
@@ -314,6 +317,89 @@ group("show again, cancel, failure");
   check(q2.phase === "failed" && q2.error === "the backend refused the view", "a backend error is shown verbatim");
 }
 
+group("full screen: the smaller side, less the captions, whole modules");
+{
+  check(fullQrAvail(1920, 1080, 60) === 1020, "landscape: the height less the captions");
+  check(fullQrAvail(1080, 2400, 60) === 1080, "portrait: the width");
+  check(fullQrAvail(800.7, 900, 0) === 800, "whole pixels");
+  check(fullQrAvail(10, 10, 50) === 1, "never below one pixel");
+  /* v6 (41 modules + 8 quiet) in 1020 px: 20 px a module, 980 px drawn. */
+  const m = moduleScale(41 + 8, fullQrAvail(1920, 1080, 60));
+  check(m.px === 20 && m.side === 980 && m.side <= 1020, JSON.stringify(m));
+}
+
+group("import from the board's QR: the account record, then zw_import");
+{
+  const REC: QrAccountRecord = {
+    network: "test", seedFingerprint: "551a1fd4" + "00".repeat(28), zfp: "551A1FD4",
+    accounts: [{ ufvk: "uviewtest1example", account: 0, ua: "utest1exampleaddressxxxxxxxxxxxx", name: null, birthday: null }],
+  };
+  const fake = (script: AccountsProgress[], tip = 3_000_000) => {
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    let i = 0;
+    const invoke: Invoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+      calls.push(args ? { cmd, args } : { cmd });
+      if (cmd === "qr_accounts_reset") return undefined as T;
+      if (cmd === "qr_accounts_feed") return script[Math.min(i++, script.length - 1)] as T;
+      if (cmd === "zw_tip") return { height: tip } as T;
+      if (cmd === "zw_import") return { alreadyImported: false, birthday: args!.birthday } as T;
+      throw new Error(`unexpected ${cmd}`);
+    };
+    return { invoke, calls };
+  };
+  const p = (state: AccountsProgress["state"], received: number, total: number, extra: Partial<AccountsProgress> = {}): AccountsProgress =>
+    ({ state, received, total, error: null, record: null, ...extra });
+
+  const b = fake([p("ignored", 0, 0), p("accepted", 1, 3), p("rejected", 1, 3, { error: "a ur:crypto-psbt" }), p("accepted", 2, 3), p("complete", 0, 0, { record: REC })]);
+  const q = new QrAccountImport(b.invoke);
+  await q.start("test");
+  check(q.phase === "scanning" && b.calls[0]!.cmd === "qr_accounts_reset", "a scan starts on a fresh decoder");
+  check(accountsCaption(q).includes("Main menu → View key"), accountsCaption(q));
+  check(await q.feed("zcash:t1x") === false && q.total === 0, "a stray code changes nothing");
+  await q.feed("UR:LEEK-ZCASH-ACCOUNTS/1-3/X");
+  check(accountsCaption(q) === "1 of 3 parts read…", accountsCaption(q));
+  await q.feed("UR:CRYPTO-PSBT/X");
+  check(accountsCaption(q).includes("ignored one code: a ur:crypto-psbt"), accountsCaption(q));
+  await q.feed("UR:LEEK-ZCASH-ACCOUNTS/2-3/X");
+  check(accountsCaption(q) === "2 of 3 parts read…", "a good part clears the note");
+  check(await q.feed("UR:LEEK-ZCASH-ACCOUNTS/3-3/X") === true && q.phase === "found", "complete: found, the camera stops");
+  check(b.calls.filter((c) => c.cmd === "qr_accounts_feed").every((c) => c.args!.network === "test"), "the chosen network goes with every code");
+  const rows = recordRows(q.record!, (n) => (n === "test" ? "Testnet" : "Mainnet"));
+  check(JSON.stringify(rows.slice(0, 3)) === JSON.stringify([["Network", "Testnet"], ["Account", "0"], ["Seed fingerprint", "ZFP 551A1FD4"]]), JSON.stringify(rows));
+  check(await q.feed("UR:LEEK-ZCASH-ACCOUNTS/1-3/X") === false, "nothing more is fed once found");
+
+  /* No birthday from the board: the tip less the margin, as the board set-up. */
+  const r = await q.importFound("");
+  const imp = b.calls.find((c) => c.cmd === "zw_import")!;
+  check(JSON.stringify(imp.args) === JSON.stringify({
+    network: "test", ufvk: "uviewtest1example", seedFingerprint: REC.seedFingerprint, account: 0, ua: REC.accounts[0]!.ua, birthday: 3_000_000 - BIRTHDAY_MARGIN,
+  }), `zw_import as a board account: ${JSON.stringify(imp.args)}`);
+  check(!b.calls.some((c) => c.cmd === "zw_import_watch"), "never the watch-only import");
+  check(q.phase === "done" && r.key.wallet === REC.seedFingerprint && r.key.account === 0 && r.key.network === "test", "the board wallet's key to open");
+
+  check(await resolveBirthday(" 3100000 ", null, async () => { throw new Error("no tip"); }) === 3_100_000, "a typed birthday, no server asked");
+  check(await resolveBirthday("", 2_900_000, async () => ({ height: 1 })) === 2_900_000, "the record's birthday when it has one");
+  let bad = "";
+  try { await resolveBirthday("12a", null, async () => ({ height: 1 })); } catch (e) { bad = (e as Error).message; }
+  check(bad.includes("block height"), "a bad birthday is refused");
+
+  const w = fake([p("accepted", 1, 2), p("refused", 0, 0, { error: "this is a Mainnet viewing key, and the Testnet wallet is chosen here" })]);
+  const q2 = new QrAccountImport(w.invoke);
+  await q2.start("test");
+  await q2.feed("a");
+  check(await q2.feed("b") === true && q2.phase === "failed" && q2.error!.includes("Mainnet viewing key"), "another network's key: refused, the camera stops");
+  let threw = false;
+  try { await q2.importFound(""); } catch { threw = true; }
+  check(threw && !w.calls.some((c) => c.cmd === "zw_import"), "nothing to import after a refusal");
+
+  const c = fake([p("accepted", 1, 2)]);
+  const q3 = new QrAccountImport(c.invoke);
+  await q3.start("main");
+  const pending = q3.feed("a");
+  q3.cancel();
+  check(await pending === false && q3.phase === "idle", "a cancelled scan drops the answer in flight");
+}
+
 group("the policy text: experimental, and never for pairing");
 {
   const { readFileSync } = await import("node:fs");
@@ -323,6 +409,12 @@ group("the policy text: experimental, and never for pairing");
   check(/experimental/i.test(scan) && /pairing/i.test(scan), "qr-scan.ts says QR signing is experimental and not for pairing");
   const html = readFileSync(join(root, "index.html"), "utf8");
   check(html.includes("Sign with QR (experimental)"), "the button says experimental");
+  check(html.includes("Import from the board's QR (experimental)"), "the import button says experimental");
+  const imp = html.slice(html.indexOf("Import from the board's QR"), html.indexOf("Import a viewing key (watch-only)")).replace(/\s+/g, " ");
+  check(/Main menu → View key/.test(imp) && /never spend/.test(imp) && /does not pair/.test(imp) && /6-digit pairing code/.test(imp),
+    "the import says where on the board, that it never spends, and that it is not pairing");
+  const acc = readFileSync(join(root, "src/qr-accounts.ts"), "utf8");
+  check(/EXPERIMENTAL/.test(acc) && /never pairing/i.test(acc) && /6-digit pairing code/.test(acc), "qr-accounts.ts says one-way, never pairing");
 }
 
 console.log(failures ? `\nFAILED (${failures})` : "\nPASSED (0 failures)");

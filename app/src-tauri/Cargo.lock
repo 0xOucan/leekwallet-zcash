@@ -3230,6 +3230,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "leek-zcash"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chacha20poly1305 0.10.1",
+ "ciborium",
+ "getrandom 0.3.4",
+ "hkdf",
+ "hmac 0.12.1",
+ "leek-device",
+ "leek-transport-serial",
+ "orchard",
+ "pczt",
+ "secp256k1",
+ "sha2 0.10.9",
+ "zcash_address",
+ "zcash_client_backend",
+ "zcash_keys",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zcash_transparent",
+ "zeroize",
+ "zip32",
+]
+
+[[package]]
 name = "leek-zcash-wallet"
 version = "0.1.0"
 dependencies = [
@@ -3257,6 +3283,7 @@ dependencies = [
  "leek-transport-ble",
  "leek-transport-serial",
  "leek-ur",
+ "leek-zcash",
  "leek-zcash-wallet",
  "serde",
  "serde_json",
