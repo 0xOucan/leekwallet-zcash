@@ -24,6 +24,7 @@
 #include "ble.h"
 #include "transport.h"
 #include "ui.h"
+#include "zcash-meta.h"
 #include "zcash-review.h"
 #include "pin.h"
 #include "button.h"
@@ -34,10 +35,12 @@ bool fake_protocol_rx_enabled(void);
 #include "leek-wallet.h"
 #include "session.h"
 #include "qr-out.h"
+#include "backlight-level.h"
 #include "airgap.h"
 #include "camera.h"
 #include "viewfinder.h"
 #include "ur-encoder.h"
+#include "ur-decoder.h"
 #include "zcash-account.h"
 #include "sdcard.h"
 #include "text-entry.h"
@@ -161,6 +164,7 @@ static void boot_device(void)
     fake_wallet_reset();
     pin__reset_static_state_for_test();
     ui__reset_static_state_for_test();
+    zmeta__reset_for_test();
 
     pin_init();
     wallet_init();
@@ -950,7 +954,7 @@ static bool select_menu_item(const char *label)
     return false;
 }
 
-/* Roadmap 1.6: Receive pages the whole UA, then its QR, then the t-address
+/* Roadmap 1.6: Receive pages the whole Orchard-only UA, then its QR, then the t-address
  * (called public) and its QR; OK flips between an address and its QR; the
  * network comes from Settings. fake_zcash.c answers with the librustzcash
  * vector, so what is checked is that the screen shows that address whole. */
@@ -967,14 +971,14 @@ static void walk_receive(const zv_key_vector *v)
         press(BUTTON_DOWN);
         page++;
     }
-    CHECK(strcmp(ua, v->ua) == 0, "the UA does not reassemble:\n  %s\n  %s", ua, v->ua);
-    CHECK(strcmp(fake_oled_qr_data(), v->ua) == 0, "the UA QR carries \"%s\"",
+    CHECK(strcmp(ua, v->ua_orchard_only) == 0, "the UA does not reassemble:\n  %s\n  %s", ua, v->ua_orchard_only);
+    CHECK(strcmp(fake_oled_qr_data(), v->ua_orchard_only) == 0, "the UA QR carries \"%s\"",
           fake_oled_qr_data());
 
     press(BUTTON_ACCEPT);
     CHECK(ui__receive_page_for_test() == 0, "OK on the QR did not return to the text");
     press(BUTTON_ACCEPT);
-    CHECK(strcmp(fake_oled_qr_data(), v->ua) == 0, "OK on the text did not show its QR");
+    CHECK(strcmp(fake_oled_qr_data(), v->ua_orchard_only) == 0, "OK on the text did not show its QR");
 
     press(BUTTON_DOWN);
     CHECK_SCREEN(fake_oled_contains("T-addr") && fake_oled_contains("PUBLIC"),
@@ -1545,8 +1549,25 @@ static void test_colour_scan_is_a_grayscale_viewfinder(void)
     }
     CHECK_SCREEN(strncmp(fake_oled_row(5), "Light <=O----> -4", 17) == 0,
                  "row 5 is not the exposure bar: \"%s\"", fake_oled_row(5));
-    CHECK_SCREEN(fake_oled_row_contains(6, "QVGA --fps s:0 r:0"),
+    CHECK_SCREEN(fake_oled_row_contains(6, "1x --fps s:0 r:0"),
                  "row 6 is not the counters: \"%s\"", fake_oled_row(6));
+    /* The percentage is in its level's colour, the bar in body text. */
+    {
+        char row5[FAKE_OLED_COLS + 2];
+        snprintf(row5, sizeof row5, "%s", fake_oled_row(5));
+        const char *pct_at = strrchr(row5, '%');
+        CHECK(pct_at != NULL, "row 5 has no percentage: \"%s\"", row5);
+        if (pct_at) {
+            const unsigned pct = (unsigned)atoi(pct_at - 2);
+            const oled_role_t want = (pct >= 25 && pct <= 60) ? OLED_ROLE_GOOD
+                                   : (pct >= 15 && pct <= 85) ? OLED_ROLE_WARN
+                                                              : OLED_ROLE_DANGER;
+            const int cell = 0 + (int)(pct_at - row5);   /* row 5 is 21 wide: no lead */
+            CHECK(fake_oled_role_at(5, cell) == want && fake_oled_role_at(5, cell - 1) == want,
+                  "%u%% drawn in role %d, not %d", pct, (int)fake_oled_role_at(5, cell), (int)want);
+            CHECK(fake_oled_role_at(5, 0) == OLED_ROLE_TEXT, "the bar is not body text");
+        }
+    }
     /* A bright screen, small in frame, nothing located. */
     CHECK_SCREEN(fake_oled_row_contains(7, "Move closer"),
                  "row 7 gives no hint: \"%s\"", fake_oled_row(7));
@@ -1567,10 +1588,42 @@ static void test_colour_scan_is_a_grayscale_viewfinder(void)
     fake_clock_advance_us(1000 * 1000);
     ui__service_scan_for_test();
     ui_render();
-    CHECK_SCREEN(fake_oled_row_contains(6, "QVGA 1fps s:3 r:1"),
+    CHECK_SCREEN(fake_oled_row_contains(6, "1x 1fps s:3 r:1"),
                  "row 6 is \"%s\"", fake_oled_row(6));
     CHECK_SCREEN(fake_oled_row_contains(7, "Point at the QR"),
                  "row 7 is \"%s\"", fake_oled_row(7));
+
+    /* Push: the sensor zoom, 1x -> 2x -> 3x -> 1x, on row 6; the capture
+       stays 320x240. */
+    CHECK(camera_zoom() == 0, "Scan did not open at 1x");
+    press(BUTTON_ACCEPT);
+    CHECK(camera_zoom() == 1, "the push did not zoom to 2x (%u)", camera_zoom());
+    CHECK_SCREEN(fake_oled_row_contains(6, "2x "), "row 6 does not say 2x: \"%s\"", fake_oled_row(6));
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_row_contains(6, "3x "), "row 6 does not say 3x: \"%s\"", fake_oled_row(6));
+    press(BUTTON_ACCEPT);
+    CHECK(camera_zoom() == 0, "3x did not wrap to 1x");
+    CHECK_SCREEN(fake_oled_row_contains(6, "1x "), "row 6 does not say 1x: \"%s\"", fake_oled_row(6));
+    CHECK(camera_frame_width() == 320, "the zoom changed the capture size");
+    /* Leaving and coming back opens at 1x, whatever the zoom was. */
+    press(BUTTON_ACCEPT);
+    CHECK(camera_zoom() == 1, "no 2x before leaving");
+    press(BUTTON_CANCEL);
+    go(SCREEN_SCAN);
+    CHECK(camera_zoom() == 0, "Scan reopened at %s, not 1x", camera_zoom_label());
+    ui__service_scan_for_test();
+    ui_render();
+    /* A level the sensor refuses: a fixed string, and the full field. */
+    camera__set_zoom_fails_for_test(true);
+    press(BUTTON_ACCEPT);
+    camera__set_zoom_fails_for_test(false);
+    CHECK(camera_zoom() == 0, "a failed zoom did not fall back to 1x");
+    CHECK_SCREEN(fake_oled_row_contains(7, "Zoom failed; 1x"),
+                 "no word of the failed zoom: \"%s\"", fake_oled_row(7));
+    /* The knob turn is still the exposure. */
+    press(BUTTON_UP);
+    CHECK(camera_exposure_bias() == -3, "the turn is no longer exposure (%d)", camera_exposure_bias());
+    camera_set_exposure_bias(-4);
 
     /* Parts of an animated UR: a progress bar of the decoder's own counts. */
     static uint8_t cbor[1200];
@@ -1616,7 +1669,7 @@ static void test_oled_scan_is_unchanged(void)
     ui__service_scan_for_test();
     ui_render();
     CHECK(fake_oled_panel_gray(NULL, NULL, NULL, NULL) == NULL, "a grayscale picture on an OLED");
-    CHECK_SCREEN(fake_oled_row_contains(7, "320 e-4 f1 s2 r0"),
+    CHECK_SCREEN(fake_oled_row_contains(7, "1x e-4 f1 s2 r0"),
                  "the status line is \"%s\"", fake_oled_row(7));
     /* The bitmap: lit where the bright screen is (x 40..160 of 320 -> panel
        16..64 after the letterbox at 17), dark at the far right. */
@@ -1626,56 +1679,232 @@ static void test_oled_scan_is_unchanged(void)
     camera__set_frame_for_test(NULL, 0, 0);
 }
 
-static void test_colour_qr_backlight(void)
+/* backlight-level.h: the backlight table (the old steps from 1 % up, fine
+ * steps below to a single tick of 14 bits) and the QR scale on top of it. */
+static void test_backlight_levels(void)
 {
-    printf("== colour kit: a QR opens dim, the knob sets its backlight, leaving restores\n");
-    /* Unlocked, then the colour panel: the wallet stays open for Receive. */
+    printf("== backlight levels: old steps above 1%%, fine below to one tick\n");
+    static const char *const LABELS[BL_LEVEL_COUNT] = {
+        "0.006%", "0.01%", "0.02%", "0.03%", "0.05%", "0.07%", "0.1%", "0.2%", "0.3%", "0.5%",
+        "0.7%", "1%", "2%", "3%", "5%", "7%", "10%", "15%", "20%", "30%", "40%", "50%",
+        "60%", "70%", "80%", "90%", "100%",
+    };
+    CHECK(BL_DUTY_MAX == 16383, "the duty is not 14-bit (%u)", (unsigned)BL_DUTY_MAX);
+    CHECK(bl_level_duty(BL_LEVEL_FULL) == BL_DUTY_MAX, "the top is not full duty");
+    CHECK(bl_level_duty(0) == 1, "the bottom is %u ticks, not one", bl_level_duty(0));
+    CHECK(bl_level_duty(BL_LEVEL_COUNT) == BL_DUTY_MAX && bl_level_duty(255) == BL_DUTY_MAX,
+          "a level past the table is not clamped to full");
+    CHECK(bl_level_duty(BL_LEVEL_1PCT) == 164, "1%% is not 164 of 16383");
+    for (uint8_t i = 0; i < BL_LEVEL_COUNT; i++) {
+        char label[8];
+        bl_level_label(i, label, sizeof label);
+        CHECK(strcmp(label, LABELS[i]) == 0, "level %u reads \"%s\", not \"%s\"",
+              i, label, LABELS[i]);
+        /* The label is the light: within 1 % of the duty, or a tick. */
+        const double want = atof(label) * BL_DUTY_MAX / 100.0, got = bl_level_duty(i);
+        CHECK(got - want < 0.6 + want / 100 && want - got < 0.6 + want / 100,
+              "level %u (%s) is duty %u, not ~%.1f", i, label, bl_level_duty(i), want);
+        if (i == 0) continue;
+        const unsigned lo = bl_level_duty(i - 1), hi = bl_level_duty(i);
+        CHECK(hi > lo, "level %u (%u) is not above level %u (%u)", i, hi, i - 1, lo);
+        CHECK(hi * 100 <= lo * 210, "level %u is x%u.%02u the one below", i, hi / lo,
+              hi * 100 / lo % 100);
+    }
+    CHECK(BL_LEVEL_DEFAULT == BL_LEVEL_FULL, "the panel does not start full");
+    /* Held at both ends. */
+    CHECK(bl_level_step(0, -1) == 0 && bl_level_step(BL_LEVEL_FULL, +1) == BL_LEVEL_FULL,
+          "a step ran off the table");
+    CHECK(bl_level_step(5, +1) == 6 && bl_level_step(5, -1) == 4, "a step is not one level");
+    /* An old firmware's percent: each of its steps exactly, anything else
+       within x1.3 (3 to 5 % is the widest gap), nonsense the default. */
+    static const uint8_t OLD[] = { 1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100 };
+    for (size_t k = 0; k < sizeof OLD; k++) {
+        char label[8], want[8];
+        bl_level_label(bl_level_from_pct(OLD[k]), label, sizeof label);
+        snprintf(want, sizeof want, "%u%%", OLD[k]);
+        CHECK(strcmp(label, want) == 0, "the old %u%% became %s", OLD[k], label);
+    }
+    for (unsigned pct = 1; pct <= 100; pct++) {
+        const unsigned want = pct * BL_DUTY_MAX / 100, got = bl_level_duty(bl_level_from_pct(pct));
+        const unsigned big = got > want ? got : want, small = got > want ? want : got;
+        CHECK(big * 100 <= small * 130, "%u%% became duty %u, not near %u", pct, got, want);
+    }
+    CHECK(bl_level_from_pct(0) == BL_LEVEL_DEFAULT && bl_level_from_pct(101) == BL_LEVEL_DEFAULT,
+          "an impossible percent was not the default");
+
+}
+
+static void set_ui_u8(const char *key, uint8_t v)
+{
+    nvs_handle_t nvs;
+    CHECK(nvs_open("leek_ui", NVS_READWRITE, &nvs) == ESP_OK, "nvs_open");
+    nvs_set_u8(nvs, key, v);
+    nvs_commit(nvs);
+    nvs_close(nvs);
+}
+
+static uint8_t get_ui_u8(const char *key)
+{
+    nvs_handle_t nvs;
+    uint8_t v = 0xFF;
+    if (nvs_open("leek_ui", NVS_READONLY, &nvs) == ESP_OK) {
+        nvs_get_u8(nvs, key, &v);
+        nvs_close(nvs);
+    }
+    return v;
+}
+
+/* An earlier firmware saved a percent under "backlight", and one before
+ * this a QR level under "qr_bl". The first is read into the nearest level,
+ * the second ignored, and both left in place; the new index key wins. */
+static void test_colour_backlight_migrates(void)
+{
+    printf("== colour kit: the old percent key becomes a level; both old keys stay\n");
     boot_unlocked_with_seed();
+    set_ui_u8("backlight", 7);
+    set_ui_u8("qr_bl", 1);
+    reboot_colour();
+    CHECK(fake_oled_backlight_duty() == 1147, "7%% came back as duty %u, not 1147",
+          fake_oled_backlight_duty());
+    settings_goto("Screen 7%");
+    uint8_t msg[40] = {0};
+    CHECK(ui_show_ur("bytes", msg, sizeof msg, SCREEN_MAIN_MENU), "no UR shown");
+    idle_pump();
+    CHECK(fake_oled_backlight_duty() == 1147, "the old QR level was used (duty %u)",
+          fake_oled_backlight_duty());
+    press(BUTTON_CANCEL);
+    CHECK(get_ui_u8("backlight") == 7 && get_ui_u8("qr_bl") == 1,
+          "the old keys were changed or deleted");
+
+    /* Once there is an index it wins over the percent. */
+    set_ui_u8("bl_idx", 4);
+    reboot_colour();
+    CHECK(fake_oled_backlight_duty() == bl_level_duty(4), "bl_idx did not win (%u)",
+          fake_oled_backlight_duty());
+    settings_goto("Screen 0.05%");
+    /* And an index past the table is ignored, not trusted: the percent. */
+    set_ui_u8("bl_idx", BL_LEVEL_COUNT);
+    reboot_colour();
+    CHECK(fake_oled_backlight_duty() == 1147, "a bad bl_idx was used (%u)",
+          fake_oled_backlight_duty());
+}
+
+/* The colour kit's QRs are at the Screen level like everything else
+ * (board, 2026-11-10: one level, set where the user can see it). Receive
+ * pages with the knob through text and QR; the signature QR's knob and OK
+ * step the colour panel's own modes, with a caption under the code. */
+static void test_colour_qr_screens(void)
+{
+    printf("== colour kit: QRs at the Screen level, Receive pages, QR-out steps its modes\n");
+    boot_unlocked_with_seed();
+    set_ui_u8("bl_idx", 4);   /* 0.05 % */
     fake_oled_set_panel_rows(240);
     ui__reset_static_state_for_test();
     ui_init();
     ui_render();
-    CHECK(fake_oled_backlight() == 100, "the panel did not start full (%u)", fake_oled_backlight());
+    const uint16_t level = bl_level_duty(4);
+    CHECK(fake_oled_backlight_duty() == level, "the panel is at duty %u", fake_oled_backlight_duty());
+    const int calls = fake_oled_backlight_calls();
 
-    /* The signature QR (any UR): 5 % on entry. */
+    /* Receive: UA text, UA QR, t-address text, t-address QR, by turning. */
+    go(SCREEN_MAIN_MENU);
+    go(SCREEN_SHOW_ADDRESS);
+    walk_receive(&ZV_KEYS[0]);
+    CHECK(fake_oled_qr_caption()[0] == 0, "a receive QR has a caption: \"%s\"",
+          fake_oled_qr_caption());
+    /* And back up from the end: the t-address, the UA QR, the UA text. */
+    press(BUTTON_UP);
+    CHECK_SCREEN(fake_oled_contains("T-addr"), "UP from the t-address QR is not its text");
+    press(BUTTON_UP);
+    CHECK(strcmp(fake_oled_qr_data(), ZV_KEYS[0].ua_orchard_only) == 0, "UP did not reach the UA QR");
+    press(BUTTON_UP);
+    CHECK_SCREEN(fake_oled_row_contains(0, "UA "), "UP did not reach the UA text");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not leave Receive");
+
+    /* The signature QR: one still code at 4 px or more, its caption. */
     uint8_t msg[90];
     for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)i;
     CHECK(ui_show_ur("bytes", msg, sizeof msg, SCREEN_MAIN_MENU), "no UR shown");
     idle_pump();
     CHECK(ui_get_screen() == SCREEN_QR_OUT, "the QR screen did not open");
-    CHECK(fake_oled_backlight() == 5, "a QR opened at %u%%, not 5", fake_oled_backlight());
-    const unsigned v0 = fake_oled_qr_version(), s0 = fake_oled_qr_scale();
+    const unsigned v0 = fake_oled_qr_version();
+    CHECK(v0 >= 1 && v0 <= QR_OUT_COLOR_STILL_MAX_VERSION && strncmp(fake_oled_qr_data(), "UR:BYTES/", 9) == 0 &&
+          strchr(fake_oled_qr_data() + 9, '/') == NULL,
+          "a 90-byte message is not one still code (v%u, \"%.20s\")", v0, fake_oled_qr_data());
+    {
+        char want[16];
+        snprintf(want, sizeof want, "v%u 0.05%%", v0);
+        CHECK(strcmp(fake_oled_qr_caption(), want) == 0, "the caption is \"%s\", not \"%s\"",
+              fake_oled_qr_caption(), want);
+    }
+    /* The push fills the panel with the same code (same version, same
+       frame), then moves to the next density, plain: still, v6 5px, v4,
+       v3, v9, each followed by its filled form, and round. */
+    CHECK(!fake_oled_qr_fill(), "the code opened filled");
+    press(BUTTON_ACCEPT);
+    CHECK(fake_oled_qr_fill() && fake_oled_qr_version() == v0, "a push did not fill the still code");
+    press(BUTTON_ACCEPT);
+    CHECK(!fake_oled_qr_fill() && fake_oled_qr_version() == 6 &&
+          strncmp(fake_oled_qr_data(), "UR:BYTES/1-", 11) == 0,
+          "a push from the filled still gave v%u \"%.20s\"%s, not v6 part 1", fake_oled_qr_version(),
+          fake_oled_qr_data(), fake_oled_qr_fill() ? " filled" : "");
+    CHECK(strncmp(fake_oled_qr_caption(), "v6 5px 1/", 9) == 0 &&
+          strstr(fake_oled_qr_caption(), "0.05%") != NULL,
+          "the caption is \"%s\"", fake_oled_qr_caption());
+    fake_clock_advance_us(400000);
+    ui__service_qr_out_for_test();
+    idle_pump();
+    CHECK(strncmp(fake_oled_qr_caption(), "v6 5px 2/", 9) == 0,
+          "the caption did not follow the frame: \"%s\"", fake_oled_qr_caption());
+    press(BUTTON_ACCEPT);
+    CHECK(fake_oled_qr_fill() && fake_oled_qr_version() == 6 &&
+          strncmp(fake_oled_qr_data(), "UR:BYTES/2-", 11) == 0,
+          "filling v6 restarted or changed it (v%u \"%.12s\")", fake_oled_qr_version(), fake_oled_qr_data());
+    fake_clock_advance_us(400000);
+    ui__service_qr_out_for_test();
+    idle_pump();
+    CHECK(fake_oled_qr_fill() && strncmp(fake_oled_qr_data(), "UR:BYTES/3-", 11) == 0,
+          "the filled code did not animate on");
+    static const unsigned NEXT[] = { 4, 3, 9 };
+    for (size_t i = 0; i < 3; i++) {
+        press(BUTTON_ACCEPT);
+        CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK left the QR");
+        CHECK(!fake_oled_qr_fill() && fake_oled_qr_version() == NEXT[i], "then v%u%s, not v%u plain",
+              fake_oled_qr_version(), fake_oled_qr_fill() ? " filled" : "", NEXT[i]);
+        press(BUTTON_ACCEPT);
+        CHECK(fake_oled_qr_fill() && fake_oled_qr_version() == NEXT[i], "v%u did not fill", NEXT[i]);
+    }
+    press(BUTTON_ACCEPT);
+    CHECK(fake_oled_qr_version() == v0 && !fake_oled_qr_fill(),
+          "the push did not come back round to the plain still code");
+    CHECK(fake_oled_backlight_calls() == calls && fake_oled_backlight_duty() == level,
+          "the density steps touched the backlight (duty %u)", fake_oled_backlight_duty());
+    /* A turn is the backlight, live, on the same table as Settings > Screen. */
+    press(BUTTON_UP);
+    CHECK(fake_oled_qr_version() == v0, "a turn changed the code (v%u)", fake_oled_qr_version());
+    CHECK(fake_oled_backlight_duty() == bl_level_duty(5), "a turn up gave duty %u, not level 5",
+          fake_oled_backlight_duty());
+    CHECK(strstr(fake_oled_qr_caption(), "0.05%") == NULL, "the caption kept the old level: \"%s\"",
+          fake_oled_qr_caption());
     press(BUTTON_DOWN);
-    CHECK(fake_oled_backlight() == 3, "a turn down gave %u%%, not 3", fake_oled_backlight());
-    CHECK(fake_oled_qr_version() == v0 && fake_oled_qr_scale() == s0,
-          "a turn changed the module size on the colour kit");
-    press(BUTTON_UP);
-    press(BUTTON_UP);
-    CHECK(fake_oled_backlight() == 7, "two turns up gave %u%%, not 7", fake_oled_backlight());
-    press(BUTTON_ACCEPT);   /* the module size now */
-    CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK left the QR");
-    CHECK(fake_oled_backlight() == 7, "OK moved the backlight (%u%%)", fake_oled_backlight());
-    CHECK(!fake_nvs_has("leek_ui", "qr_bl"), "saved before leaving the QR");
+    press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight_duty() == bl_level_duty(3), "two down gave duty %u, not level 3",
+          fake_oled_backlight_duty());
+    CHECK(!fake_nvs_has("leek_ui", "qr_bl") && !fake_nvs_has("leek_ui", "qr_bl_idx"),
+          "a separate QR level was saved");
     press(BUTTON_CANCEL);
-    CHECK(ui_get_screen() != SCREEN_QR_OUT, "Cancel did not finish the QR");
-    CHECK(fake_oled_backlight() == 100, "leaving the QR left %u%%, not 100", fake_oled_backlight());
-    CHECK(fake_nvs_has("leek_ui", "qr_bl"), "the QR level was not saved");
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not finish the QR");
+    CHECK(fake_oled_backlight_duty() == bl_level_duty(3), "leaving the QR changed the level");
+    CHECK(get_ui_u8("bl_idx") == 3, "the level the camera read at was not saved (%u)", get_ui_u8("bl_idx"));
+    set_ui_u8("bl_idx", 4);
 
-    /* Receive: text at the panel's level, its QR at the remembered 7 %. */
-    go(SCREEN_SHOW_ADDRESS);
-    CHECK(fake_oled_backlight() == 100, "the text page is at %u%%", fake_oled_backlight());
-    int page = 0;
-    while (fake_oled_row_contains(0, "UA ") && page < 8) { press(BUTTON_DOWN); page++; }
-    CHECK(fake_oled_qr_data()[0] != 0, "no receive QR reached");
-    CHECK(fake_oled_backlight() == 7, "the receive QR is at %u%%, not 7", fake_oled_backlight());
-    const int qr_page = ui__receive_page_for_test();
-    press(BUTTON_DOWN);
-    CHECK(fake_oled_backlight() == 5, "a turn on the QR gave %u%%, not 5", fake_oled_backlight());
-    CHECK(ui__receive_page_for_test() == qr_page, "a turn on the QR changed page");
-    press(BUTTON_ACCEPT);   /* back to the text */
-    CHECK(fake_oled_backlight() == 100, "the text came back at %u%%", fake_oled_backlight());
+    /* A message too long for one 4 px code opens at v6 5px. */
+    static uint8_t big[400];
+    CHECK(ui_show_ur("bytes", big, sizeof big, SCREEN_MAIN_MENU), "400 bytes not shown");
+    idle_pump();
+    CHECK(fake_oled_qr_version() == 6, "400 bytes opened at v%u, not v6", fake_oled_qr_version());
     press(BUTTON_CANCEL);
-    CHECK(fake_oled_backlight() == 100, "leaving Receive left %u%%", fake_oled_backlight());
 }
 
 static void test_colour_screen_brightness(void)
@@ -1683,50 +1912,60 @@ static void test_colour_screen_brightness(void)
     printf("== colour kit: Settings > Screen sets the backlight live, saves on OK\n");
     boot_unlocked_with_seed();
     reboot_colour();
-    CHECK(fake_oled_backlight() == 100, "the backlight did not start full (%u)", fake_oled_backlight());
+    CHECK(fake_oled_backlight_duty() == BL_DUTY_MAX, "the backlight did not start full (%u)",
+          fake_oled_backlight_duty());
 
     settings_goto("Screen 100%");
     press(BUTTON_ACCEPT);
     CHECK_SCREEN(fake_oled_contains("> Screen < 100% >"), "OK did not open the adjustment");
     CHECK_SCREEN(fake_oled_row_contains(7, HINT_ADJUST), "no adjust hint: \"%s\"", fake_oled_row(7));
     for (int i = 0; i < 4; i++) press(BUTTON_DOWN);
-    CHECK(fake_oled_backlight() == 60, "four turns down gave %u%%, not 60", fake_oled_backlight());
+    CHECK(fake_oled_backlight_duty() == 9830, "four turns down gave duty %u, not 60%%",
+          fake_oled_backlight_duty());
     CHECK_SCREEN(fake_oled_contains("> Screen < 60% >"), "the line does not follow the knob");
-    CHECK(!fake_nvs_has("leek_ui", "backlight"), "saved before OK");
+    CHECK(!fake_nvs_has("leek_ui", "bl_idx"), "saved before OK");
 
     /* Cancel puts the old level back, unsaved. */
     press(BUTTON_CANCEL);
     CHECK(ui_get_screen() == SCREEN_SETTINGS, "Cancel left Settings while adjusting");
-    CHECK(fake_oled_backlight() == 100, "Cancel kept %u%%", fake_oled_backlight());
+    CHECK(fake_oled_backlight_duty() == BL_DUTY_MAX, "Cancel kept duty %u",
+          fake_oled_backlight_duty());
     CHECK_SCREEN(fake_oled_contains("> Screen 100%"), "Cancel did not restore the line");
-    CHECK(!fake_nvs_has("leek_ui", "backlight"), "Cancel saved");
+    CHECK(!fake_nvs_has("leek_ui", "bl_idx"), "Cancel saved");
 
-    /* Finer at the dark end, and bounded at 1% and 100%. */
+    /* Every level on the way down, to the single tick, which holds (still
+       lit, so the knob can bring it back), and back up to full. */
     press(BUTTON_ACCEPT);
-    for (int i = 0; i < 10; i++) press(BUTTON_DOWN);
-    CHECK(fake_oled_backlight() == 10, "ten turns down gave %u%%, not 10", fake_oled_backlight());
-    {
-        static const uint8_t dark[] = { 7, 5, 3, 2, 1 };
-        for (unsigned i = 0; i < sizeof dark; i++) {
-            press(BUTTON_DOWN);
-            CHECK(fake_oled_backlight() == dark[i], "below 10%%: %u%%, not %u",
-                  fake_oled_backlight(), dark[i]);
-        }
+    for (int i = BL_LEVEL_FULL - 1; i >= 0; i--) {
+        press(BUTTON_DOWN);
+        CHECK(fake_oled_backlight_duty() == bl_level_duty((uint8_t)i), "level %d: duty %u",
+              i, fake_oled_backlight_duty());
     }
+    CHECK_SCREEN(fake_oled_contains("> Screen < 0.006% >"), "0.006%% is not shown");
     for (int i = 0; i < 5; i++) press(BUTTON_DOWN);
-    CHECK(fake_oled_backlight() == 1, "the floor is %u%%, not 1", fake_oled_backlight());
-    CHECK_SCREEN(fake_oled_contains("1%"), "1%% is not shown");
-    for (int i = 0; i < 20; i++) press(BUTTON_UP);
-    CHECK(fake_oled_backlight() == 100, "the ceiling is %u%%, not 100", fake_oled_backlight());
+    CHECK(fake_oled_backlight_duty() == 1, "the floor is duty %u, not one tick",
+          fake_oled_backlight_duty());
+    press(BUTTON_UP);
+    press(BUTTON_UP);
+    press(BUTTON_UP);
+    press(BUTTON_UP);
+    CHECK_SCREEN(fake_oled_contains("> Screen < 0.05% >"), "0.05%% is not shown");
+    for (int i = 0; i < 7; i++) press(BUTTON_UP);
+    CHECK_SCREEN(fake_oled_contains("> Screen < 1% >"), "1%% is not shown");
+    for (int i = 0; i < 30; i++) press(BUTTON_UP);
+    CHECK(fake_oled_backlight_duty() == BL_DUTY_MAX, "the ceiling is duty %u",
+          fake_oled_backlight_duty());
     for (int i = 0; i < 4; i++) press(BUTTON_DOWN);
     press(BUTTON_ACCEPT);
-    CHECK(fake_nvs_has("leek_ui", "backlight"), "OK did not save");
+    CHECK(get_ui_u8("bl_idx") == BL_LEVEL_FULL - 4, "OK did not save the level");
+    CHECK(!fake_nvs_has("leek_ui", "backlight"), "the percent key was written");
     CHECK_SCREEN(fake_oled_contains("> Screen 60%"), "the saved level is not shown");
     CHECK(ui_get_screen() == SCREEN_SETTINGS, "OK left Settings");
 
     /* And the OLED's levels were never touched for it. */
     reboot_colour();
-    CHECK(fake_oled_backlight() == 60, "the backlight came back at %u%%, not 60", fake_oled_backlight());
+    CHECK(fake_oled_backlight_duty() == 9830, "the backlight came back at duty %u",
+          fake_oled_backlight_duty());
     settings_goto("Screen 60%");
 }
 
@@ -1739,7 +1978,8 @@ static void test_oled_brightness_is_unchanged(void)
     press(BUTTON_ACCEPT);
     CHECK_SCREEN(fake_oled_contains("> Bright Low"), "Bright did not cycle");
     CHECK(fake_oled_backlight_calls() == 0, "an OLED set a backlight");
-    CHECK(!fake_nvs_has("leek_ui", "backlight"), "an OLED saved a backlight");
+    CHECK(!fake_nvs_has("leek_ui", "backlight") && !fake_nvs_has("leek_ui", "bl_idx"),
+          "an OLED saved a backlight");
 }
 
 static void test_colour_preview_true_exposure(void)
@@ -3620,6 +3860,149 @@ static void test_scan_assembles_then_refuses_every_type(void)
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not leave the scanner");
 }
 
+/* Read SCREEN_QR_OUT's animated UR to the end; the message or NULL. */
+static const uint8_t *view_key_assemble(size_t *n)
+{
+    static uint8_t frags[4096], mixed[4096];
+    static UrDecoder d;
+    ur_decoder_init(&d, frags, sizeof frags, mixed, sizeof mixed);
+    for (int i = 0; i < 200 && !ur_decoder_complete(&d); i++) {
+        const char *part = fake_oled_qr_data();
+        (void)ur_decoder_receive(&d, part, strlen(part));
+        fake_clock_advance_us(1000000);
+        ui__service_qr_out_for_test();
+        idle_pump();
+    }
+    CHECK(ur_decoder_complete(&d), "the record did not assemble");
+    *n = 0;
+    return ur_decoder_complete(&d) ? ur_decoder_message(&d, n) : NULL;
+}
+
+/* {1: fp, 2: [{1: UFVK, 2: 0 ...}]} up to the account index, with the
+ * account map's head `map` (0xA2 plain, 0xA4 with label and birthday). */
+static size_t view_key_expected(const zv_key_vector *v, uint8_t map, uint8_t *want)
+{
+    size_t k = 0;
+    const size_t ul = strlen(v->ufvk);
+    want[k++] = 0xA2; want[k++] = 0x01; want[k++] = 0x58; want[k++] = 32;
+    memcpy(want + k, v->seed_fingerprint, 32); k += 32;
+    want[k++] = 0x02; want[k++] = 0x81; want[k++] = map; want[k++] = 0x01;
+    want[k++] = 0x79; want[k++] = (uint8_t)(ul >> 8); want[k++] = (uint8_t)ul;
+    memcpy(want + k, v->ufvk, ul); k += ul;
+    want[k++] = 0x02; want[k++] = 0x00;
+    return k;
+}
+
+/* Main menu -> View key: a warning, then the account as an animated
+ * ur:leek-zcash-accounts whose message is exactly host/leek-zcash's
+ * AccountRecord CBOR for this seed's account. Cancel on the warning shows
+ * nothing. */
+static void test_view_key_qr(void)
+{
+    printf("== View key: a warning, then the account record as an animated UR\n");
+    boot_unlocked_with_seed();
+    go(SCREEN_MAIN_MENU);
+    CHECK(select_menu_item("View key"), "no View key in the main menu");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_VIEW_KEY, "View key did not open its warning (%d)", ui_get_screen());
+    CHECK_SCREEN(fake_oled_contains("Show view key?") && fake_oled_contains("history") &&
+                 fake_oled_contains("cannot spend"), "the warning is missing");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU && fake_oled_qr_data()[0] == 0,
+          "Cancel on the warning showed something");
+
+    go(SCREEN_VIEW_KEY);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK did not show the QR (%d)", ui_get_screen());
+    CHECK(strncmp(fake_oled_qr_data(), "UR:LEEK-ZCASH-ACCOUNTS/", 23) == 0,
+          "the QR is \"%.30s\"", fake_oled_qr_data());
+
+    size_t n = 0;
+    const uint8_t *m = view_key_assemble(&n);
+
+    const zv_key_vector *v = NULL;
+    for (size_t i = 0; i < ZV_KEYS_COUNT; i++)
+        if (ZV_KEYS[i].account == 0 && ZV_KEYS[i].network == ui_zcash_network() && !ZV_KEYS[i].passphrase[0]) {
+            v = &ZV_KEYS[i];
+            break;
+        }
+    CHECK(v != NULL, "no vector for the fake account");
+    uint8_t want[600];
+    size_t k = 0;
+    if (v && m) {
+        k = view_key_expected(v, 0xA2, want);
+        CHECK(n == k && memcmp(m, want, k) == 0, "the record is not {1: fp, 2: [{1: UFVK, 2: 0}]} (%zu B, want %zu)", n, k);
+    }
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not finish the QR");
+
+    /* With a label and a birthday on the board (a companion set them),
+     * the record carries both: {..., 3: "spend", 4: 3500000}. */
+    ZcashMeta zm = { .birthday = 3500000u };
+    strcpy(zm.label, "spend");
+    const ZcashMetaResult zr = zmeta_set(0, ui_zcash_network(), &zm);
+    ZcashMeta back;
+    CHECK(zr <= ZMETA_OK_SESSION && zmeta_get(0, ui_zcash_network(), &back) && back.birthday == 3500000u,
+          "setup: zmeta_set %d", (int)zr);
+    go(SCREEN_VIEW_KEY);
+    press(BUTTON_ACCEPT);
+    m = view_key_assemble(&n);
+    if (v && m) {
+        k = view_key_expected(v, 0xA4, want);
+        const uint8_t tail[] = { 0x03, 0x65, 's', 'p', 'e', 'n', 'd', 0x04, 0x1A, 0x00, 0x35, 0x67, 0xE0 };
+        memcpy(want + k, tail, sizeof tail);
+        k += sizeof tail;
+        CHECK(n == k && memcmp(m, want, k) == 0,
+              "the record lacks the label and birthday (%zu B, want %zu)", n, k);
+    }
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not finish the QR");
+}
+
+/* The companion's Bigger/Denser mid-scan: new parts are another message. One
+ * stray part is refused; a few in a row restart the assembly on them. */
+static void test_scan_follows_a_sender_that_switched(void)
+{
+    printf("== the scanner starts over when the sender switches fragment size\n");
+    boot_unlocked_with_seed();
+    go(SCREEN_SCAN);
+    uint8_t msg[300];
+    for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)(i * 7);
+    static UrEncoder a, b;
+    ur_encoder_init(&a, "bytes", msg, sizeof msg, 40);
+    ur_encoder_init(&b, "bytes", msg, sizeof msg, 60);
+    char part[200];
+    for (int i = 0; i < 2; i++) {
+        ur_encoder_next_part(&a, part, sizeof part);
+        ui__scan_feed_for_test(part);
+    }
+    const uint32_t total_a = airgap_scan_total();
+    CHECK(total_a == a.seq_len, "assembling the first message (%u)", (unsigned)total_a);
+
+    ur_encoder_next_part(&b, part, sizeof part);
+    ui__scan_feed_for_test(part);
+    CHECK(airgap_scan_total() == total_a, "one part of another message took over");
+    ur_encoder_next_part(&a, part, sizeof part);
+    ui__scan_feed_for_test(part);   /* the old sender again: the streak ends */
+    for (int i = 0; i < AIRGAP_SCAN_SWITCH_AFTER - 1; i++) {
+        ur_encoder_next_part(&b, part, sizeof part);
+        ui__scan_feed_for_test(part);
+    }
+    CHECK(airgap_scan_total() == total_a, "parts with the old one between took over");
+    ur_encoder_next_part(&b, part, sizeof part);
+    ui__scan_feed_for_test(part);
+    CHECK(airgap_scan_total() == b.seq_len && b.seq_len != total_a,
+          "did not switch to the new message (%u)", (unsigned)airgap_scan_total());
+    for (uint32_t i = 0; i < b.seq_len + 20 && ui_get_screen() == SCREEN_SCAN &&
+                         strstr(ui__scan_status_for_test(), "Not a Zcash") == NULL; i++) {
+        ur_encoder_next_part(&b, part, sizeof part);
+        ui__scan_feed_for_test(part);
+    }
+    CHECK(strcmp(ui__scan_status_for_test(), "Not a Zcash request") == 0,
+          "the new message did not complete (\"%s\")", ui__scan_status_for_test());
+    press(BUTTON_CANCEL);
+}
+
 int main(void)
 {
     test_the_seed_fingerprint_is_shown();
@@ -3632,6 +4015,8 @@ int main(void)
     test_sd_card_signing();
     test_qr_airgap_signing();
     test_scan_assembles_then_refuses_every_type();
+    test_scan_follows_a_sender_that_switched();
+    test_view_key_qr();
     test_qr_out_animates_and_leaves_cleanly();
     test_locking_closes_the_channel();
     test_an_expired_approval_leaves_the_screen();
@@ -3691,8 +4076,10 @@ int main(void)
     test_the_knob_direction_survives_a_reboot();
     test_colour_scan_is_a_grayscale_viewfinder();
     test_oled_scan_is_unchanged();
+    test_backlight_levels();
     test_colour_screen_brightness();
-    test_colour_qr_backlight();
+    test_colour_backlight_migrates();
+    test_colour_qr_screens();
     test_oled_brightness_is_unchanged();
     test_colour_preview_true_exposure();
     test_clockwise_raises_the_pin_digit();

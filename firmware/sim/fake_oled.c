@@ -4,11 +4,15 @@
 
 #include "fake_oled.h"
 #include "oled.h"
+#include "backlight-level.h"
 
 #include <stdio.h>
 #include <string.h>
 
 static char    text[FAKE_OLED_ROWS][FAKE_OLED_COLS + 1];
+/* The role each text cell was drawn in, as oled-core keeps per column. */
+static uint8_t text_role[FAKE_OLED_ROWS][FAKE_OLED_COLS];
+static uint8_t current_role;
 static uint8_t fb[OLED_PAGES][OLED_WIDTH];   /* SSD1306 order: one byte = 8 rows */
 static char    qr_data[400];   /* a version 10 frame is 395 characters */
 static uint8_t qr_version, qr_scale;
@@ -19,8 +23,10 @@ static const uint8_t *panel_picture;
 static int     picture_flushes;
 static const uint8_t *panel_gray;
 static uint16_t panel_gray_x, panel_gray_y, panel_gray_w, panel_gray_h;
-static uint8_t backlight = 100;
+static uint16_t backlight = BL_DUTY_MAX;
 static int     backlight_calls;
+static char    qr_caption[OLED_QR_CAPTION_MAX + 1];
+static bool    qr_fill;
 
 static uint8_t cursor_page;
 static uint8_t cursor_col;
@@ -31,6 +37,8 @@ static char trimmed[FAKE_OLED_ROWS][FAKE_OLED_COLS + 1];
 
 static void blank_text(void)
 {
+    memset(text_role, 0, sizeof text_role);
+    current_role = 0;
     for (int p = 0; p < FAKE_OLED_ROWS; p++) {
         memset(text[p], ' ', FAKE_OLED_COLS);
         text[p][FAKE_OLED_COLS] = '\0';
@@ -52,8 +60,10 @@ void fake_oled_reset(void)
     panel_picture = NULL;
     picture_flushes = 0;
     panel_gray = NULL;
-    backlight = 100;
+    backlight = BL_DUTY_MAX;
     backlight_calls = 0;
+    qr_caption[0] = '\0';
+    qr_fill = false;
 }
 
 void fake_oled_set_panel_rows(uint8_t rows) { panel_rows = rows; }
@@ -68,7 +78,15 @@ const uint8_t *fake_oled_panel_gray(uint16_t *x, uint16_t *y, uint16_t *w, uint1
     if (h) *h = panel_gray_h;
     return panel_gray;
 }
-uint8_t fake_oled_backlight(void) { return backlight; }
+uint16_t fake_oled_backlight_duty(void) { return backlight; }
+const char *fake_oled_qr_caption(void) { return qr_caption; }
+bool fake_oled_qr_fill(void) { return qr_fill; }
+void oled_set_qr_fill(bool fill) { qr_fill = fill; }
+
+void oled_set_qr_caption(const char *text)
+{
+    snprintf(qr_caption, sizeof qr_caption, "%s", text ? text : "");
+}
 int fake_oled_backlight_calls(void) { return backlight_calls; }
 
 void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
@@ -78,11 +96,11 @@ void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
     panel_gray_x = x; panel_gray_y = y; panel_gray_w = w; panel_gray_h = h;
 }
 
-esp_err_t oled_set_backlight(uint8_t pct)
+esp_err_t oled_set_backlight_duty(uint16_t duty)
 {
-    if (pct < OLED_BACKLIGHT_MIN) pct = OLED_BACKLIGHT_MIN;
-    if (pct > OLED_BACKLIGHT_MAX) pct = OLED_BACKLIGHT_MAX;
-    backlight = pct;
+    if (duty < 1) duty = 1;
+    if (duty > BL_DUTY_MAX) duty = BL_DUTY_MAX;
+    backlight = duty;
     backlight_calls++;
     return ESP_OK;
 }
@@ -170,6 +188,8 @@ esp_err_t oled_clear(void)
     cursor_col = 0;
     panel_picture = NULL;
     panel_gray = NULL;
+    qr_caption[0] = '\0';
+    qr_fill = false;
     return ESP_OK;
 }
 
@@ -192,8 +212,20 @@ esp_err_t oled_set_fast_refresh(bool fast)
     return ESP_OK;
 }
 
-/* Roles only colour a colour panel; the text grid has none to show. */
-void oled_set_role(oled_role_t role) { (void)role; }
+/* Roles only colour a colour panel; the grid keeps them per cell so a test
+   can ask what colour a reading was drawn in. */
+void oled_set_role(oled_role_t role)
+{
+    current_role = (role < OLED_ROLE_COUNT) ? (uint8_t)role : OLED_ROLE_AUTO;
+}
+
+oled_role_t fake_oled_role_at(int page, int cell)
+{
+    if (page < 0 || page >= FAKE_OLED_ROWS || cell < 0 || cell >= FAKE_OLED_COLS) {
+        return OLED_ROLE_AUTO;
+    }
+    return (oled_role_t)text_role[page][cell];
+}
 
 esp_err_t oled_set_contrast(uint8_t level)
 {
@@ -227,6 +259,7 @@ esp_err_t oled_draw_char(char c)
         int cell = cursor_col / 6;
         if (cell < FAKE_OLED_COLS) {
             text[cursor_page][cell] = c;
+            text_role[cursor_page][cell] = current_role;
         }
     }
     /* The real driver wraps by advancing 6 px and stopping at the edge. */
@@ -244,6 +277,7 @@ esp_err_t oled_draw_string(uint8_t page, uint8_t col, const char *str)
     int cell = col / 6;
     for (; *str && cell < FAKE_OLED_COLS; str++, cell++) {
         text[page][cell] = *str;
+        if (page < FAKE_OLED_ROWS) { text_role[page][cell] = current_role; }
     }
     return ESP_OK;
 }

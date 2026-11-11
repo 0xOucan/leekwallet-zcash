@@ -88,13 +88,35 @@ uint32_t airgap_scan_total(void)
     return scan_ready && scan.started ? scan.seq_len : 0;
 }
 
+const char *airgap_scan_why(void)
+{
+    return scan.why ? scan.why : "";
+}
+
 AirgapScan airgap_scan_feed(const char *ur, size_t len)
 {
     if (!scan_ready) {
         airgap_scan_reset();
         if (!scan_ready) return AIRGAP_SCAN_UNREADABLE;   /* no buffers */
     }
-    const UrPartResult r = ur_decoder_receive(&scan, ur, len);
+    UrPartResult r = ur_decoder_receive(&scan, ur, len);
+    /* The sender changed its fragment size (the companion's Bigger/Denser,
+     * a new transaction): its parts all belong to another message, which
+     * the decoder refuses so a second sender cannot take over one already
+     * in progress. A few in a row with none of the old one between is the
+     * sender moving on, not a stray frame, so start over on the new one.
+     * Whatever completes is reviewed on screen as always. */
+    static unsigned other_streak;
+    if (r == UR_PART_REJECTED && scan.why && strcmp(scan.why, "another message") == 0) {
+        if (++other_streak >= AIRGAP_SCAN_SWITCH_AFTER) {
+            ESP_LOGI(TAG, "scan: the sender switched messages; starting over");
+            other_streak = 0;
+            airgap_scan_reset();
+            r = ur_decoder_receive(&scan, ur, len);
+        }
+    } else if (r == UR_PART_ACCEPTED || r == UR_PART_REDUNDANT) {
+        other_streak = 0;
+    }
     if (r == UR_PART_ACCEPTED) {
         return AIRGAP_SCAN_ACCEPTED;
     }

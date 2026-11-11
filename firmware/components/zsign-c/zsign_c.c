@@ -1052,6 +1052,18 @@ int32_t zc_account_derive(const uint8_t seed[64], uint32_t account, uint8_t net,
     return ZS_OK;
 }
 
+int32_t zc_orchard_ua(char *out, size_t cap, uint8_t net, const uint8_t orchard[43])
+{
+    if (!out || !orchard || cap == 0 || (net != ZS_NET_MAIN && net != ZS_NET_TEST)) {
+        return ZS_ERR_ARG;
+    }
+    if (!zc_encode_ua(out, cap, net, orchard, NULL)) {
+        out[0] = '\0';
+        return ZS_ERR_ENCODE;
+    }
+    return ZS_OK;
+}
+
 int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t index_out[11],
                     uint8_t p2pkh_out[20], int *has_p2pkh)
 {

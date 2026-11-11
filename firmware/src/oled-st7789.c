@@ -36,6 +36,7 @@
 
 #include "oled.h"
 #include "oled-core.h"
+#include "backlight-level.h"
 #include "panel-color.h"
 #include "st7789.h"
 
@@ -175,16 +176,33 @@ static void build_wire_palette(void)
 
 /*
  * LEDC PWM on BLK, as the user's ST7735S driver does it: low-speed mode,
- * 13-bit duty at 5 kHz (far above anything an eye or a phone camera's
- * shutter beats against), starting at 100%. Its own timer and channel:
- * esp32-camera drives the sensor's XCLK from LEDC timer 0, channel 0
- * (camera.c), and sharing either would retune the camera's clock.
+ * starting at full. Its own timer and channel: esp32-camera drives the
+ * sensor's XCLK from LEDC timer 0, channel 0 (camera.c), and sharing either
+ * would retune the camera's clock.
+ *
+ * 14 bits, the widest the S3's LEDC timers have (SOC_LEDC_TIMER_BIT_WIDTH),
+ * because the levels below 1 % (backlight-level.h) go down to one tick.
+ *
+ * 2 kHz, down from 5. A 14-bit timer runs at frequency x 16384 ticks a
+ * second and the APB clock is 80 MHz, so 4.88 kHz is the ceiling at this
+ * width; lower makes every tick longer, which is what the dark end needs:
+ * the module drives its LEDs through a small transistor behind a base or
+ * gate resistor, whose switching times are tens to hundreds of ns, and a
+ * pulse shorter than that is smeared or lost. At 2 kHz a tick is 30.5 ns:
+ * the 0.05 % level is 8 ticks, ~0.25 us, and still switches cleanly; the
+ * last few levels (1-5 ticks) may look alike on some modules, the pulse
+ * stretched by the transistor, but they are the least light the PWM can
+ * make, and that is what they are for. 2 kHz is still far above what an eye sees flicker at
+ * (well under 100 Hz; a few hundred for the phantom array of a moving
+ * glance), and a webcam reading a QR this dim exposes for milliseconds, over
+ * several periods, so it sees an even light rather than bands.
  */
 #define BLK_TIMER       LEDC_TIMER_1
 #define BLK_CHANNEL     LEDC_CHANNEL_1
-#define BLK_RES         LEDC_TIMER_13_BIT
-#define BLK_DUTY_MAX    8191
-#define BLK_HZ          5000
+#define BLK_RES         LEDC_TIMER_14_BIT
+#define BLK_DUTY_MAX    BL_DUTY_MAX
+#define BLK_HZ          BL_PWM_HZ
+_Static_assert(BL_DUTY_BITS == 14, "BLK_RES is the 14-bit timer");
 
 static bool backlight_ready;
 
@@ -221,14 +239,13 @@ static void backlight_init(void)
     backlight_ready = true;
 }
 
-esp_err_t oled_set_backlight(uint8_t pct)
+esp_err_t oled_set_backlight_duty(uint16_t duty)
 {
-    if (pct < OLED_BACKLIGHT_MIN) pct = OLED_BACKLIGHT_MIN;
-    if (pct > OLED_BACKLIGHT_MAX) pct = OLED_BACKLIGHT_MAX;
+    if (duty < 1) duty = 1;
+    if (duty > BLK_DUTY_MAX) duty = BLK_DUTY_MAX;
     if (!backlight_ready) {
         return ESP_OK;   /* BLK on 3V3: nothing to dim, and not an error */
     }
-    const uint32_t duty = (uint32_t)pct * BLK_DUTY_MAX / 100;
     esp_err_t err = ledc_set_duty(LEDC_LOW_SPEED_MODE, BLK_CHANNEL, duty);
     return err == ESP_OK ? ledc_update_duty(LEDC_LOW_SPEED_MODE, BLK_CHANNEL) : err;
 }
@@ -290,6 +307,8 @@ esp_err_t oled_flush(void)
         .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
+    f.qr_caption = oled_core_qr_caption();
+    f.qr_fill = oled_core_qr_fill();
     const OledPanelGray g = oled_core_panel_gray();
     f.gray = g.px;
     f.gray_x = g.x; f.gray_y = g.y; f.gray_w = g.w; f.gray_h = g.h;
@@ -321,7 +340,7 @@ esp_err_t oled_set_fast_refresh(bool fast)
 esp_err_t oled_set_contrast(uint8_t level)
 {
     /* The ST7789 has no contrast register. The backlight is
-       oled_set_backlight(), a setting of its own (Settings > Screen): the
+       oled_set_backlight_duty(), a setting of its own (Settings > Screen): the
        OLED levels this takes, Dim for every QR among them, would make a TFT
        unreadable. The setting is still accepted
        and kept by ui.c, so a user's choice survives a move between boards. */

@@ -3,6 +3,7 @@
 #include "camera.h"
 
 #include "board.h"
+#include "camera-tune.h"
 
 #include <string.h>
 
@@ -50,8 +51,30 @@ bool camera_preview_true_exposure(void) { return preview_true; }
 #include "quirc.h"
 
 #include "viewfinder.h"
+#include "scan-timing.h"
+
+#include "freertos/FreeRTOS.h"
 
 static const char *TAG = "camera";
+
+/*
+ * Per-stage frame timing (scan-timing.h), one line a second over USB serial.
+ * Under a spinlock because the UI task adds its draw time from another task
+ * than the one decoding once decode has its own task, and a 64-bit add is
+ * not atomic on this core.
+ */
+static ScanTiming timing;
+static portMUX_TYPE timing_mux = portMUX_INITIALIZER_UNLOCKED;
+static int64_t timing_window_us;
+static uint32_t timing_window_frames;
+
+static void timing_add(scan_stage_t stage, int64_t t0_us)
+{
+    const int64_t dt = esp_timer_get_time() - t0_us;
+    portENTER_CRITICAL(&timing_mux);
+    scan_timing_add(&timing, stage, dt > 0 ? (uint32_t)dt : 0);
+    portEXIT_CRITICAL(&timing_mux);
+}
 
 /*
  * QVGA grayscale, which is what both halves of this file want.
@@ -85,13 +108,39 @@ static const char *TAG = "camera";
  * the frames a second, and the companion's medium fragments still resolve
  * with the phone held close. Applied by restarting the camera.
  */
+/*
+ * 2026-11-10: the Scan screen no longer steps the size. Its output is always
+ * QVGA, and the push zooms on the sensor instead (camera_next_zoom(),
+ * camera-tune.h): the same 320x240 decode cost with two or more times the
+ * real pixels per module, where VGA and SVGA quadrupled the cost for the
+ * same field of view. VGA and SVGA stay for measurement, in the bench image
+ * only: pio run -e esp32s3cam-bench with -DCAMERA_BENCH_FRAME_W=640 (or 800),
+ * and -DCAMERA_BENCH_ZOOM=1 (2x) or 2 (3x) for a zoom at QVGA.
+ */
 static const struct { uint16_t w, h; framesize_t size; } FRAME_MODES[] = {
     { 320, 240, FRAMESIZE_QVGA },
     { 640, 480, FRAMESIZE_VGA  },
     { 800, 600, FRAMESIZE_SVGA },
 };
-#define FRAME_MODE_COUNT (sizeof FRAME_MODES / sizeof FRAME_MODES[0])
-static uint8_t frame_mode = 0;
+#if defined(LEEK_QR_BENCH) && LEEK_QR_BENCH && defined(CAMERA_BENCH_FRAME_W)
+#  if CAMERA_BENCH_FRAME_W == 640
+#    define FRAME_MODE_START 1
+#  elif CAMERA_BENCH_FRAME_W == 800
+#    define FRAME_MODE_START 2
+#  else
+#    define FRAME_MODE_START 0
+#  endif
+#else
+#  define FRAME_MODE_START 0
+#endif
+#if defined(LEEK_QR_BENCH) && LEEK_QR_BENCH && defined(CAMERA_BENCH_ZOOM)
+#  define ZOOM_START CAMERA_BENCH_ZOOM
+#else
+#  define ZOOM_START 0
+#endif
+static const uint8_t frame_mode = FRAME_MODE_START;
+/* The zoom level (camera-tune.h), 1x every time the camera starts. */
+static uint8_t zoom_level;
 #define FRAME_W     (FRAME_MODES[frame_mode].w)
 #define FRAME_H     (FRAME_MODES[frame_mode].h)
 #define FRAME_SIZE  (FRAME_MODES[frame_mode].size)
@@ -119,6 +168,120 @@ static uint8_t frame_mode = 0;
 #  define CAMERA_PREVIEW_EVERY   4
 #endif
 
+/* The AGC ceiling, in whole x (camera-tune.h). 4x: noise lands on the module
+   edges quirc thresholds, but blur from a long shutter is worse. */
+#ifndef CAMERA_GAIN_CEILING_X
+#  define CAMERA_GAIN_CEILING_X  4
+#endif
+
+/* Mains frequency for the banding filter: 60 (Mexico, the Americas), 50, or
+   0 for the sensor's automatic detection (camera-tune.h). */
+#ifndef CAMERA_MAINS_HZ
+#  define CAMERA_MAINS_HZ  60
+#endif
+
+/*
+ * Shutter cap in lines (camera-tune.h): 96 ~ 8-12 ms at the driver's QVGA
+ * timing. 0 leaves the driver's one-frame maximum. Measure: the scan log's
+ * "exp" stays at or under this, "gain" makes up the rest, and the PC stream
+ * of a phone moved by hand smears less.
+ */
+#ifndef CAMERA_SHUTTER_CAP_LINES
+#  define CAMERA_SHUTTER_CAP_LINES  96
+#endif
+/* The driver's VTS for every binned mode (QVGA..SVGA): 1968 / 2. */
+#define CAMERA_DRIVER_VTS  984
+
+/*
+ * Centre-weighted metering, and the offset that keeps the knob's -5..0 scale
+ * landing where the user tuned it (camera-tune.h). 0 restores flat metering
+ * and the bias as it was. Measure: with a phone filling the middle of the
+ * view, the row-5 level stays green (25-60%) whether the room is lit or not.
+ */
+#ifndef CAMERA_AEC_CENTRE
+#  define CAMERA_AEC_CENTRE  1
+#endif
+#ifndef CAMERA_AEC_BIAS_OFFSET
+#  define CAMERA_AEC_BIAS_OFFSET  3
+#endif
+
+static int sensor_ae_level(int8_t bias)
+{
+    return camera_tune_ae_level(bias, CAMERA_AEC_CENTRE != 0, CAMERA_AEC_BIAS_OFFSET);
+}
+
+static bool apply_zoom(uint8_t level);
+static void decode_start(void);
+static void decode_park(void);
+
+/*
+ * 240 MHz while the camera runs, 160 otherwise.
+ *
+ * The CAM board runs at 160 MHz because 240 got it very hot beside the
+ * OV5640 (sdkconfig.s3cam). quirc is CPU-bound, so the Scan screen is the
+ * one place 240 pays: up to 1.5x on identify and decode. Dynamic frequency
+ * scaling (CONFIG_PM_ENABLE, sdkconfig.s3cam) between 160 and 240 only -
+ * the floor is 160, never XTAL, and light sleep stays off, so the APB stays
+ * at 80 MHz and no peripheral sees a clock change; only the CPU divider of
+ * the 480 MHz PLL moves. The camera's XCLK comes from the fixed 160 MHz PLL
+ * tap, not the CPU clock. A CPU_FREQ_MAX lock is held from camera_start()
+ * to camera_stop(), so the heat is only while scanning.
+ *
+ * Measure: the scan log's "cpu 240" field, and `ident` falling to about
+ * two-thirds of its 160 MHz value. Heat: touch the module after five
+ * minutes on Scan. -DCAMERA_SCAN_CPU_MHZ=0 keeps 160 for an A/B.
+ * A build whose generated sdkconfig.<env> predates this (PlatformIO does not
+ * regenerate it) has no PM and logs that it stays at 160:
+ * rm firmware/sdkconfig.esp32s3cam* and rebuild.
+ */
+#ifndef CAMERA_SCAN_CPU_MHZ
+#  define CAMERA_SCAN_CPU_MHZ  240
+#endif
+#if CONFIG_PM_ENABLE && CAMERA_SCAN_CPU_MHZ > 0
+#include "esp_pm.h"
+static esp_pm_lock_handle_t cpu_lock;
+
+static void scan_cpu_boost(bool on)
+{
+    static bool configured;
+    if (!configured) {
+        configured = true;
+        const esp_pm_config_t pm = {
+            .max_freq_mhz = CAMERA_SCAN_CPU_MHZ,
+            .min_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .light_sleep_enable = false,
+        };
+        esp_err_t err = esp_pm_configure(&pm);
+        if (err == ESP_OK) {
+            err = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "scan", &cpu_lock);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "no scan-time CPU boost: %s", esp_err_to_name(err));
+            cpu_lock = NULL;
+        }
+    }
+    if (cpu_lock == NULL) {
+        return;
+    }
+    if (on) {
+        esp_pm_lock_acquire(cpu_lock);
+    } else {
+        esp_pm_lock_release(cpu_lock);
+    }
+}
+#else
+static void scan_cpu_boost(bool on)
+{
+    static bool said;
+    if (on && !said && CAMERA_SCAN_CPU_MHZ > 0) {
+        said = true;
+        ESP_LOGW(TAG, "CONFIG_PM_ENABLE is off in this sdkconfig: the CPU stays at "
+                      "%d MHz while scanning (rm sdkconfig.<env> and rebuild)",
+                 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
+    }
+}
+#endif
+
 static struct quirc *quirc_ctx;
 static bool running;
 
@@ -132,12 +295,24 @@ static struct quirc_code scan_code;
 static struct quirc_data scan_data;
 
 #if BOARD_HAS_SPI_PANEL
-/* The colour kit's grayscale preview: 30 KB, in PSRAM (viewfinder.h). Taken
-   once and kept, so the UI can point the panel at it between frames. */
-static uint8_t         *gray_preview;
-static ViewfinderStats  gray_stats;
+/*
+ * The colour kit's grayscale preview: 30 KB each, in PSRAM (viewfinder.h),
+ * taken once and kept. Two of them, because the decoder renders on its own
+ * task (below) while the UI points the panel at the last one: the renderer
+ * only ever writes the buffer the UI is not showing, and unpublishes it while
+ * it does, so the panel never shows a half-drawn preview. `gray_stats` is the
+ * renderer's working copy (it carries the previous frame for `motion`);
+ * `gray_stats_pub` is what the UI gets with the buffer. Indices under
+ * timing_mux; -1 is none.
+ */
+static uint8_t         *gray_buf[2];
+static int              gray_showing = -1, gray_fresh = -1;
+static ViewfinderStats  gray_stats, gray_stats_pub;
 #else
+/* The OLED bitmap the UI copies, and the renderer's scratch (PSRAM) that is
+   copied into it under the lock, so the UI never copies a half render. */
 static uint8_t  preview[VIEWFINDER_BYTES];
+static uint8_t *preview_work;
 #endif
 static bool     preview_fresh;
 static uint32_t preview_tick;
@@ -228,6 +403,75 @@ static bool sccb_recover(void)
     gpio_reset_pin(sda);
     gpio_reset_pin(scl);
     return ok;
+}
+
+/*
+ * What the sensor's AEC/AGC settled on, read back once a second: exposure in
+ * lines (0x3500-0x3502, line x 16) and the real gain (0x350A/B, 0x10 = 1x),
+ * printed as gain x10. These are the numbers that show whether the gain
+ * ceiling and the shutter cap are doing what camera_start() asked.
+ */
+static void sensor_exposure(unsigned *lines, unsigned *gain_x10)
+{
+    *lines = 0;
+    *gain_x10 = 0;
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor == NULL || sensor->get_reg == NULL) {
+        return;
+    }
+    const int e0 = sensor->get_reg(sensor, 0x3500, 0xFF);
+    const int e1 = sensor->get_reg(sensor, 0x3501, 0xFF);
+    const int e2 = sensor->get_reg(sensor, 0x3502, 0xFF);
+    const int g0 = sensor->get_reg(sensor, 0x350A, 0xFF);
+    const int g1 = sensor->get_reg(sensor, 0x350B, 0xFF);
+    if (e0 >= 0 && e1 >= 0 && e2 >= 0) {
+        *lines = ((unsigned)(e0 & 0x0F) << 12 | (unsigned)e1 << 4 | (unsigned)e2 >> 4);
+    }
+    if (g0 >= 0 && g1 >= 0) {
+        *gain_x10 = (((unsigned)(g0 & 0x03) << 8) | (unsigned)g1) * 10u / 16u;
+    }
+}
+
+/*
+ * One line a second while scanning, so a bench session is diagnosable over
+ * the cable without swapping in the benchmark image. `s` (located) is the
+ * useful count: none means the code is too small, too dim or out of frame;
+ * located without `r` (decodes) means it is seen and its modules are not
+ * resolved. Nothing here is derived from a decoded payload.
+ */
+static void timing_log_maybe(void)
+{
+    const int64_t now_us = esp_timer_get_time();
+    if (timing_window_us == 0) {
+        timing_window_us = now_us;
+        timing_window_frames = stat_frames;
+        return;
+    }
+    const int64_t dt = now_us - timing_window_us;
+    if (dt < 1000000) {
+        return;
+    }
+    ScanTiming snap;
+    portENTER_CRITICAL(&timing_mux);
+    snap = timing;
+    scan_timing_reset(&timing);
+    portEXIT_CRITICAL(&timing_mux);
+
+    char stages[128];
+    scan_timing_format(&snap, stages, sizeof stages);
+    const uint32_t fps_x10 = (uint32_t)((uint64_t)(stat_frames - timing_window_frames) *
+                                        10000000u / (uint64_t)dt);
+    unsigned lines = 0, gain_x10 = 0;
+    sensor_exposure(&lines, &gain_x10);
+    ESP_LOGI(TAG, "scan %s %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux | cpu %u",
+             FRAME_W == 320 ? camera_tune_zoom(zoom_level)->label
+                            : (FRAME_W == 640 ? "VGA" : "SVGA"),
+             (unsigned)(fps_x10 / 10), (unsigned)(fps_x10 % 10), stages,
+             (unsigned)stat_located, (unsigned)stat_decodes,
+             lines, gain_x10 / 10, gain_x10 % 10,
+             (unsigned)esp_rom_get_cpu_ticks_per_us());
+    timing_window_us = now_us;
+    timing_window_frames = stat_frames;
 }
 
 #ifndef BOARD_VIEWFINDER_ROTATE
@@ -329,12 +573,12 @@ bool camera_start(void)
          */
         if (sensor->set_gain_ctrl != NULL)     { sensor->set_gain_ctrl(sensor, 1); }
         if (sensor->set_exposure_ctrl != NULL) { sensor->set_exposure_ctrl(sensor, 1); }
-        if (sensor->set_ae_level != NULL)      { sensor->set_ae_level(sensor, exposure_bias); }
+        if (sensor->set_ae_level != NULL)      { sensor->set_ae_level(sensor, sensor_ae_level(exposure_bias)); }
 
         /*
          * A QR profile, not a photo profile: nothing here is looked at by a
          * person except through a 128x64 preview. Night mode off, because it
-         * exists to choose long exposures. Gain capped at 4x, because gain
+         * exists to choose long exposures. Gain capped at 4x (below), because gain
          * noise lands exactly on the module edges quirc thresholds. Contrast
          * up to separate black from white modules, a little sharpening and a
          * little denoise - more of either softens or haloes the edges. White
@@ -342,7 +586,46 @@ bool camera_start(void)
          * moving the picture between frames is one fewer cause of a miss.
          */
         if (sensor->set_aec2 != NULL)          { sensor->set_aec2(sensor, 0); }
-        if (sensor->set_gainceiling != NULL)   { sensor->set_gainceiling(sensor, GAINCEILING_4X); }
+        /*
+         * Not set_gainceiling(): the vendored driver writes its enum value
+         * raw into 0x3A18/19, and GAINCEILING_4X is 1, which in the
+         * register's real-gain format (0x10 = 1x) is a 1/16x ceiling. That
+         * pinned AGC at its minimum from the first bench session on, so all
+         * brightness came from shutter time - the blur the exposure bias was
+         * then fighting. A real CAMERA_GAIN_CEILING_X, through set_reg()
+         * (camera-tune.h). Measure: the scan log's "gain" now climbs above
+         * 1.0x on a dim screen and "exp" falls; try 8 with
+         * -DCAMERA_GAIN_CEILING_X=8 for dim phones.
+         */
+        if (sensor->set_reg != NULL) {
+            sensor->set_reg(sensor, 0x3A18, 0x3FF,
+                            camera_tune_gain_ceiling_reg(CAMERA_GAIN_CEILING_X));
+        }
+        /* Banding at the local mains frequency, not the driver's fixed
+           50 Hz. Measure: a printed code under room LED light shows no
+           rolling dark bands in the PC stream. */
+        if (sensor->set_reg != NULL) {
+            sensor->set_reg(sensor, 0x3C01, CAMERA_TUNE_BAND_3C01_MASK,
+                            camera_tune_band_3c01(CAMERA_MAINS_HZ));
+            sensor->set_reg(sensor, 0x3C00, CAMERA_TUNE_BAND_3C00_MASK,
+                            camera_tune_band_3c00(CAMERA_MAINS_HZ));
+        }
+        /* Cap the shutter, both banding variants, and weight the metering
+           to the middle of the view. Exposure stays automatic: no manual
+           value that could stretch a frame (see above). */
+        if (sensor->set_reg != NULL && CAMERA_SHUTTER_CAP_LINES > 0) {
+            const uint16_t cap = camera_tune_shutter_cap(CAMERA_SHUTTER_CAP_LINES,
+                                                         CAMERA_DRIVER_VTS);
+            sensor->set_reg(sensor, 0x3A02, 0xFFFF, cap);
+            sensor->set_reg(sensor, 0x3A14, 0x0FFF, cap);
+        }
+        if (sensor->set_reg != NULL && CAMERA_AEC_CENTRE) {
+            uint8_t w[8];
+            camera_tune_aec_pack(CAMERA_TUNE_AEC_CENTRE, w);
+            for (int i = 0; i < 8; i++) {
+                sensor->set_reg(sensor, 0x5688 + i, 0xFF, w[i]);
+            }
+        }
         if (sensor->set_contrast != NULL)      { sensor->set_contrast(sensor, 2); }
         if (sensor->set_sharpness != NULL)     { sensor->set_sharpness(sensor, 1); }
         if (sensor->set_denoise != NULL)       { sensor->set_denoise(sensor, 1); }
@@ -383,6 +666,13 @@ bool camera_start(void)
                  sensor->status.vflip);
     }
 
+    /* 1x on every start (the Scan screen opens at the full field); the
+       bench image may start zoomed. */
+    zoom_level = 0;
+    if (ZOOM_START > 0 && ZOOM_START < CAMERA_ZOOM_COUNT && apply_zoom(ZOOM_START)) {
+        zoom_level = ZOOM_START;
+    }
+
     quirc_ctx = quirc_new();
     if (quirc_ctx == NULL || quirc_resize(quirc_ctx, FRAME_W, FRAME_H) < 0) {
         /* quirc's image and pixel planes are 77 KB each and land in PSRAM.
@@ -398,15 +688,26 @@ bool camera_start(void)
     preview_fresh = false;
     preview_tick = 0;
 #if BOARD_HAS_SPI_PANEL
-    if (gray_preview == NULL) {
-        gray_preview = heap_caps_malloc(VIEWFINDER_GRAY_BYTES, MALLOC_CAP_SPIRAM);
+    for (int i = 0; i < 2; i++) {
+        if (gray_buf[i] == NULL) {
+            gray_buf[i] = heap_caps_malloc(VIEWFINDER_GRAY_BYTES, MALLOC_CAP_SPIRAM);
+        }
     }
     memset(&gray_stats, 0, sizeof gray_stats);
+    gray_showing = gray_fresh = -1;
+#else
+    if (preview_work == NULL) {
+        preview_work = heap_caps_malloc(VIEWFINDER_BYTES, MALLOC_CAP_SPIRAM);
+    }
 #endif
     stat_frames = 0;
     stat_decodes = 0;
     stat_located = 0;
+    scan_timing_reset(&timing);
+    timing_window_us = 0;
+    scan_cpu_boost(true);
     running = true;
+    decode_start();
     ESP_LOGI(TAG, "camera up: %dx%d grayscale", FRAME_W, FRAME_H);
     return true;
 }
@@ -416,6 +717,7 @@ void camera_stop(void)
     if (!running) {
         return;
     }
+    decode_park();
     running = false;
     streaming = false;
     /*
@@ -427,33 +729,32 @@ void camera_stop(void)
     esp_camera_deinit();
     quirc_destroy(quirc_ctx);
     quirc_ctx = NULL;
+    scan_cpu_boost(false);
     preview_fresh = false;
 #if BOARD_HAS_SPI_PANEL
     gray_stats.primed = false;
+    gray_showing = gray_fresh = -1;
 #else
     memset(preview, 0, sizeof preview);
 #endif
 }
 
-bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
+/* One frame: capture, preview, decode. Called by the decode task, or by
+   camera_next_qr() itself when there is none. */
+static bool process_frame(char *out, size_t out_size, size_t *out_len)
 {
     if (!running || out == NULL || out_size == 0) {
         return false;
     }
 
+    const int64_t t_wait = esp_timer_get_time();
     camera_fb_t *fb = esp_camera_fb_get();
     if (fb == NULL) {
         return false;
     }
+    timing_add(SCAN_STAGE_WAIT, t_wait);
     stat_frames++;
 
-    /*
-     * One line a second while scanning, so a bench session is diagnosable over
-     * the cable without swapping in the benchmark image. `located` is the
-     * useful number: none means the code is too small, too dim or out of
-     * frame; located without decodes means it is seen and its modules are not
-     * resolved. Nothing here is derived from a decoded payload.
-     */
     /*
      * Optional: a frame every so often while scanning, without anyone pressing
      * anything. Off by default; built with -DCAMERA_AUTODUMP_MS=5000 for a
@@ -474,16 +775,7 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
     }
 #endif
 
-    {
-        static int64_t last_log_us;
-        const int64_t now_us = esp_timer_get_time();
-        if (now_us - last_log_us > 1000000) {
-            last_log_us = now_us;
-            ESP_LOGI(TAG, "scanning: %u frames, %u located, %u decoded",
-                     (unsigned)stat_frames, (unsigned)stat_located,
-                     (unsigned)stat_decodes);
-        }
-    }
+    timing_log_maybe();
 
     bool got = false;
 
@@ -502,18 +794,39 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
 
         if (CAMERA_PREVIEW_EVERY > 0 &&
             ++preview_tick % CAMERA_PREVIEW_EVERY == 0) {
+            const int64_t t_prev = esp_timer_get_time();
 #if BOARD_HAS_SPI_PANEL
             /* A millisecond or two at QVGA: one pass over the frame for the
                box average, one over the 30 KB preview for the stretch. */
-            if (gray_preview != NULL) {
-                viewfinder_render_gray(fb->buf, FRAME_W, FRAME_H, gray_preview,
+            if (gray_buf[0] != NULL && gray_buf[1] != NULL) {
+                portENTER_CRITICAL(&timing_mux);
+                const int target = gray_showing == 0 ? 1 : 0;
+                const int last = gray_fresh >= 0 ? gray_fresh : gray_showing;
+                gray_fresh = -1;
+                portEXIT_CRITICAL(&timing_mux);
+                /* The renderer compares with the previous preview (motion),
+                   so the target starts as a copy of the newest one. */
+                if (last >= 0 && last != target) {
+                    memcpy(gray_buf[target], gray_buf[last], VIEWFINDER_GRAY_BYTES);
+                }
+                viewfinder_render_gray(fb->buf, FRAME_W, FRAME_H, gray_buf[target],
                                        &gray_stats, preview_true);
+                portENTER_CRITICAL(&timing_mux);
+                gray_stats_pub = gray_stats;
+                gray_fresh = target;
                 preview_fresh = true;
+                portEXIT_CRITICAL(&timing_mux);
             }
 #else
-            viewfinder_render(fb->buf, FRAME_W, FRAME_H, preview);
-            preview_fresh = true;
+            if (preview_work != NULL) {
+                viewfinder_render(fb->buf, FRAME_W, FRAME_H, preview_work);
+                portENTER_CRITICAL(&timing_mux);
+                memcpy(preview, preview_work, sizeof preview);
+                preview_fresh = true;
+                portEXIT_CRITICAL(&timing_mux);
+            }
 #endif
+            timing_add(SCAN_STAGE_PREVIEW, t_prev);
         }
 
         /*
@@ -526,12 +839,17 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
          * identify stage on the very next line costs.
          */
         int w = 0, h = 0;
+        const int64_t t_copy = esp_timer_get_time();
         uint8_t *img = quirc_begin(quirc_ctx, &w, &h);
         memcpy(img, fb->buf, (size_t)w * (size_t)h);
+        timing_add(SCAN_STAGE_COPY, t_copy);
+        const int64_t t_ident = esp_timer_get_time();
         quirc_end(quirc_ctx);
+        timing_add(SCAN_STAGE_IDENTIFY, t_ident);
 
         const int n = quirc_count(quirc_ctx);
         stat_located += (uint32_t)n;
+        const int64_t t_dec = esp_timer_get_time();
         for (int i = 0; i < n && !got; i++) {
             quirc_extract(quirc_ctx, i, &scan_code);
             if (quirc_decode(&scan_code, &scan_data) != QUIRC_SUCCESS) {
@@ -563,10 +881,180 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
             }
             got = true;
         }
+        if (n > 0) {
+            timing_add(SCAN_STAGE_DECODE, t_dec);
+        }
     }
 
     esp_camera_fb_return(fb);
     return got;
+}
+
+/*
+ * Decode on core 1, capture on core 0.
+ *
+ * Until now camera_next_qr() captured and decoded inside the UI task's loop,
+ * so the panel flush (~25 ms a preview on the colour kit) and quirc took
+ * turns on one core while the other sat mostly idle. Here a task pinned to
+ * core 1 runs process_frame() back to back and posts each UR string to a
+ * queue; camera_next_qr() only drains it. The camera driver's DMA task stays
+ * on core 0 (CONFIG_CAMERA_CORE0), and so do NimBLE and, usually, the UI.
+ *
+ * Its 20 KB stack is in PSRAM (xTaskCreatePinnedToCoreWithCaps): quirc_decode
+ * alone puts ~8.9 KB on it (main.c), and internal RAM is what the colour kit
+ * does not have. That is safe for this task and no other: it holds only
+ * camera pixels, quirc's working state and UR part strings (a PCZT fragment,
+ * not key material), never a secret, and it never writes flash (a task with
+ * an external stack must not; NVS is the UI's). The queue's storage and the
+ * hand-off buffers are PSRAM too; its control block, the task's TCB and the
+ * semaphore stay internal (a few hundred bytes), as the spinlocks inside
+ * them require.
+ *
+ * -DCAMERA_DECODE_TASK=0 restores decoding in the caller's loop, for an A/B,
+ * and so does any failure to create these at runtime.
+ *
+ * Measure: the scan log's `draw` no longer adds to the frame time (fps
+ * rises by about draw / (wait + ident + dec) on the colour kit), and the
+ * bench's frames/s is unchanged or better. TODO(board): confirm no panel
+ * tearing and that Cancel leaves Scan promptly.
+ */
+#ifndef CAMERA_DECODE_TASK
+#  define CAMERA_DECODE_TASK  1
+#endif
+#define CAMERA_QR_MAX     1100   /* what the UI and the bench pass in */
+#define DECODE_STACK      20480
+#define DECODE_QUEUE_LEN  4
+
+#if CAMERA_DECODE_TASK
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/idf_additions.h"
+
+typedef struct {
+    uint16_t len;
+    char     text[CAMERA_QR_MAX];
+} QrItem;
+
+static TaskHandle_t      decode_task;
+static SemaphoreHandle_t decode_parked;
+static QueueHandle_t     qr_queue;
+static StaticQueue_t     qr_queue_cb;       /* internal: it holds a spinlock */
+static QrItem           *qr_tx, *qr_rx;     /* PSRAM hand-off buffers */
+static volatile bool     decode_run;
+static uint32_t          qr_dropped;
+
+static void decode_loop(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        while (decode_run) {
+            size_t len = 0;
+            if (process_frame(qr_tx->text, sizeof qr_tx->text, &len)) {
+                qr_tx->len = (uint16_t)len;
+                if (xQueueSend(qr_queue, qr_tx, 0) != pdTRUE) {
+                    qr_dropped++;   /* the UI is behind; a fountain part is replaceable */
+                }
+            } else if (!running) {
+                vTaskDelay(1);
+            }
+        }
+        xSemaphoreGive(decode_parked);
+    }
+}
+
+/* Once, on the first camera_start(); then parked between scans. */
+static bool decode_task_ready(void)
+{
+    if (decode_task != NULL) {
+        return true;
+    }
+    static bool failed;
+    if (failed) {
+        return false;
+    }
+    uint8_t *storage = heap_caps_malloc(DECODE_QUEUE_LEN * sizeof(QrItem), MALLOC_CAP_SPIRAM);
+    qr_tx = heap_caps_malloc(sizeof(QrItem), MALLOC_CAP_SPIRAM);
+    qr_rx = heap_caps_malloc(sizeof(QrItem), MALLOC_CAP_SPIRAM);
+    decode_parked = xSemaphoreCreateBinary();
+    if (storage != NULL && qr_tx != NULL && qr_rx != NULL && decode_parked != NULL) {
+        qr_queue = xQueueCreateStatic(DECODE_QUEUE_LEN, sizeof(QrItem), storage, &qr_queue_cb);
+    }
+    if (qr_queue == NULL ||
+        xTaskCreatePinnedToCoreWithCaps(decode_loop, "qr-decode", DECODE_STACK, NULL, 4,
+                                        &decode_task, 1, MALLOC_CAP_SPIRAM) != pdPASS) {
+        ESP_LOGW(TAG, "no decode task; decoding in the UI loop");
+        failed = true;
+        decode_task = NULL;
+        return false;
+    }
+    ESP_LOGI(TAG, "decode task on core 1, stack %u B in PSRAM", (unsigned)DECODE_STACK);
+    return true;
+}
+
+static void decode_start(void)
+{
+    if (!decode_task_ready()) {
+        return;
+    }
+    xQueueReset(qr_queue);
+    qr_dropped = 0;
+    decode_run = true;
+    xTaskNotifyGive(decode_task);
+}
+
+/* Before the driver and quirc go away: the task must be out of
+   process_frame(). It finishes the frame it is on (fb_get waits at most a
+   frame on a live sensor, the driver's timeout on a dead one). */
+static void decode_park(void)
+{
+    if (decode_task == NULL || !decode_run) {
+        return;
+    }
+    decode_run = false;
+    if (xSemaphoreTake(decode_parked, pdMS_TO_TICKS(6000)) != pdTRUE) {
+        ESP_LOGE(TAG, "decode task did not park");
+    }
+}
+#else
+static void decode_start(void) { }
+static void decode_park(void) { }
+#endif
+
+bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
+{
+    if (!running || out == NULL || out_size == 0) {
+        return false;
+    }
+#if CAMERA_DECODE_TASK
+    if (decode_task != NULL && decode_run) {
+        if (xQueueReceive(qr_queue, qr_rx, 0) != pdTRUE) {
+            return false;
+        }
+        const size_t len = qr_rx->len;
+        if (len + 1 > out_size) {
+            return false;
+        }
+        memcpy(out, qr_rx->text, len);
+        out[len] = '\0';
+        if (out_len != NULL) {
+            *out_len = len;
+        }
+        return true;
+    }
+#endif
+    return process_frame(out, out_size, out_len);
+}
+
+void camera_note_draw_us(uint32_t us)
+{
+    if (!running) {
+        return;
+    }
+    portENTER_CRITICAL(&timing_mux);
+    scan_timing_add(&timing, SCAN_STAGE_DRAW, us);
+    portEXIT_CRITICAL(&timing_mux);
 }
 
 void camera_set_orientation(uint8_t mode)
@@ -591,7 +1079,7 @@ void camera_set_exposure_bias(int8_t level)
     exposure_bias = (int8_t)(level < -5 ? -5 : (level > 0 ? 0 : level));
     sensor_t *sensor = esp_camera_sensor_get();
     if (running && sensor != NULL && sensor->set_ae_level != NULL) {
-        sensor->set_ae_level(sensor, exposure_bias);
+        sensor->set_ae_level(sensor, sensor_ae_level(exposure_bias));
     }
 }
 
@@ -599,15 +1087,44 @@ int8_t camera_exposure_bias(void) { return exposure_bias; }
 
 uint16_t camera_frame_width(void) { return FRAME_W; }
 
-bool camera_next_frame_size(void)
+/*
+ * Point the sensor's window at a zoom level, live: no restart, the
+ * framebuffers stay 320x240. set_res_raw() also re-applies mirror and flip
+ * (set_image_options()), so the orientation survives. A frame or two around
+ * the switch may be mixed; quirc simply misses them.
+ */
+static bool apply_zoom(uint8_t level)
 {
-    frame_mode = (uint8_t)((frame_mode + 1) % FRAME_MODE_COUNT);
-    /* The driver fixes the frame size at init, so a change is a restart.
-       Started even if the previous size failed to start, or one size that
-       will not come up would strand OK there for good. */
-    camera_stop();
-    return camera_start();
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor == NULL || sensor->set_res_raw == NULL || FRAME_W != 320) {
+        return level == 0;
+    }
+    const CameraZoom *z = camera_tune_zoom(level);
+    const int err = sensor->set_res_raw(sensor, z->sx, z->sy, z->ex, z->ey, z->ox, z->oy,
+                                        z->tx, z->ty, z->ow, z->oh, z->scale, z->binning);
+    ESP_LOGI(TAG, "zoom %s: window (%u,%u)-(%u,%u) VTS %u -> %s", z->label,
+             z->sx, z->sy, z->ex, z->ey, z->ty, err ? "FAILED" : "ok");
+    return err == 0;
 }
+
+bool camera_next_zoom(void)
+{
+    if (!running) {
+        return false;
+    }
+    const uint8_t next = camera_tune_zoom_next(zoom_level);
+    if (apply_zoom(next)) {
+        zoom_level = next;
+        return true;
+    }
+    /* Back to the full field, which is the driver's own QVGA window. */
+    (void)apply_zoom(0);
+    zoom_level = 0;
+    return false;
+}
+
+uint8_t camera_zoom(void) { return zoom_level; }
+const char *camera_zoom_label(void) { return camera_tune_zoom(zoom_level)->label; }
 
 
 
@@ -674,21 +1191,27 @@ const uint8_t *camera_preview_take(void) { return NULL; }
 
 const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
 {
-    if (!preview_fresh || gray_preview == NULL) {
+    portENTER_CRITICAL(&timing_mux);
+    if (gray_fresh < 0) {
+        portEXIT_CRITICAL(&timing_mux);
         return NULL;
     }
+    gray_showing = gray_fresh;
+    gray_fresh = -1;
     preview_fresh = false;
-    if (stats != NULL) { *stats = gray_stats; }
-    return gray_preview;
+    if (stats != NULL) { *stats = gray_stats_pub; }
+    const uint8_t *buf = gray_buf[gray_showing];
+    portEXIT_CRITICAL(&timing_mux);
+    return buf;
 }
 #else
 const uint8_t *camera_preview_take(void)
 {
-    if (!preview_fresh) {
-        return NULL;
-    }
+    portENTER_CRITICAL(&timing_mux);
+    const bool fresh = preview_fresh;
     preview_fresh = false;
-    return preview;
+    portEXIT_CRITICAL(&timing_mux);
+    return fresh ? preview : NULL;
 }
 
 const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
@@ -743,8 +1266,10 @@ void camera__set_located_for_test(uint32_t located, uint32_t decodes)
     test_decodes = decodes;
 }
 
+static uint8_t test_zoom;
 bool camera_start(void)
 {
+    test_zoom = 0;
     test_running = test_frame != NULL;
     test_frames = 0;
     test_mono_fresh = test_gray_fresh = false;
@@ -824,6 +1349,7 @@ void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located)
 #endif
 
 void camera_set_orientation(uint8_t mode) { (void)mode; }
+void camera_note_draw_us(uint32_t us) { (void)us; }
 void camera_dump_frame(void) { }
 uint8_t camera_orientation(void) { return 0; }
 #ifdef LEEK_HOST_TEST
@@ -837,7 +1363,30 @@ int8_t camera_exposure_bias(void) { return test_bias; }
 void camera_set_exposure_bias(int8_t level) { (void)level; }
 int8_t camera_exposure_bias(void) { return 0; }
 #endif
-bool camera_next_frame_size(void) { return false; }
+#ifdef LEEK_HOST_TEST
+/* The host stand-in's zoom: the real table and cycle, and a switch for a
+   level that fails to apply. */
+static bool    test_zoom_fails;
+void camera__set_zoom_fails_for_test(bool fails) { test_zoom_fails = fails; }
+bool camera_next_zoom(void)
+{
+    if (!test_running) {
+        return false;
+    }
+    if (test_zoom_fails) {
+        test_zoom = 0;
+        return false;
+    }
+    test_zoom = camera_tune_zoom_next(test_zoom);
+    return true;
+}
+uint8_t camera_zoom(void) { return test_zoom; }
+const char *camera_zoom_label(void) { return camera_tune_zoom(test_zoom)->label; }
+#else
+bool camera_next_zoom(void) { return false; }
+uint8_t camera_zoom(void) { return 0; }
+const char *camera_zoom_label(void) { return camera_tune_zoom(0)->label; }
+#endif
 void camera_set_stream(bool on) { (void)on; }
 bool camera_streaming(void) { return false; }
 

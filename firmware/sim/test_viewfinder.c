@@ -14,6 +14,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "viewfinder.h"
@@ -437,12 +438,17 @@ static void test_lines(void)
         }
     }
 
-    viewfinder_stats_line(320, 12, 3, 1, line);
-    CHECK(!strcmp(line, "QVGA 12fps s:3 r:1"), "stats: \"%s\"", line);
-    viewfinder_stats_line(800, 0xFFFF, 12345, 999, line);
-    CHECK(!strcmp(line, "SVGA --fps s:99 r:99"), "stats clamp: \"%s\"", line);
-    viewfinder_stats_line(640, 500, 0, 0, line);
-    CHECK(!strcmp(line, "VGA 99fps s:0 r:0"), "stats VGA: \"%s\"", line);
+    viewfinder_stats_line("1x", 12, 3, 1, line);
+    CHECK(!strcmp(line, "1x 12fps s:3 r:1"), "stats: \"%s\"", line);
+    viewfinder_stats_line("3x", 0xFFFF, 12345, 999, line);
+    CHECK(!strcmp(line, "3x --fps s:99 r:99"), "stats clamp: \"%s\"", line);
+    viewfinder_stats_line("2x", 500, 0, 0, line);
+    CHECK(!strcmp(line, "2x 99fps s:0 r:0"), "stats 2x: \"%s\"", line);
+    /* A long label is cut so the row still fits; no label is "?". */
+    viewfinder_stats_line("ZOOMZOOM", 99, 99, 99, line);
+    CHECK(!strcmp(line, "ZOOM 99fps s:99 r:99") && strlen(line) <= 21, "stats long: \"%s\"", line);
+    viewfinder_stats_line(NULL, 1, 0, 0, line);
+    CHECK(!strcmp(line, "? 1fps s:0 r:0"), "stats no label: \"%s\"", line);
 
     viewfinder_progress_line(10, 6, line);
     CHECK(!strcmp(line, "[####------] 6 left"), "progress: \"%s\"", line);
@@ -452,6 +458,36 @@ static void test_lines(void)
     CHECK(strlen(line) <= 21 && !strncmp(line, "[----------] 999", 16), "progress clamp: \"%s\"", line);
     viewfinder_progress_line(0, 0, line);
     CHECK(!strcmp(line, "[----------] 0 left"), "progress none: \"%s\"", line);
+}
+
+/* The exposure row's colour: graded on the printed percentage, so the
+   colour and the number can never disagree. */
+static void test_level_grade(void)
+{
+    printf("Level grade\n");
+    char line[VIEWFINDER_LINE];
+    for (int m = 0; m < 256; m++) {
+        viewfinder_exposure_line(-4, (uint8_t)m, line);
+        const unsigned pct = (unsigned)atoi(line + strlen(line) - VIEWFINDER_EXPOSURE_PCT_CHARS);
+        const viewfinder_level_t want =
+            (pct >= 25 && pct <= 60) ? VIEWFINDER_LEVEL_GOOD :
+            (pct >= 15 && pct <= 85) ? VIEWFINDER_LEVEL_MEDIUM : VIEWFINDER_LEVEL_BAD;
+        CHECK(viewfinder_level_grade((uint8_t)m) == want,
+              "mean %d (%u%%) graded %d, not %d", m, pct,
+              (int)viewfinder_level_grade((uint8_t)m), (int)want);
+        CHECK(line[strlen(line) - 1] == '%', "row does not end in its percentage: \"%s\"", line);
+    }
+    /* The edges, by name. 59 is 23%: medium. */
+    CHECK(viewfinder_level_grade(0)   == VIEWFINDER_LEVEL_BAD,    "black is not bad");
+    CHECK(viewfinder_level_grade(39)  == VIEWFINDER_LEVEL_MEDIUM, "15%% is not medium");
+    CHECK(viewfinder_level_grade(38)  == VIEWFINDER_LEVEL_BAD,    "14%% is not bad");
+    CHECK(viewfinder_level_grade(59)  == VIEWFINDER_LEVEL_MEDIUM, "23%% is not medium");
+    CHECK(viewfinder_level_grade(64)  == VIEWFINDER_LEVEL_GOOD,   "25%% is not good");
+    CHECK(viewfinder_level_grade(155) == VIEWFINDER_LEVEL_GOOD,   "60%% is not good");
+    CHECK(viewfinder_level_grade(156) == VIEWFINDER_LEVEL_MEDIUM, "61%% is not medium");
+    CHECK(viewfinder_level_grade(217) == VIEWFINDER_LEVEL_MEDIUM, "85%% is not medium");
+    CHECK(viewfinder_level_grade(220) == VIEWFINDER_LEVEL_BAD,    "86%% is not bad");
+    CHECK(viewfinder_level_grade(255) == VIEWFINDER_LEVEL_BAD,    "white is not bad");
 }
 
 static void test_gray_guards(void)
@@ -539,6 +575,7 @@ int main(void)
     test_gray_motion();
     test_hints();
     test_lines();
+    test_level_grade();
     test_gray_guards();
 
     if (failures) {

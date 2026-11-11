@@ -32,6 +32,12 @@ int32_t zc_account_derive(const uint8_t seed[64], uint32_t account, uint8_t net,
                           const uint8_t *t_account, const uint8_t *t_receiver,
                           zs_account *out);
 
+/* The Orchard-only UA (ZIP 316) for a raw Orchard receiver on `net`, the
+ * address the Receive pages show: 106 characters on mainnet against 141 for
+ * Orchard + P2PKH, a QR two versions smaller. ZS_OK, ZS_ERR_ARG, or
+ * ZS_ERR_ENCODE if `cap` is too small. */
+int32_t zc_orchard_ua(char *out, size_t cap, uint8_t net, const uint8_t orchard[43]);
+
 typedef struct zc_ctx zc_ctx;
 
 zc_ctx *zc_pczt_new(const uint8_t *bytes, size_t len, int32_t *err);

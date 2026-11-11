@@ -122,6 +122,11 @@ WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount
     DeriveJob job = { { account, network, out }, WALLET_ERROR_DERIVATION_FAILED };
     const bool ran = zcash_worker_run(derive_job, &job);
     WalletError err = ran ? job.err : WALLET_ERROR_DERIVATION_FAILED;
+    if (err == WALLET_OK &&
+        zc_orchard_ua(out->ua_orchard, sizeof out->ua_orchard, network,
+                      out->keys.orchard_address) != ZS_OK) {
+        err = WALLET_ERROR_DERIVATION_FAILED;
+    }
     if (err != WALLET_OK) {
         DERIVE_FAIL("account %u net %u: %s, wallet error %d", (unsigned)account,
                     (unsigned)network, ran ? "derived" : "the Zcash worker did not run",

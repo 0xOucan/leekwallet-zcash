@@ -6,10 +6,19 @@
  * suite reads them, so what is tested is exactly what the panel shows.
  *
  * Pages, in order:
- *   - the unified address, whole, over as many pages as it needs;
- *   - the unified address as a QR;
+ *   - the shielded address, whole, over as many pages as it needs;
+ *   - the shielded address as a QR;
  *   - the transparent address, with a warning that it is public;
  *   - the transparent address as a QR.
+ *
+ * The shielded address is the account's Orchard receiver alone, a UA with
+ * no P2PKH item (ZcashAccount.ua_orchard): 106 characters on mainnet, 110 on
+ * testnet, against 141/145 with the transparent receiver. Its QR is a version
+ * 5 or 6 where the full UA needs a 7, so the colour panel draws it at 5 px a
+ * module instead of 4 (board, 2026-11-10: "shielded address qr code is not
+ * bigger"). It is also the more private address to hand out: a payer cannot
+ * fall back to the transparent receiver. That receiver keeps its own pages,
+ * and the full UA is still what the companion imports (protocol.c).
  *
  * QR codes carry the address exactly as encoded, lowercase, in byte mode.
  * Upper case would reach alphanumeric mode and a smaller code, but

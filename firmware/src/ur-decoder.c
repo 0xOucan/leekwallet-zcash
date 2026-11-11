@@ -206,6 +206,9 @@ static void absorb(UrDecoder *d, uint32_t index, const uint8_t *data)
     }
 }
 
+/* Why the last part was refused, for the scan log (ur_decoder_why). */
+#define REJECT(reason) do { d->why = (reason); return UR_PART_REJECTED; } while (0)
+
 UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
 {
     if (d == NULL || ur == NULL || d->fragments == NULL) {
@@ -224,16 +227,16 @@ UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
             } else if (slashes == 1) {
                 second = i;
             } else {
-                return UR_PART_REJECTED;
+                REJECT("three slashes");
             }
             slashes++;
         }
     }
     if (slashes == 0 || ur_len < 4) {
-        return UR_PART_REJECTED;
+        REJECT("no slash");
     }
     if (ur[0] != 'u' && ur[0] != 'U') {
-        return UR_PART_REJECTED;
+        REJECT("not ur:");
     }
 
     uint8_t raw[UR_PART_MAX];
@@ -246,7 +249,7 @@ UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
         /* Single part: the whole message, no CBOR envelope. */
         if (!ur_decode(ur, ur_len, type, sizeof type, raw, sizeof raw,
                        &raw_len)) {
-            return UR_PART_REJECTED;
+            REJECT("single-part decode");
         }
         seq_num = 1;
         seq_len = 1;
@@ -257,7 +260,7 @@ UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
     } else {
         const size_t type_len = first - 3;
         if (type_len == 0 || type_len > UR_TYPE_MAX) {
-            return UR_PART_REJECTED;
+            REJECT("type length");
         }
         for (size_t i = 0; i < type_len; i++) {
             const char c = ur[3 + i];
@@ -268,40 +271,40 @@ UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
         uint32_t hdr_num, hdr_len;
         if (!parse_seq(ur + first + 1, second - first - 1, &hdr_num,
                        &hdr_len)) {
-            return UR_PART_REJECTED;
+            REJECT("sequence header");
         }
         if (!ur_bytewords_decode(ur + second + 1, ur_len - second - 1,
                                  raw, sizeof raw, &raw_len)) {
-            return UR_PART_REJECTED;
+            REJECT("bytewords");
         }
         if (!parse_part(raw, raw_len, &seq_num, &seq_len, &message_len,
                         &checksum, &data, &data_len)) {
-            return UR_PART_REJECTED;
+            REJECT("part CBOR");
         }
         /* The header outside the CBOR and the values inside it must agree;
            if they do not, one of them is lying and we cannot tell which. */
         if (hdr_num != seq_num || hdr_len != seq_len) {
-            return UR_PART_REJECTED;
+            REJECT("header/CBOR mismatch");
         }
     }
 
     if (seq_num == 0 || seq_len == 0 || seq_len > UR_MAX_PARTS ||
         data_len == 0 || message_len == 0) {
-        return UR_PART_REJECTED;
+        REJECT("zero field");
     }
     /* The fragment length is implied, and the sender does not get to make the
        last fragment a different size from the rest. */
     if ((uint64_t)seq_len * data_len < message_len ||
         (uint64_t)(seq_len - 1) * data_len >= message_len) {
-        return UR_PART_REJECTED;
+        REJECT("fragment size");
     }
 
     if (!d->started) {
         if ((size_t)seq_len * data_len > d->fragments_cap) {
-            return UR_PART_REJECTED;
+            REJECT("too big for buffers");
         }
         if ((size_t)UR_DECODER_MIXED * data_len > d->mixed_cap) {
-            return UR_PART_REJECTED;
+            REJECT("mixed too big");
         }
         d->started = true;
         d->seq_len = seq_len;
@@ -315,14 +318,14 @@ UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
         if (seq_len != d->seq_len || message_len != d->message_len ||
             checksum != d->checksum || data_len != d->fragment_len ||
             strcmp(type, d->type) != 0) {
-            return UR_PART_REJECTED;
+            REJECT("another message");
         }
     }
 
     uint8_t mask[UR_PART_MASK_BYTES];
     if (!ur_fountain_fragments(seq_num, d->seq_len, d->checksum, mask,
                                &d->scratch)) {
-        return UR_PART_REJECTED;
+        REJECT("fountain mask");
     }
 
     uint8_t work[UR_PART_MAX];
@@ -364,7 +367,7 @@ UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
        checksum is over the message, not the padded fragments. */
     if (ur_crc32(d->fragments, d->message_len) != d->checksum) {
         ur_decoder_reset(d);
-        return UR_PART_REJECTED;
+        REJECT("message checksum");
     }
     return UR_PART_COMPLETE;
 }
