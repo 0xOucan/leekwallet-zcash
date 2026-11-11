@@ -57,6 +57,7 @@ static void account_from(const zv_key_vector *v, ZcashAccount *a)
     snprintf(a->keys.ufvk, sizeof a->keys.ufvk, "%s", v->ufvk);
     snprintf(a->keys.ua, sizeof a->keys.ua, "%s", v->ua);
     snprintf(a->t_address, sizeof a->t_address, "%s", v->transparent_address);
+    snprintf(a->ua_orchard, sizeof a->ua_orchard, "%s", v->ua_orchard_only);
 }
 
 static bool have_zbar;
@@ -125,10 +126,10 @@ static void test_snapshot(void)
 
     ZRecvPage p;
     CHECK(zrecv_render(&a, 0, &p) && p.kind == ZRECV_TEXT, "page 0 is text");
-    CHECK(strcmp(p.row[0], "UA 1/2  acct 0  MAIN") == 0, "title \"%s\"", p.row[0]);
-    CHECK(strncmp(p.row[1], a.keys.ua, 21) == 0, "first address row");
+    CHECK(strcmp(p.row[0], "UA 1/1  acct 0  MAIN") == 0, "title \"%s\"", p.row[0]);
+    CHECK(strncmp(p.row[1], a.ua_orchard, 21) == 0, "first address row");
     CHECK(strcmp(p.row[7], "BACK    UP/DN    QR") == 0, "footer \"%s\"", p.row[7]);
-    CHECK(n == 5, "two UA pages, UA QR, t-addr, t-addr QR: %d", n);
+    CHECK(n == 4, "one Orchard-only UA page, its QR, t-addr, t-addr QR: %d", n);
     CHECK(!zrecv_render(&a, n, &p) && !zrecv_render(&a, -1, &p), "out of range");
 }
 
@@ -148,7 +149,7 @@ static void test_every_vector(void)
             CHECK(zrecv_render(&a, pg, &p), "page %d renders", pg);
             if (p.kind == ZRECV_QR) {
                 if (ua_qr < 0) ua_qr = pg; else t_qr = pg;
-                const char *want = ua_qr == pg ? v->ua : v->transparent_address;
+                const char *want = ua_qr == pg ? v->ua_orchard_only : v->transparent_address;
                 CHECK(p.qr && strcmp(p.qr, want) == 0, "QR carries the address as encoded");
                 CHECK(oled_qr_fits(p.version, p.scale), "QR v%u x%u fits", p.version, p.scale);
                 CHECK(scans_to(&p, want), "QR page %d scans back", pg);
@@ -165,7 +166,8 @@ static void test_every_vector(void)
                 CHECK(strstr(p.row[5], "PUBLIC") != NULL, "t-address called public");
             }
         }
-        CHECK(strcmp(ua, v->ua) == 0, "UA reassembles:\n      %s\n      %s", ua, v->ua);
+        CHECK(strcmp(ua, v->ua_orchard_only) == 0, "Orchard-only UA reassembles:\n      %s\n      %s",
+              ua, v->ua_orchard_only);
         CHECK(strcmp(t, v->transparent_address) == 0, "t-address reassembles");
         CHECK(ua_qr == n - 3 && t_text == n - 2 && t_qr == n - 1, "page order");
         CHECK(zrecv_toggle_qr(&a, 0) == ua_qr && zrecv_toggle_qr(&a, ua_qr) == 0 &&
@@ -175,12 +177,30 @@ static void test_every_vector(void)
     }
 }
 
+/* An account with no Orchard-only UA (derivation never filled it) still
+ * shows its full UA rather than nothing. */
+static void test_full_ua_fallback(void)
+{
+    ctx = "fallback to the full UA";
+    ZcashAccount a;
+    account_from(&ZV_KEYS[0], &a);
+    a.ua_orchard[0] = '\0';
+    ZRecvPage p;
+    const int qr = zrecv_toggle_qr(&a, 0);
+    CHECK(zrecv_render(&a, qr, &p) && p.kind == ZRECV_QR && strcmp(p.qr, a.keys.ua) == 0,
+          "QR carries keys.ua");
+    CHECK(zrecv_page_count(&a) == 5, "two full-UA pages again");
+}
+
 static void test_qr_fit(void)
 {
     ctx = "qr fit";
     uint8_t v, s;
     CHECK(zrecv_qr_fit(35, &v, &s) && v == 3 && s == 2, "t-address: v3 x2, got v%u x%u", v, s);
     CHECK(zrecv_qr_fit(145, &v, &s) && v == 7 && s == 1, "testnet UA: v7 x1, got v%u x%u", v, s);
+    /* The Orchard-only UA Receive shows: two versions smaller. */
+    CHECK(zrecv_qr_fit(106, &v, &s) && v == 5 && s == 1, "mainnet Orchard UA: v5 x1, got v%u x%u", v, s);
+    CHECK(zrecv_qr_fit(110, &v, &s) && v == 6 && s == 1, "testnet Orchard UA: v6 x1, got v%u x%u", v, s);
     CHECK(zrecv_qr_fit(271, &v, &s) && v == 10 && s == 1, "v10 ceiling");
     CHECK(!zrecv_qr_fit(272, &v, &s), "beyond v10 refused");
 }
@@ -229,6 +249,7 @@ int main(void)
     printf("test_zcash_receive%s\n", have_zbar ? "" : " (zbarimg missing: QR scan SKIPPED)");
     test_snapshot();
     test_every_vector();
+    test_full_ua_fallback();
     test_qr_fit();
     test_fingerprint();
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "OK", failures, failures == 1 ? "" : "s");

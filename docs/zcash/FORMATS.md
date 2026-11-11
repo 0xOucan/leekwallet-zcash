@@ -160,3 +160,42 @@ flushes it and renames it, and removes a leftover temporary at the next mount.
 /LEEKZ/unsigned.json      optional: {"network","account","created"}, display only
 /LEEKZ/signed.zsig        written by the device
 ```
+
+## Animated QR (experimental)
+
+The QR air gap carries three Uniform Resources (bc-ur's multi-part
+fountain encoding, uppercase in the QR's alphanumeric mode, read in either
+case). The firmware (`src/ur-*.c`) and the hosts (`host/leek-ur`) produce
+the same parts byte for byte; `vectors/ur/` holds samples. QR is never used
+for pairing.
+
+| Type | Direction | Message |
+|---|---|---|
+| `ur:leek-pczt` | host → board | the signer view (`*.pczt` bytes) in one CBOR byte string |
+| `ur:leek-zsig` | board → host | the `*.zsig` in one CBOR byte string |
+| `ur:leek-zcash-accounts` | board → host (View key) | the account record below, as is |
+
+A decoder pins a message's type, length and checksum at its first part
+and refuses parts of another message. After three of them in a row it
+starts over on the new one, because the sender switched (a new fragment
+size, a new request). A host ignores its own type when it sees it, for
+example in a mirror.
+
+### Account record
+
+`leek-zcash-accounts` (`host/leek-zcash/src/record.rs`). It has the shape
+wallets already parse for a hardware signer's Zcash accounts, so their
+import code carries over:
+
+```
+{
+  1: bytes(32)  seed fingerprint (ZIP 32)
+  2: [ { 1: text UFVK, 2: uint ZIP 32 account index, ? 3: text label,
+         ? 4: uint birthday height }, ... ]
+}
+```
+
+The board's View key screen writes one account. It includes the label and
+the birthday only when the board has them: a companion sets them over USB
+or Bluetooth (`zmeta`). Readers that do not know key 4 skip it. The host
+derives the address from the UFVK, Orchard + P2PKH for a board account.

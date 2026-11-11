@@ -30,7 +30,7 @@ and the ESP32-S3 is not 5 V tolerant.
 | DC | GPIO2 | also drives the onboard LED, which may flicker with traffic; fine as an output |
 | CS | GPIO48 | **required**: with CS on GND the panel stays black (it never re-syncs to byte boundaries). GPIO48 is the onboard RGB LED's pin, which the firmware does not use |
 | RES | 3V3 through 10 kΩ | the driver resets the panel in software (SWRESET) |
-| BLK | GPIO43 (header **TX**) | backlight PWM, **Settings → Screen** (1–100 %: 1, 2, 3, 5, 7, 10, 15, 20, then tens). Optional: on 3V3 it is simply always full |
+| BLK | GPIO43 (header **TX**) | backlight PWM, **Settings → Screen** (0.006–100 %: below 1 % in fine steps down to one PWM tick, then 1, 2, 3, 5, 7, 10, 15, 20 and tens). Optional: on 3V3 it is simply always full |
 | TRA / TRB | GPIO3 / GPIO46 | encoder A / B, wired straight (no resistor). **Not** RX/TX (44/43): the module's encoder could not pull those low |
 | PSH (OK) | GPIO42 | the knob's push, as on the knob kit |
 | K0 (Cancel) | GPIO14 | as on the knob kit |
@@ -47,11 +47,26 @@ anything to GPIO45: a pull-up there changes the flash voltage at boot.
 ### The backlight on TX (GPIO43)
 
 GPIO43 is UART0's TX, free on this kit: the console is USB Serial/JTAG and
-the encoder moved to GPIO3/46. The firmware drives it with LEDC PWM (5 kHz,
-13-bit, LEDC timer 1 / channel 1; the camera's XCLK keeps timer 0 /
-channel 0), and **Settings → Screen** sets it in steps of 10 % from 10 % to
-100 %: turn to change it live, OK keeps it (saved in NVS, not secret),
-Cancel puts back the old level. The default is 100 %.
+the encoder moved to GPIO3/46. The firmware drives it with LEDC PWM (2 kHz,
+14-bit, the widest the S3's LEDC has; LEDC timer 1 / channel 1, the
+camera's XCLK keeps timer 0 / channel 0). **Settings → Screen** steps through
+one table: 1, 2, 3, 5, 7, 10, 15, 20 % and then tens, and below 1 % as fine
+and as low as the PWM goes, for a webcam reading the panel's QRs in a dim
+room: 0.7, 0.5, 0.3, 0.2, 0.1, 0.07, 0.05, 0.03, 0.02, 0.01 % and one tick
+of 16383, shown as 0.006 %. Turn to change it live, OK keeps it (saved in
+NVS as an index, `bl_idx`, not secret; a percent an older firmware saved is
+read once into the nearest step), Cancel puts back the old level. The
+default is 100 %. Every screen uses it, QRs included; pick the level a
+camera reads the QR at and leave it there while scanning. The serial log
+says `Screen backlight 0.05% (level 4, duty 8/16383)` on every OK.
+
+Why 2 kHz: a 14-bit timer at 80 MHz tops out at 4.88 kHz, and a lower
+frequency makes each tick longer (30.5 ns at 2 kHz), which the module's
+backlight transistor needs at the dark end. The bottom few steps (1 to 5
+ticks) may look alike on some modules, because the transistor stretches a
+pulse that short; everything from 0.05 % (8 ticks) up switches cleanly.
+2 kHz is far above visible flicker, and a camera exposing for a panel this
+dim integrates many periods.
 
 - **Wire it straight**: module BLK to the header pin marked TX. The module's
   BLK normally drives a transistor on the module, so the pin only supplies a

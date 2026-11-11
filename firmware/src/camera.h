@@ -63,13 +63,23 @@ uint8_t camera_orientation(void);
 void camera_set_exposure_bias(int8_t level);
 int8_t camera_exposure_bias(void);
 
-/** Step the capture size QVGA -> VGA -> SVGA and (re)start the camera. */
-bool camera_next_frame_size(void);
+/**
+ * Digital zoom on the sensor (camera-tune.h): 1x -> 2x -> 3x -> 1x, applied
+ * live, output always 320x240. 1x again on every camera_start(). False when
+ * the level would not apply, in which case the camera is back at 1x.
+ */
+bool camera_next_zoom(void);
+uint8_t camera_zoom(void);
+/** "1x", "2x" or "3x". */
+const char *camera_zoom_label(void);
+
 uint16_t camera_frame_width(void);
 
 /**
  * The next QR symbol decoded since the last call, as text, if there is one.
- * Never blocks: the scan screen calls this from the UI task's loop.
+ * Never blocks: the scan screen calls this from the UI task's loop. On the
+ * board the decoding runs on a task of its own (camera.c, core 1) and this
+ * only takes its results; a caller polling it in a loop must yield.
  */
 bool camera_next_qr(char *out, size_t out_size, size_t *out_len);
 
@@ -89,7 +99,8 @@ const uint8_t *camera_preview_take(void);
  * statistics, if one has been rendered since the last call; NULL otherwise,
  * and always NULL on a monochrome build, whose camera_preview_take() is the
  * one that renders. The buffer is the camera's own (PSRAM on the board) and
- * stays valid, holding the last preview, until the next camera_next_qr().
+ * stays valid, holding that preview, until the next take: the renderer
+ * never writes the buffer it last handed out.
  * Raw sensor pixels only, like the bitmap.
  */
 const uint8_t *camera_preview_gray_take(ViewfinderStats *stats);
@@ -115,6 +126,13 @@ bool camera_preview_true_exposure(void);
  */
 void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located);
 
+/**
+ * The UI's render + panel flush time for one Scan screen frame, added to the
+ * per-stage timing camera.c logs once a second (scan-timing.h). No-op when
+ * the camera is stopped.
+ */
+void camera_note_draw_us(uint32_t us);
+
 #ifdef LEEK_HOST_TEST
 /*
  * The host build has no sensor; these stand one in for the UI suites. With a
@@ -124,6 +142,8 @@ void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located);
  */
 void camera__set_frame_for_test(const uint8_t *frame, uint16_t w, uint16_t h);
 void camera__set_located_for_test(uint32_t located, uint32_t decodes);
+/* Make the next camera_next_zoom() fail, as a sensor refusing the window. */
+void camera__set_zoom_fails_for_test(bool fails);
 #endif
 
 #endif /* LEEK_CAMERA_H */

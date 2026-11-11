@@ -12,6 +12,7 @@
 #include "oled.h"
 #include "oled-core.h"
 #include "panel-color.h"
+#include "qr-out.h"
 #include "../../vectors/keys_vectors.h"
 
 void leek_log(const char *level, const char *tag, const char *fmt, ...) { }
@@ -35,6 +36,8 @@ static void render(void)
         .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
+    f.qr_caption = oled_core_qr_caption();
+    f.qr_fill = oled_core_qr_fill();
     const OledPanelGray g = oled_core_panel_gray();
     f.gray = g.px;
     f.gray_x = g.x; f.gray_y = g.y; f.gray_w = g.w; f.gray_h = g.h;
@@ -54,9 +57,16 @@ static bool scans_to(const char *want)
     int fd = mkstemp(path);
     FILE *f = fdopen(fd, "wb");
     fprintf(f, "P5\n%d %d\n255\n", W, H);
+    /* Halfway between the darkest and lightest red on the panel, as a
+       camera that exposes for the code would split it. */
+    int lo = 31, hi = 0;
     for (int i = 0; i < W * H; i++) {
-        const uint16_t c = img[i];
-        fputc(((c >> 11) & 0x1F) * 255 / 31 > 127 ? 255 : 0, f);
+        const int r = (img[i] >> 11) & 0x1F;
+        if (r < lo) lo = r;
+        if (r > hi) hi = r;
+    }
+    for (int i = 0; i < W * H; i++) {
+        fputc(((img[i] >> 11) & 0x1F) * 2 > lo + hi ? 255 : 0, f);
     }
     fclose(f);
     char cmd[128], got[512] = {0};
@@ -144,10 +154,23 @@ int main(void)
     oled_fill_page(2, 0x00);
     CHECK(oled_core_glyphs()[2 * OLED_WIDTH] == 0, "a glyph outlived its page fill");
 
-    /* QR codes at native scale, four modules of quiet zone. */
+    /* QR codes at native scale: the largest whole module that keeps two
+       modules of quiet zone, four where that scale leaves room anyway. */
     CHECK(panel_color_qr_scale(49, W, H) == 4, "v8 at 4 px per module");
     CHECK(panel_color_qr_scale(57, W, H) == 3, "v10 at 3");
-    CHECK(panel_color_qr_scale(29, W, H) == 6, "v3 at 6");
+    CHECK(panel_color_qr_scale(29, W, H) == 7, "v3 at 7, not %u", panel_color_qr_scale(29, W, H));
+    CHECK(panel_color_qr_scale(45, W, H) == 4, "v7 at 4");
+    CHECK(panel_color_qr_scale(41, W, H) == 5, "v6 at 5");
+    for (int v = 1; v <= OLED_QR_MAX_VERSION; v++) {
+        const int m = v * 4 + 17, sc = panel_color_qr_scale((uint8_t)m, W, H);
+        CHECK(sc >= 1 && (m + 4) * sc <= W && (m + 4) * (sc + 1) > W,
+              "v%d at %d px is not the largest scale with 2 modules quiet", v, sc);
+    }
+
+    /* Drawn: centred, light to every edge of the panel, every module a
+       solid square, at least two modules of light all round, and the code
+       scans back to exactly what was drawn: each UA and t-address (Receive,
+       with no caption) and a UR part (with one). */
     int scanned = 0;
     for (size_t i = 0; i < ZV_KEYS_COUNT; i += 3) {
         const char *texts[2] = { ZV_KEYS[i].ua, ZV_KEYS[i].transparent_address };
@@ -156,11 +179,131 @@ int main(void)
             oled_clear();
             CHECK(oled_draw_qrcode_ex(texts[k], versions[k], scales[k], false) == ESP_OK, "draw");
             render();
+            const QRCode *qr = oled_core_last_qr(NULL);
+            const int sc = panel_color_qr_scale(qr->size, W, H), px = qr->size * sc;
+            const int ox = (W - px) / 2, oy = (H - px) / 2;
+            CHECK(sc == (k ? 7 : 4), "%s at %d px a module", k ? "t-addr" : "UA", sc);
+            int wrong = 0;
+            for (int y = 0; y < H; y++) {
+                for (int x = 0; x < W; x++) {
+                    const bool in = x >= ox && x < ox + px && y >= oy && y < oy + px;
+                    const bool dark = in && qrcode_getModule((QRCode *)qr, (uint8_t)((x - ox) / sc),
+                                                             (uint8_t)((y - oy) / sc));
+                    wrong += at(x, y) != (dark ? pal->qr_dark : pal->qr_light);
+                }
+            }
+            CHECK(wrong == 0, "%d pixels are not the code on light", wrong);
+            CHECK(ox >= 2 * sc && oy >= 2 * sc && W - ox - px >= 2 * sc && H - oy - px >= 2 * sc,
+                  "less than two modules of quiet zone");
+            CHECK(ox - (W - ox - px) <= 1 && oy - (H - oy - px) <= 1, "not centred");
             CHECK(scans_to(texts[k]), "%s does not scan", texts[k]);
             scanned++;
         }
     }
+
+    /* Every colour mode of the return path (qr-out.h): the module size its
+       name says, each of its first frames scanning back, the caption under
+       it where it fits (and the code reading through it). */
+    {
+        static uint8_t msg[300];
+        for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)(i * 31 + 5);
+        for (uint8_t mode = 0; mode < QR_OUT_MODE_COUNT; mode++) {
+            const QrOutMode *m = qr_out_mode_info(mode);
+            if (!m->color) continue;
+            CHECK(qr_out_start("leek-zsig", msg, sizeof msg, mode, 0), "%s did not start", m->name);
+            const int sc = panel_color_qr_scale((uint8_t)(m->version * 4 + 17), W, H);
+            char named[16];
+            snprintf(named, sizeof named, "v%u %dpx", m->version, sc);
+            CHECK(strcmp(named, m->name) == 0, "mode \"%s\" draws as \"%s\"", m->name, named);
+            CHECK(sc >= 3 + (m->version < 10), "mode %s at %d px", m->name, sc);
+            int64_t now = 0;
+            for (int f = 0; f < 3; f++) {
+                char frame[QR_OUT_MAX_PART + 1], cap[OLED_QR_CAPTION_MAX + 1];
+                snprintf(frame, sizeof frame, "%s", qr_out_frame());
+                snprintf(cap, sizeof cap, "%s %u/%u 0.006%%", m->name,
+                         (unsigned)qr_out_seq_num(), (unsigned)qr_out_seq_len());
+                oled_clear();
+                oled_set_qr_caption(cap);
+                CHECK(oled_draw_qrcode_ex(frame, m->version, m->scale, false) == ESP_OK,
+                      "%s frame %d", m->name, f);
+                render();
+                CHECK(scans_to(frame), "%s frame %d does not scan", m->name, f);
+                scanned++;
+                int y0, rows;
+                if (panel_color_qr_caption_rows(cap, (uint8_t)(m->version * 4 + 17), W, H, &y0, &rows)) {
+                    int ink = 0;
+                    for (int y = y0; y < y0 + rows; y++)
+                        for (int x = 0; x < W; x++) ink += at(x, y) == pal->qr_dark;
+                    CHECK(ink > 0, "%s: the caption is not drawn", m->name);
+                    const int px = (m->version * 4 + 17) * sc;
+                    CHECK(y0 >= (H - px) / 2 + px + 2 * sc, "%s: the caption is in the quiet zone",
+                          m->name);
+                }
+                now += 1000000;
+                qr_out_tick(now);
+            }
+        }
+        qr_out_stop();
+        /* A caption on the v8 still code (4 px), what a .zsig opens as. */
+        int y0, rows;
+        CHECK(panel_color_qr_caption_rows("v8 0.05%", 49, W, H, &y0, &rows) && rows == 14,
+              "no 2x2 caption under a v8 code");
+        CHECK(!panel_color_qr_caption_rows("v3 7px 1/7 0.05%", 29, W, H, NULL, NULL),
+              "a caption squeezed under v3 at 7 px");
+    }
+
+    /* Using the 240x240 (board, 2026-11-10): for each mode the knob steps
+       through on the signature QR, and for the Orchard-only Receive code,
+       the code drawn is the densest version at its module size (one version
+       more would leave under two modules of quiet zone), at the largest
+       module size for its version, and what is lit dark spans exactly that
+       square: measured off the rendered panel, not computed. */
+    {
+        printf("  240x240 use (dark-module extent, measured):\n");
+        static const uint8_t versions[] = { 3, 4, 5, 6, 9 };
+        for (size_t i = 0; i < sizeof versions; i++) {
+            const uint8_t v = versions[i];
+            const int m = v * 4 + 17, sc = panel_color_qr_scale((uint8_t)m, W, H);
+            if (v != 5) {   /* v5 is Receive's (mainnet Orchard UA), not a knob mode */
+                CHECK((m + 4 + 4) * sc > W, "v%u at %d px: v%u would fit too, so it is not the densest", v, sc, v + 1);
+            }
+            char text[400];
+            const int cap = (int)qr_out_alnum_capacity(v);
+            memset(text, 'A', (size_t)cap);
+            text[cap] = 0;
+            oled_clear();
+            CHECK(oled_draw_qrcode_ex(text, v, 1, false) == ESP_OK, "v%u draw", v);
+            render();
+            int x0 = W, y0 = H, x1 = -1, y1 = -1;
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                    if (at(x, y) == pal->qr_dark) {
+                        if (x < x0) x0 = x;
+                        if (x > x1) x1 = x;
+                        if (y < y0) y0 = y;
+                        if (y > y1) y1 = y;
+                    }
+            const int side = x1 - x0 + 1;
+            CHECK(side == m * sc && y1 - y0 + 1 == m * sc, "v%u: dark extent %dx%d, not %d", v, side, y1 - y0 + 1, m * sc);
+            CHECK(x0 >= 2 * sc && W - 1 - x1 >= 2 * sc, "v%u: margin %d px under two modules", v, x0);
+            printf("    v%u %d px: code %d of 240 px (%d%%), margins %d/%d px = %.1f modules\n", v, sc, side,
+                   side * 100 / W, x0, W - 1 - x1, (double)x0 / sc);
+        }
+        /* Receive's Orchard-only UAs: v5 on mainnet, v6 on testnet, both 5 px. */
+        for (size_t i = 0; i < ZV_KEYS_COUNT; i += 6) {
+            const char *ua = ZV_KEYS[i].ua_orchard_only;
+            const uint8_t v = strlen(ua) <= 106 ? 5 : 6;
+            oled_clear();
+            CHECK(oled_draw_qrcode_ex(ua, v, 1, false) == ESP_OK, "Orchard UA v%u", v);
+            render();
+            CHECK(panel_color_qr_scale(oled_core_last_qr(NULL)->size, W, H) == 5, "Orchard UA not at 5 px");
+            CHECK(scans_to(ua), "the Orchard UA does not scan");
+            scanned++;
+        }
+    }
+
     printf("  %d native-scale codes scanned back\n", scanned);
+    oled_clear();
 
     /* The splash picture wins over everything until a clear. */
     static uint8_t picture[128 * 16];
@@ -229,6 +372,51 @@ int main(void)
         CHECK(at(239, 239) == pal->gray[gpic[39 * GW + 139] >> 2], "a clipped viewfinder is wrong");
         oled_clear();
     }
+
+    /* Filled (oled_set_qr_fill): one module of quiet zone, modules a pixel
+       apart in size, the code drawn exactly to its fractional grid, a caption
+       dropped, and it still scans. v6 fills 228 px where whole 5 px modules
+       fill 205. */
+    CHECK(panel_color_qr_fill_side(41, W, H) == 228, "v6 fills %d px", panel_color_qr_fill_side(41, W, H));
+    for (int v = 3; v <= 10; v++) {
+        const int n = v * 4 + 17, side = panel_color_qr_fill_side((uint8_t)n, W, H);
+        CHECK(side > n * panel_color_qr_scale((uint8_t)n, W, H), "v%d fill is no bigger", v);
+        CHECK((W - side) / 2 >= side / n, "v%d fill: under one module of quiet zone", v);
+    }
+    for (size_t i = 0; i < ZV_KEYS_COUNT; i += 5) {
+        oled_clear();
+        CHECK(oled_draw_qrcode_ex(ZV_KEYS[i].ua, 7, 1, false) == ESP_OK, "draw");
+        oled_set_qr_caption("v7 1/9 0.3%");
+        oled_set_qr_fill(true);
+        render();
+        const QRCode *qr = oled_core_last_qr(NULL);
+        const int n = qr->size, side = panel_color_qr_fill_side((uint8_t)n, W, H);
+        const int ox = (W - side) / 2, oy = (H - side) / 2;
+        int wrong = 0, lo = 99, hi = 0;
+        for (int m = 0; m < n; m++) {
+            const int w = (m + 1) * side / n - m * side / n;
+            if (w < lo) lo = w;
+            if (w > hi) hi = w;
+        }
+        for (int y = 0; y < H; y++) {
+            for (int x = 0; x < W; x++) {
+                const bool in = x >= ox && x < ox + side && y >= oy && y < oy + side;
+                const int mx = in ? ((x - ox + 1) * n - 1) / side : 0;
+                const int my = in ? ((y - oy + 1) * n - 1) / side : 0;
+                const bool dark = in && qrcode_getModule((QRCode *)qr, (uint8_t)mx, (uint8_t)my);
+                wrong += at(x, y) != (dark ? pal->qr_dark : pal->qr_light);
+            }
+        }
+        CHECK(hi - lo == 1, "v7 fill modules are %d to %d px", lo, hi);
+        CHECK(wrong == 0, "%d pixels of the filled code are wrong (caption drawn?)", wrong);
+        CHECK(scans_to(ZV_KEYS[i].ua), "the filled v7 does not scan");
+        if (i == 0) {
+            printf("  v7 fill: %d px (modules %d-%d px), whole: %d px\n", side, lo, hi,
+                   n * panel_color_qr_scale((uint8_t)n, W, H));
+        }
+    }
+    oled_clear();
+    CHECK(!oled_core_qr_fill(), "a clear kept the fill");
 
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

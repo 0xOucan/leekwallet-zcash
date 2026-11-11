@@ -23,6 +23,8 @@ use zecz::wallet::{
 use zecz::zsig::{self, Zsig};
 use zecz::{Network, Profile, Wallet};
 
+mod qr;
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Net {
     Test,
@@ -43,6 +45,32 @@ struct Cli {
     server: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+/// Showing the signer view as an animated ur:leek-pczt QR (EXPERIMENTAL).
+#[derive(clap::Args, Clone, Debug)]
+struct QrShow {
+    /// EXPERIMENTAL: show the signer view as an animated ur:leek-pczt QR in
+    /// this terminal for the board's camera (implies --compact).
+    #[arg(long)]
+    qr: bool,
+    /// EXPERIMENTAL: write a self-contained HTML page that loops the QR in a
+    /// browser, for a terminal too small for the code (implies --compact).
+    #[arg(long, value_name = "FILE")]
+    qr_html: Option<PathBuf>,
+    /// Largest UR fragment in bytes: smaller is fewer modules per code (easier
+    /// for the board's camera) and more frames.
+    #[arg(long, default_value_t = qr::DEFAULT_FRAGMENT, value_name = "BYTES")]
+    qr_fragment: usize,
+    /// Milliseconds each frame stays up.
+    #[arg(long, default_value_t = qr::DEFAULT_INTERVAL_MS, value_name = "MS")]
+    qr_interval: u64,
+}
+
+impl QrShow {
+    fn wanted(&self) -> bool {
+        self.qr || self.qr_html.is_some()
+    }
 }
 
 #[derive(Subcommand)]
@@ -143,6 +171,8 @@ enum Cmd {
         /// QR frames). The device rebuilds the fields it leaves out.
         #[arg(long)]
         compact: bool,
+        #[command(flatten)]
+        qr: QrShow,
     },
     /// Build an unsigned PCZT that moves every transparent coin of the
     /// account into its shielded pool (Ironwood from NU6.3).
@@ -153,6 +183,45 @@ enum Cmd {
         /// Write the compact signer view (v2 PCZT).
         #[arg(long)]
         compact: bool,
+        #[command(flatten)]
+        qr: QrShow,
+    },
+    /// EXPERIMENTAL: show an unsigned PCZT (from `send --out`) as an animated
+    /// ur:leek-pczt QR, in the terminal (default) or as an HTML page.
+    QrShow {
+        #[arg(long = "in")]
+        input: PathBuf,
+        #[command(flatten)]
+        qr: QrShow,
+        /// For the camera bench: step through the presets (90/500, 90/350,
+        /// 120/400, 150/350, 150/250, 200/300 by default), Enter when the
+        /// board completes each, and print the time each took.
+        #[arg(long)]
+        sweep: bool,
+        /// Presets for --sweep, as FRAGMENT/MS, comma separated.
+        #[arg(long, value_name = "B/MS,...", requires = "sweep")]
+        presets: Option<String>,
+    },
+    /// EXPERIMENTAL: read the board's animated ur:leek-zsig and write the
+    /// .zsig for `finish --sigs`. From a webcam (build with --features
+    /// qr-camera, Linux V4L2), or from a file of UR parts, one per line.
+    QrScan {
+        /// Where to write the .zsig.
+        #[arg(long)]
+        out: PathBuf,
+        /// Read the parts from this file instead of a camera.
+        #[arg(long, value_name = "PARTS.TXT")]
+        from_file: Option<PathBuf>,
+        /// The V4L2 camera.
+        #[arg(long, default_value = "/dev/video0")]
+        camera: PathBuf,
+        /// Give up after this many seconds of scanning.
+        #[arg(long, default_value_t = 180)]
+        timeout: u64,
+        /// The unsigned PCZT the board was shown: the .zsig must name its
+        /// hash (checked again by `finish`).
+        #[arg(long)]
+        pczt: Option<PathBuf>,
     },
     /// Pair with the device, export its account (UFVK) and run `init`.
     DeviceInit {
@@ -352,17 +421,110 @@ fn cmd_address(profile: Profile) -> Result<()> {
     Ok(())
 }
 
-fn cmd_send(profile: Profile, to: &str, amount: &str, zec: bool, memo: Option<&str>, out: &Path, compact: bool) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn cmd_send(profile: Profile, to: &str, amount: &str, zec: bool, memo: Option<&str>, out: &Path, compact: bool, qr: &QrShow) -> Result<()> {
     let mut w = Wallet::open(profile)?;
     let amount_zat = if zec { parse_zec(amount)? } else { amount.parse::<u64>().context("amount must be zatoshis (or pass --zec)")? };
+    // QR implies the compact view: half the frames.
+    let compact = compact || qr.wanted();
     let p = w.propose_send(&SendRequest { to: to.to_string(), amount_zat, memo: memo.map(str::to_string), compact })?;
-    write_proposal(&p, out)
+    write_proposal(&p, out)?;
+    show_qr(&p.signer_view, qr, false)
 }
 
-fn cmd_shield(profile: Profile, out: &Path, compact: bool) -> Result<()> {
+fn cmd_shield(profile: Profile, out: &Path, compact: bool, qr: &QrShow) -> Result<()> {
     let mut w = Wallet::open(profile)?;
-    let p = w.propose_shield(compact)?;
-    write_proposal(&p, out)
+    let p = w.propose_shield(compact || qr.wanted())?;
+    write_proposal(&p, out)?;
+    show_qr(&p.signer_view, qr, false)
+}
+
+/// The signer view as an animated ur:leek-pczt (EXPERIMENTAL): an HTML page
+/// if asked, then the terminal loop if asked (or if nothing else was, for
+/// `qr-show`).
+fn show_qr(view: &[u8], qr: &QrShow, terminal_by_default: bool) -> Result<()> {
+    if !qr.wanted() && !terminal_by_default {
+        return Ok(());
+    }
+    let e = leek_ur::Encoder::leek_pczt(view, qr.qr_fragment).map_err(|e| anyhow!("{e}"))?;
+    println!(
+        "QR signing is EXPERIMENTAL. ur:leek-pczt: {} B in {} fragment(s) of {} B, {} ms a frame.",
+        view.len(),
+        e.seq_len(),
+        e.fragment_len(),
+        qr.qr_interval
+    );
+    if let Some(path) = &qr.qr_html {
+        qr::write_html(&e, qr.qr_interval, path)?;
+    }
+    if qr.qr || (terminal_by_default && qr.qr_html.is_none()) {
+        qr::show_terminal(&e, qr.qr_interval)?;
+    }
+    Ok(())
+}
+
+fn cmd_qr_show(input: &Path, qr: &QrShow, sweep: bool, presets: Option<&str>) -> Result<()> {
+    let view = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
+    if !view.starts_with(b"PCZT") {
+        bail!("{} is not a PCZT", input.display());
+    }
+    if sweep {
+        let list = match presets {
+            Some(p) => parse_presets(p)?,
+            None => qr::PRESETS.to_vec(),
+        };
+        println!("QR signing is EXPERIMENTAL. Sweep of {} preset(s) over {} ({} B).", list.len(), input.display(), view.len());
+        qr::sweep(&view, &list)?;
+        return Ok(());
+    }
+    show_qr(&view, qr, true)
+}
+
+/// "90/500,150/250" -> [(90, 500), (150, 250)].
+fn parse_presets(s: &str) -> Result<Vec<(usize, u64)>> {
+    s.split(',')
+        .map(|p| {
+            let (f, ms) = p.trim().split_once('/').ok_or_else(|| anyhow!("a preset is FRAGMENT/MS, got {p:?}"))?;
+            let f: usize = f.trim().parse().context("fragment bytes")?;
+            let ms: u64 = ms.trim().parse().context("frame ms")?;
+            if !(10..=512).contains(&f) || !(50..=5000).contains(&ms) {
+                bail!("preset {p:?} is out of range (10-512 B, 50-5000 ms)");
+            }
+            Ok((f, ms))
+        })
+        .collect()
+}
+
+fn cmd_qr_scan(out: &Path, from_file: Option<&Path>, camera: &Path, timeout: u64, pczt: Option<&Path>) -> Result<()> {
+    println!("QR signing is EXPERIMENTAL.");
+    let zsig = match from_file {
+        Some(f) => qr::zsig_from_parts_file(f)?,
+        None => scan_camera(camera, timeout)?,
+    };
+    let z = match pczt {
+        Some(p) => {
+            let view = fs::read(p).with_context(|| format!("reading {}", p.display()))?;
+            Zsig::parse_for(&zsig, &view)?
+        }
+        None => Zsig::parse(&zsig)?,
+    };
+    fs::write(out, &zsig).with_context(|| format!("writing {}", out.display()))?;
+    println!("Read {} signature(s) for PCZT sha256 {} -> {}", z.entries.len(), hex::encode(z.pczt_sha256), out.display());
+    println!("Next: zecz finish --pczt <the unsigned PCZT> --sigs {}", out.display());
+    Ok(())
+}
+
+#[cfg(all(feature = "qr-camera", target_os = "linux"))]
+fn scan_camera(camera: &Path, timeout: u64) -> Result<Vec<u8>> {
+    qr::camera::scan(camera, std::time::Duration::from_secs(timeout))
+}
+
+#[cfg(not(all(feature = "qr-camera", target_os = "linux")))]
+fn scan_camera(_camera: &Path, _timeout: u64) -> Result<Vec<u8>> {
+    bail!(
+        "this zecz was built without a camera reader. Rebuild with `cargo build --release -p zecz-cli --features qr-camera` \
+         (Linux), or scan the board's QR with another reader and pass the parts with --from-file <parts.txt>"
+    )
 }
 
 fn write_proposal(p: &zecz::wallet::SendProposal, out: &Path) -> Result<()> {
@@ -588,8 +750,14 @@ async fn main() -> Result<()> {
         Cmd::Balance => cmd_balance(profile),
         Cmd::Address => cmd_address(profile),
         Cmd::History { limit } => cmd_history(profile, limit),
-        Cmd::Send { to, amount, zec, memo, out, compact } => cmd_send(profile, &to, &amount, zec, memo.as_deref(), &out, compact),
-        Cmd::Shield { out, compact } => cmd_shield(profile, &out, compact),
+        Cmd::Send { to, amount, zec, memo, out, compact, qr } => {
+            cmd_send(profile, &to, &amount, zec, memo.as_deref(), &out, compact, &qr)
+        }
+        Cmd::Shield { out, compact, qr } => cmd_shield(profile, &out, compact, &qr),
+        Cmd::QrShow { input, qr, sweep, presets } => cmd_qr_show(&input, &qr, sweep, presets.as_deref()),
+        Cmd::QrScan { out, from_file, camera, timeout, pczt } => {
+            cmd_qr_scan(&out, from_file.as_deref(), &camera, timeout, pczt.as_deref())
+        }
         Cmd::DeviceInit { port, account, birthday, name } => cmd_device_init(profile, &port, account, birthday, &name).await,
         Cmd::DeviceShowAddress { port, account } => cmd_device_show_address(&profile, &port, account),
         Cmd::SignDevice { port, account, input, out } => cmd_sign_device(&profile, &port, account, &input, &out),

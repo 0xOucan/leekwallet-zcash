@@ -59,7 +59,7 @@ esp_err_t oled_clear_panel_now(void) { return oled_clear(); }
 esp_err_t oled_draw_raw(const uint8_t *d, size_t n) { (void)d; (void)n; return ESP_FAIL; }
 bool oled_present(void) { return true; }
 uint8_t oled_panel_rows(void) { return H; }
-esp_err_t oled_set_backlight(uint8_t pct) { (void)pct; return ESP_OK; }
+esp_err_t oled_set_backlight_duty(uint16_t duty) { (void)duty; return ESP_OK; }
 
 /* One image: the colour panel on the left; the SH1107's 128x128 at 2x
  * (white on black) on the right, both on a grey card. */
@@ -75,6 +75,8 @@ static void snap(const char *name)
         .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
+    f.qr_caption = oled_core_qr_caption();
+    f.qr_fill = oled_core_qr_fill();
     const OledPanelGray g = oled_core_panel_gray();
     f.gray = g.px;
     f.gray_x = g.x; f.gray_y = g.y; f.gray_w = g.w; f.gray_h = g.h;
@@ -290,6 +292,14 @@ int main(int argc, char **argv)
     if (ui_show_ur(AIRGAP_UR_ZSIG, zsig, sizeof zsig, SCREEN_MAIN_MENU)) {
         ui_render();
         snap("09-qr-reply-still");
+        /* The colour panel's animated modes, a turn at a time: v6 at 5 px
+           with its caption, then v4 at 6 px, then v3 at 7 px. */
+        press(BUTTON_DOWN);
+        snap("09b-qr-reply-v6-5px");
+        press(BUTTON_DOWN);
+        snap("09c-qr-reply-v4-6px");
+        press(BUTTON_DOWN);
+        snap("09d-qr-reply-v3-7px");
     } else {
         fprintf(stderr, "ui_show_ur refused the reply\n");
     }
@@ -299,6 +309,13 @@ int main(int argc, char **argv)
     snap("10-receive");
     press(BUTTON_DOWN);
     snap("11-receive-2");
+    /* Turning on: the UA's QR (v7, 4 px), the t-address, its QR (v3, 7 px). */
+    press(BUTTON_DOWN);
+    snap("11b-receive-ua-qr");
+    press(BUTTON_DOWN);
+    snap("11c-receive-t-addr");
+    press(BUTTON_DOWN);
+    snap("11d-receive-t-qr");
 
     go(SCREEN_MAIN_MENU);
     ui_notify_wrong_network(1);

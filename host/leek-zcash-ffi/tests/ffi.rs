@@ -422,3 +422,139 @@ fn quick_unlock_through_a_foreign_wrapper() {
     k.forget();
     assert_eq!(QuickUnlock::create(k, w).err().unwrap().code(), 704);
 }
+
+// ---------------------------------------------------------------- QR (UR)
+
+fn record0(net: &str, birthday: Option<u32>) -> AccountRecord {
+    let k = json("keys.json", &format!("{net}/abandon-art/pp0/acct0"));
+    AccountRecord {
+        seed_fingerprint: hex::decode(k["seed_fingerprint"].as_str().unwrap()).unwrap(),
+        accounts: vec![AccountEntry { ufvk: k["ufvk"].as_str().unwrap().into(), index: 0, name: None, birthday }],
+    }
+}
+
+#[test]
+fn the_view_key_qr_scans_in_any_order_and_case() {
+    let r = record0("test", Some(4_506_700));
+    let e = QrEncoder::account_record(r.clone(), 50).unwrap();
+    assert_eq!(e.ur_type(), "leek-zcash-accounts");
+    assert!(e.seq_len() > 1 && !e.is_single_part());
+    let frames = e.frames(0, e.seq_len() + 4);
+    assert!(frames.iter().all(|f| f.starts_with("UR:LEEK-ZCASH-ACCOUNTS/") && f.len() as u32 <= e.longest_frame()));
+
+    let s = QrScanner::new(QrScanKind::AccountRecord, Some(Network::Test));
+    // Noise a camera sees: a plain address, our own request, a foreign UR.
+    assert_eq!(s.feed("zcash:utest1abc".into()).state, QrPartState::Ignored);
+    let pczt = QrEncoder::pczt(v("iw_send_nu7_compact"), 50).unwrap();
+    assert_eq!(s.feed(pczt.frame(0)).state, QrPartState::Ignored);
+    let p = s.feed("ur:crypto-psbt/lpadaxcfaxhdcxdhfleymdz".into());
+    assert_eq!(p.state, QrPartState::Rejected);
+    assert!(p.error.unwrap().contains("ur:crypto-psbt"));
+
+    let mut last = None;
+    for f in frames.iter().rev() {
+        let p = s.feed(f.to_ascii_lowercase());
+        assert!(p.percent <= 100);
+        last = Some(p);
+        if s.is_complete() {
+            break;
+        }
+    }
+    let last = last.unwrap();
+    assert_eq!((last.state, last.percent), (QrPartState::Complete, 100));
+    assert_eq!(s.account_record().unwrap(), r);
+    assert_eq!(s.zsig(), None);
+    // Further frames change nothing.
+    assert_eq!(s.feed(frames[0].clone()).state, QrPartState::Complete);
+    s.reset();
+    assert!(!s.is_complete() && s.account_record().is_none());
+}
+
+#[test]
+fn the_view_key_of_the_other_network_is_refused() {
+    let e = QrEncoder::account_record(record0("main", None), 50).unwrap();
+    let s = QrScanner::new(QrScanKind::AccountRecord, Some(Network::Test));
+    let mut refused = None;
+    for i in 0..(e.seq_len() as u64 * 3) {
+        let p = s.feed(e.frame(i));
+        if p.state == QrPartState::Refused {
+            refused = Some(p);
+            break;
+        }
+    }
+    let p = refused.expect("refused");
+    assert!(p.error.unwrap().contains("Mainnet"), "names the key's network");
+    assert!(!s.is_complete() && p.total == 0, "started over");
+    // No network given: any record is taken.
+    let any = QrScanner::new(QrScanKind::AccountRecord, None);
+    for i in 0..(e.seq_len() as u64 * 3) {
+        any.feed(e.frame(i));
+    }
+    assert!(any.is_complete());
+}
+
+#[test]
+fn the_board_reply_qr_gives_the_zsig() {
+    let zsig: Vec<u8> = (0..700u32).map(|i| (i * 31 % 251) as u8).collect();
+    let e = QrEncoder::zsig(zsig.clone(), 50).unwrap();
+    let s = QrScanner::new(QrScanKind::Zsig, None);
+    // A reflection of the request on the host's own screen is ignored.
+    let pczt = QrEncoder::pczt(v("iw_send_nu7_compact"), 50).unwrap();
+    assert_eq!(s.feed(pczt.frame(3)).state, QrPartState::Ignored);
+    let acc = QrEncoder::account_record(record0("test", None), 50).unwrap();
+    assert_eq!(s.feed(acc.frame(0)).state, QrPartState::Rejected);
+    // Skip every third frame: the fountain parts fill the gaps.
+    let mut i = 0u64;
+    while !s.is_complete() && i < 500 {
+        if i % 3 != 1 {
+            s.feed(e.frame(i));
+        }
+        i += 1;
+    }
+    assert_eq!(s.zsig().unwrap(), zsig);
+    assert!(s.account_record().is_none());
+}
+
+#[test]
+fn the_scanner_follows_a_sender_that_switched() {
+    let a = QrEncoder::account_record(record0("test", None), 40).unwrap();
+    let b = QrEncoder::account_record(record0("test", Some(4_000_000)), 60).unwrap();
+    let s = QrScanner::new(QrScanKind::AccountRecord, None);
+    s.feed(a.frame(0));
+    s.feed(a.frame(1));
+    // One stray part of another message is refused...
+    assert_eq!(s.feed(b.frame(0)).state, QrPartState::Rejected);
+    assert_eq!(s.feed(a.frame(2)).state, QrPartState::Accepted);
+    // ...three in a row and the scanner follows the new one.
+    for i in 0..3 {
+        s.feed(b.frame(i));
+    }
+    let p = s.feed(b.frame(3));
+    assert_eq!(p.total, b.seq_len());
+    for i in 4..(b.seq_len() as u64 * 3) {
+        if s.is_complete() {
+            break;
+        }
+        s.feed(b.frame(i));
+    }
+    assert_eq!(s.account_record().unwrap().accounts[0].birthday, Some(4_000_000));
+}
+
+#[test]
+fn the_signing_request_qr_matches_the_companion() {
+    let e = QrEncoder::pczt(v("iw_send_nu7_compact"), qr_defaults().fragment_len).unwrap();
+    // The board-tested size: 28 fragments of 50 B (app/src-tauri airgap.rs).
+    assert_eq!((e.seq_len(), e.fragment_len()), (28, 50));
+    let f = e.frames(0, 40);
+    assert_eq!(f.len(), 40);
+    assert!(f[0].starts_with("UR:LEEK-PCZT/1-28/"));
+    assert_eq!(f[39], e.frame(39));
+    assert_eq!(e.frames(0, 10_000).len() as u32, QR_MAX_BATCH);
+    assert!(QrEncoder::pczt(b"not a pczt".to_vec(), 50).is_err());
+    assert_eq!(qr_part_type(f[0].clone()).as_deref(), Some("leek-pczt"));
+    assert_eq!(qr_part_type("zcash:utest1".into()), None);
+
+    let d = qr_defaults();
+    assert_eq!((d.fragment_len, d.frame_ms, d.board_zoom), (50, 500, 2));
+    assert!(d.fragment_choices.contains(&40) && d.frame_ms_choices.contains(&500));
+}

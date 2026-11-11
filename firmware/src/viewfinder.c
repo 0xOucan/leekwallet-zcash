@@ -227,6 +227,40 @@ void viewfinder_render_gray(const uint8_t *frame, uint16_t fw, uint16_t fh,
 #define HINT_CLOSER_MIN_PCT   2     /* ...that is in frame... */
 #define HINT_CLOSER_MAX_PCT   25    /* ...and small */
 
+/*
+ * The exposure row's colour, on the printed percentage of the raw mean
+ * (0..99). Starting points from the user's first colour-kit session (a phone
+ * at half brightness read best around a quarter to a half of full scale);
+ * move them after a bench session. Inclusive bounds:
+ *
+ *   GOOD    LEVEL_GOOD_MIN_PCT .. LEVEL_GOOD_MAX_PCT        (green)
+ *   MEDIUM  LEVEL_MEDIUM_MIN_PCT .. LEVEL_MEDIUM_MAX_PCT,
+ *           outside GOOD                                    (amber)
+ *   BAD     everything else                                 (red)
+ */
+#define LEVEL_GOOD_MIN_PCT    25
+#define LEVEL_GOOD_MAX_PCT    60
+#define LEVEL_MEDIUM_MIN_PCT  15
+#define LEVEL_MEDIUM_MAX_PCT  85
+
+static unsigned level_pct(uint8_t mean)
+{
+    unsigned pct = (unsigned)mean * 100u / 255u;
+    return pct > 99 ? 99 : pct;
+}
+
+viewfinder_level_t viewfinder_level_grade(uint8_t mean)
+{
+    const unsigned pct = level_pct(mean);
+    if (pct >= LEVEL_GOOD_MIN_PCT && pct <= LEVEL_GOOD_MAX_PCT) {
+        return VIEWFINDER_LEVEL_GOOD;
+    }
+    if (pct >= LEVEL_MEDIUM_MIN_PCT && pct <= LEVEL_MEDIUM_MAX_PCT) {
+        return VIEWFINDER_LEVEL_MEDIUM;
+    }
+    return VIEWFINDER_LEVEL_BAD;
+}
+
 const char *viewfinder_hint(const ViewfinderStats *st, bool located)
 {
     if (st == NULL || !st->primed) {
@@ -263,18 +297,17 @@ void viewfinder_exposure_line(int8_t bias, uint8_t mean, char out[VIEWFINDER_LIN
     }
     bar[7] = '>';
     bar[8] = '\0';
-    unsigned pct = (unsigned)mean * 100u / 255u;
-    if (pct > 99) { pct = 99; }
-    snprintf(out, VIEWFINDER_LINE, "Light %s %2d %2u%%", bar, (int)bias, pct);
+    snprintf(out, VIEWFINDER_LINE, "Light %s %2d %2u%%", bar, (int)bias, level_pct(mean));
 }
 
-void viewfinder_stats_line(uint16_t frame_w, uint16_t fps, uint32_t seen,
+void viewfinder_stats_line(const char *zoom, uint16_t fps, uint32_t seen,
                            uint32_t read, char out[VIEWFINDER_LINE])
 {
-    const char *size = frame_w == 320 ? "QVGA" : frame_w == 640 ? "VGA"
-                     : frame_w == 800 ? "SVGA" : "?";
-    /* Each number clamped to two digits in a buffer of its own, so the line
-       provably fits: "SVGA 99fps s:99 r:99" is 20. */
+    /* The label cut to four, and each number clamped to two digits in a
+       buffer of its own, so the line provably fits: "2.7x 99fps s:99 r:99"
+       is 20. */
+    char size[5];
+    snprintf(size, sizeof size, "%s", zoom != NULL ? zoom : "?");
     char rate[3], s[3], r[3];
     if (fps == 0xFFFF) {
         memcpy(rate, "--", 3);

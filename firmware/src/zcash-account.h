@@ -30,6 +30,10 @@ typedef struct {
     uint8_t    t_account[65];           /* chain code || pubkey of m/44'/coin'/account' */
     uint8_t    t_receiver[20];          /* HASH160 at .../0/0 */
     char       t_address[ZCASH_TADDR_MAX]; /* "t1..." / "tm..." */
+    /* The same Orchard receiver alone: what Receive shows and puts in its QR
+     * (zcash-receive.h). keys.ua, with the P2PKH receiver, is what the
+     * companion imports and checks against. */
+    char       ua_orchard[ZS_UA_MAX];
 } ZcashAccount;
 
 /** ZIP 32 / BIP44 coin type: 133 on mainnet, 1 on testnet. */

@@ -1899,3 +1899,107 @@ passphrase all worked. Five things did not. Branch `companion-test-fixes`.
 - Txid `8676ee562b8066b8c9fb720706551f2a57f8176066380bfd29d5edf50abd0151`, mined in block 4,606,165.
 - Still to do by hand: mainnet past the activation, Bluetooth, SD, a shield,
   "Update your app" on both panels, and an update from a v0.1.0 board.
+
+### Camera tuning (2026-11-10)
+
+Branch `camera-tuning`, from the colour-kit viewfinder. Built and host-tested
+only: nothing here has run on a board yet. Each change is its own commit and
+its own build define, so any one can be backed out or A/B'd. Expected gains are
+estimates from the OV5640 datasheet and the driver's code, to be replaced by the
+numbers below.
+
+**What to read back.** On the Scan screen (and in the `esp32s3cam-bench` image)
+the USB serial log prints one line a second:
+
+    I camera: scan 1x 9.8 fps | wait 41.2/88 copy 1.1/2 ident 38.0/61 dec 3.2/19
+              prev 1.9/3 draw 24.0/31 ms | s:12 r:4 | exp 96 lines gain 2.5x | cpu 240
+
+Each stage is mean/max ms over that second: `wait` blocked on the sensor (large
+means the sensor is the limit), `ident` quirc_end, `dec` extract+decode, `prev`
+the viewfinder, `draw` the UI render and panel flush. `exp`/`gain` are what AEC
+and AGC settled on, read back from the sensor. Each completed animated UR also
+logs `UR complete: <ms>, <frames>, <parts> for seqLen <n> (<redundant>, <pct>)`;
+the bench image restarts and logs one per pass of a looping sender.
+
+| Change | Define (default) | Expected | Check on the board |
+|---|---|---|---|
+| Light level colour (row 5) | thresholds in viewfinder.c | green 25-60 %, amber 15-25/60-85 %, red otherwise | percentage colour follows the knob |
+| Gain ceiling: a real 4x (was 1/16x: `set_gainceiling` wrote enum 1 into real-gain 0x3A18/19) | `CAMERA_GAIN_CEILING_X` (4) | shorter shutter, less blur | `gain` above 1.0x on a dim screen; `exp` falls; decodes/s up at phone 50 % |
+| Banding 60 Hz (driver had manual 50 Hz; 0x3C00 bit 2 = 0 is 60 Hz, datasheet table 4-8) | `CAMERA_MAINS_HZ` (60; 50; 0 auto) | no rolling bands on room-lit paper | printed code under LED light, PC stream |
+| Shutter cap 0x3A02/03 + 0x3A14/15 | `CAMERA_SHUTTER_CAP_LINES` (96; 0 off) | ~8-12 ms max, gain fills in | `exp` <= 96. If it never exceeds 6, the units are 1/16 line: set 1536 |
+| Centre-weighted AEC 0x5688-0x568F (15 middle 2x2, 1 elsewhere), knob bias + 3 to the sensor | `CAMERA_AEC_CENTRE` (1), `CAMERA_AEC_BIAS_OFFSET` (3) | screen exposed right whatever the room | row 5 green with a phone filling the middle, lit or dark room |
+| Sensor zoom, push 1x -> 2x -> 3x -> 1x, output always QVGA | `CAMERA_ZOOM_VTS` (984) | 2x: twice the pixels per module at the same decode cost | row 6 shows `2x`; `s` at distances where 1x found nothing; bigger sender fragments |
+| 240 MHz while scanning (esp_pm, floor 160) | `CAMERA_SCAN_CPU_MHZ` (240; 0 off), `CONFIG_PM_ENABLE` | `ident`/`dec` x0.67 | `cpu 240` in the log; heat after 5 min |
+| Decode task on core 1, 20 KB stack in PSRAM | `CAMERA_DECODE_TASK` (1; 0 inline) | `draw` no longer adds to the frame | fps up by roughly draw/(wait+ident+dec); Cancel leaves Scan promptly |
+
+Zoom windows (camera-tune.h; centred on the 2624x1952 array, 2x2 binned, ISP
+offsets 16/8, HTS 2060):
+
+| Level | Window | Binned - offsets | To 320x240 | Field |
+|---|---|---|---|---|
+| 1x | (0,0)-(2623,1951) | 1280x960 | 4:1 | full (the driver's own QVGA) |
+| 2x | (640,480)-(1983,1471) | 640x480 | 2:1 | 1/2 |
+| 3x | (800,600)-(1823,1351) | 480x360 | 3:2 | 1/2.67 |
+
+"3x" is 2.67x: a true 3x window (853.3x640) has no clean ratio to QVGA.
+
+**Board checklist** (colour kit first, then the OLED kit; fixed jig, phone at
+50 % brightness looping the same animated UR, five runs per setting):
+
+1. Delete the generated `firmware/sdkconfig.esp32s3cam*` before building:
+   PlatformIO does not regenerate them, and without that `CONFIG_PM_ENABLE` is
+   not picked up (the log then says the CPU stays at 160 MHz).
+2. Bench image, no code in view, `-DCAMERA_PREVIEW_EVERY=0`: `fps` is the
+   sensor's ceiling; line time = 1 / (fps x 984). Note it: it sets the real
+   shutter cap in ms and the 60 Hz band step (0x3A0A/0B = 8333 us / line time,
+   still the driver's value).
+3. Scan opens at `1x` on row 6, turn moves the bias, the percentage changes
+   colour, the hint row still shows Too dark / Too bright / Hold steady / Move
+   closer.
+4. `gain` climbs above 1.0x on a dim screen; `exp` stays at or under 96.
+5. Push: `2x`, `3x`, `1x`; the viewfinder shows the zoomed frame; no "Zoom
+   failed; 1x". Then try `-DCAMERA_ZOOM_VTS=700` and `600` on the bench, watch
+   for capture timeouts.
+6. `cpu 240` while scanning; touch the module after five minutes.
+7. `UR complete` times at 1x and 2x, sender fragments 90 and 120-150 bytes, 250
+   and 500 ms per frame.
+8. A/B anything doubtful with its define set to its "off" value.
+
+### The QR air gap on the board, View key, the SDK's QR (2026-11-10 to 11)
+
+The tuned camera on the colour kit, against `zecz` and the desktop app. All
+the runs are in [QR-BENCH.md](zcash/QR-BENCH.md).
+
+- **Too dense at first.** From a 1080p laptop screen the board found a 90 B
+  code (v8) 253 times but decoded it only 3 times. `zecz` in the terminal
+  at 90 B, 1x zoom, took 215 s. The fix was less data per code and bigger
+  codes. With the board at 2x zoom and exposure -4, 50 B (v6) read in
+  70.6 s, 40 B (v5) in 60.5 s and 30 B (also v5) in 83.0 s. The defaults
+  moved to 50 B at 500 ms, and the app gained a stopwatch, a manual step
+  mode and a bench sweep to measure the rest.
+- **The first send by QR in both directions** was signed by `zecz` and
+  mined in block 4,606,736
+  (`8f3b9264fddce48f6989396336741512e3fdafe66870826c0ceeb63725e73c7d`).
+  Two more were signed from the desktop app (`43f6c901…c085` and
+  `85926611…19e9`). Reading the board's reply with the laptop webcam took
+  39.4 s at first, and 7.4 s once the app decoded each frame with a lighter
+  pass.
+- **A sender that switches.** Changing the fragment size mid-scan is a new
+  message, and the decoder refused all of it. It now follows the new
+  message after three of its parts in a row, as `QrScanner` in the SDK
+  does.
+- **View key.** A new main-menu item shows the account as
+  `ur:leek-zcash-accounts`. The first import worked but asked for a
+  birthday the board already had: the record now carries the board's label
+  and birthday (keys 3 and 4), and the app fills them in. Account 0
+  imported at block 4,506,700 and synced, with the board unplugged.
+- **QRs that fill the panel.** Whole-pixel modules with two of quiet zone
+  use 77–88 % of the 240 px panel. A push now also offers each density
+  filled: modules of a fractional size, 228 px for v6. zbar reads them in
+  the simulator. On the board they are untested.
+- **The SDK.** `leek-zcash-ffi` gained `QrScanner`, `QrEncoder` and
+  `qr_defaults()`. Five Rust tests cover them and the Kotlin smoke test
+  scans a View key through the generated bindings.
+
+Not tested: the OPTIGA Trust M paths (`esp32s3cam-color-se`), the filled QR
+layout on a board, and QR on a phone.

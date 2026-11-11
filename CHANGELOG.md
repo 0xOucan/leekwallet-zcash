@@ -8,6 +8,21 @@ are released in
 
 ## Unreleased
 
+- **CAM kits: camera tuning for faster QR scanning (measured on the colour
+  kit, [QR-BENCH.md](docs/zcash/QR-BENCH.md)).** The AGC gain ceiling was effectively 1/16x (the driver wrote its
+  enum value into a real-gain register), so all brightness came from shutter
+  time and blur; it is now a real 4x. Banding is 60 Hz (was 50 Hz). The
+  shutter is capped at 96 lines and metering is centre-weighted, with the
+  knob's -5..0 bias kept. The knob push now zooms on the sensor, 1x → 2x → 3x
+  (2.67x) → 1x, always captured at QVGA and opening at 1x; VGA and SVGA are
+  gone from the Scan screen and stay in the bench image. Row 6 shows the zoom
+  (`1x 12fps s:3 r:1`), and the colour kit shows the light level's percentage
+  in green, amber or red. The CPU runs at 240 MHz only while scanning (160
+  otherwise), and decoding runs on core 1. Once a second the serial log shows
+  per-stage times, exposure, gain and the CPU clock, and each animated UR logs
+  its time to complete. Every change has a build define to switch it off;
+  JOURNAL.md "Camera tuning" has the board checklist. Delete
+  `firmware/sdkconfig.esp32s3cam*` before building.
 - **Seed backups in the secure element and back (development image only).**
   A new env, `esp32s3cam-color-se` (colour kit + OPTIGA Trust M on GPIO47/21),
   adds Settings > Secure element: copy the open seed into the chip's Level 1
@@ -21,6 +36,49 @@ are released in
   a backup location, not extra security; the vault stays the master
   (`firmware/docs/BACKUP.md`). Every other image is unchanged. Host-tested
   (`sim/test_se_backup.c`); not yet run on a chip.
+- **The QR air gap works on the board (experimental).** A board kept off
+  USB and Bluetooth signs by animated QR in both directions: the request as
+  `ur:leek-pczt`, the reply as `ur:leek-zsig`. Three testnet sends were
+  signed this way on the colour kit; the first, by `zecz`, was mined in
+  block 4,606,736 (`8f3b9264…3c7d`). QR is never used for pairing.
+  - **Desktop app:** *Sign with QR* on the Send and Shield review. It
+    defaults to 50-byte fragments at 500 ms (Speed: Safe 50/500, Balanced
+    50/400, Fast 50/300, Custom). A full-screen view shows the code as large
+    as the window allows. A stopwatch, a manual step mode and a *Bench
+    sweep* through 11 settings produce a Markdown table. The reply decodes
+    in about 7 s instead of 39 s.
+  - **Bench:** a compact send took 60.5 s to read at 40 B and 70.6 s at
+    50 B, with the board at 2x zoom
+    ([QR-BENCH.md](docs/zcash/QR-BENCH.md)).
+  - **`zecz`:** `send --qr` and `--qr-html`, `qr-show` (with `--sweep`) and
+    `qr-scan`, from the webcam with the `qr-camera` feature or from a file
+    of parts.
+  - Both use one new crate, `host/leek-ur`, which produces the firmware's
+    parts byte for byte.
+- **View key: set up a wallet without connecting the board (experimental).**
+  On the board, Main menu → View key: a warning ("Whoever scans it sees
+  balance and history. It cannot spend."), then the account as an animated
+  `ur:leek-zcash-accounts`. It carries the seed fingerprint, the UFVK and,
+  when the board knows them, its label and birthday height
+  ([FORMATS.md](docs/zcash/FORMATS.md#account-record)). The desktop app
+  imports it as a board wallet under Wallets on this device → *Import from
+  the board's QR*, with the board's birthday filled in. This was tested
+  with the board unplugged: testnet account 0 imported at block 4,506,700
+  and synced.
+- **The board's QR screen (colour kit).**
+  - A turn sets the backlight live. A push shows the same code filled to
+    the panel, then the next density, plain: still, v6, v4, v3, v9. The
+    filled layout is experimental: one module of quiet zone and modules a
+    pixel apart in size, v6 at 228 px instead of 205.
+  - Receive shows the Orchard-only address, a smaller code (v5 on mainnet).
+  - The scanner follows a sender that switched messages after three of its
+    parts in a row, and logs why it refused a part.
+- **SDK: animated QR for other wallets.** `leek-zcash-ffi` (Kotlin and
+  Swift) gains `QrScanner`, which takes camera texts and returns the View
+  key's account record or the board's `.zsig`; it refuses a key for the
+  other network and follows a switched sender. It also gains `QrEncoder`
+  (`ur:leek-pczt` frames) and `qr_defaults()` with the bench's settings. No
+  wallet ships it yet.
 - **Secure element research, and a development-only SE container.** How
   Trezor and BitBox use the OPTIGA Trust M, and a design for using it here
   (`firmware/docs/RESEARCH-SECURE-ELEMENT.md`,
@@ -35,13 +93,23 @@ are released in
   (`Light <=O----> -4 23%`), capture size, frames/s, codes located and read,
   a progress bar for animated URs, and fixed hints (Too dark, Too bright,
   Hold steady, Move closer). **Settings → Preview** shows the true exposure
-  instead. **Settings → Screen** dims the backlight (1–100 %, finer below 10 %, PWM on GPIO43,
-  the header's TX): move the module's BLK from 3V3 to TX to use it
-  (WIRING-S3CAM-COLOR.md). The OLED kits are unchanged.
-  Every QR the panel shows (Receive, a signature) opens at its own
-  backlight, 5 % unless turned, so a webcam sees modules rather than glare:
-  turning the knob on the QR sets it (remembered), OK steps the module size,
-  Cancel finishes and puts the panel's own level back.
+  instead. **Settings → Screen** dims the backlight (PWM on GPIO43, the
+  header's TX): move the module's BLK from 3V3 to TX to use it
+  (WIRING-S3CAM-COLOR.md). The steps are 1, 2, 3, 5, 7, 10, 15, 20 % and
+  tens, and below 1 % fine ones down to a single tick of the 14-bit PWM
+  (0.7, 0.5, 0.3 … 0.02, 0.01, 0.006 %), because even 1 % was far too
+  bright for a webcam reading the panel's QR. One level for every screen,
+  QRs included: Receive and the signature QR keep their knob (Receive pages,
+  the QR steps its module size). The OLED kits are unchanged.
+- **Colour kit: QRs fill the panel.** Every QR (Receive, a signature) is
+  drawn from its modules at the largest whole number of pixels per module
+  that leaves two modules of quiet zone, with the light running to the
+  panel's edges: a t-address is 7 px a module instead of 6, a v6 code 5
+  instead of 4. The signature QR has its own sizes on this panel (v9 at
+  4 px, v6 at 5, v4 at 6, v3 at 7; a turn or OK steps them) and opens as one
+  still code where the message fits in one at 4 px, else at v6 5 px. A small
+  line under the code says the mode, the frame and the backlight where it
+  fits without shrinking the modules.
 - **Colour kit: the screen stayed dark with Bluetooth on.** The colour build
   ran out of internal RAM before the UI task started ("Failed to create UI
   task"). The panel's buffers are smaller, its SPI interrupt code no longer

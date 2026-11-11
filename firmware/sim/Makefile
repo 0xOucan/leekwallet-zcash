@@ -40,7 +40,7 @@ VAULT_CRYPTO :=                 $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                 $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/aes_modes.c \
                 $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/gf128mul.c
 
-TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_zcash_keys test_zcash_pczt test_zcash_account
+TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_ur_fixtures test_qr_out test_oled_qr test_viewfinder test_scan_timing test_camera_tune test_zcash_keys test_zcash_pczt test_zcash_account
 
 all: $(addprefix $(BUILD)/,$(TESTS))
 
@@ -60,6 +60,11 @@ $(BUILD)/test_ur_encoder: $(UR_ENCODER_SRC) | $(BUILD)
 $(BUILD)/test_ur_encoder_asan: $(UR_ENCODER_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=all \
 	      -fno-omit-frame-pointer -o $@ $^
+
+# The air-gap fixtures the host's UR crate (host/leek-ur) wrote, in vectors/ur:
+# the board's encoder must print them and its decoder must read them.
+$(BUILD)/test_ur_fixtures: test_ur_fixtures.c host_stubs.c ../src/ur-encoder.c ../src/ur-decoder.c ../src/ur.c ../src/ur-fountain.c ../src/cbor.c $(CRYPTO)/sha2.c $(CRYPTO)/memzero.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
 
 # The return path's schedule, against the real QR encoder: every frame of every
 # mode has to fit the version it will be drawn at.
@@ -199,8 +204,12 @@ $(BUILD)/test_panel128: test_panel128.c ../src/panel128.c ../src/oled-core.c ../
 
 # The colour panel (240x240 ST7789): crisp glyphs, roles, native-scale QR.
 $(BUILD)/test_panel_color: CFLAGS += -DLEEK_BOARD_S3CAM -DLEEK_DISPLAY=LEEK_DISPLAY_ST7789
+# With the real QR return path, so every colour mode's frames are drawn and
+# scanned back at the module size the mode is named for.
 $(BUILD)/test_panel_color: test_panel_color.c ../src/panel-color.c ../src/oled-core.c ../src/font5x7.c \
-                           ../src/qrcode.c host_stubs.c ../../vectors/keys_vectors.h | $(BUILD)
+                           ../src/qrcode.c host_stubs.c ../../vectors/keys_vectors.h \
+                           ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
+                           ../src/cbor.c $(CRYPTO)/sha2.c $(CRYPTO)/memzero.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
 
 # The boot splash: timing, both renderings, the version line. With --pgm DIR
@@ -448,6 +457,16 @@ $(BUILD)/test_button: test_button.c esp_stubs.c ../src/button.c | $(BUILD)
 $(BUILD)/test_viewfinder: test_viewfinder.c ../src/viewfinder.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
+# Per-stage scan timing and the time-to-complete-UR clock: arithmetic and
+# formatting only, like the viewfinder.
+$(BUILD)/test_scan_timing: test_scan_timing.c ../src/scan-timing.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# The OV5640 register values of the scan profile (gain ceiling, banding,
+# shutter cap, AEC weights, zoom windows): pure, no driver.
+$(BUILD)/test_camera_tune: test_camera_tune.c ../src/camera-tune.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
+
 # Against the real vault, not a stub. src/pin.c no longer stores a verifier of
 # its own, so "does this PIN open the device" is now a question only the real
 # leek-wallet.c can answer - and test_no_fast_verifier_in_nvs() inspects the
@@ -489,7 +508,8 @@ UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
                   ../src/cbor.c ../src/device-wipe.c \
                   ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
-                  ../src/airgap.c ../src/camera.c ../src/viewfinder.c ../src/ur-decoder.c \
+                  ../src/backlight-level.c \
+                  ../src/airgap.c ../src/camera.c ../src/camera-tune.c ../src/viewfinder.c ../src/scan-timing.c ../src/ur-decoder.c \
                   $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                   $(CRYPTO)/sha2.c $(CRYPTO)/pbkdf2.c \
                   $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c \

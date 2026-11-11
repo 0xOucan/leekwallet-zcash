@@ -28,6 +28,8 @@
 #include "ble-name.h"
 #include "esp_timer.h"
 #include "qr-out.h"
+#include "cbor.h"
+#include "backlight-level.h"
 #include "splash.h"
 #ifndef LEEK_HOST_TEST
 #include "esp_heap_caps.h"
@@ -65,6 +67,7 @@
 #endif
 #include "camera.h"
 #include "viewfinder.h"
+#include "scan-timing.h"
 #include "esp_random.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -579,6 +582,8 @@ typedef enum {
      * panel. Scan needs a camera and is simply absent without one, rather
      * than present and apologising; it takes ur:leek-pczt (airgap.h). */
     MENU_SHOW_ADDRESS,
+    /* The account for an air-gapped companion (SCREEN_VIEW_KEY). */
+    MENU_VIEW_KEY,
     MENU_SCAN,
     /* SD storage mode (roadmap 1.4): load a .zkv seed for the session, or
      * save the open one. On every board with a card slot, seed or no seed:
@@ -604,6 +609,7 @@ static const char *menu_action_label(MenuAction a)
         case MENU_TEMP_SEED:     return "Temp Seed";
         case MENU_END_TEMP:      return "End Temp Seed";
         case MENU_SHOW_ADDRESS:  return "Receive";
+        case MENU_VIEW_KEY:      return "View key";
         case MENU_SCAN:          return "Scan";
         case MENU_SD_SEED:       return "SD Card";
         case MENU_SETTINGS:      return "Settings";
@@ -629,6 +635,9 @@ static void menu_rebuild(void)
      * nothing that could sign. */
     if (status.wallet_count > 0 || temp) {
         menu_actions[menu_item_count++] = MENU_SHOW_ADDRESS;
+#if LEEK_HAS_ZCASH
+        menu_actions[menu_item_count++] = MENU_VIEW_KEY;
+#endif
 #if LEEK_HAS_CAMERA
         menu_actions[menu_item_count++] = MENU_SCAN;
 #endif
@@ -926,10 +935,13 @@ static int64_t  last_activity_us = 0;
 #define UI_HAS_PREVIEW_SETTING (BOARD_HAS_SPI_PANEL && LEEK_HAS_CAMERA)
 #endif
 
-/* The backlight, percent, one of backlight_steps (1..100). Not secret. */
-#define UI_KEY_BACKLIGHT    "backlight"
-/* The backlight while a QR is shown (receive and signature QRs), percent. */
-#define UI_KEY_QR_BACKLIGHT "qr_bl"
+/* The backlight, an index into backlight-level.h's table. Not secret. */
+#define UI_KEY_BACKLIGHT    "bl_idx"
+/* What an earlier firmware saved: percent, 1..100. Read, mapped to the
+   nearest level, and left where it is (bl_level_from_pct()). A QR level an
+   earlier firmware saved as "qr_bl" is ignored and left alone too: every
+   screen, QRs included, is at this one level now. */
+#define UI_KEY_BACKLIGHT_PCT    "backlight"
 /* 1: the viewfinder shows the true exposure rather than auto-levels. */
 #define UI_KEY_PREVIEW      "pv_true"
 
@@ -943,99 +955,36 @@ static bool color_panel(void)
 #endif
 }
 
-/* Full by default: the module was on 3V3 until it had a pin. */
-#define BACKLIGHT_DEFAULT   100
-/* Finer at the dark end, where the eye notices each step: 10 % was still
-   glaring for a webcam reading the panel's QR (board, 2026-11-10). Never 0,
-   so the panel can always be read to turn it back up. */
-static const uint8_t backlight_steps[] = {
-    1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100,
-};
-#define BACKLIGHT_STEPS (sizeof backlight_steps / sizeof backlight_steps[0])
-
-/* The next step up (dir > 0) or down from `pct`, which need not be a step
-   itself (an older firmware saved tens; 25 % from anywhere still moves). */
-static uint8_t backlight_next(uint8_t pct, int dir)
-{
-    if (dir > 0) {
-        for (size_t i = 0; i < BACKLIGHT_STEPS; i++) {
-            if (backlight_steps[i] > pct) return backlight_steps[i];
-        }
-        return backlight_steps[BACKLIGHT_STEPS - 1];
-    }
-    for (size_t i = BACKLIGHT_STEPS; i-- > 0;) {
-        if (backlight_steps[i] < pct) return backlight_steps[i];
-    }
-    return backlight_steps[0];
-}
-static uint8_t backlight_pct = BACKLIGHT_DEFAULT;
+/* backlight-level.h's table: the old steps from 1 % up, fine ones below to a
+   single tick. Every screen, QRs included, is at this level. Full by
+   default: the module was on 3V3 until it had a pin. */
+static uint8_t backlight_level = BL_LEVEL_DEFAULT;
 /* While adjusting in place: the level to put back on Cancel. */
-static uint8_t backlight_saved = BACKLIGHT_DEFAULT;
+static uint8_t backlight_saved = BL_LEVEL_DEFAULT;
 static bool    backlight_editing;
 
-/*
- * The backlight while a QR is on the panel: its own level, 5 % unless the
- * user turned it, and remembered. A webcam pointed at a full-bright panel
- * saw a glare with no modules in it, and 10 % was still too bright for one
- * (board, 2026-11-10). Turned with the knob on the QR itself; leaving the QR
- * puts the panel back at backlight_pct.
- */
-#define QR_BACKLIGHT_DEFAULT 5
-static uint8_t qr_backlight_pct = QR_BACKLIGHT_DEFAULT;
-static bool    qr_backlight_dirty;
-#endif
-
-/* True where a knob turn on a QR is its backlight: the colour kit. */
-static bool qr_knob_is_backlight(void)
+static void backlight_show(uint8_t level)
 {
-#if UI_COLOR_CODE
-    return color_panel();
-#else
-    return false;
-#endif
+    oled_set_backlight_duty(bl_level_duty(level));
 }
+#endif
 
-/* Light the colour panel for a QR (true) or as everywhere else (false). */
-static void qr_backlight_apply(bool qr)
-{
 #if UI_COLOR_CODE
-    if (color_panel()) {
-        oled_set_backlight(qr ? qr_backlight_pct : backlight_pct);
+/* The level from NVS: the index if this firmware saved one, else the
+   percent an earlier one saved, mapped to the nearest level; else `level`. */
+static uint8_t backlight_load(nvs_handle_t nvs, uint8_t level)
+{
+    uint8_t stored = 0;
+    if (nvs_get_u8(nvs, UI_KEY_BACKLIGHT, &stored) == ESP_OK && stored < BL_LEVEL_COUNT) {
+        return stored;
     }
-#else
-    (void)qr;
-#endif
-}
-
-/* A knob turn on a QR: one step of the QR's own backlight. */
-static void qr_backlight_turn(int dir)
-{
-#if UI_COLOR_CODE
-    qr_backlight_pct = backlight_next(qr_backlight_pct, dir);
-    qr_backlight_dirty = true;
-    qr_backlight_apply(true);
-    ESP_LOGI(TAG, "QR backlight %u%%", (unsigned)qr_backlight_pct);
-#else
-    (void)dir;
-#endif
-}
-
-/* Saved once, when the QR is left, rather than on every detent. */
-static void qr_backlight_save(void)
-{
-#if UI_COLOR_CODE
-    if (!qr_backlight_dirty) {
-        return;
+    if (nvs_get_u8(nvs, UI_KEY_BACKLIGHT_PCT, &stored) == ESP_OK &&
+        stored >= 1 && stored <= 100) {
+        return bl_level_from_pct(stored);
     }
-    qr_backlight_dirty = false;
-    nvs_handle_t nvs;
-    if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
-        nvs_set_u8(nvs, UI_KEY_QR_BACKLIGHT, qr_backlight_pct);
-        nvs_commit(nvs);
-        nvs_close(nvs);
-    }
-#endif
+    return level;
 }
+#endif
 
 /* Four steps rather than a slider: the OLED is legible across the whole range,
  * so fine control buys nothing and costs presses. Low is genuinely useful -
@@ -1147,14 +1096,7 @@ static void settings_load(void)
         button_set_knob_reversed(stored == 1);
     }
 #if UI_COLOR_CODE
-    if (nvs_get_u8(nvs, UI_KEY_BACKLIGHT, &stored) == ESP_OK &&
-        stored >= OLED_BACKLIGHT_MIN && stored <= OLED_BACKLIGHT_MAX) {
-        backlight_pct = stored;
-    }
-    if (nvs_get_u8(nvs, UI_KEY_QR_BACKLIGHT, &stored) == ESP_OK &&
-        stored >= OLED_BACKLIGHT_MIN && stored <= OLED_BACKLIGHT_MAX) {
-        qr_backlight_pct = stored;
-    }
+    backlight_level = backlight_load(nvs, backlight_level);
 #endif
 #if UI_HAS_PREVIEW_SETTING
     if (nvs_get_u8(nvs, UI_KEY_PREVIEW, &stored) == ESP_OK) {
@@ -1184,7 +1126,7 @@ static void backlight_save(void)
 {
     nvs_handle_t nvs;
     if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
-        nvs_set_u8(nvs, UI_KEY_BACKLIGHT, backlight_pct);
+        nvs_set_u8(nvs, UI_KEY_BACKLIGHT, backlight_level);
         nvs_commit(nvs);
         nvs_close(nvs);
     }
@@ -1199,24 +1141,32 @@ static bool backlight_edit_button(button_id_t btn)
     }
     switch (btn) {
         case BUTTON_UP:
-            backlight_pct = backlight_next(backlight_pct, +1);
+            backlight_level = bl_level_step(backlight_level, +1);
             break;
         case BUTTON_DOWN:
-            backlight_pct = backlight_next(backlight_pct, -1);
+            backlight_level = bl_level_step(backlight_level, -1);
             break;
         case BUTTON_ACCEPT:
             backlight_save();
             backlight_editing = false;
-            ESP_LOGI(TAG, "Screen backlight %u%%", (unsigned)backlight_pct);
+            {
+                /* On the serial log, so the level a webcam reads the
+                   panel's QRs at can be written down. */
+                char pct[8];
+                bl_level_label(backlight_level, pct, sizeof pct);
+                ESP_LOGI(TAG, "Screen backlight %s (level %u, duty %u/%u)", pct,
+                         (unsigned)backlight_level, (unsigned)bl_level_duty(backlight_level),
+                         (unsigned)BL_DUTY_MAX);
+            }
             break;
         case BUTTON_CANCEL:
-            backlight_pct = backlight_saved;
+            backlight_level = backlight_saved;
             backlight_editing = false;
             break;
         default:
             return true;
     }
-    oled_set_backlight(backlight_pct);
+    backlight_show(backlight_level);
     ui_invalidate();
     return true;
 }
@@ -2423,6 +2373,9 @@ static void screen_main_menu_on_button(button_id_t btn)
                 case MENU_SHOW_ADDRESS:
                     ui_set_screen(SCREEN_SHOW_ADDRESS);
                     break;
+                case MENU_VIEW_KEY:
+                    ui_set_screen(SCREEN_VIEW_KEY);
+                    break;
                 case MENU_SCAN:
                     ui_set_screen(SCREEN_SCAN);
                     break;
@@ -3458,8 +3411,8 @@ static void screen_settings_enter(void)
     /* Left mid-adjustment (an auto-lock, say): the unsaved level goes. */
     if (backlight_editing) {
         backlight_editing = false;
-        backlight_pct = backlight_saved;
-        oled_set_backlight(backlight_pct);
+        backlight_level = backlight_saved;
+        backlight_show(backlight_level);
     }
 #endif
 }
@@ -3525,15 +3478,15 @@ static void screen_settings_render(void)
                      brightness_label(brightness_choice));
 #if UI_COLOR_CODE
             /* The colour panel's backlight, a percentage, in place of the
-               OLED's levels; "< 70% >" while it is being turned. */
+               OLED's levels; "< 71% >" while it is being turned. */
             if (color_panel()) {
                 const bool sel = item_idx == settings_selection;
+                char pct[8];
+                bl_level_label(backlight_level, pct, sizeof pct);
                 if (sel && backlight_editing) {
-                    snprintf(line, sizeof(line), "> Screen < %u%% >",
-                             (unsigned)backlight_pct);
+                    snprintf(line, sizeof(line), "> Screen < %s >", pct);
                 } else {
-                    snprintf(line, sizeof(line), "%s Screen %u%%", sel ? ">" : " ",
-                             (unsigned)backlight_pct);
+                    snprintf(line, sizeof(line), "%s Screen %s", sel ? ">" : " ", pct);
                 }
             }
 #endif
@@ -3683,7 +3636,7 @@ static void screen_settings_on_button(button_id_t btn)
                 case SET_BRIGHTNESS:
 #if UI_COLOR_CODE
                     if (color_panel()) {
-                        backlight_saved = backlight_pct;
+                        backlight_saved = backlight_level;
                         backlight_editing = true;
                         break;
                     }
@@ -3759,6 +3712,11 @@ static void screen_settings_on_button(button_id_t btn)
  * ============================================================================ */
 
 static screen_id_t qr_out_back = SCREEN_MAIN_MENU;
+/* A turn on the colour panel's QR moved the backlight: saved on exit. */
+static bool qr_out_backlight_moved;
+/* The colour panel's code fills the glass, modules uneven (oled_set_qr_fill):
+ * each mode of COLOR_QR_CYCLE is shown plain, then filled, then the next. */
+static bool qr_out_fill;
 
 /* A panel big enough to show a whole message as one still code at a size a
  * camera reads (qr-out.h, QR_OUT_MODE_STILL): the 240-row colour TFT. The
@@ -3768,6 +3726,26 @@ static bool qr_out_still_first(void)
     return oled_panel_rows() > 128;
 }
 
+/* The colour panel's OK cycle (qr-out.h): still, then the animated modes
+ * from the default down to the largest modules, then the densest. */
+static const uint8_t COLOR_QR_CYCLE[] = {
+    QR_OUT_MODE_STILL, QR_OUT_MODE_C_V6, QR_OUT_MODE_C_V4, QR_OUT_MODE_C_V3, QR_OUT_MODE_C_V9,
+};
+
+/* Start or switch to `mode`, as this panel allows it: the colour panel's
+ * still code only at 4 px a module or more (QR_OUT_COLOR_STILL_MAX_VERSION). */
+static bool qr_out_try(const char *type, const uint8_t *cbor, size_t len,
+                       uint8_t mode, int64_t now)
+{
+    const bool ok = type ? qr_out_start(type, cbor, len, mode, now)
+                         : qr_out_set_mode(mode, now);
+    if (ok && mode == QR_OUT_MODE_STILL && qr_out_still_first() &&
+        qr_out_current_version() > QR_OUT_COLOR_STILL_MAX_VERSION) {
+        return false;
+    }
+    return ok;
+}
+
 bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
                 screen_id_t back)
 {
@@ -3775,24 +3753,63 @@ bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
     /* Most readable first. v3 x2 cannot carry everything, so a message that
        does not fit there falls back to the next most readable mode, and one
        that fits nowhere is refused rather than half shown. A colour panel
-       (qr_out_still_first) tries one still code before any of them. */
-    static const uint8_t ORDER[] = { QR_OUT_MODE_STILL, QR_OUT_MODE_DEFAULT, 0, 1 };
+       (qr_out_still_first) has its own list: one still code, then its own
+       animated modes (qr-out.h), largest modules last as they carry least. */
+    static const uint8_t ORDER[] = { QR_OUT_MODE_DEFAULT, 0, 1 };
+    static const uint8_t COLOR_ORDER[] = {
+        QR_OUT_MODE_STILL, QR_OUT_COLOR_MODE_DEFAULT, QR_OUT_MODE_C_V9,
+        QR_OUT_MODE_C_V4, QR_OUT_MODE_C_V3,
+    };
+    const bool colour = qr_out_still_first();
+    const uint8_t *order = colour ? COLOR_ORDER : ORDER;
+    const size_t n = colour ? sizeof COLOR_ORDER : sizeof ORDER;
     bool started = false;
-    for (size_t i = qr_out_still_first() ? 0 : 1; i < sizeof ORDER && !started; i++) {
-        started = qr_out_start(type, cbor, len, ORDER[i], now);
+    for (size_t i = 0; i < n && !started; i++) {
+        started = qr_out_try(type, cbor, len, order[i], now);
     }
     if (!started) {
+        qr_out_stop();
         return false;
     }
     qr_out_back = back;
+    qr_out_fill = false;
     ui_set_screen(SCREEN_QR_OUT);
     return true;
+}
+
+/* The line under the code on the colour panel: the mode, the frame and the
+ * backlight, "v6 5px 2/9 0.3%" or "v8 0.006%x25%". The OLEDs ignore it (oled.h). */
+static void qr_out_caption(void)
+{
+#if UI_COLOR_CODE
+    if (!color_panel()) {
+        return;
+    }
+    char pct[8], line[OLED_QR_CAPTION_MAX + 1];
+    bl_level_label(backlight_level, pct, sizeof pct);
+    const QrOutMode *m = qr_out_mode_info(qr_out_current_mode());
+    char name[8];
+    if (m != NULL && m->version == 0) {
+        snprintf(name, sizeof name, "v%u", (unsigned)qr_out_current_version());
+    } else {
+        snprintf(name, sizeof name, "%s", m ? m->name : "");
+    }
+    if (qr_out_seq_len() > 1) {
+        snprintf(line, sizeof line, "%s %u/%u %s", name, (unsigned)qr_out_seq_num(),
+                 (unsigned)qr_out_seq_len(), pct);
+    } else {
+        snprintf(line, sizeof line, "%s %s", name, pct);
+    }
+    oled_set_qr_caption(line);
+#endif
 }
 
 static void screen_qr_out_render(void)
 {
     const char *frame = qr_out_frame();
     const QrOutMode *m = qr_out_mode_info(qr_out_current_mode());
+    qr_out_caption();
+    oled_set_qr_fill(qr_out_fill);
     if (frame == NULL || m == NULL ||
         oled_draw_qrcode_ex(frame, qr_out_current_version(), m->scale,
                             m->inverted) != ESP_OK) {
@@ -3804,32 +3821,80 @@ static void screen_qr_out_render(void)
     }
 }
 
+/* On the colour panel: the next mode of COLOR_QR_CYCLE (dir > 0) or the one
+ * before that carries this message, from wherever the current one sits.
+ * Forward, each mode first fills the panel (same frames, bigger modules),
+ * and the push after that moves on to the next mode, plain. */
+static void qr_out_next_color_mode(int dir, int64_t now)
+{
+    if (dir > 0 && !qr_out_fill) {
+        qr_out_fill = true;
+        ESP_LOGI(TAG, "QR out: v%u fill", (unsigned)qr_out_current_version());
+        return;
+    }
+    qr_out_fill = false;
+    const size_t n = sizeof COLOR_QR_CYCLE;
+    size_t at = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (COLOR_QR_CYCLE[i] == qr_out_current_mode()) at = i;
+    }
+    const uint8_t was = qr_out_current_mode();
+    for (size_t k = 1; k < n; k++) {
+        const size_t i = dir > 0 ? (at + k) % n : (at + n - k) % n;
+        if (qr_out_try(NULL, NULL, 0, COLOR_QR_CYCLE[i], now)) {
+            return;
+        }
+    }
+    (void)qr_out_set_mode(was, now);   /* nothing else carries it */
+}
+
+/* The mode a push left the colour code in, for the bench log. */
+static void qr_out_log_mode(void)
+{
+    ESP_LOGI(TAG, "QR out: v%u%s", (unsigned)qr_out_current_version(), qr_out_fill ? " fill" : "");
+}
+
 static void screen_qr_out_on_button(button_id_t btn)
 {
     const int64_t now = esp_timer_get_time();
-    /* The colour kit: a turn is the backlight, which is what a camera needs
-       moved most, and OK steps the module size; Cancel is done, as ever.
-       The OLEDs keep turn = size, OK = brightness. */
-    if (qr_knob_is_backlight()) {
-        if (btn == BUTTON_UP || btn == BUTTON_DOWN) {
-            qr_backlight_turn(btn == BUTTON_UP ? +1 : -1);
-            ui_invalidate();
-            return;
-        }
+    /* The colour kit: a turn sets the backlight live (the same Settings >
+       Screen level, saved when the QR closes), and the push steps the
+       density through its modes (qr-out.h): the board cannot tell a phone
+       from a webcam, so the user dims and sizes the code for the camera in
+       front of it (bench, 2026-11-10). Cancel is done, as ever. The OLEDs
+       keep turn = size, OK = brightness. */
+    if (qr_out_still_first() && btn != BUTTON_CANCEL) {
         if (btn == BUTTON_ACCEPT) {
-            btn = BUTTON_DOWN;   /* the next module size, below */
+            const bool was_fill = qr_out_fill;
+            qr_out_next_color_mode(+1, now);
+            if (was_fill) {
+                qr_out_log_mode();
+            }
         }
+#if UI_COLOR_CODE
+        else if (btn == BUTTON_UP || btn == BUTTON_DOWN) {
+            const uint8_t was = backlight_level;
+            backlight_level = bl_level_step(backlight_level, btn == BUTTON_UP ? +1 : -1);
+            if (backlight_level != was) {
+                backlight_show(backlight_level);
+                qr_out_backlight_moved = true;
+            }
+        }
+#endif
+        ui_invalidate();
+        return;
     }
     switch (btn) {
         case BUTTON_UP:
         case BUTTON_DOWN: {
             /* Step through the module sizes. A mode that cannot carry this
-               message is skipped rather than shown blank. */
+               message is skipped rather than shown blank, and so are the
+               colour panel's own. */
             const uint8_t step = (btn == BUTTON_UP) ? QR_OUT_MODE_COUNT - 1 : 1;
             uint8_t mode = qr_out_current_mode();
             for (int i = 0; i < QR_OUT_MODE_COUNT - 1; i++) {
                 mode = (uint8_t)((mode + step) % QR_OUT_MODE_COUNT);
-                if (mode == QR_OUT_MODE_STILL && !qr_out_still_first()) {
+                if (mode == QR_OUT_MODE_STILL || qr_out_mode_info(mode)->color) {
                     continue;
                 }
                 if (qr_out_set_mode(mode, now)) {
@@ -3869,17 +3934,22 @@ static void screen_qr_out_enter(void)
     qr_brightness = 5;   /* Dim */
     oled_set_contrast(BRIGHTNESS_LEVELS[qr_brightness]);
     oled_set_fast_refresh(true);   /* no dark bands on a camera; oled.h */
-    qr_backlight_apply(true);
 }
 
 static void screen_qr_out_exit(screen_id_t next)
 {
     (void)next;
+#if UI_COLOR_CODE
+    if (qr_out_backlight_moved) {
+        /* The level the camera read at stays, for every screen: one
+           brightness setting, as Settings > Screen. */
+        backlight_save();
+        qr_out_backlight_moved = false;
+    }
+#endif
     qr_out_stop();
     oled_set_fast_refresh(false);
     oled_set_contrast(BRIGHTNESS_LEVELS[brightness_choice]);
-    qr_backlight_apply(false);
-    qr_backlight_save();
 }
 
 /* Advance the animation. Called once per turn of the UI task's loop, which
@@ -4960,15 +5030,6 @@ static void recv_apply_panel(void)
                     p.kind == ZRECV_QR;
     oled_set_contrast(BRIGHTNESS_LEVELS[qr ? 5 : brightness_choice]);
     oled_set_fast_refresh(qr);
-    qr_backlight_apply(qr);
-}
-
-/* True while the receive screen shows a QR page rather than text. */
-static bool recv_on_qr(void)
-{
-    ZRecvPage p;
-    return recv_ready && zrecv_render(&recv_account, recv_page, &p) &&
-           p.kind == ZRECV_QR;
 }
 #endif
 
@@ -4992,7 +5053,6 @@ static void screen_show_address_exit(screen_id_t next)
     recv_ready = false;
     recv_page = 0;
     recv_apply_panel();
-    qr_backlight_save();
 #endif
 }
 
@@ -5037,14 +5097,6 @@ static void screen_show_address_on_button(button_id_t btn)
         return;
     }
 #if LEEK_HAS_ZCASH
-    if (recv_ready && qr_knob_is_backlight() && recv_on_qr() &&
-        (btn == BUTTON_UP || btn == BUTTON_DOWN)) {
-        /* On a QR the colour kit's knob is the backlight; OK goes back to
-           the text pages, where a turn pages again. */
-        qr_backlight_turn(btn == BUTTON_UP ? +1 : -1);
-        ui_invalidate();
-        return;
-    }
     if (recv_ready) {
         const int n = zrecv_page_count(&recv_account);
         switch (btn) {
@@ -5129,7 +5181,7 @@ static bool    scan_preview_live;
  * feedback below it, every one of them numbers or fixed strings:
  *
  *   row 5  Light <=O----> -4 23%   the exposure bias on a bar, the mean level
- *   row 6  QVGA 12fps s:3 r:1      capture size, frame rate, located, read
+ *   row 6  1x 12fps s:3 r:1        sensor zoom, frame rate, located, read
  *   row 7  progress of an animated UR, an event ("Not a Zcash request"),
  *          an aiming hint ("Too dark"), or "Point at the QR"
  *
@@ -5159,11 +5211,66 @@ static void scan_color_reset(void)
 }
 #endif
 
+/* Time to a complete animated UR (scan-timing.h), logged over USB serial
+ * once per message: the number the camera tuning is meant to move. */
+static ScanUrClock scan_ur_clock;
+
+static void scan_ur_log_done(void)
+{
+    uint32_t frames = 0;
+    camera_stats(&frames, NULL, NULL);
+    ScanUrResult r;
+    if (scan_ur_done(&scan_ur_clock, esp_timer_get_time(), frames,
+                     airgap_scan_total(), &r)) {
+        char line[96];
+        scan_ur_format(&r, line, sizeof line);
+        ESP_LOGI(TAG, "%s", line);
+    }
+}
+
 /* One decoded QR string: the same function service_scan() calls per frame,
  * named so the host can drive it without a camera. */
+/* A refused code, once a second at most: what it was (the UR type and part
+ * number, up to the second '/', never the payload) and why. The bench reads
+ * these off the serial log when parts stop counting. */
+static void scan_log_refused(const char *ur, size_t len, AirgapScan res)
+{
+    static int64_t last_us;
+    static unsigned skipped;
+    const int64_t now = esp_timer_get_time();
+    if (now - last_us < 1000000) {
+        skipped++;
+        return;
+    }
+    size_t n = 0, slashes = 0;
+    while (n < len && n < 40 && ur[n] != '\0') {
+        if (ur[n] == '/' && ++slashes == 2) break;
+        n++;
+    }
+    ESP_LOGI(TAG, "scan refused (%s, %u more since): \"%.*s\" %u chars",
+             res == AIRGAP_SCAN_WRONG_TYPE ? "wrong type" : airgap_scan_why(),
+             skipped, (int)n, ur, (unsigned)len);
+    last_us = now;
+    skipped = 0;
+}
+
 static void scan_handle(const char *ur, size_t len)
 {
-    switch (airgap_scan_feed(ur, len)) {
+    const AirgapScan res = airgap_scan_feed(ur, len);
+    if (res == AIRGAP_SCAN_UNREADABLE || res == AIRGAP_SCAN_WRONG_TYPE) {
+        scan_log_refused(ur, len, res);
+    }
+    if (res == AIRGAP_SCAN_ACCEPTED || res == AIRGAP_SCAN_REDUNDANT ||
+        res == AIRGAP_SCAN_PCZT) {
+        uint32_t frames = 0;
+        camera_stats(&frames, NULL, NULL);
+        scan_ur_part(&scan_ur_clock, esp_timer_get_time(), frames,
+                     res == AIRGAP_SCAN_REDUNDANT);
+    }
+    if (res == AIRGAP_SCAN_PCZT) {
+        scan_ur_log_done();
+    }
+    switch (res) {
         case AIRGAP_SCAN_ACCEPTED:
             snprintf(scan_status, sizeof scan_status, "%lu parts to go",
                      (unsigned long)airgap_scan_remaining());
@@ -5245,6 +5352,7 @@ static void qr_sign_review_done(bool approved)
 static void screen_scan_enter(void)
 {
     airgap_scan_reset();
+    scan_ur_reset(&scan_ur_clock);
     scan_preview_live = false;
 #if !BOARD_HAS_SPI_PANEL
     memset(scan_preview, 0, sizeof scan_preview);
@@ -5270,12 +5378,26 @@ static void scan_render_color(void)
 
     char line[VIEWFINDER_LINE];
     viewfinder_exposure_line(camera_exposure_bias(), scan_gray_stats.mean, line);
-    oled_set_role(OLED_ROLE_TEXT);
-    oled_draw_string_centered(5, line);
+    /* The bar in body text, its percentage in the level's grade: green
+       good, amber medium, red bad (viewfinder_level_grade()). Drawn as two
+       strings at the columns a centred one would use. */
+    const viewfinder_level_t grade = viewfinder_level_grade(scan_gray_stats.mean);
+    const oled_role_t grade_role = grade == VIEWFINDER_LEVEL_GOOD   ? OLED_ROLE_GOOD
+                                 : grade == VIEWFINDER_LEVEL_MEDIUM ? OLED_ROLE_WARN
+                                                                    : OLED_ROLE_DANGER;
+    {
+        const size_t n = strlen(line);
+        const size_t head = n > VIEWFINDER_EXPOSURE_PCT_CHARS ? n - VIEWFINDER_EXPOSURE_PCT_CHARS : 0;
+        const uint8_t col0 = (uint8_t)((OLED_WIDTH - n * 6) / 2);
+        oled_set_role(OLED_ROLE_TEXT);
+        oled_draw_string(5, col0, line);
+        oled_set_role(grade_role);
+        oled_draw_string(5, (uint8_t)(col0 + head * 6), line + head);
+    }
 
     uint32_t frames = 0, read = 0, seen = 0;
     camera_stats(&frames, &read, &seen);
-    viewfinder_stats_line(camera_frame_width(), scan_fps, seen, read, line);
+    viewfinder_stats_line(camera_zoom_label(), scan_fps, seen, read, line);
     oled_set_role(OLED_ROLE_DIM);
     oled_draw_string_centered(6, line);
 
@@ -5290,7 +5412,9 @@ static void scan_render_color(void)
         oled_set_role(OLED_ROLE_TEXT);
         oled_draw_string_centered(7, scan_status);
     } else {
-        oled_set_role(OLED_ROLE_WARN);
+        /* Amber, or red when the level itself is bad ("Too dark" on a
+           red percentage reads as one message). */
+        oled_set_role(grade == VIEWFINDER_LEVEL_BAD ? OLED_ROLE_DANGER : OLED_ROLE_WARN);
         oled_draw_string_centered(7, hint);
     }
     oled_set_role(OLED_ROLE_AUTO);
@@ -5334,8 +5458,9 @@ static void screen_scan_on_button(button_id_t btn)
         ui_set_screen(SCREEN_MAIN_MENU);
         return;
     }
-    /* Bench controls for comparing combinations; orientation stays f2.
-       UP brighter, DOWN darker, OK steps the capture size, and OK with UP
+    /* Turn (UP brighter, DOWN darker) is the exposure bias; the push steps
+       the sensor zoom 1x -> 2x -> 3x -> 1x (the capture stays QVGA, and the
+       viewfinder shows exactly the zoomed frame quirc reads); OK with UP
        held toggles live video to the PC viewer.
 
        A knob cannot be held on UP, so on the S3 CAM kit (knob + Cancel, no
@@ -5346,11 +5471,11 @@ static void screen_scan_on_button(button_id_t btn)
     } else if (btn == BUTTON_ACCEPT) {
         if (button_is_pressed(BUTTON_UP)) {
             camera_set_stream(!camera_streaming());
-        } else if (!camera_next_frame_size()) {
-            /* Said on the screen, not left as a view that stopped moving;
-               OK again moves on to the next size. */
-            snprintf(scan_status, sizeof scan_status, "%u failed; OK=next",
-                     (unsigned)camera_frame_width());
+        } else if (!camera_next_zoom()) {
+            /* Said on the screen, not left as a view that stopped changing.
+               The camera is back at the full field; the next push tries
+               2x again. */
+            snprintf(scan_status, sizeof scan_status, "Zoom failed; 1x");
 #if UI_COLOR_CODE
             scan_event_until_ms = ui_now_ms() + SCAN_EVENT_MS;
 #endif
@@ -5447,13 +5572,13 @@ static void service_scan(void)
             /* "f0 s12 r0": flip mode, codes seen, codes read. Short because
                the row is 21 characters and the numbers matter more than the
                words. */
-            /* "640 e-5 f123 s3 r1": capture width, exposure, frames
-               captured, codes seen, codes read. Frames still climbing on a
-               blank view means the camera is live and the picture is dark;
-               frames stopped means capture itself stopped. */
+            /* "1x e-4 f123 s3 r1": zoom, exposure, frames captured, codes
+               seen, codes read. Frames still climbing on a blank view means
+               the camera is live and the picture is dark; frames stopped
+               means capture itself stopped. */
             char line[48];
-            snprintf(line, sizeof line, "%u e%d f%u s%u r%u",
-                     (unsigned)camera_frame_width(),
+            snprintf(line, sizeof line, "%s e%d f%u s%u r%u",
+                     camera_zoom_label(),
                      (int)camera_exposure_bias(),
                      (unsigned)(cam_frames > 999 ? 999 : cam_frames),
                      (unsigned)(cam_seen > 99 ? 99 : cam_seen),
@@ -7012,6 +7137,112 @@ static const screen_t screen_share_view_key = {
     .exit = NULL,
 };
 
+#if LEEK_HAS_ZCASH
+/* ============================================================================
+ * View key (Main menu): the account for an air-gapped companion
+ *
+ * What zGetAccount sends over USB or Bluetooth after "Share view key?", for a
+ * companion that never connects: the seed fingerprint, the UFVK and the
+ * account index, as the CBOR of host/leek-zcash's AccountRecord
+ *   { 1: bytes(32) fingerprint, 2: [ { 1: text UFVK, 2: uint index } ] }
+ * (Keystone's zcash-accounts shape, our own type) in an animated
+ * ur:leek-zcash-accounts. A companion that imports it can build PCZTs this
+ * board signs over QR. One-way: nothing is paired, and USB and Bluetooth keep
+ * their 6-digit code. The same warning as the host's request comes first,
+ * because anyone who scans it sees the account's whole history.
+ * ============================================================================ */
+
+#define VIEW_KEY_UR_TYPE "leek-zcash-accounts"
+
+static void screen_view_key_render(void)
+{
+    oled_clear();
+    oled_set_role(OLED_ROLE_ACCENT);
+    oled_draw_string_centered(0, "Show view key?");
+    oled_set_role(OLED_ROLE_WARN);
+    oled_draw_string(2, 0, "Whoever scans it sees");
+    oled_draw_string(3, 0, "balance and history.");
+    oled_set_role(OLED_ROLE_AUTO);
+    oled_draw_string(4, 0, "It cannot spend.");
+    char line[22];
+    snprintf(line, sizeof line, "acct %u  %s", (unsigned)(hd_account % 100000u),
+             zcash_network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
+    oled_draw_string_centered(6, line);
+    oled_draw_string(7, 0, HINT_NO_YES);
+}
+
+/* The record's CBOR into `buf`; its length, or 0 if it did not fit.
+ * The label (key 3) and birthday (key 4) go in when the board knows them
+ * (zmeta: set by a companion over USB or Bluetooth), so a wallet that
+ * imports by QR scans from the right height instead of asking for it. */
+static size_t view_key_cbor(const ZcashAccount *a, const ZcashMeta *m, uint8_t *buf, size_t cap)
+{
+    const bool label = m != NULL && m->label[0] != '\0';
+    const bool birthday = m != NULL && m->birthday != 0;
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 2);
+    cbor_write_uint(&w, 1);
+    cbor_write_bytes(&w, a->keys.seed_fingerprint, sizeof a->keys.seed_fingerprint);
+    cbor_write_uint(&w, 2);
+    cbor_write_array(&w, 1);
+    cbor_write_map(&w, 2u + (label ? 1u : 0u) + (birthday ? 1u : 0u));
+    cbor_write_uint(&w, 1);
+    cbor_write_text(&w, a->keys.ufvk);
+    cbor_write_uint(&w, 2);
+    cbor_write_uint(&w, a->account);
+    if (label) {
+        cbor_write_uint(&w, 3);
+        cbor_write_text(&w, m->label);
+    }
+    if (birthday) {
+        cbor_write_uint(&w, 4);
+        cbor_write_uint(&w, m->birthday);
+    }
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+static void screen_view_key_on_button(button_id_t btn)
+{
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
+    if (btn != BUTTON_ACCEPT) {
+        return;   /* one page: the knob has nothing to scroll */
+    }
+    /* Receive's account buffer: the two screens are never up together. */
+    static uint8_t cbor[QR_OUT_MAX_MESSAGE];
+    size_t n = 0;
+    if (ensure_wallet_unlocked() &&
+        zcash_account_derive(hd_account, zcash_network, &recv_account) == WALLET_OK) {
+        ZcashMeta zm = { 0 };
+        const bool known = zmeta_get(hd_account, zcash_network, &zm);
+        n = view_key_cbor(&recv_account, known ? &zm : NULL, cbor, sizeof cbor);
+        if (n > 0) {
+            ESP_LOGI(TAG, "View key: birthday %s", zm.birthday ? "included" : "unknown");
+        }
+    }
+    memzero(&recv_account, sizeof recv_account);
+    recv_ready = false;
+    /* The key itself is never logged; which account was shown is. */
+    if (n > 0 && ui_show_ur(VIEW_KEY_UR_TYPE, cbor, n, SCREEN_MAIN_MENU)) {
+        ESP_LOGI(TAG, "View key shown: account %u, %u B record", (unsigned)hd_account, (unsigned)n);
+    } else {
+        ESP_LOGW(TAG, "View key: could not show account %u (%u B)", (unsigned)hd_account, (unsigned)n);
+        ui_set_screen(SCREEN_MAIN_MENU);
+    }
+    memzero(cbor, sizeof cbor);
+}
+
+static const screen_t screen_view_key = {
+    .enter = NULL,
+    .render = screen_view_key_render,
+    .on_button = screen_view_key_on_button,
+    .exit = NULL,
+};
+#endif
+
 /* ============================================================================
  * Unlock app data? (zGetStorageKey)
  *
@@ -7281,6 +7512,9 @@ void ui_init(void)
 #if LEEK_HAS_ZCASH
     screens[SCREEN_ADDRESS_CHECK] = &screen_address_check;
     screens[SCREEN_SHARE_VIEW_KEY] = &screen_share_view_key;
+#if LEEK_HAS_ZCASH
+    screens[SCREEN_VIEW_KEY] = &screen_view_key;
+#endif
     screens[SCREEN_STORAGE_KEY] = &screen_storage_key;
 #endif
     screens[SCREEN_SCAN] = &screen_scan;
@@ -7294,7 +7528,7 @@ void ui_init(void)
     oled_set_contrast(BRIGHTNESS_LEVELS[brightness_choice]);
 #if UI_COLOR_CODE
     if (color_panel()) {
-        oled_set_backlight(backlight_pct);
+        backlight_show(backlight_level);
     }
 #endif
 
@@ -7621,9 +7855,14 @@ void ui_task(void *pvParameters)
 
         service_host_lock();
 
-        /* Re-render if needed */
+        /* Re-render if needed. On the Scan screen timed, as the "draw" stage
+         * of the camera's once-a-second line (scan-timing.h). */
         if (ui_needs_render()) {
+            const int64_t t_draw = esp_timer_get_time();
             ui_render();
+            if (current_screen == SCREEN_SCAN) {
+                camera_note_draw_us((uint32_t)(esp_timer_get_time() - t_draw));
+            }
         }
 
         /* After the repaint, never before: the work deferred here is deferred
@@ -7775,8 +8014,8 @@ void ui__reset_static_state_for_test(void)
     lock_timeout_stored_choice = 1;
     brightness_choice = 5;
 #if UI_COLOR_CODE
-    backlight_pct = BACKLIGHT_DEFAULT;
-    backlight_saved = BACKLIGHT_DEFAULT;
+    backlight_level = BL_LEVEL_DEFAULT;
+    backlight_saved = BL_LEVEL_DEFAULT;
     backlight_editing = false;
 #endif
 #if UI_HAS_PREVIEW_SETTING

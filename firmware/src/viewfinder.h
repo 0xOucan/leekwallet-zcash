@@ -144,9 +144,29 @@ const char *viewfinder_hint(const ViewfinderStats *st, bool located);
  *  mean level. */
 void viewfinder_exposure_line(int8_t bias, uint8_t mean, char out[VIEWFINDER_LINE]);
 
-/** "QVGA 12fps s:3 r:1": capture size, frames a second, codes located and
- *  read. Unknown fps (0xFFFF) prints as "--". */
-void viewfinder_stats_line(uint16_t frame_w, uint16_t fps, uint32_t seen,
+/**
+ * How good the view's mean level is for scanning, graded on the same
+ * percentage the exposure row prints (mean * 100 / 255, at most 99), so the
+ * colour always agrees with the number beside it. Thresholds are named in
+ * viewfinder.c next to the hints. GOOD is green on the colour kit, MEDIUM
+ * amber and BAD red; the OLEDs show no colour and ignore it.
+ */
+typedef enum {
+    VIEWFINDER_LEVEL_GOOD = 0,
+    VIEWFINDER_LEVEL_MEDIUM,
+    VIEWFINDER_LEVEL_BAD,
+} viewfinder_level_t;
+
+viewfinder_level_t viewfinder_level_grade(uint8_t mean);
+
+/* The exposure row ends in its percentage, "23%", always this many
+   characters, so a caller can colour that part on its own. */
+#define VIEWFINDER_EXPOSURE_PCT_CHARS 3
+
+/** "1x 12fps s:3 r:1": the zoom (at most 4 characters, longer is cut),
+ *  frames a second, codes located and read. Unknown fps (0xFFFF) prints as
+ *  "--". */
+void viewfinder_stats_line(const char *zoom, uint16_t fps, uint32_t seen,
                            uint32_t read, char out[VIEWFINDER_LINE]);
 
 /** "[####------] 12 left": parts of an animated UR assembled, of `total`. */

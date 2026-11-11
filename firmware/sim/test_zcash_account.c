@@ -47,6 +47,7 @@ static void check_vector(const zv_key_vector *v)
     CHECK(memcmp(a.keys.seed_fingerprint, v->seed_fingerprint, 32) == 0, "seed fingerprint");
     CHECK(strcmp(a.keys.ufvk, v->ufvk) == 0, "UFVK");
     CHECK(strcmp(a.keys.ua, v->ua) == 0, "UA");
+    CHECK(strcmp(a.ua_orchard, v->ua_orchard_only) == 0, "Orchard-only UA for Receive");
     CHECK(strcmp(a.t_address, v->transparent_address) == 0, "t-address");
     CHECK(memcmp(a.t_account, v->transparent_account_pubkey, 65) == 0, "transparent account key");
 }

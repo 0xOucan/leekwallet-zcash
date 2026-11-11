@@ -190,6 +190,55 @@ $T send --to <address> --amount 0.005 --zec --compact --out /media/$USER/SD/LEEK
 $T finish --pczt /media/$USER/SD/LEEKZ/unsigned.pczt --sigs /media/$USER/SD/LEEKZ/signed.zsig
 ```
 
+### QR instead of a cable (experimental)
+
+EXPERIMENTAL, and opt-in: for a board kept off USB and Bluetooth. It is
+slow (a 1.4 KB compact view is 28 frames at the default 50-byte fragments
+and 500 ms a frame; the colour kit read it in about 70 s at 2x zoom); USB and Bluetooth stay the everyday
+links. Never for pairing. The UR (`ur:leek-pczt` out, `ur:leek-zsig` back)
+is [`leek-ur`](../leek-ur), the one the Zcash LeekWallet app uses.
+
+```sh
+# 1. Build the send and show it as an animated QR in this terminal
+#    (--qr implies --compact). Enter or Ctrl-C stops the loop.
+$T send --to <address> --amount 0.001 --zec --out tx.pczt --qr
+#    A terminal too small for the code: an offline HTML page instead,
+#    opened in a browser, full screen.
+$T send --to <address> --amount 0.001 --zec --out tx.pczt --qr-html tx-qr.html
+#    Show an existing PCZT again, denser or slower:
+$T qr-show --in tx.pczt --qr-fragment 40 --qr-interval 800
+
+# 2. On the board: Scan, point its camera at the code, review, ACCEPT.
+#    The board then shows its signature as a QR code.
+
+# 3. Read it: from the webcam (a build with --features qr-camera, Linux
+#    V4L2), or from a file of UR parts, one per line, from any scanner.
+$T qr-scan --pczt tx.pczt --out tx.zsig
+$T qr-scan --pczt tx.pczt --out tx.zsig --from-file parts.txt
+
+# 4. As with every other link.
+$T finish --pczt tx.pczt --sigs tx.zsig
+```
+
+`--qr-fragment` (default 50 bytes; 40 was the fastest on the board bench, 90 and up rarely decoded): smaller is fewer modules per code,
+easier for the board's camera; larger is fewer frames. `--qr-interval`
+(default 500 ms). Every frame of a loop is the same QR version (error
+correction L, alphanumeric), drawn black on white with a four-module quiet
+zone. `qr-scan --pczt` checks the `.zsig` names that PCZT's hash before it
+writes it; `finish` checks it again and verifies every signature. The
+camera reader wants a YUYV webcam (`--camera /dev/video0` by default) and
+gives up after `--timeout` seconds (180).
+
+For the camera bench, `qr-show --sweep` steps through presets (90/500,
+90/350, 120/400, 150/350, 150/250, 200/300; or `--presets 90/500,150/250`),
+each labelled on screen. Start a scan on the board, press Enter when the
+board says it is complete, and the time from the preset's first frame is
+printed; at the end, a table for [QR-BENCH.md](../../docs/zcash/QR-BENCH.md):
+
+```sh
+$T qr-show --in tx.pczt --sweep
+```
+
 ### `.zkv` seed cards
 
 A `.zkv` file is a seed sealed under a passphrase, for the board's SD storage

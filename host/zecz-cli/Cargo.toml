@@ -18,3 +18,19 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 hex = "0.4"
+# The QR air gap (experimental, src/qr.rs): the UR the app uses, and the QR
+# codes drawn in the terminal or an HTML page. qrcode without its `image`
+# feature is pure Rust with no dependencies (MIT OR Apache-2.0).
+leek-ur = { path = "../leek-ur" }
+qrcode = { version = "=0.14.1", default-features = false }
+# Webcam capture and QR decoding for `zecz qr-scan`, behind `qr-camera`:
+# linuxvideo (0BSD) talks V4L2 through ioctls with no C library and no
+# bindgen (the v4l crate needs libclang; nokhwa sits on it), and rqrr
+# ((MIT OR Apache-2.0) AND ISC) is a pure-Rust port of quirc. Linux only.
+rqrr = { version = "=0.11.0", default-features = false, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linuxvideo = { version = "=0.3.5", optional = true }
+
+[features]
+qr-camera = ["dep:linuxvideo", "dep:rqrr"]

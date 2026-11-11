@@ -18,6 +18,7 @@
 #ifndef FAKE_OLED_H
 #define FAKE_OLED_H
 
+#include "oled.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -32,6 +33,9 @@ const char *fake_oled_row(int page);
 
 /** Substring search within one row. */
 bool fake_oled_row_contains(int page, const char *needle);
+
+/** The role text cell `cell` (0..20) of row `page` was drawn in. */
+oled_role_t fake_oled_role_at(int page, int cell);
 
 /** Substring search across every row. */
 bool fake_oled_contains(const char *needle);
@@ -49,9 +53,13 @@ int fake_oled_picture_flush_count(void);
 /** The grayscale picture oled_show_panel_gray() set, and where, or NULL
  *  since a clear. Any out-pointer may be NULL. */
 const uint8_t *fake_oled_panel_gray(uint16_t *x, uint16_t *y, uint16_t *w, uint16_t *h);
-/** The last oled_set_backlight() level (100 after a reset), and how many
- *  calls set it. */
-uint8_t fake_oled_backlight(void);
+/** The last oled_set_backlight_duty() duty (BL_DUTY_MAX after a reset), and
+ *  how many calls set it. */
+uint16_t fake_oled_backlight_duty(void);
+/** The caption oled_set_qr_caption() set, "" if none since a clear. */
+const char *fake_oled_qr_caption(void);
+/** What oled_set_qr_fill() asked for since the last clear. */
+bool fake_oled_qr_fill(void);
 int fake_oled_backlight_calls(void);
 
 /** Payload of the last oled_draw_qrcode(), or "" if none. */

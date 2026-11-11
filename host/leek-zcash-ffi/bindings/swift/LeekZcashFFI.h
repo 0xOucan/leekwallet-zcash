@@ -488,6 +488,106 @@ void uniffi_leek_zcash_ffi_fn_init_callback_vtable_pairinglistener(const UniffiV
 void uniffi_leek_zcash_ffi_fn_method_pairinglistener_on_pairing_code(void*_Nonnull ptr, RustBuffer code, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QRENCODER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QRENCODER
+void*_Nonnull uniffi_leek_zcash_ffi_fn_clone_qrencoder(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_QRENCODER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_QRENCODER
+void uniffi_leek_zcash_ffi_fn_free_qrencoder(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRENCODER_ACCOUNT_RECORD
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRENCODER_ACCOUNT_RECORD
+void*_Nonnull uniffi_leek_zcash_ffi_fn_constructor_qrencoder_account_record(RustBuffer record, uint32_t max_fragment_len, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRENCODER_PCZT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRENCODER_PCZT
+void*_Nonnull uniffi_leek_zcash_ffi_fn_constructor_qrencoder_pczt(RustBuffer view, uint32_t max_fragment_len, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRENCODER_ZSIG
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRENCODER_ZSIG
+void*_Nonnull uniffi_leek_zcash_ffi_fn_constructor_qrencoder_zsig(RustBuffer zsig, uint32_t max_fragment_len, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_FRAGMENT_LEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_FRAGMENT_LEN
+uint32_t uniffi_leek_zcash_ffi_fn_method_qrencoder_fragment_len(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_FRAME
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_FRAME
+RustBuffer uniffi_leek_zcash_ffi_fn_method_qrencoder_frame(void*_Nonnull ptr, uint64_t index, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_FRAMES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_FRAMES
+RustBuffer uniffi_leek_zcash_ffi_fn_method_qrencoder_frames(void*_Nonnull ptr, uint64_t start, uint32_t count, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_IS_SINGLE_PART
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_IS_SINGLE_PART
+int8_t uniffi_leek_zcash_ffi_fn_method_qrencoder_is_single_part(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_LONGEST_FRAME
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_LONGEST_FRAME
+uint32_t uniffi_leek_zcash_ffi_fn_method_qrencoder_longest_frame(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_SEQ_LEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_SEQ_LEN
+uint32_t uniffi_leek_zcash_ffi_fn_method_qrencoder_seq_len(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_UR_TYPE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRENCODER_UR_TYPE
+RustBuffer uniffi_leek_zcash_ffi_fn_method_qrencoder_ur_type(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QRSCANNER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QRSCANNER
+void*_Nonnull uniffi_leek_zcash_ffi_fn_clone_qrscanner(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_QRSCANNER
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FREE_QRSCANNER
+void uniffi_leek_zcash_ffi_fn_free_qrscanner(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRSCANNER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CONSTRUCTOR_QRSCANNER_NEW
+void*_Nonnull uniffi_leek_zcash_ffi_fn_constructor_qrscanner_new(RustBuffer kind, RustBuffer network, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_ACCOUNT_RECORD
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_ACCOUNT_RECORD
+RustBuffer uniffi_leek_zcash_ffi_fn_method_qrscanner_account_record(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_FEED
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_FEED
+RustBuffer uniffi_leek_zcash_ffi_fn_method_qrscanner_feed(void*_Nonnull ptr, RustBuffer text, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_IS_COMPLETE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_IS_COMPLETE
+int8_t uniffi_leek_zcash_ffi_fn_method_qrscanner_is_complete(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_RESET
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_RESET
+void uniffi_leek_zcash_ffi_fn_method_qrscanner_reset(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_ZSIG
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_METHOD_QRSCANNER_ZSIG
+RustBuffer uniffi_leek_zcash_ffi_fn_method_qrscanner_zsig(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QUICKUNLOCK
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_CLONE_QUICKUNLOCK
 void*_Nonnull uniffi_leek_zcash_ffi_fn_clone_quickunlock(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -704,6 +804,17 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_prepare_for_signer(RustBuffer pczt, Rus
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_PREPARE_SD_SIGN
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_PREPARE_SD_SIGN
 RustBuffer uniffi_leek_zcash_ffi_fn_func_prepare_sd_sign(RustBuffer pczt, RustBuffer account, RustBuffer view, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_DEFAULTS
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_DEFAULTS
+RustBuffer uniffi_leek_zcash_ffi_fn_func_qr_defaults(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_PART_TYPE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_PART_TYPE
+RustBuffer uniffi_leek_zcash_ffi_fn_func_qr_part_type(RustBuffer text, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_SIGN_RESULT_FROM_BYTES
@@ -1095,6 +1206,18 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_prepare_sd_sign(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_DEFAULTS
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_DEFAULTS
+uint16_t uniffi_leek_zcash_ffi_checksum_func_qr_defaults(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_PART_TYPE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_PART_TYPE
+uint16_t uniffi_leek_zcash_ffi_checksum_func_qr_part_type(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_SIGN_RESULT_FROM_BYTES
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_SIGN_RESULT_FROM_BYTES
 uint16_t uniffi_leek_zcash_ffi_checksum_func_sign_result_from_bytes(void
@@ -1233,6 +1356,78 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code(v
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_FRAGMENT_LEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_FRAGMENT_LEN
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrencoder_fragment_len(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_FRAME
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_FRAME
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrencoder_frame(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_FRAMES
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_FRAMES
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrencoder_frames(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_IS_SINGLE_PART
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_IS_SINGLE_PART
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrencoder_is_single_part(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_LONGEST_FRAME
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_LONGEST_FRAME
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrencoder_longest_frame(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_SEQ_LEN
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_SEQ_LEN
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrencoder_seq_len(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_UR_TYPE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRENCODER_UR_TYPE
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrencoder_ur_type(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_ACCOUNT_RECORD
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_ACCOUNT_RECORD
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrscanner_account_record(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_FEED
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_FEED
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrscanner_feed(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_IS_COMPLETE
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_IS_COMPLETE
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrscanner_is_complete(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_RESET
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_RESET
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrscanner_reset(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_ZSIG
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QRSCANNER_ZSIG
+uint16_t uniffi_leek_zcash_ffi_checksum_method_qrscanner_zsig(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_ACCOUNT
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_METHOD_QUICKUNLOCK_ACCOUNT
 uint16_t uniffi_leek_zcash_ffi_checksum_method_quickunlock_account(void
@@ -1356,6 +1551,30 @@ uint16_t uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_LEEKDEVICE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_LEEKDEVICE_NEW
 uint16_t uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRENCODER_ACCOUNT_RECORD
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRENCODER_ACCOUNT_RECORD
+uint16_t uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_account_record(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRENCODER_PCZT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRENCODER_PCZT
+uint16_t uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_pczt(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRENCODER_ZSIG
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRENCODER_ZSIG
+uint16_t uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_zsig(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRSCANNER_NEW
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_CONSTRUCTOR_QRSCANNER_NEW
+uint16_t uniffi_leek_zcash_ffi_checksum_constructor_qrscanner_new(void
     
 );
 #endif

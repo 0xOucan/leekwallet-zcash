@@ -170,6 +170,28 @@ esp_err_t oled_draw_qrcode_at(const char *data, uint8_t version, uint8_t scale);
 esp_err_t oled_draw_qrcode_ex(const char *data, uint8_t version, uint8_t scale,
                               bool inverted);
 
+/*
+ * One short line under the next QR, until the next oled_clear(): an animated
+ * code's frame counter, the backlight. Copied, up to OLED_QR_CAPTION_MAX
+ * characters; NULL or "" removes it. Only a colour panel shows it, and only
+ * where it fits under the code without shrinking the modules (panel-color.c);
+ * everywhere else it is accepted and ignored, so the OLEDs draw exactly what
+ * they drew before.
+ */
+#define OLED_QR_CAPTION_MAX 20
+void oled_set_qr_caption(const char *text);
+
+/**
+ * Draw the next QR as large as the colour panel allows: one module of quiet
+ * zone each side and modules of a fractional size, so some are a pixel
+ * wider than others (a v6 at 5 or 6 px fills 228 of 240 px, where whole
+ * 5 px modules fill 205). No caption fits under it. Experimental: a
+ * camera's reading of uneven modules is what the bench measures. The OLEDs
+ * ignore it. Cleared, like the caption, by the next clear.
+ */
+void oled_set_qr_fill(bool fill);
+
+
 /** True once a panel answered at init; false on a headless board. */
 bool oled_present(void);
 
@@ -220,14 +242,14 @@ void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
                           uint16_t w, uint16_t h);
 
 /*
- * The colour panel's backlight, 10..100 percent (clamped), as LEDC PWM on
- * the module's BLK pin where the board wires one (PIN_DISPLAY_BLK). A board
- * with BLK tied to 3V3 accepts it and nothing changes. Colour panels only;
- * the OLEDs dim through oled_set_contrast().
+ * The colour panel's backlight, as an LEDC duty out of BL_DUTY_MAX (8191,
+ * backlight-level.h: the levels the UI steps through), PWM on the module's
+ * BLK pin where the board wires one (PIN_DISPLAY_BLK). 0 is raised to 1 so
+ * the panel is never dark; above the maximum is full. A board with BLK tied
+ * to 3V3 accepts it and nothing changes. Colour panels only; the OLEDs dim
+ * through oled_set_contrast().
  */
-#define OLED_BACKLIGHT_MIN  1
-#define OLED_BACKLIGHT_MAX  100
-esp_err_t oled_set_backlight(uint8_t pct);
+esp_err_t oled_set_backlight_duty(uint16_t duty);
 
 /**
  * What text means, for a panel that can show it in colour.
@@ -246,6 +268,7 @@ typedef enum {
     OLED_ROLE_WARN,      /* look before you continue */
     OLED_ROLE_OK,        /* done, approved */
     OLED_ROLE_DANGER,    /* destructive, refused, failed */
+    OLED_ROLE_GOOD,      /* a reading in range: the website's bright green */
     OLED_ROLE_COUNT
 } oled_role_t;
 
