@@ -30,4 +30,31 @@
 #define CAMERA_TUNE_GAIN_REG_MAX  0x3FF
 uint16_t camera_tune_gain_ceiling_reg(unsigned times);
 
+/*
+ * Banding filter: which mains frequency the exposure steps avoid beating with.
+ *
+ * 0x3C01 bit 7 selects manual (1) or automatic (0) detection; the driver's
+ * defaults leave it manual (0x3C01 = 0xA4). In manual mode 0x3C00 bit 2
+ * picks the frequency: 1 for 50 Hz, 0 for 60 Hz. Confirmed against the
+ * driver's own "//50Hz {0x3c00, 0x04}" default and Linux's ov5640.c
+ * (ov5640_set_ctrl_light_freq sets CTRL00 BIT(2) only for 50 Hz). The
+ * driver therefore ran at 50 Hz; Mexico's mains is 60 Hz.
+ *
+ * `hz` is 50, 60 or 0 for automatic detection; anything else is 60.
+ * Values to OR in under the masks CAMERA_TUNE_BAND_3C00_MASK /
+ * CAMERA_TUNE_BAND_3C01_MASK.
+ *
+ * Expected on the board: no rolling dark bands on a printed code under room
+ * LED or fluorescent light. A phone or monitor is self-lit and barely
+ * changes. The band step registers (0x3A08/09 for 50 Hz, 0x3A0A/0B for 60 Hz)
+ * are left at the driver's values, which were computed for its reference
+ * timing, not for our QVGA PLL; with the shutter capped under one band
+ * (below) they hardly matter. TODO(board): once the sensor's real line time
+ * is measured, set 0x3A0A/0B = 8333 us / line time.
+ */
+#define CAMERA_TUNE_BAND_3C00_MASK  0x04
+#define CAMERA_TUNE_BAND_3C01_MASK  0x80
+uint8_t camera_tune_band_3c00(unsigned hz);
+uint8_t camera_tune_band_3c01(unsigned hz);
+
 #endif /* LEEK_CAMERA_TUNE_H */

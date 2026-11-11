@@ -148,6 +148,12 @@ static uint8_t frame_mode = 0;
 #  define CAMERA_GAIN_CEILING_X  4
 #endif
 
+/* Mains frequency for the banding filter: 60 (Mexico, the Americas), 50, or
+   0 for the sensor's automatic detection (camera-tune.h). */
+#ifndef CAMERA_MAINS_HZ
+#  define CAMERA_MAINS_HZ  60
+#endif
+
 static struct quirc *quirc_ctx;
 static bool running;
 
@@ -451,6 +457,15 @@ bool camera_start(void)
         if (sensor->set_reg != NULL) {
             sensor->set_reg(sensor, 0x3A18, 0x3FF,
                             camera_tune_gain_ceiling_reg(CAMERA_GAIN_CEILING_X));
+        }
+        /* Banding at the local mains frequency, not the driver's fixed
+           50 Hz. Measure: a printed code under room LED light shows no
+           rolling dark bands in the PC stream. */
+        if (sensor->set_reg != NULL) {
+            sensor->set_reg(sensor, 0x3C01, CAMERA_TUNE_BAND_3C01_MASK,
+                            camera_tune_band_3c01(CAMERA_MAINS_HZ));
+            sensor->set_reg(sensor, 0x3C00, CAMERA_TUNE_BAND_3C00_MASK,
+                            camera_tune_band_3c00(CAMERA_MAINS_HZ));
         }
         if (sensor->set_contrast != NULL)      { sensor->set_contrast(sensor, 2); }
         if (sensor->set_sharpness != NULL)     { sensor->set_sharpness(sensor, 1); }
