@@ -109,8 +109,14 @@ static void bench_task(void *arg)
 
     for (;;) {
         size_t len = 0;
-        if (camera_next_qr(payload, sizeof payload, &len) && ur_ok) {
-            bench_ur_feed(payload, len, &clock);
+        if (camera_next_qr(payload, sizeof payload, &len)) {
+            if (ur_ok) {
+                bench_ur_feed(payload, len, &clock);
+            }
+        } else {
+            /* The decode runs on camera.c's own task now; this one only
+               drains it, and must not spin at that task's priority. */
+            vTaskDelay(1);
         }
 
         const int64_t now = esp_timer_get_time();
@@ -145,7 +151,8 @@ static void bench_task(void *arg)
 void qr_bench_start(void)
 {
     /*
-     * 16 KB. quirc's buffers are heap, and camera.c keeps its 13 KB of
+     * 16 KB. (Decoding now runs on camera.c's own task; this stack mostly
+     * holds the UR session and printf.) quirc's buffers are heap, and camera.c keeps its 13 KB of
      * quirc_code and quirc_data static for exactly this reason, so what is
      * left on the stack is the driver's own call depth plus printf with
      * doubles. The task reports its own high-water mark every second, which is

@@ -211,6 +211,8 @@ static int sensor_ae_level(int8_t bias)
 }
 
 static bool apply_zoom(uint8_t level);
+static void decode_start(void);
+static void decode_park(void);
 
 /*
  * 240 MHz while the camera runs, 160 otherwise.
@@ -293,12 +295,24 @@ static struct quirc_code scan_code;
 static struct quirc_data scan_data;
 
 #if BOARD_HAS_SPI_PANEL
-/* The colour kit's grayscale preview: 30 KB, in PSRAM (viewfinder.h). Taken
-   once and kept, so the UI can point the panel at it between frames. */
-static uint8_t         *gray_preview;
-static ViewfinderStats  gray_stats;
+/*
+ * The colour kit's grayscale preview: 30 KB each, in PSRAM (viewfinder.h),
+ * taken once and kept. Two of them, because the decoder renders on its own
+ * task (below) while the UI points the panel at the last one: the renderer
+ * only ever writes the buffer the UI is not showing, and unpublishes it while
+ * it does, so the panel never shows a half-drawn preview. `gray_stats` is the
+ * renderer's working copy (it carries the previous frame for `motion`);
+ * `gray_stats_pub` is what the UI gets with the buffer. Indices under
+ * timing_mux; -1 is none.
+ */
+static uint8_t         *gray_buf[2];
+static int              gray_showing = -1, gray_fresh = -1;
+static ViewfinderStats  gray_stats, gray_stats_pub;
 #else
+/* The OLED bitmap the UI copies, and the renderer's scratch (PSRAM) that is
+   copied into it under the lock, so the UI never copies a half render. */
 static uint8_t  preview[VIEWFINDER_BYTES];
+static uint8_t *preview_work;
 #endif
 static bool     preview_fresh;
 static uint32_t preview_tick;
@@ -674,10 +688,17 @@ bool camera_start(void)
     preview_fresh = false;
     preview_tick = 0;
 #if BOARD_HAS_SPI_PANEL
-    if (gray_preview == NULL) {
-        gray_preview = heap_caps_malloc(VIEWFINDER_GRAY_BYTES, MALLOC_CAP_SPIRAM);
+    for (int i = 0; i < 2; i++) {
+        if (gray_buf[i] == NULL) {
+            gray_buf[i] = heap_caps_malloc(VIEWFINDER_GRAY_BYTES, MALLOC_CAP_SPIRAM);
+        }
     }
     memset(&gray_stats, 0, sizeof gray_stats);
+    gray_showing = gray_fresh = -1;
+#else
+    if (preview_work == NULL) {
+        preview_work = heap_caps_malloc(VIEWFINDER_BYTES, MALLOC_CAP_SPIRAM);
+    }
 #endif
     stat_frames = 0;
     stat_decodes = 0;
@@ -686,6 +707,7 @@ bool camera_start(void)
     timing_window_us = 0;
     scan_cpu_boost(true);
     running = true;
+    decode_start();
     ESP_LOGI(TAG, "camera up: %dx%d grayscale", FRAME_W, FRAME_H);
     return true;
 }
@@ -695,6 +717,7 @@ void camera_stop(void)
     if (!running) {
         return;
     }
+    decode_park();
     running = false;
     streaming = false;
     /*
@@ -710,12 +733,15 @@ void camera_stop(void)
     preview_fresh = false;
 #if BOARD_HAS_SPI_PANEL
     gray_stats.primed = false;
+    gray_showing = gray_fresh = -1;
 #else
     memset(preview, 0, sizeof preview);
 #endif
 }
 
-bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
+/* One frame: capture, preview, decode. Called by the decode task, or by
+   camera_next_qr() itself when there is none. */
+static bool process_frame(char *out, size_t out_size, size_t *out_len)
 {
     if (!running || out == NULL || out_size == 0) {
         return false;
@@ -772,14 +798,33 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
 #if BOARD_HAS_SPI_PANEL
             /* A millisecond or two at QVGA: one pass over the frame for the
                box average, one over the 30 KB preview for the stretch. */
-            if (gray_preview != NULL) {
-                viewfinder_render_gray(fb->buf, FRAME_W, FRAME_H, gray_preview,
+            if (gray_buf[0] != NULL && gray_buf[1] != NULL) {
+                portENTER_CRITICAL(&timing_mux);
+                const int target = gray_showing == 0 ? 1 : 0;
+                const int last = gray_fresh >= 0 ? gray_fresh : gray_showing;
+                gray_fresh = -1;
+                portEXIT_CRITICAL(&timing_mux);
+                /* The renderer compares with the previous preview (motion),
+                   so the target starts as a copy of the newest one. */
+                if (last >= 0 && last != target) {
+                    memcpy(gray_buf[target], gray_buf[last], VIEWFINDER_GRAY_BYTES);
+                }
+                viewfinder_render_gray(fb->buf, FRAME_W, FRAME_H, gray_buf[target],
                                        &gray_stats, preview_true);
+                portENTER_CRITICAL(&timing_mux);
+                gray_stats_pub = gray_stats;
+                gray_fresh = target;
                 preview_fresh = true;
+                portEXIT_CRITICAL(&timing_mux);
             }
 #else
-            viewfinder_render(fb->buf, FRAME_W, FRAME_H, preview);
-            preview_fresh = true;
+            if (preview_work != NULL) {
+                viewfinder_render(fb->buf, FRAME_W, FRAME_H, preview_work);
+                portENTER_CRITICAL(&timing_mux);
+                memcpy(preview, preview_work, sizeof preview);
+                preview_fresh = true;
+                portEXIT_CRITICAL(&timing_mux);
+            }
 #endif
             timing_add(SCAN_STAGE_PREVIEW, t_prev);
         }
@@ -843,6 +888,163 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
 
     esp_camera_fb_return(fb);
     return got;
+}
+
+/*
+ * Decode on core 1, capture on core 0.
+ *
+ * Until now camera_next_qr() captured and decoded inside the UI task's loop,
+ * so the panel flush (~25 ms a preview on the colour kit) and quirc took
+ * turns on one core while the other sat mostly idle. Here a task pinned to
+ * core 1 runs process_frame() back to back and posts each UR string to a
+ * queue; camera_next_qr() only drains it. The camera driver's DMA task stays
+ * on core 0 (CONFIG_CAMERA_CORE0), and so do NimBLE and, usually, the UI.
+ *
+ * Its 20 KB stack is in PSRAM (xTaskCreatePinnedToCoreWithCaps): quirc_decode
+ * alone puts ~8.9 KB on it (main.c), and internal RAM is what the colour kit
+ * does not have. That is safe for this task and no other: it holds only
+ * camera pixels, quirc's working state and UR part strings (a PCZT fragment,
+ * not key material), never a secret, and it never writes flash (a task with
+ * an external stack must not; NVS is the UI's). The queue's storage and the
+ * hand-off buffers are PSRAM too; its control block, the task's TCB and the
+ * semaphore stay internal (a few hundred bytes), as the spinlocks inside
+ * them require.
+ *
+ * -DCAMERA_DECODE_TASK=0 restores decoding in the caller's loop, for an A/B,
+ * and so does any failure to create these at runtime.
+ *
+ * Measure: the scan log's `draw` no longer adds to the frame time (fps
+ * rises by about draw / (wait + ident + dec) on the colour kit), and the
+ * bench's frames/s is unchanged or better. TODO(board): confirm no panel
+ * tearing and that Cancel leaves Scan promptly.
+ */
+#ifndef CAMERA_DECODE_TASK
+#  define CAMERA_DECODE_TASK  1
+#endif
+#define CAMERA_QR_MAX     1100   /* what the UI and the bench pass in */
+#define DECODE_STACK      20480
+#define DECODE_QUEUE_LEN  4
+
+#if CAMERA_DECODE_TASK
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/idf_additions.h"
+
+typedef struct {
+    uint16_t len;
+    char     text[CAMERA_QR_MAX];
+} QrItem;
+
+static TaskHandle_t      decode_task;
+static SemaphoreHandle_t decode_parked;
+static QueueHandle_t     qr_queue;
+static StaticQueue_t     qr_queue_cb;       /* internal: it holds a spinlock */
+static QrItem           *qr_tx, *qr_rx;     /* PSRAM hand-off buffers */
+static volatile bool     decode_run;
+static uint32_t          qr_dropped;
+
+static void decode_loop(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        while (decode_run) {
+            size_t len = 0;
+            if (process_frame(qr_tx->text, sizeof qr_tx->text, &len)) {
+                qr_tx->len = (uint16_t)len;
+                if (xQueueSend(qr_queue, qr_tx, 0) != pdTRUE) {
+                    qr_dropped++;   /* the UI is behind; a fountain part is replaceable */
+                }
+            } else if (!running) {
+                vTaskDelay(1);
+            }
+        }
+        xSemaphoreGive(decode_parked);
+    }
+}
+
+/* Once, on the first camera_start(); then parked between scans. */
+static bool decode_task_ready(void)
+{
+    if (decode_task != NULL) {
+        return true;
+    }
+    static bool failed;
+    if (failed) {
+        return false;
+    }
+    uint8_t *storage = heap_caps_malloc(DECODE_QUEUE_LEN * sizeof(QrItem), MALLOC_CAP_SPIRAM);
+    qr_tx = heap_caps_malloc(sizeof(QrItem), MALLOC_CAP_SPIRAM);
+    qr_rx = heap_caps_malloc(sizeof(QrItem), MALLOC_CAP_SPIRAM);
+    decode_parked = xSemaphoreCreateBinary();
+    if (storage != NULL && qr_tx != NULL && qr_rx != NULL && decode_parked != NULL) {
+        qr_queue = xQueueCreateStatic(DECODE_QUEUE_LEN, sizeof(QrItem), storage, &qr_queue_cb);
+    }
+    if (qr_queue == NULL ||
+        xTaskCreatePinnedToCoreWithCaps(decode_loop, "qr-decode", DECODE_STACK, NULL, 4,
+                                        &decode_task, 1, MALLOC_CAP_SPIRAM) != pdPASS) {
+        ESP_LOGW(TAG, "no decode task; decoding in the UI loop");
+        failed = true;
+        decode_task = NULL;
+        return false;
+    }
+    ESP_LOGI(TAG, "decode task on core 1, stack %u B in PSRAM", (unsigned)DECODE_STACK);
+    return true;
+}
+
+static void decode_start(void)
+{
+    if (!decode_task_ready()) {
+        return;
+    }
+    xQueueReset(qr_queue);
+    qr_dropped = 0;
+    decode_run = true;
+    xTaskNotifyGive(decode_task);
+}
+
+/* Before the driver and quirc go away: the task must be out of
+   process_frame(). It finishes the frame it is on (fb_get waits at most a
+   frame on a live sensor, the driver's timeout on a dead one). */
+static void decode_park(void)
+{
+    if (decode_task == NULL || !decode_run) {
+        return;
+    }
+    decode_run = false;
+    if (xSemaphoreTake(decode_parked, pdMS_TO_TICKS(6000)) != pdTRUE) {
+        ESP_LOGE(TAG, "decode task did not park");
+    }
+}
+#else
+static void decode_start(void) { }
+static void decode_park(void) { }
+#endif
+
+bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
+{
+    if (!running || out == NULL || out_size == 0) {
+        return false;
+    }
+#if CAMERA_DECODE_TASK
+    if (decode_task != NULL && decode_run) {
+        if (xQueueReceive(qr_queue, qr_rx, 0) != pdTRUE) {
+            return false;
+        }
+        const size_t len = qr_rx->len;
+        if (len + 1 > out_size) {
+            return false;
+        }
+        memcpy(out, qr_rx->text, len);
+        out[len] = '\0';
+        if (out_len != NULL) {
+            *out_len = len;
+        }
+        return true;
+    }
+#endif
+    return process_frame(out, out_size, out_len);
 }
 
 void camera_note_draw_us(uint32_t us)
@@ -989,21 +1191,27 @@ const uint8_t *camera_preview_take(void) { return NULL; }
 
 const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
 {
-    if (!preview_fresh || gray_preview == NULL) {
+    portENTER_CRITICAL(&timing_mux);
+    if (gray_fresh < 0) {
+        portEXIT_CRITICAL(&timing_mux);
         return NULL;
     }
+    gray_showing = gray_fresh;
+    gray_fresh = -1;
     preview_fresh = false;
-    if (stats != NULL) { *stats = gray_stats; }
-    return gray_preview;
+    if (stats != NULL) { *stats = gray_stats_pub; }
+    const uint8_t *buf = gray_buf[gray_showing];
+    portEXIT_CRITICAL(&timing_mux);
+    return buf;
 }
 #else
 const uint8_t *camera_preview_take(void)
 {
-    if (!preview_fresh) {
-        return NULL;
-    }
+    portENTER_CRITICAL(&timing_mux);
+    const bool fresh = preview_fresh;
     preview_fresh = false;
-    return preview;
+    portEXIT_CRITICAL(&timing_mux);
+    return fresh ? preview : NULL;
 }
 
 const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
