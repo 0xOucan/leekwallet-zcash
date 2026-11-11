@@ -30,7 +30,7 @@ and the ESP32-S3 is not 5 V tolerant.
 | DC | GPIO2 | also drives the onboard LED, which may flicker with traffic; fine as an output |
 | CS | GPIO48 | **required**: with CS on GND the panel stays black (it never re-syncs to byte boundaries). GPIO48 is the onboard RGB LED's pin, which the firmware does not use |
 | RES | 3V3 through 10 kΩ | the driver resets the panel in software (SWRESET) |
-| BLK | GPIO43 (header **TX**) | backlight PWM, **Settings → Screen** (10–100 %). Optional: on 3V3 it is simply always full |
+| BLK | GPIO43 (header **TX**) | backlight PWM, **Settings → Screen** (1–100 %: 1, 2, 3, 5, 7, 10, 15, 20, then tens). Optional: on 3V3 it is simply always full |
 | TRA / TRB | GPIO3 / GPIO46 | encoder A / B, wired straight (no resistor). **Not** RX/TX (44/43): the module's encoder could not pull those low |
 | PSH (OK) | GPIO42 | the knob's push, as on the knob kit |
 | K0 (Cancel) | GPIO14 | as on the knob kit |

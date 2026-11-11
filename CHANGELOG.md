@@ -22,9 +22,13 @@ are released in
   (`Light <=O----> -4 23%`), capture size, frames/s, codes located and read,
   a progress bar for animated URs, and fixed hints (Too dark, Too bright,
   Hold steady, Move closer). **Settings → Preview** shows the true exposure
-  instead. **Settings → Screen** dims the backlight (10–100 %, PWM on GPIO43,
+  instead. **Settings → Screen** dims the backlight (1–100 %, finer below 10 %, PWM on GPIO43,
   the header's TX): move the module's BLK from 3V3 to TX to use it
   (WIRING-S3CAM-COLOR.md). The OLED kits are unchanged.
+  Every QR the panel shows (Receive, a signature) opens at its own
+  backlight, 5 % unless turned, so a webcam sees modules rather than glare:
+  turning the knob on the QR sets it (remembered), OK steps the module size,
+  Cancel finishes and puts the panel's own level back.
 - **Colour kit: the screen stayed dark with Bluetooth on.** The colour build
   ran out of internal RAM before the UI task started ("Failed to create UI
   task"). The panel's buffers are smaller, its SPI interrupt code no longer

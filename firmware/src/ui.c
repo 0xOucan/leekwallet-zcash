@@ -902,8 +902,10 @@ static int64_t  last_activity_us = 0;
 #define UI_HAS_PREVIEW_SETTING (BOARD_HAS_SPI_PANEL && LEEK_HAS_CAMERA)
 #endif
 
-/* The backlight, percent, 10..100 in tens (oled.h). Not secret. */
+/* The backlight, percent, one of backlight_steps (1..100). Not secret. */
 #define UI_KEY_BACKLIGHT    "backlight"
+/* The backlight while a QR is shown (receive and signature QRs), percent. */
+#define UI_KEY_QR_BACKLIGHT "qr_bl"
 /* 1: the viewfinder shows the true exposure rather than auto-levels. */
 #define UI_KEY_PREVIEW      "pv_true"
 
@@ -919,12 +921,97 @@ static bool color_panel(void)
 
 /* Full by default: the module was on 3V3 until it had a pin. */
 #define BACKLIGHT_DEFAULT   100
-#define BACKLIGHT_STEP      10
+/* Finer at the dark end, where the eye notices each step: 10 % was still
+   glaring for a webcam reading the panel's QR (board, 2026-11-10). Never 0,
+   so the panel can always be read to turn it back up. */
+static const uint8_t backlight_steps[] = {
+    1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+};
+#define BACKLIGHT_STEPS (sizeof backlight_steps / sizeof backlight_steps[0])
+
+/* The next step up (dir > 0) or down from `pct`, which need not be a step
+   itself (an older firmware saved tens; 25 % from anywhere still moves). */
+static uint8_t backlight_next(uint8_t pct, int dir)
+{
+    if (dir > 0) {
+        for (size_t i = 0; i < BACKLIGHT_STEPS; i++) {
+            if (backlight_steps[i] > pct) return backlight_steps[i];
+        }
+        return backlight_steps[BACKLIGHT_STEPS - 1];
+    }
+    for (size_t i = BACKLIGHT_STEPS; i-- > 0;) {
+        if (backlight_steps[i] < pct) return backlight_steps[i];
+    }
+    return backlight_steps[0];
+}
 static uint8_t backlight_pct = BACKLIGHT_DEFAULT;
 /* While adjusting in place: the level to put back on Cancel. */
 static uint8_t backlight_saved = BACKLIGHT_DEFAULT;
 static bool    backlight_editing;
+
+/*
+ * The backlight while a QR is on the panel: its own level, 5 % unless the
+ * user turned it, and remembered. A webcam pointed at a full-bright panel
+ * saw a glare with no modules in it, and 10 % was still too bright for one
+ * (board, 2026-11-10). Turned with the knob on the QR itself; leaving the QR
+ * puts the panel back at backlight_pct.
+ */
+#define QR_BACKLIGHT_DEFAULT 5
+static uint8_t qr_backlight_pct = QR_BACKLIGHT_DEFAULT;
+static bool    qr_backlight_dirty;
 #endif
+
+/* True where a knob turn on a QR is its backlight: the colour kit. */
+static bool qr_knob_is_backlight(void)
+{
+#if UI_COLOR_CODE
+    return color_panel();
+#else
+    return false;
+#endif
+}
+
+/* Light the colour panel for a QR (true) or as everywhere else (false). */
+static void qr_backlight_apply(bool qr)
+{
+#if UI_COLOR_CODE
+    if (color_panel()) {
+        oled_set_backlight(qr ? qr_backlight_pct : backlight_pct);
+    }
+#else
+    (void)qr;
+#endif
+}
+
+/* A knob turn on a QR: one step of the QR's own backlight. */
+static void qr_backlight_turn(int dir)
+{
+#if UI_COLOR_CODE
+    qr_backlight_pct = backlight_next(qr_backlight_pct, dir);
+    qr_backlight_dirty = true;
+    qr_backlight_apply(true);
+    ESP_LOGI(TAG, "QR backlight %u%%", (unsigned)qr_backlight_pct);
+#else
+    (void)dir;
+#endif
+}
+
+/* Saved once, when the QR is left, rather than on every detent. */
+static void qr_backlight_save(void)
+{
+#if UI_COLOR_CODE
+    if (!qr_backlight_dirty) {
+        return;
+    }
+    qr_backlight_dirty = false;
+    nvs_handle_t nvs;
+    if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, UI_KEY_QR_BACKLIGHT, qr_backlight_pct);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+#endif
+}
 
 /* Four steps rather than a slider: the OLED is legible across the whole range,
  * so fine control buys nothing and costs presses. Low is genuinely useful -
@@ -1040,6 +1127,10 @@ static void settings_load(void)
         stored >= OLED_BACKLIGHT_MIN && stored <= OLED_BACKLIGHT_MAX) {
         backlight_pct = stored;
     }
+    if (nvs_get_u8(nvs, UI_KEY_QR_BACKLIGHT, &stored) == ESP_OK &&
+        stored >= OLED_BACKLIGHT_MIN && stored <= OLED_BACKLIGHT_MAX) {
+        qr_backlight_pct = stored;
+    }
 #endif
 #if UI_HAS_PREVIEW_SETTING
     if (nvs_get_u8(nvs, UI_KEY_PREVIEW, &stored) == ESP_OK) {
@@ -1084,14 +1175,10 @@ static bool backlight_edit_button(button_id_t btn)
     }
     switch (btn) {
         case BUTTON_UP:
-            if (backlight_pct + BACKLIGHT_STEP <= OLED_BACKLIGHT_MAX) {
-                backlight_pct = (uint8_t)(backlight_pct + BACKLIGHT_STEP);
-            }
+            backlight_pct = backlight_next(backlight_pct, +1);
             break;
         case BUTTON_DOWN:
-            if (backlight_pct >= OLED_BACKLIGHT_MIN + BACKLIGHT_STEP) {
-                backlight_pct = (uint8_t)(backlight_pct - BACKLIGHT_STEP);
-            }
+            backlight_pct = backlight_next(backlight_pct, -1);
             break;
         case BUTTON_ACCEPT:
             backlight_save();
@@ -3684,6 +3771,19 @@ static void screen_qr_out_render(void)
 static void screen_qr_out_on_button(button_id_t btn)
 {
     const int64_t now = esp_timer_get_time();
+    /* The colour kit: a turn is the backlight, which is what a camera needs
+       moved most, and OK steps the module size; Cancel is done, as ever.
+       The OLEDs keep turn = size, OK = brightness. */
+    if (qr_knob_is_backlight()) {
+        if (btn == BUTTON_UP || btn == BUTTON_DOWN) {
+            qr_backlight_turn(btn == BUTTON_UP ? +1 : -1);
+            ui_invalidate();
+            return;
+        }
+        if (btn == BUTTON_ACCEPT) {
+            btn = BUTTON_DOWN;   /* the next module size, below */
+        }
+    }
     switch (btn) {
         case BUTTON_UP:
         case BUTTON_DOWN: {
@@ -3733,6 +3833,7 @@ static void screen_qr_out_enter(void)
     qr_brightness = 5;   /* Dim */
     oled_set_contrast(BRIGHTNESS_LEVELS[qr_brightness]);
     oled_set_fast_refresh(true);   /* no dark bands on a camera; oled.h */
+    qr_backlight_apply(true);
 }
 
 static void screen_qr_out_exit(screen_id_t next)
@@ -3741,6 +3842,8 @@ static void screen_qr_out_exit(screen_id_t next)
     qr_out_stop();
     oled_set_fast_refresh(false);
     oled_set_contrast(BRIGHTNESS_LEVELS[brightness_choice]);
+    qr_backlight_apply(false);
+    qr_backlight_save();
 }
 
 /* Advance the animation. Called once per turn of the UI task's loop, which
@@ -4160,6 +4263,15 @@ static void recv_apply_panel(void)
                     p.kind == ZRECV_QR;
     oled_set_contrast(BRIGHTNESS_LEVELS[qr ? 5 : brightness_choice]);
     oled_set_fast_refresh(qr);
+    qr_backlight_apply(qr);
+}
+
+/* True while the receive screen shows a QR page rather than text. */
+static bool recv_on_qr(void)
+{
+    ZRecvPage p;
+    return recv_ready && zrecv_render(&recv_account, recv_page, &p) &&
+           p.kind == ZRECV_QR;
 }
 #endif
 
@@ -4183,6 +4295,7 @@ static void screen_show_address_exit(screen_id_t next)
     recv_ready = false;
     recv_page = 0;
     recv_apply_panel();
+    qr_backlight_save();
 #endif
 }
 
@@ -4227,6 +4340,14 @@ static void screen_show_address_on_button(button_id_t btn)
         return;
     }
 #if LEEK_HAS_ZCASH
+    if (recv_ready && qr_knob_is_backlight() && recv_on_qr() &&
+        (btn == BUTTON_UP || btn == BUTTON_DOWN)) {
+        /* On a QR the colour kit's knob is the backlight; OK goes back to
+           the text pages, where a turn pages again. */
+        qr_backlight_turn(btn == BUTTON_UP ? +1 : -1);
+        ui_invalidate();
+        return;
+    }
     if (recv_ready) {
         const int n = zrecv_page_count(&recv_account);
         switch (btn) {
