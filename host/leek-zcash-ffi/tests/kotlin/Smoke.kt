@@ -70,12 +70,23 @@ fun main(args: Array<String>) {
     check(req.fileName == "LEEKZ/unsigned.pczt" && req.zsigFileName == "LEEKZ/signed.zsig", "sd paths")
     check(req.bytes.contentEquals(full) && req.sentHash.size == 32, "sd request")
 
-    // Errors: category, stable code, recovery.
+    // The call order for a PCZT from the wallet's own builder (Zodl:
+    // redactPcztForSigner): prepareForSigner, a no-op when the derivations
+    // are there, then preflight (signPczt runs it too).
+    preflight(prepareForSigner(pczt, account.ufvk!!, account.seedFingerprint, 0u), account, null)
+
+    // What the JNI library offered: boardUpdateText(), firmwareOutdated(level).
+    check(boardUpdateText().startsWith("Update your board"), "board update text")
+    check(firmwareOutdated(null) && firmwareOutdated(1u), "no level, or level 1, is outdated")
+    check(!firmwareOutdated(minFirmwareCompat()), "the current level is not")
+
+    // Errors: category, stable code, recovery, and the sentence to show.
     try {
         signerViewBytes("nope".toByteArray(), SignerView.FULL)
         check(false, "a bad PCZT is refused")
     } catch (e: LeekException.Pczt) {
         check(e.code.toInt() == 512 && e.recovery == Recovery.DO_NOT_RETRY, "parse error: $e")
+        check(e.reason == "the transaction does not parse", "reason: ${e.reason}")
     }
     try {
         applyZsig(pczt, full, "ZSIG".toByteArray())

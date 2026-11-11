@@ -1804,13 +1804,27 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hex",
+ "leek-android",
  "leek-transport-serial",
  "leek-ur",
  "leek-zcash",
+ "pczt",
+ "rand 0.10.3",
+ "rusqlite",
  "serde_json",
  "serialport",
+ "tokio",
  "uniffi",
+ "zcash_address",
+ "zcash_client_backend",
+ "zcash_client_sqlite",
+ "zcash_keys",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zcash_transparent",
+ "zecz-core",
  "zeroize",
+ "zip321",
 ]
 
 [[package]]

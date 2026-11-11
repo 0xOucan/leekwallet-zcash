@@ -990,6 +990,8 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -1022,6 +1024,8 @@ fun uniffi_leek_zcash_ffi_checksum_func_disable_quick_unlock(
 fun uniffi_leek_zcash_ffi_checksum_func_encode_account_record(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_finish_sd_sign(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_firmware_outdated(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_min_firmware_compat(
 ): Short
@@ -1390,6 +1394,8 @@ fun uniffi_leek_zcash_ffi_fn_func_encode_account_record(`record`: RustBuffer.ByV
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_finish_sd_sign(`pczt`: RustBuffer.ByValue,`sent`: RustBuffer.ByValue,`zsig`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_firmware_outdated(`fwCompat`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
 fun uniffi_leek_zcash_ffi_fn_func_min_firmware_compat(uniffi_out_err: UniffiRustCallStatus, 
 ): Int
 fun uniffi_leek_zcash_ffi_fn_func_preflight(`pczt`: RustBuffer.ByValue,`account`: RustBuffer.ByValue,`features`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1567,6 +1573,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_func_finish_sd_sign() != 59129.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_firmware_outdated() != 37973.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_min_firmware_compat() != 2035.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1648,7 +1657,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_show_address() != 3657.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_sign_pczt() != 21125.toShort()) {
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_leekdevice_sign_pczt() != 42241.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code() != 41350.toShort()) {
@@ -3032,6 +3041,16 @@ public interface LeekDeviceInterface {
     
     /**
      * Preflight, upload, review on the board, verify and apply.
+     *
+     * `pczt` is the wallet's PCZT: the one it built, or its own
+     * `redact_pczt_for_signer` copy (Zodl's `redactPcztForSigner`).
+     * `signed_pczt` is that PCZT with the signatures: hand it to the
+     * wallet's combine (Zodl's `createTransactionFromPczt(pcztWithProofs,
+     * signed)`). If the wallet's account may lack its ZIP 32 derivation
+     * (imported without one), pass the PCZT through
+     * [`prepare_for_signer`] first; it changes nothing when the paths are
+     * there. `verify_account` refuses another seed on the board before any
+     * upload (code 401).
      */
     fun `signPczt`(`pczt`: kotlin.ByteArray, `account`: AccountMeta, `view`: SignerView, `verifyAccount`: kotlin.Boolean, `listener`: SignListener?): SignResult
     
@@ -3275,6 +3294,16 @@ open class LeekDevice: Disposable, AutoCloseable, LeekDeviceInterface
     
     /**
      * Preflight, upload, review on the board, verify and apply.
+     *
+     * `pczt` is the wallet's PCZT: the one it built, or its own
+     * `redact_pczt_for_signer` copy (Zodl's `redactPcztForSigner`).
+     * `signed_pczt` is that PCZT with the signatures: hand it to the
+     * wallet's combine (Zodl's `createTransactionFromPczt(pcztWithProofs,
+     * signed)`). If the wallet's account may lack its ZIP 32 derivation
+     * (imported without one), pass the PCZT through
+     * [`prepare_for_signer`] first; it changes nothing when the paths are
+     * there. `verify_account` refuses another seed on the board before any
+     * upload (code 401).
      */
     @Throws(LeekException::class)override fun `signPczt`(`pczt`: kotlin.ByteArray, `account`: AccountMeta, `view`: SignerView, `verifyAccount`: kotlin.Boolean, `listener`: SignListener?): SignResult {
             return FfiConverterTypeSignResult.lift(
@@ -6230,6 +6259,9 @@ public object FfiConverterTypeKeyWrapperFailure : FfiConverterRustBuffer<KeyWrap
  * `code` is `leek_zcash::LeekError::code` (the README lists them),
  * `recovery` its `Recovery`, `reason` a fixed sentence per code that never
  * carries an amount, an address, a key or PCZT bytes, so it can go to logs.
+ * Show `reason` to the user: for the board's outdated-app refusal (520) it
+ * is "Update your app: ...", for a board set to the other network (400)
+ * "The board is set to Testnet, but this app is on Mainnet. Switch ...".
  * `device_code` is the firmware's code when the board refused with one this
  * version does not know (`code` 900).
  */
@@ -7495,6 +7527,20 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
     uniffiRustCallWithError(LeekException) { _status ->
     UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_finish_sd_sign(
         FfiConverterByteArray.lower(`pczt`),FfiConverterByteArray.lower(`sent`),FfiConverterByteArray.lower(`zsig`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Whether a board at this `fw_compat` (`Features.fw_compat`; `None` counts
+         * as 1) should be told to update: what `Features.firmware_outdated` says,
+         * for a level the app kept (the JNI library's `firmwareOutdated(level)`).
+         */ fun `firmwareOutdated`(`fwCompat`: kotlin.UInt?): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_firmware_outdated(
+        FfiConverterOptionalUInt.lower(`fwCompat`),_status)
 }
     )
     }

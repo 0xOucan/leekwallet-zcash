@@ -80,7 +80,9 @@ One `LeekError` for everything, `#[non_exhaustive]`. `code()` is stable (1xx
 link, 2xx session and board, 3xx user, 4xx account and network, 5xx PCZT,
 6xx signatures, 7xx stored app data and quick unlock (706 to 709, see "Stored app data"), 900 an unknown firmware code; `DuplicateRk`, the board's
 `ZS_E_DUPLICATE_RK` (0x0518), is 517; `AppOutdated`, `ZS_E_APP_OUTDATED`
-(0x0519), is 520: show its text, update the app). `recovery()` says
+(0x0519), is 520: show its text, update the app; `BoardNetwork { board }`,
+the board's refusal for its own network setting (0x0528), shares
+`WrongNetwork`'s 400 and its text says which way to switch). `recovery()` says
 `RetrySameLink`, `Reconnect` or `DoNotRetry`. Every firmware code in
 `docs/PROTOCOL.md` §6, `ZS_E_*` and `ZSIGN_E_*` is mapped (a few by call:
 code 0x0E is `AddressNotOurs` for an address check and `OutputMismatch` for

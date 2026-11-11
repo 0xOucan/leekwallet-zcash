@@ -7,7 +7,7 @@ use leek_device::device::{self, Device, Value};
 use zcash_address::unified::{self, Encoding};
 use zcash_protocol::consensus::NetworkType;
 
-use crate::error::{from_device, Ctx, LeekError};
+use crate::error::{from_device, from_device_on, Ctx, LeekError};
 
 /// The key source a wallet records for an account imported from the board
 /// (`import_account_ufvk(.., key_source)`).
@@ -62,6 +62,14 @@ impl Network {
             NetworkType::Main => Ok(Network::Main),
             NetworkType::Test => Ok(Network::Test),
             NetworkType::Regtest => Err(LeekError::Unsupported(crate::Unsupported::Network)),
+        }
+    }
+
+    /// The other network.
+    pub fn other(self) -> Self {
+        match self {
+            Network::Main => Network::Test,
+            Network::Test => Network::Main,
         }
     }
 
@@ -253,9 +261,10 @@ pub fn get_account_with(
     progress: &dyn Fn(AccountProgress),
 ) -> Result<Account, LeekError> {
     progress(AccountProgress::ConfirmOnDevice);
-    let r = device.z_get_account(index, network.as_str()).map_err(|e| from_device(&e, Ctx::Other))?;
+    let r = device.z_get_account(index, network.as_str()).map_err(|e| from_device_on(&e, Ctx::Other, network))?;
     if text(&r, "network")? != network.as_str() {
-        return Err(LeekError::WrongNetwork);
+        // Firmware that ignores the request's network answers for its own.
+        return Err(LeekError::BoardNetwork { board: network.other() });
     }
     let seed_fingerprint: [u8; 32] = device::get_bytes(&r, "seedFingerprint")
         .ok()
@@ -289,13 +298,17 @@ pub fn get_account_with(
 /// The fingerprint is a stable identifier of the seed: every paired host
 /// reads the same bytes, across accounts, networks and sessions. `network`,
 /// when given, is checked against the board's setting
-/// ([`LeekError::WrongNetwork`]) and does not change the answer. Firmware
+/// ([`LeekError::BoardNetwork`]) and does not change the answer. Firmware
 /// without the call is [`LeekError::FirmwareTooOld`]; fall back to
 /// [`get_account`] there.
 pub fn seed_fingerprint(device: &mut Device, network: Option<Network>) -> Result<[u8; 32], LeekError> {
     device.z_get_seed_fingerprint(network.map(Network::as_str)).map_err(|e| {
         let unknown = e.downcast_ref::<device::DeviceError>().is_some_and(|d| d.code == 0x0001);
-        if unknown { LeekError::FirmwareTooOld } else { from_device(&e, Ctx::Other) }
+        match (unknown, network) {
+            (true, _) => LeekError::FirmwareTooOld,
+            (false, Some(n)) => from_device_on(&e, Ctx::Other, n),
+            (false, None) => from_device(&e, Ctx::Other),
+        }
     })
 }
 
@@ -306,7 +319,7 @@ pub fn seed_fingerprint(device: &mut Device, network: Option<Network>) -> Result
 pub fn show_address(device: &mut Device, index: u32, network: Network, ua: &str) -> Result<AddressCheck, LeekError> {
     match device.z_show_address(index, network.as_str(), ua) {
         Ok(()) => Ok(AddressCheck::Verified),
-        Err(e) => match from_device(&e, Ctx::ShowAddress) {
+        Err(e) => match from_device_on(&e, Ctx::ShowAddress, network) {
             LeekError::UserRejected => Ok(AddressCheck::Rejected),
             LeekError::AddressNotOurs => Ok(AddressCheck::NotOurs),
             LeekError::AddressUncheckable => Ok(AddressCheck::Unsupported),
@@ -319,7 +332,7 @@ pub fn show_address(device: &mut Device, index: u32, network: Network, ua: &str)
 /// it is kept in flash (a stored wallet with no passphrase), false if only
 /// until the board locks.
 pub fn set_birthday(device: &mut Device, index: u32, network: Network, height: u32) -> Result<bool, LeekError> {
-    device.z_set_birthday(index, network.as_str(), height).map_err(|e| from_device(&e, Ctx::Other))
+    device.z_set_birthday(index, network.as_str(), height).map_err(|e| from_device_on(&e, Ctx::Other, network))
 }
 
 pub use leek_device::device::{BOARD_UPDATE_TEXT, MIN_FIRMWARE_COMPAT};

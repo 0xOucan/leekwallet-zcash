@@ -36,3 +36,24 @@ serde_json = "1"
 # A raw byte stream over the PTY, as a USB host moves it.
 serialport = { version = "=4.10.1", default-features = false }
 hex = "0.4"
+# A PCZT made the way Zodl's Android SDK 6.0.0 makes it (the same
+# zcash_client_backend: create_pczt_from_proposal, redact_pczt_for_signer)
+# for an account imported with its ZIP 32 derivation, through zecz-core's
+# wallet fixture (tests/zodl.rs). Test-only; the versions are zecz-core's,
+# already in Cargo.lock.
+zecz-core = { path = "../zecz-core" }
+# The JNI library the Zodl fork still links, compared call for call
+# (tests/jni_parity.rs) until the fork moves to these bindings.
+leek-android = { path = "../leek-android" }
+pczt = { version = "=0.10.0", default-features = false }
+rand = { version = "0.10", features = ["sys_rng"] }
+zcash_client_backend = { version = "=0.25.0", default-features = false }
+zcash_client_sqlite = { version = "=0.23.0", default-features = false }
+zcash_keys = { version = "=0.17.0", default-features = false }
+zcash_primitives = { version = "=0.31.0", default-features = false }
+zcash_protocol = { version = "=0.11.0", default-features = false }
+zcash_transparent = { version = "=0.11.0", default-features = false }
+zcash_address = { version = "=0.14.0", default-features = false }
+zip321 = { version = "=0.10.0", default-features = false }
+rusqlite = { version = "0.37", default-features = false }
+tokio = { version = "1", default-features = false }

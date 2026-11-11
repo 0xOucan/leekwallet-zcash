@@ -785,6 +785,11 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_encode_account_record(RustBuffer record
 RustBuffer uniffi_leek_zcash_ffi_fn_func_finish_sd_sign(RustBuffer pczt, RustBuffer sent, RustBuffer zsig, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_FIRMWARE_OUTDATED
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_FIRMWARE_OUTDATED
+int8_t uniffi_leek_zcash_ffi_fn_func_firmware_outdated(RustBuffer fw_compat, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_MIN_FIRMWARE_COMPAT
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_MIN_FIRMWARE_COMPAT
 uint32_t uniffi_leek_zcash_ffi_fn_func_min_firmware_compat(RustCallStatus *_Nonnull out_status
@@ -1179,6 +1184,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_encode_account_record(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_FINISH_SD_SIGN
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_FINISH_SD_SIGN
 uint16_t uniffi_leek_zcash_ffi_checksum_func_finish_sd_sign(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_FIRMWARE_OUTDATED
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_FIRMWARE_OUTDATED
+uint16_t uniffi_leek_zcash_ffi_checksum_func_firmware_outdated(void
     
 );
 #endif
