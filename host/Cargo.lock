@@ -1805,6 +1805,7 @@ dependencies = [
  "anyhow",
  "hex",
  "leek-transport-serial",
+ "leek-ur",
  "leek-zcash",
  "serde_json",
  "serialport",

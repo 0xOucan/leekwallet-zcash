@@ -90,6 +90,17 @@ fun main(args: Array<String>) {
     check(back.accounts == rec.accounts && back.seedFingerprint.contentEquals(rec.seedFingerprint), "record")
     check(accountRecordType() == "leek-zcash-accounts", "record type")
 
+    // The View key QR, out and back through the SDK's animated-QR pieces.
+    QrEncoder.accountRecord(rec, qrDefaults().fragmentLen).use { enc ->
+        check(enc.frame(0uL).startsWith("UR:LEEK-ZCASH-ACCOUNTS/"), "qr frame")
+        QrScanner(QrScanKind.ACCOUNT_RECORD, null).use { scan ->
+            var i = 0uL
+            while (!scan.isComplete() && i < 300uL) { scan.feed(enc.frame(i)); i++ }
+            val got = scan.accountRecord()
+            check(got != null && got.accounts == rec.accounts, "qr record")
+        }
+    }
+
     // Stored app data: the draft's vector 1 key, sealed and opened.
     val sk = StorageKey.fromBytes(
         hex("f43c678ee392cc4552daa3bde21c3cb15b416811dfdacf64e7aceca6114bd0d0"),
