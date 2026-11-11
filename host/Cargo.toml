@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["zecz-core", "zecz-cli", "leek-android", "leek-device", "leek-zcash", "leek-zcash-ffi"]
+members = ["zecz-core", "zecz-cli", "leek-android", "leek-device", "leek-zcash", "leek-zcash-ffi", "leek-ur"]
 
 [workspace.package]
 edition = "2021"

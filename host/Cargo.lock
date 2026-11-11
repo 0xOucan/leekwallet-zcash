@@ -1718,6 +1718,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "leek-ur"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.8",
+]
+
+[[package]]
 name = "leek-zcash"
 version = "0.1.0"
 dependencies = [
