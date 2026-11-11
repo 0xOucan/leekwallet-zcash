@@ -84,6 +84,13 @@ export function qrScanningAvailable(): boolean {
 const DECODE_MAX_EDGE = 1920;
 /** Shortest gap between two decode attempts; the loop paces itself. */
 const SCAN_INTERVAL_MS = 120;
+/** The same for an animated code, whose frames do not wait. */
+const ANIMATED_INTERVAL_MS = 30;
+
+export interface ScanOptions {
+  /** An animated UR (Sign with QR's reply): lighter, more frequent attempts. */
+  animated?: boolean;
+}
 
 type Caps = MediaTrackCapabilities & {
   exposureCompensation?: { min: number; max: number; step?: number };
@@ -118,7 +125,10 @@ export async function scanQr<T>(
   accept: (text: string) => T | undefined,
   onResult: (value: T) => void,
   onError: (message: string) => void,
+  options: ScanOptions = {},
 ): Promise<QrScan> {
+  const animated = options.animated === true;
+  const gap = animated ? ANIMATED_INTERVAL_MS : SCAN_INTERVAL_MS;
   if (!qrScanningAvailable()) throw new Error("This window cannot reach a camera. Paste the address instead.");
   void prepare();
   let choice = loadCamera();
@@ -204,7 +214,7 @@ export async function scanQr<T>(
   const tick = async (): Promise<void> => {
     if (stopped) return;
     try {
-      for (const pass of decodePasses(frame++, softwareDarken)) {
+      for (const pass of decodePasses(frame++, softwareDarken, animated)) {
         if (stopped) return;
         const img = grab(pass.region, pass.contrast);
         if (!img) break;
@@ -230,9 +240,9 @@ export async function scanQr<T>(
         return;
       }
     }
-    if (!stopped) timer = setTimeout(() => void tick(), SCAN_INTERVAL_MS);
+    if (!stopped) timer = setTimeout(() => void tick(), gap);
   };
-  timer = setTimeout(() => void tick(), SCAN_INTERVAL_MS);
+  timer = setTimeout(() => void tick(), gap);
 
   return {
     stop,

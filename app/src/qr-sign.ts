@@ -49,7 +49,7 @@ export const QR_PRESETS = {
   balanced: { fragment: 120, interval: 400 },
   fast: { fragment: 150, interval: 250 },
 } as const;
-export type QrPreset = keyof typeof QR_PRESETS | "custom";
+export type QrPreset = keyof typeof QR_PRESETS | "custom" | "manual";
 export const QR_SETTINGS_KEY = "leek.qr.send";
 /** Frames fetched from the backend at a time. */
 export const QR_BATCH = 64;
@@ -78,7 +78,8 @@ export function bigQrAvail(width: number, height: number): number {
   return Math.floor(Math.min(width * 0.96, height * 0.7));
 }
 
-export interface QrSettings { fragment: number; interval: number }
+/** `manual`: one frame per Next (button or Space), for debugging a camera. */
+export interface QrSettings { fragment: number; interval: number; manual?: boolean }
 
 type Store = Pick<Storage, "getItem" | "setItem">;
 function store(s?: Store): Store | null {
@@ -92,7 +93,7 @@ export function loadQrSettings(s?: Store): QrSettings {
     const v = JSON.parse(store(s)?.getItem(QR_SETTINGS_KEY) ?? "null") as Partial<QrSettings> | null;
     const fragment = (QR_FRAGMENTS as readonly number[]).includes(v?.fragment ?? -1) ? v!.fragment! : def.fragment;
     const interval = (QR_INTERVALS as readonly number[]).includes(v?.interval ?? -1) ? v!.interval! : def.interval;
-    return { fragment, interval };
+    return { fragment, interval, manual: v?.manual === true };
   } catch {
     return def;
   }
@@ -124,6 +125,7 @@ export interface QrFrameView {
   fragmentLen: number;
   version: number;
   interval: number;
+  manual: boolean;
 }
 
 export interface Clock {
@@ -145,6 +147,7 @@ const realClock: Clock = {
 export interface QrTiming {
   fragment: number;
   interval: number;
+  manual: boolean;
   seqLen: number;
   version: number;
   /** The loop showing, ms: the board's scan, ended by the user's click. */
@@ -249,7 +252,13 @@ export class QrSigner {
   }
 
   private schedule(gen: number): void {
+    if (this.settings.manual) return;   /* next() steps instead */
     this.timer = this.clock.set(() => void this.advance(gen), this.settings.interval);
+  }
+
+  /** Manual mode: show the next part now. */
+  next(): void {
+    if (this.phase === "showing" && this.settings.manual) void this.advance(this.generation);
   }
 
   private async advance(gen: number): Promise<void> {
@@ -279,7 +288,7 @@ export class QrSigner {
     const part = text.split("/")[1]?.includes("-") ? text.split("/")[1]! : "1-1";
     return {
       text, part, shown: this.shown, seqLen: this.seqLen, fragmentLen: this.fragmentLen,
-      version: this.version, interval: this.settings.interval,
+      version: this.version, interval: this.settings.interval, manual: !!this.settings.manual,
     };
   }
 
@@ -289,7 +298,8 @@ export class QrSigner {
   }
 
   private change(next: QrSettings): void {
-    if (next.fragment === this.settings.fragment && next.interval === this.settings.interval) return;
+    if (next.fragment === this.settings.fragment && next.interval === this.settings.interval &&
+        !!next.manual === !!this.settings.manual) return;
     const refetch = next.fragment !== this.settings.fragment;
     this.settings = next;
     saveQrSettings(next, this.storage);
@@ -305,6 +315,7 @@ export class QrSigner {
 
   /** Which preset the settings are, or "custom". */
   preset(): QrPreset {
+    if (this.settings.manual) return "manual";
     for (const [k, v] of Object.entries(QR_PRESETS)) {
       if (v.fragment === this.settings.fragment && v.interval === this.settings.interval) return k as QrPreset;
     }
@@ -314,6 +325,7 @@ export class QrSigner {
   /** Safe, Balanced or Fast. "custom" keeps the settings as they are. */
   setPreset(p: QrPreset): void {
     if (p === "custom") return;
+    if (p === "manual") { this.change({ ...this.settings, manual: true }); return; }
     this.change({ ...QR_PRESETS[p] });
   }
 
@@ -321,8 +333,9 @@ export class QrSigner {
   bigger(): void { this.change({ ...this.settings, fragment: this.step(QR_FRAGMENTS, this.settings.fragment, -1) }); }
   /** Denser codes: larger fragments, fewer frames. */
   denser(): void { this.change({ ...this.settings, fragment: this.step(QR_FRAGMENTS, this.settings.fragment, +1) }); }
-  slower(): void { this.change({ ...this.settings, interval: this.step(QR_INTERVALS, this.settings.interval, -1) }); }
-  faster(): void { this.change({ ...this.settings, interval: this.step(QR_INTERVALS, this.settings.interval, +1) }); }
+  /* A pace is automatic: Slower and Faster leave manual mode. */
+  slower(): void { this.change({ ...this.settings, manual: false, interval: this.step(QR_INTERVALS, this.settings.interval, -1) }); }
+  faster(): void { this.change({ ...this.settings, manual: false, interval: this.step(QR_INTERVALS, this.settings.interval, +1) }); }
   canBigger(): boolean { return this.settings.fragment !== QR_FRAGMENTS[0]; }
   canDenser(): boolean { return this.settings.fragment !== QR_FRAGMENTS[QR_FRAGMENTS.length - 1]; }
   canSlower(): boolean { return this.settings.interval !== QR_INTERVALS[0]; }
@@ -416,7 +429,7 @@ export class QrSigner {
     const now = this.now();
     const showMs = this.showMs ?? (this.phase === "showing" && this.shownAt !== null ? now - this.shownAt : null);
     const readMs = this.scanAt === null ? null : (this.doneAt ?? (this.phase === "scanning" ? now : this.scanAt)) - this.scanAt;
-    return { fragment: s.fragment, interval: s.interval, seqLen: this.seqLen, version: this.version, showMs, readMs, qrReads: this.qrReads };
+    return { fragment: s.fragment, interval: s.interval, manual: !!s.manual, seqLen: this.seqLen, version: this.version, showMs, readMs, qrReads: this.qrReads };
   }
 
   private now(): number {
@@ -431,7 +444,7 @@ export class QrSigner {
 
 /** The status line under the code. */
 export function frameCaption(f: QrFrameView): string {
-  return `Part ${f.part} · frame ${f.shown} · ${f.seqLen} fragment${f.seqLen === 1 ? "" : "s"} of ${f.fragmentLen} B · QR version ${f.version} · ${f.interval} ms`;
+  return `Part ${f.part} · frame ${f.shown} · ${f.seqLen} fragment${f.seqLen === 1 ? "" : "s"} of ${f.fragmentLen} B · QR version ${f.version} · ${f.manual ? "manual: Next or Space" : `${f.interval} ms`}`;
 }
 
 const secs = (ms: number | null) => (ms === null ? "–" : `${(ms / 1000).toFixed(1)} s`);
@@ -442,7 +455,7 @@ const secs = (ms: number | null) => (ms === null ? "–" : `${(ms / 1000).toFixe
  */
 export function timingCaption(t: QrTiming): string {
   const total = t.showMs !== null && t.readMs !== null ? ` · total ${secs(t.showMs + t.readMs)}` : "";
-  return `⏱ ${t.fragment} B / ${t.interval} ms (${t.seqLen} fragment${t.seqLen === 1 ? "" : "s"}, QR v${t.version}) · board read ${secs(t.showMs)}`
+  return `⏱ ${t.fragment} B / ${t.manual ? "manual" : `${t.interval} ms`} (${t.seqLen} fragment${t.seqLen === 1 ? "" : "s"}, QR v${t.version}) · board read ${secs(t.showMs)}`
     + ` · reply read ${secs(t.readMs)}${t.readMs !== null ? ` (${t.qrReads} QR)` : ""}${total}`;
 }
 

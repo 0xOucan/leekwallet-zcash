@@ -424,6 +424,9 @@ group("scanner: camera memory, sliders, crops, passes, contrast");
   }
   check(seen.size === 3, "three extra passes in rotation: the whole frame, contrast, the other binarizer");
   check(decodePasses(0, -2).every((p) => p.contrast), "brightness lowered in software: every pass gets the contrast");
+  const anim = [0, 1, 2, 3, 4, 5].map((n) => decodePasses(n, 0, true));
+  check(anim.filter((ps) => ps.length === 1).length === 4 && anim.every((ps) => ps[0]!.region === "center"),
+    "an animated reply: the middle every frame, the rotating pass every third");
   /* A washed-out code: dark modules at 200, light at 250 (a glowing screen). */
   const px = new Uint8ClampedArray(4 * 100);
   for (let i = 0; i < 100; i++) { const v = i % 2 ? 250 : 200; px.set([v, v, v, 255], i * 4); }

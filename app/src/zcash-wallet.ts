@@ -826,6 +826,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       $<HTMLButtonElement>(id).disabled = !ok;
     }
     $<HTMLSelectElement>("zwqrspeed").value = q.preset();
+    $("zwqrnext").hidden = !(showing && q.settings.manual);
     say("zwqrtimer", timingCaption(q.timing()));
     const f = q.frame();
     if (f) {
@@ -902,6 +903,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
         },
         () => undefined,
         (m) => { stopQrCamera(); q.fail(new Error(m)); },
+        { animated: true },
       );
     } catch (e) {
       stopQrCamera();
@@ -1262,9 +1264,19 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   $("zwsignqr").addEventListener("click", () => void startQrSign());
   $("zwqrspeed").addEventListener("change", () => {
     const v = $<HTMLSelectElement>("zwqrspeed").value;
-    if (v === "safe" || v === "balanced" || v === "fast") qrSign?.setPreset(v);
+    if (v === "safe" || v === "balanced" || v === "fast" || v === "manual") qrSign?.setPreset(v);
   });
   $("zwqrbigger").addEventListener("click", () => qrSign?.bigger());
+  $("zwqrnext").addEventListener("click", () => qrSign?.next());
+  /* Manual mode: Space steps the parts while the code is up, unless typing. */
+  document.addEventListener("keydown", (e) => {
+    const q = qrSign;
+    if (e.key !== " " || !q || q.phase !== "showing" || !q.settings.manual) return;
+    const t = e.target as HTMLElement | null;
+    if (t && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName)) return;
+    e.preventDefault();
+    q.next();
+  });
   $("zwqrdenser").addEventListener("click", () => qrSign?.denser());
   $("zwqrslower").addEventListener("click", () => qrSign?.slower());
   $("zwqrfaster").addEventListener("click", () => qrSign?.faster());

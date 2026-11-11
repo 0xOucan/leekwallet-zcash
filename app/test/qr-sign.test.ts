@@ -242,6 +242,25 @@ group("the bench stopwatch: board read, reply read, total, and a speed change re
     && line.includes("total 46.5 s"), line);
 }
 
+group("manual: one part per Next, and Slower/Faster go back to automatic");
+{
+  const b = fakeBackend(VIEW);
+  const c = fakeClock();
+  const q = new QrSigner(b.invoke, c.clock, memStore());
+  await q.show(VIEW);
+  q.setPreset("manual");
+  await flush();
+  check(q.preset() === "manual" && c.ms === null, "no timer in manual mode");
+  const p0 = q.frame()!.shown;
+  q.next(); await flush();
+  q.next(); await flush();
+  check(q.frame()!.shown === p0 + 2 && c.ms === null, `two Nexts, two parts (${q.frame()!.shown - p0})`);
+  check(frameCaption(q.frame()!).includes("manual"), frameCaption(q.frame()!));
+  check(timingCaption(q.timing()).includes("90 B / manual"), timingCaption(q.timing()));
+  q.slower(); await flush();
+  check(q.preset() !== "manual" && c.ms === 800, `Slower is automatic again (${c.ms})`);
+}
+
 group("show again, cancel, failure");
 {
   const b = fakeBackend(VIEW);
