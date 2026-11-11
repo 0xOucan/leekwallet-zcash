@@ -9,7 +9,7 @@
  */
 
 import {
-  bigQrAvail, frameCaption, loadQrSettings, moduleScale, qrVersionFor, saveQrSettings, scanCaption,
+  bigQrAvail, frameCaption, loadQrSettings, moduleScale, qrVersionFor, saveQrSettings, scanCaption, timingCaption,
   QrSigner, QR_BATCH, QR_FRAGMENTS, QR_PRESETS, QR_INTERVALS, QR_SETTINGS_KEY, type Clock, type ScanProgress,
 } from "../src/qr-sign.ts";
 import type { Invoke } from "../src/tauri-transport.ts";
@@ -212,6 +212,34 @@ group("scanning the board's reply");
   check((await q.feed("UR:LEEK-ZSIG/3-3/AA")) === null, "nothing more is read after completion");
   q.finished();
   check(q.phase === "done", "done");
+}
+
+group("the bench stopwatch: board read, reply read, total, and a speed change restarts it");
+{
+  const b = fakeBackend(VIEW, 2);
+  const c = fakeClock();
+  let t = 1000;
+  c.clock.now = () => t;
+  const q = new QrSigner(b.invoke, c.clock, memStore());
+  await q.show(VIEW);
+  t += 5000;
+  check(q.timing().showMs === 5000 && q.timing().readMs === null, `live board read ${JSON.stringify(q.timing())}`);
+  q.slower();
+  await flush();
+  t += 42_000;
+  check(q.timing().showMs === 42_000 && q.timing().interval === 800, "a speed change times again from then, with its settings");
+  await q.startScan();
+  t += 3000;
+  await q.feed("zcash:t1notours");
+  await q.feed("UR:LEEK-ZSIG/1-2/AA");
+  t += 1500;
+  check((await q.feed("UR:LEEK-ZSIG/2-2/AA")) !== null, "complete");
+  t += 99_000;
+  const m = q.timing();
+  check(m.showMs === 42_000 && m.readMs === 4500 && m.qrReads === 3, `stopped at completion ${JSON.stringify(m)}`);
+  const line = timingCaption(m);
+  check(line.includes("90 B / 800 ms") && line.includes("board read 42.0 s") && line.includes("reply read 4.5 s (3 QR)")
+    && line.includes("total 46.5 s"), line);
 }
 
 group("show again, cancel, failure");

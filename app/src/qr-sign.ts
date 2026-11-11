@@ -129,8 +129,31 @@ export interface QrFrameView {
 export interface Clock {
   set(fn: () => void, ms: number): unknown;
   clear(handle: unknown): void;
+  /** Milliseconds, for the stopwatch; Date.now when left out. */
+  now?(): number;
 }
-const realClock: Clock = { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) };
+const realClock: Clock = {
+  set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>), now: () => Date.now(),
+};
+
+/**
+ * The bench stopwatch (docs/zcash/QR-BENCH.md): how long the board took to
+ * read the transaction (from the loop's start, restarted by every speed
+ * change, to "the board shows its signature"), how long the camera took to
+ * read the reply, and the settings that did it. Null until measured.
+ */
+export interface QrTiming {
+  fragment: number;
+  interval: number;
+  seqLen: number;
+  version: number;
+  /** The loop showing, ms: the board's scan, ended by the user's click. */
+  showMs: number | null;
+  /** Reading the board's reply, ms, until the .zsig was whole. */
+  readMs: number | null;
+  /** QR codes the camera decoded during the read, the board's or not. */
+  qrReads: number;
+}
 
 /**
  * One QR signing, from the review to the .zsig. The screen subscribes with
@@ -157,6 +180,12 @@ export class QrSigner {
   private scanProgress = { received: 0, total: 0 };
   private feeding: Promise<void> = Promise.resolve();
   private zsig: Uint8Array | null = null;
+  private shownAt: number | null = null;
+  private scanAt: number | null = null;
+  private doneAt: number | null = null;
+  private showMs: number | null = null;
+  private qrReads = 0;
+  private timedSettings: QrSettings | null = null;
 
   private readonly invoke: Invoke;
   private readonly clock: Clock;
@@ -187,6 +216,8 @@ export class QrSigner {
     this.batchStart = 0;
     this.index = 0;
     this.shown = 0;
+    /* A new loop is a new measurement: the board starts again from part 1. */
+    this.shownAt = null;
     try {
       await this.fetch(0, gen);
     } catch (e) {
@@ -195,6 +226,9 @@ export class QrSigner {
     }
     if (gen !== this.generation || this.phase !== "showing") return;
     this.shown = 1;
+    this.shownAt = this.now();
+    this.scanAt = this.doneAt = this.showMs = null;
+    this.timedSettings = { ...this.settings };
     this.onChange();
     this.schedule(gen);
   }
@@ -261,7 +295,12 @@ export class QrSigner {
     saveQrSettings(next, this.storage);
     if (this.phase !== "showing") { this.onChange(); return; }
     if (refetch) void this.restart();
-    else { this.stopTimer(); this.onChange(); this.schedule(this.generation); }
+    else {
+      /* Same frames at another pace: timed again from now. */
+      this.shownAt = this.now();
+      this.timedSettings = { ...next };
+      this.stopTimer(); this.onChange(); this.schedule(this.generation);
+    }
   }
 
   /** Which preset the settings are, or "custom". */
@@ -294,6 +333,12 @@ export class QrSigner {
     if (this.phase !== "showing" && this.phase !== "scanning") return;
     this.generation++;
     this.stopTimer();
+    if (this.phase === "showing") {
+      this.scanAt = this.now();
+      this.showMs = this.shownAt === null ? null : this.scanAt - this.shownAt;
+      this.doneAt = null;
+      this.qrReads = 0;
+    }
     await this.invoke<void>("qr_scan_reset");
     this.scanProgress = { received: 0, total: 0 };
     this.scanNote = "";
@@ -320,6 +365,7 @@ export class QrSigner {
   feed(text: string): Promise<Uint8Array | null> {
     const run = this.feeding.then(async (): Promise<Uint8Array | null> => {
       if (this.phase !== "scanning") return null;
+      this.qrReads++;
       const p = await this.invoke<ScanProgress>("qr_scan_feed", { text });
       if (this.phase !== "scanning") return null;
       if (p.state === "ignored") return null;
@@ -328,6 +374,7 @@ export class QrSigner {
       else if (p.state === "accepted") this.scanNote = "";
       if (p.state === "complete" && p.zsig) {
         this.zsig = Uint8Array.from(p.zsig);
+        this.doneAt = this.now();
         this.phase = "finishing";
         this.onChange();
         return this.zsig;
@@ -363,6 +410,19 @@ export class QrSigner {
     this.onChange();
   }
 
+  /** The stopwatch so far (live while a phase runs). */
+  timing(): QrTiming {
+    const s = this.timedSettings ?? this.settings;
+    const now = this.now();
+    const showMs = this.showMs ?? (this.phase === "showing" && this.shownAt !== null ? now - this.shownAt : null);
+    const readMs = this.scanAt === null ? null : (this.doneAt ?? (this.phase === "scanning" ? now : this.scanAt)) - this.scanAt;
+    return { fragment: s.fragment, interval: s.interval, seqLen: this.seqLen, version: this.version, showMs, readMs, qrReads: this.qrReads };
+  }
+
+  private now(): number {
+    return this.clock.now ? this.clock.now() : Date.now();
+  }
+
   private stopTimer(): void {
     if (this.timer !== null) this.clock.clear(this.timer);
     this.timer = null;
@@ -372,6 +432,18 @@ export class QrSigner {
 /** The status line under the code. */
 export function frameCaption(f: QrFrameView): string {
   return `Part ${f.part} · frame ${f.shown} · ${f.seqLen} fragment${f.seqLen === 1 ? "" : "s"} of ${f.fragmentLen} B · QR version ${f.version} · ${f.interval} ms`;
+}
+
+const secs = (ms: number | null) => (ms === null ? "–" : `${(ms / 1000).toFixed(1)} s`);
+
+/**
+ * The stopwatch line: on screen while it runs, and once a signing is read
+ * whole, the line the app logs for docs/zcash/QR-BENCH.md.
+ */
+export function timingCaption(t: QrTiming): string {
+  const total = t.showMs !== null && t.readMs !== null ? ` · total ${secs(t.showMs + t.readMs)}` : "";
+  return `⏱ ${t.fragment} B / ${t.interval} ms (${t.seqLen} fragment${t.seqLen === 1 ? "" : "s"}, QR v${t.version}) · board read ${secs(t.showMs)}`
+    + ` · reply read ${secs(t.readMs)}${t.readMs !== null ? ` (${t.qrReads} QR)` : ""}${total}`;
 }
 
 /** The scan's progress line. */

@@ -47,7 +47,7 @@ import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
 import qrcodegen from "qrcode-generator";
-import { bigQrAvail, drawQr, frameCaption, scanCaption, QrSigner } from "./qr-sign.ts";
+import { bigQrAvail, drawQr, frameCaption, scanCaption, timingCaption, QrSigner } from "./qr-sign.ts";
 import { txHead } from "./tx-labels.ts";
 import { initSwapView, type Proposal } from "./swap-view.ts";
 
@@ -797,6 +797,8 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   let qrSign: QrSigner | null = null;
   let qrScan: QrScan | null = null;
+  /* Ticks the stopwatch line between frames and camera reads. */
+  let qrTick: ReturnType<typeof setInterval> | null = null;
 
   function stopQrCamera(): void {
     qrScan?.stop();
@@ -805,6 +807,8 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   }
 
   function stopQrSign(): void {
+    if (qrTick) clearInterval(qrTick);
+    qrTick = null;
     stopQrCamera();
     qrSign?.cancel();
     qrSign = null;
@@ -822,6 +826,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       $<HTMLButtonElement>(id).disabled = !ok;
     }
     $<HTMLSelectElement>("zwqrspeed").value = q.preset();
+    say("zwqrtimer", timingCaption(q.timing()));
     const f = q.frame();
     if (f) {
       const box = $("zwqrsign");
@@ -858,6 +863,9 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const q = new QrSigner(invoke);
     qrSign = q;
     q.onChange = () => { if (qrSign === q) renderQrSign(); };
+    qrTick = setInterval(() => {
+      if (qrSign === q && (q.phase === "showing" || q.phase === "scanning")) say("zwqrtimer", timingCaption(q.timing()));
+    }, 200);
     $("zwqrsign").hidden = false;
     $<HTMLButtonElement>("zwsignsend").disabled = true;
     $<HTMLButtonElement>("zwsignqr").disabled = true;
@@ -910,12 +918,14 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     try {
       if (!sameKey(prop.key, keyNow()) || proposal !== prop) throw new Error("The wallet on screen changed; build the transaction again.");
       deps.log(`zcash: QR reply read (${zsig.length} B .zsig)`);
+      deps.log(`zcash: QR bench ${timingCaption(q.timing())}`);
+      const bench = timingCaption(q.timing());
       const txid = await finishSigned(prop.key, prop.view, zsig, mainOk, line);
       q.finished();
       cancelProposal();
       ($("zwamount") as HTMLInputElement).value = "";
       ($("zwmemo") as HTMLTextAreaElement).value = "";
-      say("zwsendstatus", `Sent (signed over QR): ${txid}. It shows as pending until it is mined.`);
+      say("zwsendstatus", `Sent (signed over QR): ${txid}. It shows as pending until it is mined. ${bench}`);
       void scheduler.trigger();
     } catch (e) {
       q.fail(e);
