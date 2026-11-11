@@ -53,7 +53,7 @@ static const char *PARTS[] = {
 static UrEncoder enc;
 static UrDecoder dec;
 static uint8_t fragments[8 * 1024];
-static uint8_t mixed[8 * 1024];
+static uint8_t mixed[UR_DECODER_MIXED * 512];
 
 static void test_matches_the_reference(void)
 {

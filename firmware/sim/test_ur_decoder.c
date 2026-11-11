@@ -49,7 +49,7 @@ static const char *PARTS[] = {
 static const char *SINGLE = "ur:bytes/uepmrnwskensotht";
 
 static uint8_t fragments[8 * 1024];
-static uint8_t mixed[8 * 1024];
+static uint8_t mixed[UR_DECODER_MIXED * 512];
 static UrDecoder dec;
 
 #define N_PARTS (sizeof PARTS / sizeof PARTS[0])
@@ -269,6 +269,28 @@ static int emit_vectors(const char *path)
     return 0;
 }
 
+/* A mixed part read twice (the board's camera is faster than the screen)
+ * must not take a second slot in the queue, and is reported redundant. */
+static void test_mixed_read_twice(void)
+{
+    printf("mixed part read twice\n");
+    ur_decoder_reset(&dec);
+    UrPartResult r;
+    /* Parts 6 onward are mixed; find one that stays mixed (two or more
+       fragments missing) with nothing else known. */
+    for (size_t i = 5; i < N_PARTS; i++) {
+        ur_decoder_reset(&dec);
+        feed(PARTS[i], &r);
+        if (r != UR_PART_ACCEPTED || dec.mixed_count != 1) continue;
+        feed(PARTS[i], &r);
+        CHECK(r == UR_PART_REDUNDANT, "second read of part %zu is redundant", i + 1);
+        CHECK(dec.mixed_count == 1, "second read of part %zu took a slot (%u)", i + 1,
+              (unsigned)dec.mixed_count);
+        return;
+    }
+    CHECK(false, "no part stayed mixed");
+}
+
 int main(int argc, char **argv)
 {
     ur_decoder_init(&dec, fragments, sizeof fragments, mixed, sizeof mixed);
@@ -283,6 +305,7 @@ int main(int argc, char **argv)
     test_single_part();
     test_mixing_two_messages_is_refused();
     test_garbage_is_refused();
+    test_mixed_read_twice();
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
            failures, failures == 1 ? "" : "s");

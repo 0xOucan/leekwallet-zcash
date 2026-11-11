@@ -46,9 +46,13 @@
 #include "ur-fountain.h"
 #include "ur.h"
 
-/** Mixed parts held back waiting to be reducible. */
+/** Mixed parts held back waiting to be reducible. 64, not 8: on the board's
+ * camera (2026-11-11) a full queue dropped useful parts once frames were
+ * missed, and a simulation of a 36-part message read at 45 % needed 124
+ * frames on average instead of 151 (worst case 202 instead of 311). The
+ * masks cost 16 B a slot here; the data, 512 B a slot, is the caller's. */
 #ifndef UR_DECODER_MIXED
-#define UR_DECODER_MIXED 8
+#define UR_DECODER_MIXED 64
 #endif
 
 typedef enum {

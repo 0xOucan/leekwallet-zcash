@@ -26,7 +26,7 @@ static int failures = 0;
 } while (0)
 
 static uint8_t fragments[8 * 1024];
-static uint8_t mixed[8 * 1024];
+static uint8_t mixed[UR_DECODER_MIXED * 512];
 static UrDecoder dec;
 
 static void test_every_frame_fits_and_decodes(void)

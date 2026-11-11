@@ -347,6 +347,14 @@ UrPartResult ur_decoder_receive(UrDecoder *d, const char *ur, size_t ur_len)
         }
         absorb(d, idx, work);
     } else {
+        /* The same combination already queued (the same mixed part read
+           twice, or two parts that reduce to one): nothing new, and it must
+           not take a second slot. */
+        for (uint32_t m = 0; m < d->mixed_count; m++) {
+            if (memcmp(d->mixed_mask[m], mask, UR_PART_MASK_BYTES) == 0) {
+                return UR_PART_REDUNDANT;
+            }
+        }
         if (d->mixed_count >= UR_DECODER_MIXED) {
             /* Full. Dropping is safe: the sender keeps emitting parts and a
                later one will reduce further. Better than evicting a part that

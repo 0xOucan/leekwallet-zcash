@@ -3863,7 +3863,7 @@ static void test_scan_assembles_then_refuses_every_type(void)
 /* Read SCREEN_QR_OUT's animated UR to the end; the message or NULL. */
 static const uint8_t *view_key_assemble(size_t *n)
 {
-    static uint8_t frags[4096], mixed[4096];
+    static uint8_t frags[4096], mixed[UR_DECODER_MIXED * 512];
     static UrDecoder d;
     ur_decoder_init(&d, frags, sizeof frags, mixed, sizeof mixed);
     for (int i = 0; i < 200 && !ur_decoder_complete(&d); i++) {
