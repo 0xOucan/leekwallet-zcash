@@ -703,3 +703,10 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
 .swap__id { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-2); }
 .swap__id code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; min-width: 0; flex: 1; }
 .swap__id button { flex: none; }
+
+/* Sign with QR (experimental, src/qr-sign.ts): the code as large as the
+ * screen allows, black on white whatever the theme, never smoothed. */
+.qrsign__show { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.qrsign__code { image-rendering: pixelated; background: #fff; max-width: 100%; }
+.qrsign__count { margin: 0; font-variant-numeric: tabular-nums; text-align: center; }
+.qrsign .badge { font-size: 0.75em; padding: 0 0.4em; border: 1px solid currentColor; border-radius: 4px; vertical-align: middle; }

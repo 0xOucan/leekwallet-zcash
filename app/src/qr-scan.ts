@@ -1,8 +1,16 @@
 /**
- * Camera QR scanning for the Send form: a Zcash address or a ZIP 321
- * `zcash:` payment request (parsed by packages/core/src/zip321.ts). Zcash
- * only, and nothing else: there is no QR flow for pairing or signing (the
- * board is reached over USB and Bluetooth only).
+ * Camera QR scanning for the Send form, Zcash only, for two things:
+ *
+ * - a Zcash address or a ZIP 321 `zcash:` payment request (parsed by
+ *   packages/core/src/zip321.ts);
+ * - the board's signature, `ur:leek-zsig`, in "Sign with QR", the
+ *   EXPERIMENTAL opt-in air-gapped signing flow (src/qr-sign.ts): the app
+ *   shows the transaction as an animated `ur:leek-pczt`, and reads the
+ *   board's reply here, every code going to the backend's UR decoder.
+ *
+ * Never for pairing: the board pairs and is reached over USB and Bluetooth,
+ * with the 6-digit code, and those stay the everyday links. QR is only the
+ * signing flow for a board kept off every link.
  *
  * Decoding is the bundled `zxing-wasm` reader (MIT, WebAssembly, shipped
  * inside the app and served from 'self'; nothing is fetched). The same

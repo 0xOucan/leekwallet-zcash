@@ -349,7 +349,49 @@
                     the recipient and amount on the board's screen.</span></label>
                 <div class="row">
                   <button type="button" id="zwsignsend" class="primary">Sign on the board and send</button>
+                  <button type="button" id="zwsignqr" class="secondary" title="Experimental: for a board kept off USB and Bluetooth">Sign with QR (experimental)</button>
                   <button type="button" id="zwcancel" class="secondary">Cancel</button>
+                </div>
+              </section>
+              <!-- Sign with QR, EXPERIMENTAL and opt-in (src/qr-sign.ts): the
+                   signer view as an animated ur:leek-pczt for the board's
+                   camera, then the board's ur:leek-zsig read with this
+                   camera. Never for pairing; USB and Bluetooth stay the
+                   everyday links. -->
+              <section class="preview qrsign" id="zwqrsign" hidden aria-labelledby="zwqrsignhead">
+                <h4 id="zwqrsignhead">Sign with QR <span class="badge">experimental</span></h4>
+                <p class="muted" id="zwqrsignhelp"></p>
+                <div class="qrsign__show" id="zwqrshow">
+                  <canvas id="zwqrcanvas" class="qrsign__code" role="img" aria-label="Animated QR code of the transaction for the board"></canvas>
+                  <p class="qrsign__count" id="zwqrcount" aria-live="off"></p>
+                  <label class="field qrsign__speed"><span>Speed</span>
+                    <select id="zwqrspeed">
+                      <option value="safe">Safe (90 B, 500 ms)</option>
+                      <option value="balanced">Balanced (120 B, 400 ms)</option>
+                      <option value="fast">Fast (150 B, 250 ms)</option>
+                      <option value="custom">Custom</option>
+                    </select></label>
+                  <div class="row">
+                    <button type="button" id="zwqrbigger" class="secondary" title="Bigger modules: smaller fragments, more frames">Bigger</button>
+                    <button type="button" id="zwqrdenser" class="secondary" title="Denser code: larger fragments, fewer frames">Denser</button>
+                    <button type="button" id="zwqrslower" class="secondary">Slower</button>
+                    <button type="button" id="zwqrfaster" class="secondary">Faster</button>
+                  </div>
+                  <div class="row">
+                    <button type="button" id="zwqrscan" class="primary">The board shows its signature: scan it</button>
+                  </div>
+                </div>
+                <div class="zscan" id="zwqrscanbox" hidden>
+                  <video id="zwqrvideo" playsinline muted></video>
+                  <progress id="zwqrbar" value="0" max="1"></progress>
+                  <p class="muted zscan__tip">The board's screen is bright: lower the brightness or zoom in on the scanner if it does not read, and keep the code in the middle.</p>
+                  <div class="row">
+                    <button type="button" id="zwqragain" class="secondary">Show the transaction again</button>
+                  </div>
+                </div>
+                <p class="muted" id="zwqrstatus" role="status" aria-live="polite"></p>
+                <div class="row">
+                  <button type="button" id="zwqrcancel" class="secondary">Cancel QR signing</button>
                 </div>
               </section>
               <progress id="zwsendbar" value="0" max="1" hidden></progress>

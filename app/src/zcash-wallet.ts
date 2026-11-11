@@ -28,6 +28,11 @@
  * viewing key imported by hand (watch-only). It shows and syncs as usual;
  * anything that needs the board (send, shield, a swap from ZEC, verifying
  * an address) asks for it, and a board that connects takes over.
+ *
+ * Sign with QR (src/qr-sign.ts) is an EXPERIMENTAL, opt-in second button
+ * under the Send and Shield review, for a board kept off every link: the
+ * same signer view as an animated ur:leek-pczt, the board's ur:leek-zsig
+ * read back with the camera, then the same zw_finish.
  */
 
 import {
@@ -41,6 +46,8 @@ import { ensureWallet, readSeedRetrying } from "./zcash-auto.ts";
 import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
+import qrcodegen from "qrcode-generator";
+import { bigQrAvail, drawQr, frameCaption, scanCaption, QrSigner } from "./qr-sign.ts";
 import { txHead } from "./tx-labels.ts";
 import { initSwapView, type Proposal } from "./swap-view.ts";
 
@@ -663,6 +670,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   }
 
   function cancelProposal(): void {
+    stopQrSign();
     proposal = null;
     $("zwproposal").hidden = true;
     releaseSync?.();
@@ -728,8 +736,23 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
         deps.log(`zcash: board approved sighash ${toHex(r.sighash)}`);
         return encodeZsig(r.sha256, r.entries);
       });
-      line("Signed on the board. Proving (the first time loads the proving key)…");
-      finishLine = line;
+      return await finishSigned(key, viewBytes, zsig, mainOk, line);
+    } finally {
+      bar.hidden = true;
+    }
+  }
+
+  /**
+   * The board's `.zsig` for `viewBytes`, however it came back (the session,
+   * or the QR air gap): zw_finish checks it against the view's hash and
+   * each signature against its rk, proves, and broadcasts after its own
+   * upgrade and expiry checks. Mainnet needs `mainOk` there too.
+   */
+  async function finishSigned(key: Key, viewBytes: Uint8Array, zsig: Uint8Array, mainOk: boolean, line: (t: string) => void): Promise<string> {
+    if (key.network === "main" && !mainOk) throw new Error("This is mainnet: tick the confirmation above first.");
+    line("Signed on the board. Proving (the first time loads the proving key)…");
+    finishLine = line;
+    try {
       const sent = await invoke<{ txid: string; broadcast: boolean }>("zw_finish", {
         ...key, view: Array.from(viewBytes), zsig: Array.from(zsig), mainnetConfirmed: mainOk,
       });
@@ -737,7 +760,6 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       return sent.txid;
     } finally {
       finishLine = null;
-      bar.hidden = true;
     }
   }
 
@@ -752,6 +774,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     }
     const bar = $<HTMLProgressElement>("zwsendbar");
     $<HTMLButtonElement>("zwsignsend").disabled = true;
+    $<HTMLButtonElement>("zwsignqr").disabled = true;
     try {
       const txid = await signView(prop.key, prop.view, mainOk, (t) => say("zwsendstatus", t), bar);
       cancelProposal();
@@ -766,6 +789,139 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
       say("zwsendstatus", zErrorText(e));
     } finally {
       $<HTMLButtonElement>("zwsignsend").disabled = false;
+      $<HTMLButtonElement>("zwsignqr").disabled = false;
+    }
+  }
+
+  /* ------------------------------------------- Sign with QR (experimental) */
+
+  let qrSign: QrSigner | null = null;
+  let qrScan: QrScan | null = null;
+
+  function stopQrCamera(): void {
+    qrScan?.stop();
+    qrScan = null;
+    $("zwqrscanbox").hidden = true;
+  }
+
+  function stopQrSign(): void {
+    stopQrCamera();
+    qrSign?.cancel();
+    qrSign = null;
+    $("zwqrsign").hidden = true;
+    $<HTMLButtonElement>("zwsignsend").disabled = false;
+    $<HTMLButtonElement>("zwsignqr").disabled = false;
+  }
+
+  function renderQrSign(): void {
+    const q = qrSign;
+    if (!q) return;
+    const showing = q.phase === "showing";
+    $("zwqrshow").hidden = !showing;
+    for (const [id, ok] of [["zwqrbigger", q.canBigger()], ["zwqrdenser", q.canDenser()], ["zwqrslower", q.canSlower()], ["zwqrfaster", q.canFaster()]] as const) {
+      $<HTMLButtonElement>(id).disabled = !ok;
+    }
+    $<HTMLSelectElement>("zwqrspeed").value = q.preset();
+    const f = q.frame();
+    if (f) {
+      const box = $("zwqrsign");
+      const avail = bigQrAvail(box.clientWidth || window.innerWidth, window.innerHeight);
+      drawQr($<HTMLCanvasElement>("zwqrcanvas"), qrcodegen as never, f.text, f.version, avail, window.devicePixelRatio || 1);
+      say("zwqrcount", frameCaption(f));
+    }
+    if (q.phase === "scanning") {
+      const p = q.progress();
+      const bar = $<HTMLProgressElement>("zwqrbar");
+      bar.max = Math.max(1, p.total);
+      bar.value = p.received;
+      say("zwqrstatus", scanCaption(p, q.scanNote));
+    }
+    if (q.phase === "failed") {
+      say("zwqrstatus", q.error ?? "QR signing failed.");
+      /* The review is still there: sign it again, over QR or a link. */
+      $<HTMLButtonElement>("zwsignsend").disabled = false;
+      $<HTMLButtonElement>("zwsignqr").disabled = false;
+    }
+  }
+
+  /** Sign with QR: show the signer view, then scan the board's reply. */
+  async function startQrSign(): Promise<void> {
+    const prop = proposal;
+    if (!prop || !status) return;
+    if (!sameKey(prop.key, keyNow())) { cancelProposal(); return; }
+    const mainOk = ($("zwmainconfirm") as HTMLInputElement).checked;
+    if (prop.network === "main" && !mainOk) {
+      say("zwsendstatus", "This is mainnet: tick the confirmation above first.");
+      return;
+    }
+    stopQrSign();
+    const q = new QrSigner(invoke);
+    qrSign = q;
+    q.onChange = () => { if (qrSign === q) renderQrSign(); };
+    $("zwqrsign").hidden = false;
+    $<HTMLButtonElement>("zwsignsend").disabled = true;
+    $<HTMLButtonElement>("zwsignqr").disabled = true;
+    say("zwqrsignhelp", "EXPERIMENTAL. On the board: choose Scan and point its camera at this code. It shows the same review; ACCEPT on its last page signs, and the board then shows its signature as a QR code. "
+      + "If the board does not pick it up: Speed Safe, then Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
+    say("zwqrstatus", "");
+    say("zwsendstatus", "Signing with QR (experimental)…");
+    $("zwqrsign").scrollIntoView?.({ block: "nearest" });
+    await q.show(prop.view);
+  }
+
+  async function scanQrReply(): Promise<void> {
+    const q = qrSign;
+    const prop = proposal;
+    if (!q || !prop) return;
+    if (!qrScanningAvailable()) {
+      say("zwqrstatus", "This window cannot reach a camera, so the board's QR reply cannot be read here. Sign over USB or Bluetooth instead.");
+      return;
+    }
+    await q.startScan();
+    $("zwqrscanbox").hidden = false;
+    renderQrSign();
+    const mainOk = ($("zwmainconfirm") as HTMLInputElement).checked;
+    try {
+      qrScan = await scanQr<never>(
+        $<HTMLVideoElement>("zwqrvideo"),
+        /* Never "accepts" a code: every one goes to the decoder, and the
+         * scan is stopped from here once the reply is whole. */
+        (t) => {
+          void q.feed(t).then((zsig) => {
+            if (zsig && qrSign === q) void finishQr(q, prop, zsig, mainOk);
+          }).catch((e) => q.fail(e));
+          return undefined;
+        },
+        () => undefined,
+        (m) => { stopQrCamera(); q.fail(new Error(m)); },
+      );
+    } catch (e) {
+      stopQrCamera();
+      const name = (e as { name?: string }).name;
+      q.fail(new Error(name === "NotAllowedError"
+        ? "The camera was not allowed. Allow it for Zcash LeekWallet in the system settings."
+        : name === "NotFoundError" ? "No camera found." : `The camera did not start: ${(e as Error).message ?? String(e)}`));
+    }
+  }
+
+  async function finishQr(q: QrSigner, prop: NonNullable<typeof proposal>, zsig: Uint8Array, mainOk: boolean): Promise<void> {
+    stopQrCamera();
+    const line = (t: string) => { say("zwqrstatus", t); say("zwsendstatus", t); };
+    try {
+      if (!sameKey(prop.key, keyNow()) || proposal !== prop) throw new Error("The wallet on screen changed; build the transaction again.");
+      deps.log(`zcash: QR reply read (${zsig.length} B .zsig)`);
+      const txid = await finishSigned(prop.key, prop.view, zsig, mainOk, line);
+      q.finished();
+      cancelProposal();
+      ($("zwamount") as HTMLInputElement).value = "";
+      ($("zwmemo") as HTMLTextAreaElement).value = "";
+      say("zwsendstatus", `Sent (signed over QR): ${txid}. It shows as pending until it is mined.`);
+      void scheduler.trigger();
+    } catch (e) {
+      q.fail(e);
+      say("zwsendstatus", zErrorText(e));
+      $<HTMLButtonElement>("zwsignsend").disabled = false;
+      $<HTMLButtonElement>("zwsignqr").disabled = false;
     }
   }
 
@@ -1093,6 +1249,19 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   $("zwreview").addEventListener("click", () => void propose("send"));
   $("zwcancel").addEventListener("click", () => { cancelProposal(); say("zwsendstatus", "Cancelled; nothing was signed."); });
   $("zwsignsend").addEventListener("click", () => void signAndSend());
+  $("zwsignqr").addEventListener("click", () => void startQrSign());
+  $("zwqrspeed").addEventListener("change", () => {
+    const v = $<HTMLSelectElement>("zwqrspeed").value;
+    if (v === "safe" || v === "balanced" || v === "fast") qrSign?.setPreset(v);
+  });
+  $("zwqrbigger").addEventListener("click", () => qrSign?.bigger());
+  $("zwqrdenser").addEventListener("click", () => qrSign?.denser());
+  $("zwqrslower").addEventListener("click", () => qrSign?.slower());
+  $("zwqrfaster").addEventListener("click", () => qrSign?.faster());
+  $("zwqrscan").addEventListener("click", () => void scanQrReply());
+  $("zwqragain").addEventListener("click", () => { stopQrCamera(); void qrSign?.showAgain(); });
+  $("zwqrcancel").addEventListener("click", () => { stopQrSign(); say("zwsendstatus", "QR signing cancelled. The review is still there: sign it another way, or Cancel."); });
+  window.addEventListener("resize", () => { if (qrSign?.phase === "showing") renderQrSign(); });
 
   $("zwhistrefresh").addEventListener("click", () => void loadHistory("zwhist").catch((e) => say("zwstatus", zErrorText(e))));
   $("ztab-activity").addEventListener("click", () => void loadHistory("zwhist").catch(() => undefined));

@@ -3223,6 +3223,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "leek-ur"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "leek-zcash-wallet"
 version = "0.1.0"
 dependencies = [
@@ -3249,6 +3256,7 @@ dependencies = [
  "leek-near-intents",
  "leek-transport-ble",
  "leek-transport-serial",
+ "leek-ur",
  "leek-zcash-wallet",
  "serde",
  "serde_json",
