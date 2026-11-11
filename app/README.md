@@ -384,14 +384,16 @@ uppercase for the QR alphanumeric mode) from `src-tauri/src/airgap.rs` over
 firmware's vectors. The code follows the Zodl fork's large-QR rules: as big
 as the screen allows (min of 96 % of the width, 70 % of the height), error
 correction L, whole pixels per module, a four-module quiet zone, black on
-white, one QR version for the whole loop. *Speed*: *Safe* (90-byte
-fragments at 500 ms, the default: 16 frames for a 1.4 KB view, where the
-Ethereum LeekWallet's benches on this board settled, with the rule that a
-frame stays up at least twice the board camera's capture interval),
-*Balanced* (120 B, 400 ms), *Fast* (150 B, 250 ms; for the board camera's
-coming zoom) or *Custom*: *Bigger* / *Denser* step the fragment (50, 90,
-120, 150, 200, 250 B; 50 is what the Zodl fork signed with), *Slower* /
-*Faster* the frame (800 to 200 ms). A part and frame counter runs under the
+white, one QR version for the whole loop. *Speed*: *Safe* (50-byte
+fragments at 500 ms, the default: 28 frames for a 1.4 KB view, read by the
+colour kit in about 70 s at 2x zoom), *Balanced* (50 B, 400 ms), *Fast*
+(50 B, 300 ms) or *Custom*: *Bigger* / *Denser* step the fragment (30, 40,
+50, 90, 120, 150, 200, 250 B; 40 was the fastest on the bench, 90 and up
+rarely decoded), *Slower* / *Faster* the frame (800 to 200 ms). *Full
+screen* (or a click on the code) shows it as large as the window allows;
+Esc or a click exits, Space steps *Manual* mode. *Bench sweep* steps
+through 11 settings and copies a Markdown table; a stopwatch (⏱) times each
+run. A part and frame counter runs under the
 code; the choice is remembered (`leek.qr.send`). Record bench results in
 [docs/zcash/QR-BENCH.md](../docs/zcash/QR-BENCH.md). On the board: *Scan*,
 review, ACCEPT. Then *The board shows its signature: scan it* opens the
@@ -484,6 +486,19 @@ says so with *Connect the board*; connecting one hands the screen to that
 board's own account. *Import a viewing key* takes a unified full viewing
 key (`uview1…`, `uviewtest1…`) and its birthday (*Use today's tip* for a new
 account): the old desktop app's watch-only import (roadmap 8.1).
+
+*Import from the board's QR* (experimental) sets up a board wallet without
+connecting the board. On the board: Main menu → *View key*, then OK on its
+warning. The app scans the animated `ur:leek-zcash-accounts` with the
+camera. The Rust side, `qr_accounts_reset` and `qr_accounts_feed` in
+`src-tauri/src/qr_accounts.rs`, refuses a key for the other network and
+anything that is not an Orchard + P2PKH board account. It then shows the
+network, account, seed fingerprint (ZFP, to compare with the board) and
+address. The birthday is the board's when it sent one. Otherwise an empty
+field means a new seed (today's tip minus 288), or you enter the height.
+The import goes through the same `zw_import` as over USB, so it is a board
+wallet: sends need the board, by USB, Bluetooth or *Sign with QR*. It only
+reads the account and never pairs. State machine: `src/qr-accounts.ts`.
 
 ## Swaps (NEAR Intents)
 

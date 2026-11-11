@@ -64,7 +64,7 @@ $Z finish --pczt tx.pczt --sigs tx.zsig           # apply, prove, broadcast
 ```
 
 A small terminal: `--qr-html tx-qr.html` writes an offline page that loops
-the code in a browser. Defaults 90-byte fragments, 500 ms a frame
+the code in a browser. Defaults 50-byte fragments, 500 ms a frame (what the board read fastest)
 (`--qr-fragment`, `--qr-interval`); `zecz qr-show --in tx.pczt --sweep`
 steps through the speed presets for the camera bench
 ([QR-BENCH.md](../docs/zcash/QR-BENCH.md)); details in

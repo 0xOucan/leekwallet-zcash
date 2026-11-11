@@ -215,7 +215,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 |---|---|---|---|---|
 | USB | done | done | Phase 8 | Phase 9 |
 | Bluetooth | - | done | Phase 8 | Phase 9 |
-| QR | experimental, on PC (8.5) | done (slow, see 7) | experimental, on PC (8.5) | not planned (USB and Bluetooth only) |
+| QR | experimental, tested on the board (8.5) | done (slow, see 7) | experimental, tested on the board (8.5) | not planned (USB and Bluetooth only) |
 | SD card | done | not planned (see 6.x) | Phase 8 | - |
 
 **Recommendation to users:** USB or Bluetooth for everyday signing. QR or the SD card when the device must stay off every link.
@@ -379,11 +379,18 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
     qr-show`, `zecz qr-scan` (webcam behind the `qr-camera` feature, or a
     parts file). One UR implementation for both, `host/leek-ur`, held to
     the firmware's bc-ur vectors; the shared fixtures in `vectors/ur/` are
-    encoded and decoded by the board's C as well. Defaults 90-byte
-    fragments at 500 ms (the Ethereum LeekWallet's bench result on this
-    board); presets and `zecz qr-show --sweep` for the camera tuning, results
-    in [QR-BENCH.md](QR-BENCH.md). Left: a testnet send each way from the
-    app and from `zecz` with the board.
+    encoded and decoded by the board's C as well. Presets and
+    `zecz qr-show --sweep` for the camera tuning.
+  - Tested on the board (2026-11-10, colour kit): testnet sends by QR both
+    ways from `zecz` (block 4,606,736) and twice from the app. The defaults
+    moved to 50-byte fragments at 500 ms after the bench (40 B read in
+    60.5 s, 90 B rarely decoded; [QR-BENCH.md](QR-BENCH.md)).
+  - View key (2026-11-11): the board shows its account as
+    `ur:leek-zcash-accounts`, label and birthday included, and the app
+    imports it as a board wallet, tested with the board unplugged. The SDK's
+    `QrScanner` and `QrEncoder` give other wallets the same.
+  - Left: QR from a phone (the Android app, the Zodl fork), the filled QR
+    layout on a camera, and the OLED kit.
 - SD card: write `LEEKZ/unsigned.pczt`, read `LEEKZ/signed.zsig`.
 
 **8.6 NEAR Intents (M). Done (2026-10-20): the first mainnet swap, ZEC → USDC on Base, deposit signed on the board over Bluetooth, arrived.**

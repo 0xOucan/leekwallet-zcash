@@ -193,8 +193,8 @@ $T finish --pczt /media/$USER/SD/LEEKZ/unsigned.pczt --sigs /media/$USER/SD/LEEK
 ### QR instead of a cable (experimental)
 
 EXPERIMENTAL, and opt-in: for a board kept off USB and Bluetooth. It is
-slow (a 1.4 KB compact view is 16 frames at the default 90-byte fragments
-and 500 ms a frame, about 8 s a pass); USB and Bluetooth stay the everyday
+slow (a 1.4 KB compact view is 28 frames at the default 50-byte fragments
+and 500 ms a frame; the colour kit read it in about 70 s at 2x zoom); USB and Bluetooth stay the everyday
 links. Never for pairing. The UR (`ur:leek-pczt` out, `ur:leek-zsig` back)
 is [`leek-ur`](../leek-ur), the one the Zcash LeekWallet app uses.
 
@@ -206,7 +206,7 @@ $T send --to <address> --amount 0.001 --zec --out tx.pczt --qr
 #    opened in a browser, full screen.
 $T send --to <address> --amount 0.001 --zec --out tx.pczt --qr-html tx-qr.html
 #    Show an existing PCZT again, denser or slower:
-$T qr-show --in tx.pczt --qr-fragment 90 --qr-interval 800
+$T qr-show --in tx.pczt --qr-fragment 40 --qr-interval 800
 
 # 2. On the board: Scan, point its camera at the code, review, ACCEPT.
 #    The board then shows its signature as a QR code.
@@ -220,7 +220,7 @@ $T qr-scan --pczt tx.pczt --out tx.zsig --from-file parts.txt
 $T finish --pczt tx.pczt --sigs tx.zsig
 ```
 
-`--qr-fragment` (default 90 bytes; 50 is what the Zodl fork signed with): smaller is fewer modules per code,
+`--qr-fragment` (default 50 bytes; 40 was the fastest on the board bench, 90 and up rarely decoded): smaller is fewer modules per code,
 easier for the board's camera; larger is fewer frames. `--qr-interval`
 (default 500 ms). Every frame of a loop is the same QR version (error
 correction L, alphanumeric), drawn black on white with a four-module quiet

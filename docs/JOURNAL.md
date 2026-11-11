@@ -1964,3 +1964,42 @@ offsets 16/8, HTS 2060):
 7. `UR complete` times at 1x and 2x, sender fragments 90 and 120-150 bytes, 250
    and 500 ms per frame.
 8. A/B anything doubtful with its define set to its "off" value.
+
+### The QR air gap on the board, View key, the SDK's QR (2026-11-10 to 11)
+
+The tuned camera on the colour kit, against `zecz` and the desktop app. All
+the runs are in [QR-BENCH.md](zcash/QR-BENCH.md).
+
+- **Too dense at first.** From a 1080p laptop screen the board found a 90 B
+  code (v8) 253 times but decoded it only 3 times. `zecz` in the terminal
+  at 90 B, 1x zoom, took 215 s. The fix was less data per code and bigger
+  codes. With the board at 2x zoom and exposure -4, 50 B (v6) read in
+  70.6 s, 40 B (v5) in 60.5 s and 30 B (also v5) in 83.0 s. The defaults
+  moved to 50 B at 500 ms, and the app gained a stopwatch, a manual step
+  mode and a bench sweep to measure the rest.
+- **The first send by QR in both directions** was signed by `zecz` and
+  mined in block 4,606,736
+  (`8f3b9264fddce48f6989396336741512e3fdafe66870826c0ceeb63725e73c7d`).
+  Two more were signed from the desktop app (`43f6c901…c085` and
+  `85926611…19e9`). Reading the board's reply with the laptop webcam took
+  39.4 s at first, and 7.4 s once the app decoded each frame with a lighter
+  pass.
+- **A sender that switches.** Changing the fragment size mid-scan is a new
+  message, and the decoder refused all of it. It now follows the new
+  message after three of its parts in a row, as `QrScanner` in the SDK
+  does.
+- **View key.** A new main-menu item shows the account as
+  `ur:leek-zcash-accounts`. The first import worked but asked for a
+  birthday the board already had: the record now carries the board's label
+  and birthday (keys 3 and 4), and the app fills them in. Account 0
+  imported at block 4,506,700 and synced, with the board unplugged.
+- **QRs that fill the panel.** Whole-pixel modules with two of quiet zone
+  use 77–88 % of the 240 px panel. A push now also offers each density
+  filled: modules of a fractional size, 228 px for v6. zbar reads them in
+  the simulator. On the board they are untested.
+- **The SDK.** `leek-zcash-ffi` gained `QrScanner`, `QrEncoder` and
+  `qr_defaults()`. Five Rust tests cover them and the Kotlin smoke test
+  scans a View key through the generated bindings.
+
+Not tested: the OPTIGA Trust M paths (`esp32s3cam-color-se`), the filled QR
+layout on a board, and QR on a phone.

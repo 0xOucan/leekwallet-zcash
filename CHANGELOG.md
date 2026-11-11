@@ -8,8 +8,8 @@ are released in
 
 ## Unreleased
 
-- **CAM kits: camera tuning for faster QR scanning (not yet measured on a
-  board).** The AGC gain ceiling was effectively 1/16x (the driver wrote its
+- **CAM kits: camera tuning for faster QR scanning (measured on the colour
+  kit, [QR-BENCH.md](docs/zcash/QR-BENCH.md)).** The AGC gain ceiling was effectively 1/16x (the driver wrote its
   enum value into a real-gain register), so all brightness came from shutter
   time and blur; it is now a real 4x. Banding is 60 Hz (was 50 Hz). The
   shutter is capped at 96 lines and metering is centre-weighted, with the
@@ -36,17 +36,49 @@ are released in
   a backup location, not extra security; the vault stays the master
   (`firmware/docs/BACKUP.md`). Every other image is unchanged. Host-tested
   (`sim/test_se_backup.c`); not yet run on a chip.
-
-- **Sign with QR (experimental).** The app's Send and Shield review has an
-  opt-in "Sign with QR (experimental)" for a board kept off USB and
-  Bluetooth: the transaction as an animated `ur:leek-pczt` (90-byte
-  fragments at 500 ms by default; Speed Safe, Balanced, Fast or Custom),
-  then the board's `ur:leek-zsig` read with the camera, proved and
-  broadcast as over USB. `zecz` gains `send --qr` and `--qr-html`,
-  `qr-show` (with `--sweep` for the camera bench) and `qr-scan` (webcam with the `qr-camera` feature, or a file of
-  parts). Both use one new crate, `host/leek-ur`, checked against the
-  firmware's vectors. Not used for pairing. Not yet tested on a board.
-
+- **The QR air gap works on the board (experimental).** A board kept off
+  USB and Bluetooth signs by animated QR in both directions: the request as
+  `ur:leek-pczt`, the reply as `ur:leek-zsig`. Three testnet sends were
+  signed this way on the colour kit; the first, by `zecz`, was mined in
+  block 4,606,736 (`8f3b9264…3c7d`). QR is never used for pairing.
+  - **Desktop app:** *Sign with QR* on the Send and Shield review. It
+    defaults to 50-byte fragments at 500 ms (Speed: Safe 50/500, Balanced
+    50/400, Fast 50/300, Custom). A full-screen view shows the code as large
+    as the window allows. A stopwatch, a manual step mode and a *Bench
+    sweep* through 11 settings produce a Markdown table. The reply decodes
+    in about 7 s instead of 39 s.
+  - **Bench:** a compact send took 60.5 s to read at 40 B and 70.6 s at
+    50 B, with the board at 2x zoom
+    ([QR-BENCH.md](docs/zcash/QR-BENCH.md)).
+  - **`zecz`:** `send --qr` and `--qr-html`, `qr-show` (with `--sweep`) and
+    `qr-scan`, from the webcam with the `qr-camera` feature or from a file
+    of parts.
+  - Both use one new crate, `host/leek-ur`, which produces the firmware's
+    parts byte for byte.
+- **View key: set up a wallet without connecting the board (experimental).**
+  On the board, Main menu → View key: a warning ("Whoever scans it sees
+  balance and history. It cannot spend."), then the account as an animated
+  `ur:leek-zcash-accounts`. It carries the seed fingerprint, the UFVK and,
+  when the board knows them, its label and birthday height
+  ([FORMATS.md](docs/zcash/FORMATS.md#account-record)). The desktop app
+  imports it as a board wallet under Wallets on this device → *Import from
+  the board's QR*, with the board's birthday filled in. This was tested
+  with the board unplugged: testnet account 0 imported at block 4,506,700
+  and synced.
+- **The board's QR screen (colour kit).**
+  - A turn sets the backlight live. A push shows the same code filled to
+    the panel, then the next density, plain: still, v6, v4, v3, v9. The
+    filled layout is experimental: one module of quiet zone and modules a
+    pixel apart in size, v6 at 228 px instead of 205.
+  - Receive shows the Orchard-only address, a smaller code (v5 on mainnet).
+  - The scanner follows a sender that switched messages after three of its
+    parts in a row, and logs why it refused a part.
+- **SDK: animated QR for other wallets.** `leek-zcash-ffi` (Kotlin and
+  Swift) gains `QrScanner`, which takes camera texts and returns the View
+  key's account record or the board's `.zsig`; it refuses a key for the
+  other network and follows a switched sender. It also gains `QrEncoder`
+  (`ur:leek-pczt` frames) and `qr_defaults()` with the bench's settings. No
+  wallet ships it yet.
 - **Secure element research, and a development-only SE container.** How
   Trezor and BitBox use the OPTIGA Trust M, and a design for using it here
   (`firmware/docs/RESEARCH-SECURE-ELEMENT.md`,
