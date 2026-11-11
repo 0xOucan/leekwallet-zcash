@@ -28,6 +28,7 @@
 #include "ble-name.h"
 #include "esp_timer.h"
 #include "qr-out.h"
+#include "cbor.h"
 #include "backlight-level.h"
 #include "splash.h"
 #ifndef LEEK_HOST_TEST
@@ -581,6 +582,8 @@ typedef enum {
      * panel. Scan needs a camera and is simply absent without one, rather
      * than present and apologising; it takes ur:leek-pczt (airgap.h). */
     MENU_SHOW_ADDRESS,
+    /* The account for an air-gapped companion (SCREEN_VIEW_KEY). */
+    MENU_VIEW_KEY,
     MENU_SCAN,
     /* SD storage mode (roadmap 1.4): load a .zkv seed for the session, or
      * save the open one. On every board with a card slot, seed or no seed:
@@ -606,6 +609,7 @@ static const char *menu_action_label(MenuAction a)
         case MENU_TEMP_SEED:     return "Temp Seed";
         case MENU_END_TEMP:      return "End Temp Seed";
         case MENU_SHOW_ADDRESS:  return "Receive";
+        case MENU_VIEW_KEY:      return "View key";
         case MENU_SCAN:          return "Scan";
         case MENU_SD_SEED:       return "SD Card";
         case MENU_SETTINGS:      return "Settings";
@@ -631,6 +635,9 @@ static void menu_rebuild(void)
      * nothing that could sign. */
     if (status.wallet_count > 0 || temp) {
         menu_actions[menu_item_count++] = MENU_SHOW_ADDRESS;
+#if LEEK_HAS_ZCASH
+        menu_actions[menu_item_count++] = MENU_VIEW_KEY;
+#endif
 #if LEEK_HAS_CAMERA
         menu_actions[menu_item_count++] = MENU_SCAN;
 #endif
@@ -2365,6 +2372,9 @@ static void screen_main_menu_on_button(button_id_t btn)
                     break;
                 case MENU_SHOW_ADDRESS:
                     ui_set_screen(SCREEN_SHOW_ADDRESS);
+                    break;
+                case MENU_VIEW_KEY:
+                    ui_set_screen(SCREEN_VIEW_KEY);
                     break;
                 case MENU_SCAN:
                     ui_set_screen(SCREEN_SCAN);
@@ -7104,6 +7114,94 @@ static const screen_t screen_share_view_key = {
     .exit = NULL,
 };
 
+#if LEEK_HAS_ZCASH
+/* ============================================================================
+ * View key (Main menu): the account for an air-gapped companion
+ *
+ * What zGetAccount sends over USB or Bluetooth after "Share view key?", for a
+ * companion that never connects: the seed fingerprint, the UFVK and the
+ * account index, as the CBOR of host/leek-zcash's AccountRecord
+ *   { 1: bytes(32) fingerprint, 2: [ { 1: text UFVK, 2: uint index } ] }
+ * (Keystone's zcash-accounts shape, our own type) in an animated
+ * ur:leek-zcash-accounts. A companion that imports it can build PCZTs this
+ * board signs over QR. One-way: nothing is paired, and USB and Bluetooth keep
+ * their 6-digit code. The same warning as the host's request comes first,
+ * because anyone who scans it sees the account's whole history.
+ * ============================================================================ */
+
+#define VIEW_KEY_UR_TYPE "leek-zcash-accounts"
+
+static void screen_view_key_render(void)
+{
+    oled_clear();
+    oled_set_role(OLED_ROLE_ACCENT);
+    oled_draw_string_centered(0, "Show view key?");
+    oled_set_role(OLED_ROLE_WARN);
+    oled_draw_string(2, 0, "Whoever scans it sees");
+    oled_draw_string(3, 0, "balance and history.");
+    oled_set_role(OLED_ROLE_AUTO);
+    oled_draw_string(4, 0, "It cannot spend.");
+    char line[22];
+    snprintf(line, sizeof line, "acct %u  %s", (unsigned)(hd_account % 100000u),
+             zcash_network == ZCASH_NET_MAIN ? "MAIN" : "TEST");
+    oled_draw_string_centered(6, line);
+    oled_draw_string(7, 0, HINT_NO_YES);
+}
+
+/* The record's CBOR into `buf`; its length, or 0 if it did not fit. */
+static size_t view_key_cbor(const ZcashAccount *a, uint8_t *buf, size_t cap)
+{
+    CborWriter w;
+    cbor_writer_init(&w, buf, cap);
+    cbor_write_map(&w, 2);
+    cbor_write_uint(&w, 1);
+    cbor_write_bytes(&w, a->keys.seed_fingerprint, sizeof a->keys.seed_fingerprint);
+    cbor_write_uint(&w, 2);
+    cbor_write_array(&w, 1);
+    cbor_write_map(&w, 2);
+    cbor_write_uint(&w, 1);
+    cbor_write_text(&w, a->keys.ufvk);
+    cbor_write_uint(&w, 2);
+    cbor_write_uint(&w, a->account);
+    return cbor_writer_ok(&w) ? w.length : 0;
+}
+
+static void screen_view_key_on_button(button_id_t btn)
+{
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
+    if (btn != BUTTON_ACCEPT) {
+        return;   /* one page: the knob has nothing to scroll */
+    }
+    /* Receive's account buffer: the two screens are never up together. */
+    static uint8_t cbor[QR_OUT_MAX_MESSAGE];
+    size_t n = 0;
+    if (ensure_wallet_unlocked() &&
+        zcash_account_derive(hd_account, zcash_network, &recv_account) == WALLET_OK) {
+        n = view_key_cbor(&recv_account, cbor, sizeof cbor);
+    }
+    memzero(&recv_account, sizeof recv_account);
+    recv_ready = false;
+    /* The key itself is never logged; which account was shown is. */
+    if (n > 0 && ui_show_ur(VIEW_KEY_UR_TYPE, cbor, n, SCREEN_MAIN_MENU)) {
+        ESP_LOGI(TAG, "View key shown: account %u, %u B record", (unsigned)hd_account, (unsigned)n);
+    } else {
+        ESP_LOGW(TAG, "View key: could not show account %u (%u B)", (unsigned)hd_account, (unsigned)n);
+        ui_set_screen(SCREEN_MAIN_MENU);
+    }
+    memzero(cbor, sizeof cbor);
+}
+
+static const screen_t screen_view_key = {
+    .enter = NULL,
+    .render = screen_view_key_render,
+    .on_button = screen_view_key_on_button,
+    .exit = NULL,
+};
+#endif
+
 /* ============================================================================
  * Unlock app data? (zGetStorageKey)
  *
@@ -7373,6 +7471,9 @@ void ui_init(void)
 #if LEEK_HAS_ZCASH
     screens[SCREEN_ADDRESS_CHECK] = &screen_address_check;
     screens[SCREEN_SHARE_VIEW_KEY] = &screen_share_view_key;
+#if LEEK_HAS_ZCASH
+    screens[SCREEN_VIEW_KEY] = &screen_view_key;
+#endif
     screens[SCREEN_STORAGE_KEY] = &screen_storage_key;
 #endif
     screens[SCREEN_SCAN] = &screen_scan;

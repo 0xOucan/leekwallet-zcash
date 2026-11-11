@@ -251,6 +251,56 @@ int main(void)
               "a caption squeezed under v3 at 7 px");
     }
 
+    /* Using the 240x240 (board, 2026-11-10): for each mode the knob steps
+       through on the signature QR, and for the Orchard-only Receive code,
+       the code drawn is the densest version at its module size (one version
+       more would leave under two modules of quiet zone), at the largest
+       module size for its version, and what is lit dark spans exactly that
+       square: measured off the rendered panel, not computed. */
+    {
+        printf("  240x240 use (dark-module extent, measured):\n");
+        static const uint8_t versions[] = { 3, 4, 5, 6, 9 };
+        for (size_t i = 0; i < sizeof versions; i++) {
+            const uint8_t v = versions[i];
+            const int m = v * 4 + 17, sc = panel_color_qr_scale((uint8_t)m, W, H);
+            if (v != 5) {   /* v5 is Receive's (mainnet Orchard UA), not a knob mode */
+                CHECK((m + 4 + 4) * sc > W, "v%u at %d px: v%u would fit too, so it is not the densest", v, sc, v + 1);
+            }
+            char text[400];
+            const int cap = (int)qr_out_alnum_capacity(v);
+            memset(text, 'A', (size_t)cap);
+            text[cap] = 0;
+            oled_clear();
+            CHECK(oled_draw_qrcode_ex(text, v, 1, false) == ESP_OK, "v%u draw", v);
+            render();
+            int x0 = W, y0 = H, x1 = -1, y1 = -1;
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                    if (at(x, y) == pal->qr_dark) {
+                        if (x < x0) x0 = x;
+                        if (x > x1) x1 = x;
+                        if (y < y0) y0 = y;
+                        if (y > y1) y1 = y;
+                    }
+            const int side = x1 - x0 + 1;
+            CHECK(side == m * sc && y1 - y0 + 1 == m * sc, "v%u: dark extent %dx%d, not %d", v, side, y1 - y0 + 1, m * sc);
+            CHECK(x0 >= 2 * sc && W - 1 - x1 >= 2 * sc, "v%u: margin %d px under two modules", v, x0);
+            printf("    v%u %d px: code %d of 240 px (%d%%), margins %d/%d px = %.1f modules\n", v, sc, side,
+                   side * 100 / W, x0, W - 1 - x1, (double)x0 / sc);
+        }
+        /* Receive's Orchard-only UAs: v5 on mainnet, v6 on testnet, both 5 px. */
+        for (size_t i = 0; i < ZV_KEYS_COUNT; i += 6) {
+            const char *ua = ZV_KEYS[i].ua_orchard_only;
+            const uint8_t v = strlen(ua) <= 106 ? 5 : 6;
+            oled_clear();
+            CHECK(oled_draw_qrcode_ex(ua, v, 1, false) == ESP_OK, "Orchard UA v%u", v);
+            render();
+            CHECK(panel_color_qr_scale(oled_core_last_qr(NULL)->size, W, H) == 5, "Orchard UA not at 5 px");
+            CHECK(scans_to(ua), "the Orchard UA does not scan");
+            scanned++;
+        }
+    }
+
     printf("  %d native-scale codes scanned back\n", scanned);
     oled_clear();
 

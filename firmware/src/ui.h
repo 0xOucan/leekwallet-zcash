@@ -98,6 +98,10 @@ typedef enum {
      * and SD -> SE / vault restores (se-backup.h). Registered only in a
      * development image with the chip (UI_HAS_SE_BACKUP in ui.c). */
     SCREEN_SE_BACKUP,
+    /* Main menu -> View key: after a warning, the account (seed fingerprint,
+     * UFVK, index) as an animated ur:leek-zcash-accounts, for a companion
+     * that never connects by USB or Bluetooth (one-way: no pairing). */
+    SCREEN_VIEW_KEY,
     SCREEN_COUNT
 } screen_id_t;
 

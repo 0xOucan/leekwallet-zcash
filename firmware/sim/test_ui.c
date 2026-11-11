@@ -39,6 +39,7 @@ bool fake_protocol_rx_enabled(void);
 #include "camera.h"
 #include "viewfinder.h"
 #include "ur-encoder.h"
+#include "ur-decoder.h"
 #include "zcash-account.h"
 #include "sdcard.h"
 #include "text-entry.h"
@@ -3839,6 +3840,67 @@ static void test_scan_assembles_then_refuses_every_type(void)
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not leave the scanner");
 }
 
+/* Main menu -> View key: a warning, then the account as an animated
+ * ur:leek-zcash-accounts whose message is exactly host/leek-zcash's
+ * AccountRecord CBOR for this seed's account. Cancel on the warning shows
+ * nothing. */
+static void test_view_key_qr(void)
+{
+    printf("== View key: a warning, then the account record as an animated UR\n");
+    boot_unlocked_with_seed();
+    go(SCREEN_MAIN_MENU);
+    CHECK(select_menu_item("View key"), "no View key in the main menu");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_VIEW_KEY, "View key did not open its warning (%d)", ui_get_screen());
+    CHECK_SCREEN(fake_oled_contains("Show view key?") && fake_oled_contains("history") &&
+                 fake_oled_contains("cannot spend"), "the warning is missing");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU && fake_oled_qr_data()[0] == 0,
+          "Cancel on the warning showed something");
+
+    go(SCREEN_VIEW_KEY);
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK did not show the QR (%d)", ui_get_screen());
+    CHECK(strncmp(fake_oled_qr_data(), "UR:LEEK-ZCASH-ACCOUNTS/", 23) == 0,
+          "the QR is \"%.30s\"", fake_oled_qr_data());
+
+    static uint8_t frags[4096], mixed[4096];
+    static UrDecoder d;
+    ur_decoder_init(&d, frags, sizeof frags, mixed, sizeof mixed);
+    for (int i = 0; i < 200 && !ur_decoder_complete(&d); i++) {
+        const char *part = fake_oled_qr_data();
+        (void)ur_decoder_receive(&d, part, strlen(part));
+        fake_clock_advance_us(1000000);
+        ui__service_qr_out_for_test();
+        idle_pump();
+    }
+    CHECK(ur_decoder_complete(&d), "the record did not assemble");
+    size_t n = 0;
+    const uint8_t *m = ur_decoder_message(&d, &n);
+
+    const zv_key_vector *v = NULL;
+    for (size_t i = 0; i < ZV_KEYS_COUNT; i++)
+        if (ZV_KEYS[i].account == 0 && ZV_KEYS[i].network == ui_zcash_network() && !ZV_KEYS[i].passphrase[0]) {
+            v = &ZV_KEYS[i];
+            break;
+        }
+    CHECK(v != NULL, "no vector for the fake account");
+    if (v && m) {
+        uint8_t want[600];
+        size_t k = 0;
+        const size_t ul = strlen(v->ufvk);
+        want[k++] = 0xA2; want[k++] = 0x01; want[k++] = 0x58; want[k++] = 32;
+        memcpy(want + k, v->seed_fingerprint, 32); k += 32;
+        want[k++] = 0x02; want[k++] = 0x81; want[k++] = 0xA2; want[k++] = 0x01;
+        want[k++] = 0x79; want[k++] = (uint8_t)(ul >> 8); want[k++] = (uint8_t)ul;
+        memcpy(want + k, v->ufvk, ul); k += ul;
+        want[k++] = 0x02; want[k++] = 0x00;
+        CHECK(n == k && memcmp(m, want, k) == 0, "the record is not {1: fp, 2: [{1: UFVK, 2: 0}]} (%zu B, want %zu)", n, k);
+    }
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not finish the QR");
+}
+
 /* The companion's Bigger/Denser mid-scan: new parts are another message. One
  * stray part is refused; a few in a row restart the assembly on them. */
 static void test_scan_follows_a_sender_that_switched(void)
@@ -3896,6 +3958,7 @@ int main(void)
     test_qr_airgap_signing();
     test_scan_assembles_then_refuses_every_type();
     test_scan_follows_a_sender_that_switched();
+    test_view_key_qr();
     test_qr_out_animates_and_leaves_cleanly();
     test_locking_closes_the_channel();
     test_an_expired_approval_leaves_the_screen();
