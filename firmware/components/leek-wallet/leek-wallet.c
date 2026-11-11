@@ -2307,6 +2307,100 @@ uint8_t wallet_add_mnemonic(const char *mnemonic) {
     return new_index;
 }
 
+/* One stored slot's phrase, decrypted into `out` without touching `state`:
+ * the open seed, the selection and the passphrase all stay as they are. GCM
+ * vaults only (every vault is migrated to v3 at unlock); anything else, a
+ * missing key or a tag that does not verify is reported, never guessed at. */
+static WalletError read_slot_phrase(uint8_t index, char out[MAX_MNEMONIC_LENGTH]) {
+    if (!VAULT_USES_GCM(vault_version)) {
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    char key[16];
+    get_mnemonic_key(index, key, sizeof(key));
+    uint8_t blob[MAX_MNEMONIC_LENGTH + VAULT_CRYPT_OVERHEAD];
+    size_t blob_len = sizeof(blob);
+    esp_err_t err = nvs_get_blob(nvs, key, blob, &blob_len);
+    nvs_close(nvs);
+    if (err != ESP_OK) {
+        memzero(blob, sizeof(blob));
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    uint8_t plain[MAX_MNEMONIC_LENGTH];
+    size_t n = vault_decrypt(blob, blob_len, state.encryption_key, plain, sizeof(plain));
+    memzero(blob, sizeof(blob));
+    /* Stored with its terminator (save_encrypted_mnemonic_at_index). */
+    if (n == 0 || n > MAX_MNEMONIC_LENGTH || plain[n - 1] != '\0') {
+        memzero(plain, sizeof(plain));
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    memcpy(out, plain, n);
+    memzero(plain, sizeof(plain));
+    return WALLET_OK;
+}
+
+WalletError wallet_store_mnemonic_if_new(const char *mnemonic, uint8_t *slot_out,
+                                         bool *already_out) {
+    if (slot_out) {
+        *slot_out = 0;
+    }
+    if (already_out) {
+        *already_out = false;
+    }
+    if (!slot_out || !already_out) {
+        return WALLET_ERROR_INVALID_MNEMONIC;
+    }
+    if (!state.initialized) {
+        return WALLET_ERROR_NOT_INITIALIZED;
+    }
+    if (!state.unlocked) {
+        return WALLET_ERROR_LOCKED;
+    }
+    if (vault_unreadable) {
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    if (!mnemonic || !mnemonic_check(mnemonic)) {
+        return WALLET_ERROR_INVALID_MNEMONIC;
+    }
+    const size_t length = strlen(mnemonic);
+    if (length == 0 || length >= MAX_MNEMONIC_LENGTH) {
+        return WALLET_ERROR_INVALID_MNEMONIC;
+    }
+
+    /* Every stored slot is read before anything is written. A slot that will
+     * not decrypt stops the restore: it might be this very seed, and the
+     * answer "stored it twice" or "could not tell" is not one to give by
+     * writing. Nothing here overwrites or deletes a slot; the only write is
+     * wallet_add_mnemonic(), which appends at wallet_count + 1. */
+    char phrase[MAX_MNEMONIC_LENGTH];
+    for (uint8_t i = 1; i <= state.wallet_count; i++) {
+        WalletError err = read_slot_phrase(i, phrase);
+        if (err != WALLET_OK) {
+            memzero(phrase, sizeof(phrase));
+            return err;
+        }
+        const bool same = strlen(phrase) == length && memcmp(phrase, mnemonic, length) == 0;
+        memzero(phrase, sizeof(phrase));
+        if (same) {
+            *slot_out = i;
+            *already_out = true;
+            return WALLET_OK;
+        }
+    }
+    if (state.wallet_count >= MAX_WALLETS) {
+        return WALLET_ERROR_STORAGE_FULL;
+    }
+    uint8_t index = wallet_add_mnemonic(mnemonic);
+    if (index == 0) {
+        return WALLET_ERROR_STORAGE_FAILED;
+    }
+    *slot_out = index;
+    return WALLET_OK;
+}
+
 WalletError wallet_delete_mnemonic(uint8_t index) {
     if (!state.initialized) {
         return WALLET_ERROR_NOT_INITIALIZED;

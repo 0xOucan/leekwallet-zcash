@@ -30,9 +30,9 @@ int sdseed_list(char names[][SDCARD_NAME_MAX + 1], int max)
     return n < 0 ? -1 : n;
 }
 
-SdSeedResult sdseed_load(const char *name, const char *pass, size_t pass_len, ZkvContents *meta)
+SdSeedResult sdseed_open(const char *name, const char *pass, size_t pass_len, ZkvContents *c)
 {
-    memset(meta, 0, sizeof *meta);
+    memset(c, 0, sizeof *c);
     if (sdcard_mount() != SDCARD_OK) return SDSEED_E_NOCARD;
 
     uint8_t file[ZKV_FILE_MAX];
@@ -40,9 +40,16 @@ SdSeedResult sdseed_load(const char *name, const char *pass, size_t pass_len, Zk
     int rc = sdcard_read(name, file, sizeof file, &len);
     if (rc == SDCARD_E_TOOBIG) return SDSEED_E_FORMAT;
     if (rc != SDCARD_OK) return SDSEED_E_IO;
+    SdSeedResult r = from_zkv(zkv_open(file, len, pass, pass_len, c));
+    memzero(file, sizeof file);
+    return r;
+}
 
+SdSeedResult sdseed_load(const char *name, const char *pass, size_t pass_len, ZkvContents *meta)
+{
+    memset(meta, 0, sizeof *meta);
     ZkvContents c;
-    SdSeedResult r = from_zkv(zkv_open(file, len, pass, pass_len, &c));
+    SdSeedResult r = sdseed_open(name, pass, pass_len, &c);
     if (r != SDSEED_OK) return r;
 
     const char *phrase = mnemonic_from_data(c.entropy, c.entropy_len);
@@ -54,6 +61,32 @@ SdSeedResult sdseed_load(const char *name, const char *pass, size_t pass_len, Zk
     }
     /* trezor-crypto keeps the phrase in a static buffer until cleared. */
     mnemonic_clear();
+    memzero(&c, sizeof c);
+    return r;
+}
+
+SdSeedResult sdseed_restore_to_vault(const char *name, const char *pass, size_t pass_len,
+                                     ZkvContents *meta, uint8_t *slot, bool *already)
+{
+    memset(meta, 0, sizeof *meta);
+    *slot = 0;
+    *already = false;
+    ZkvContents c;
+    SdSeedResult r = sdseed_open(name, pass, pass_len, &c);
+    if (r != SDSEED_OK) return r;
+
+    const char *phrase = mnemonic_from_data(c.entropy, c.entropy_len);
+    r = SDSEED_E_WALLET;
+    WalletError err = phrase ? wallet_store_mnemonic_if_new(phrase, slot, already)
+                             : WALLET_ERROR_INVALID_MNEMONIC;
+    mnemonic_clear();
+    if (err == WALLET_OK) {
+        r = SDSEED_OK;
+        *meta = c;
+        memzero(meta->entropy, sizeof meta->entropy);
+    } else if (err == WALLET_ERROR_STORAGE_FULL) {
+        r = SDSEED_E_VAULT_FULL;
+    }
     memzero(&c, sizeof c);
     return r;
 }
@@ -72,17 +105,12 @@ SdSeedResult sdseed_save(const char *pass, size_t pass_len, const char *label, u
     }
     ZkvContents c;
     memset(&c, 0, sizeof c);
-    uint8_t bits[33];
-    int nbits = mnemonic_to_bits(phrase, bits);
+    const bool have = zkv_entropy_from_phrase(phrase, &c);
     memzero(phrase, sizeof phrase);
-    /* ENT + ENT/32 bits: 132 for 12 words up to 264 for 24. */
-    if (nbits < 132 || nbits > 264 || nbits % 33 != 0) {
-        memzero(bits, sizeof bits);
+    if (!have) {
+        memzero(&c, sizeof c);
         return SDSEED_E_WALLET;
     }
-    c.entropy_len = (uint8_t)(nbits * 32 / 33 / 8);
-    memcpy(c.entropy, bits, c.entropy_len);
-    memzero(bits, sizeof bits);
     c.birthday = birthday;
     c.account = account;
     snprintf(c.label, sizeof c.label, "%s", label ? label : "");
@@ -141,6 +169,7 @@ const char *sdseed_strerror(SdSeedResult r)
         case SDSEED_E_PASS:   return "Pass: 8-64 chars";
         case SDSEED_E_WALLET: return "No seed to use";
         case SDSEED_E_VERIFY: return "Did not read back";
+        case SDSEED_E_VAULT_FULL: return "Vault is full";
         default:              return "Error";
     }
 }

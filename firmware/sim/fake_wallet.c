@@ -271,6 +271,33 @@ uint8_t wallet_add_mnemonic(const char *mnemonic)
     return mnemonic ? fake_wallet_preload(mnemonic) : 0;
 }
 
+/* The real one's rule, without the crypto: an existing slot with the same
+ * phrase is a no-op, otherwise a new slot at the end; never an overwrite. */
+WalletError wallet_store_mnemonic_if_new(const char *mnemonic, uint8_t *slot_out,
+                                         bool *already_out)
+{
+    *slot_out = 0;
+    *already_out = false;
+    if (!w.unlocked) {
+        return WALLET_ERROR_LOCKED;
+    }
+    if (!mnemonic || mnemonic_check(mnemonic) == 0) {
+        return WALLET_ERROR_INVALID_MNEMONIC;
+    }
+    for (uint8_t i = 0; i < w.count; i++) {
+        if (strcmp(w.mnemonics[i], mnemonic) == 0) {
+            *slot_out = (uint8_t)(i + 1);
+            *already_out = true;
+            return WALLET_OK;
+        }
+    }
+    if (w.count >= FAKE_MAX_WALLETS) {
+        return WALLET_ERROR_STORAGE_FULL;
+    }
+    *slot_out = fake_wallet_preload(mnemonic);
+    return *slot_out ? WALLET_OK : WALLET_ERROR_STORAGE_FAILED;
+}
+
 WalletError wallet_select_wallet(uint8_t index)
 {
     if (index < 1 || index > w.count) {
