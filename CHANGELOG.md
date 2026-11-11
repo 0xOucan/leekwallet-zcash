@@ -8,6 +8,16 @@ are released in
 
 ## Unreleased
 
+- **Sign with QR (experimental).** The app's Send and Shield review has an
+  opt-in "Sign with QR (experimental)" for a board kept off USB and
+  Bluetooth: the transaction as an animated `ur:leek-pczt` (90-byte
+  fragments at 500 ms by default; Speed Safe, Balanced, Fast or Custom),
+  then the board's `ur:leek-zsig` read with the camera, proved and
+  broadcast as over USB. `zecz` gains `send --qr` and `--qr-html`,
+  `qr-show` (with `--sweep` for the camera bench) and `qr-scan` (webcam with the `qr-camera` feature, or a file of
+  parts). Both use one new crate, `host/leek-ur`, checked against the
+  firmware's vectors. Not used for pairing. Not yet tested on a board.
+
 - **Secure element research, and a development-only SE container.** How
   Trezor and BitBox use the OPTIGA Trust M, and a design for using it here
   (`firmware/docs/RESEARCH-SECURE-ELEMENT.md`,
