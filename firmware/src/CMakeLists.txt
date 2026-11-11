@@ -60,3 +60,13 @@ idf_component_register(
 if(LEEK_CAMERA_DRIVER)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE LEEK_CAMERA_DRIVER=1)
 endif()
+
+# The QR speed A/B images (platformio.ini -qstages, -qfast): quirc's PUBLIC
+# definitions do not reach this component, and camera.c prints the stage log
+# only when it sees them itself.
+if(LEEK_CAMERA_DRIVER AND QUIRC_STAGE_TIMING)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE QUIRC_STAGE_TIMING=1)
+endif()
+if(LEEK_CAMERA_DRIVER AND QUIRC_FAST_PERSPECTIVE)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE QUIRC_FAST_PERSPECTIVE=1)
+endif()

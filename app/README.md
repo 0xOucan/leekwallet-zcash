@@ -385,13 +385,16 @@ firmware's vectors. The code follows the Zodl fork's large-QR rules: as big
 as the screen allows (min of 96 % of the width, 70 % of the height), error
 correction L, whole pixels per module, a four-module quiet zone, black on
 white, one QR version for the whole loop. *Speed*: *Safe* (50-byte
-fragments at 500 ms, the default: 28 frames for a 1.4 KB view, read by the
-colour kit in about 70 s at 2x zoom), *Balanced* (50 B, 400 ms), *Fast*
-(50 B, 300 ms) or *Custom*: *Bigger* / *Denser* step the fragment (30, 40,
-50, 90, 120, 150, 200, 250 B; 40 was the fastest on the bench, 90 and up
-rarely decoded), *Slower* / *Faster* the frame (800 to 200 ms). *Full
-screen* (or a click on the code) shows it as large as the window allows;
-Esc or a click exits, Space steps *Manual* mode. *Bench sweep* steps
+fragments at 500 ms, the default: 28 frames for a 1.4 KB view), *Balanced*
+(50 B, 400 ms), *Fast* (50 B, 300 ms), *Big codes, for a phone* (25 B,
+500 ms: QR v4, the largest modules) or *Custom*: *Bigger* / *Denser* step
+the fragment (25, 30, 40, 50, 90, 120, 150, 200, 250 B), *Slower* /
+*Faster* the frame (800 to 200 ms). Since the board's decoder and code
+search were fixed (2026-11-11), a laptop screen at 2x reads 39–88 B at
+250–350 ms in 13–20 s; a phone works with *Big codes* at 300–350 ms, the
+board at 3x and the phone about 30 cm away. *Full screen* (or a click on
+the code) shows it as large as the window allows, on a black page with a
+2-module white border; Esc or a click exits, Space steps *Manual* mode. *Bench sweep* steps
 through 11 settings and copies a Markdown table; a stopwatch (⏱) times each
 run. A part and frame counter runs under the
 code; the choice is remembered (`leek.qr.send`). Record bench results in

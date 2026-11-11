@@ -21,13 +21,12 @@
  * module, a four-module quiet zone, black on white. And one QR version for
  * the whole loop, so the code does not change size while it animates.
  *
- * Defaults: 90-byte fragments at 500 ms (a 1.4 KB compact view is 16
- * frames, 8 s a pass), where the Ethereum LeekWallet's board benches on
- * this same board settled, with their rule: a frame stays up at least twice
- * the board camera's capture interval (300 ms made it miss most frames).
- * The Zodl fork signed at 50 B / 500 ms; 50 is one "Bigger" away.
+ * Default: 50-byte fragments at 500 ms (QR v6; a 1.4 KB compact view is 28
+ * frames), from the board bench: a frame stays up at least twice the board
+ * camera's capture interval.
  *
- * Speed: Safe (50/500), Balanced (50/400), Fast (50/300), or Custom with
+ * Speed: Safe (50/500), Balanced (50/400), Fast (50/300), Big codes
+ * (25/500: QR v4, the biggest modules, for a phone screen), or Custom with
  * Bigger / Denser / Slower / Faster, for the camera-tuning sweep (the board
  * scans at ~7 fps in QVGA today; Balanced and Fast wait for its zoom). The
  * same presets are `zecz qr-show --sweep`'s first ones; results go in
@@ -40,7 +39,7 @@
 import type { Invoke } from "./tauri-transport.ts";
 
 /** Fragment sizes offered, bytes (airgap.rs FRAGMENTS). */
-export const QR_FRAGMENTS = [30, 40, 50, 90, 120, 150, 200, 250] as const;
+export const QR_FRAGMENTS = [25, 30, 40, 50, 90, 120, 150, 200, 250] as const;
 /** Frame intervals offered, ms (airgap.rs INTERVALS). */
 export const QR_INTERVALS = [800, 500, 400, 350, 300, 250, 200] as const;
 /** The speed presets; anything else is "custom". */
@@ -51,6 +50,9 @@ export const QR_PRESETS = {
   safe: { fragment: 50, interval: 500 },
   balanced: { fragment: 50, interval: 400 },
   fast: { fragment: 50, interval: 300 },
+  /* QR v4 (33 modules) instead of v6 (41): modules a quarter bigger, twice
+   * the frames. For a small screen (a phone) or a board at 1x. */
+  big: { fragment: 25, interval: 500 },
 } as const;
 export type QrPreset = keyof typeof QR_PRESETS | "custom" | "manual";
 
@@ -94,6 +96,10 @@ export function qrVersionFor(chars: number): number {
   if (i < 0) throw new Error(`a QR frame of ${chars} characters is too long`);
   return i + 1;
 }
+
+/** The full-screen view's quiet zone, modules: 2 on its black page (the
+ * board's own panel reads with 2), so a phone screen gives the code more room. */
+export const QR_FULL_QUIET = 2;
 
 /** Pixels per module and the drawn side for a code of `modules` (quiet zone included) in `avail` px. */
 export function moduleScale(modules: number, avail: number): { px: number; side: number } {
@@ -551,16 +557,16 @@ type QrGen = (type: number, ec: "L" | "M" | "Q" | "H") => {
 
 /**
  * Draw `text` as a QR code on `canvas`: version `version`, error correction
- * L, alphanumeric mode, a four-module quiet zone, black on white, a whole
- * number of pixels per module in `avail` CSS px (times the device pixel
- * ratio, so a module is whole device pixels too).
+ * L, alphanumeric mode, a `quiet`-module white quiet zone (4 by default; the
+ * full-screen view uses 2 on a black page, so the code gets the room), black
+ * on white, a whole number of pixels per module in `avail` CSS px (times the
+ * device pixel ratio, so a module is whole device pixels too).
  */
-export function drawQr(canvas: HTMLCanvasElement, gen: QrGen, text: string, version: number, avail: number, dpr = 1): void {
+export function drawQr(canvas: HTMLCanvasElement, gen: QrGen, text: string, version: number, avail: number, dpr = 1, quiet = 4): void {
   const qr = gen(version, "L");
   qr.addData(text, "Alphanumeric");
   qr.make();
   const n = qr.getModuleCount();
-  const quiet = 4;
   const { px, side } = moduleScale(n + quiet * 2, Math.floor(avail * dpr));
   if (canvas.width !== side) { canvas.width = side; canvas.height = side; }
   canvas.style.width = `${side / dpr}px`;

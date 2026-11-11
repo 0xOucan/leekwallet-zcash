@@ -8,6 +8,21 @@ are released in
 
 ## Unreleased
 
+- **QR scanning on the board: 2–3x faster, and phones work (tested on the
+  colour kit, [QR-BENCH.md](docs/zcash/QR-BENCH.md#signing-with-a-phone)).**
+  The scan decoder keeps 64 mixed parts instead of 8 and skips one it already
+  holds; a full queue had turned most reads into repeats. quirc's grid fit
+  does its maths inline, bit-identical (a boot self-test checks 80,000
+  cases), which cuts the code search for a v8 code from about 290 ms to
+  120–190 ms a frame. Laptop screen at 2x: 13–20 s for 39–88 B fragments,
+  where 88 B did not decode before. The Scan screen opens at 2x and keeps the
+  zoom the knob chose until power-off. First phone signature by QR both ways: 25 B at
+  350 ms, 3x, about 30 cm (the lens is fixed-focus). The `-qstages` and
+  `-qfast` images log quirc's stage times and why codes fail.
+- **Companion: big codes and a black full screen for phones.** A *Big codes*
+  preset (25 B, QR v4), *Bigger* down to 25 B, and a black full-screen page
+  with a 2-module white border and a brightness and glare hint.
+
 - **CAM kits: camera tuning for faster QR scanning (measured on the colour
   kit, [QR-BENCH.md](docs/zcash/QR-BENCH.md)).** The AGC gain ceiling was effectively 1/16x (the driver wrote its
   enum value into a real-gain register), so all brightness came from shutter

@@ -24,6 +24,14 @@
 #include <math.h>
 #endif // QUIRC_USE_TGMATH
 #include "quirc_internal.h"
+#include "quirc_stages.h"
+
+#ifdef QUIRC_STAGE_TIMING
+uint32_t (*quirc_stage_clock)(void);
+uint32_t quirc_stage_time[QUIRC_STAGE_COUNT];
+uint32_t quirc_stage_maps;
+#define STAGE_NOW()	(quirc_stage_clock ? quirc_stage_clock() : 0u)
+#endif
 
 /************************************************************************
  * Linear algebra routines
@@ -97,6 +105,150 @@ static void perspective_setup(quirc_float_t *c,
 		hden;
 }
 
+#ifdef QUIRC_FAST_PERSPECTIVE
+/* LeekWallet addition: perspective_map() without its three library calls.
+ *
+ * Grid fitting (jiggle_perspective) calls perspective_map() some 160,000
+ * times for a version 5 code and 270,000 for a version 8, nine per fitness
+ * cell, and on the ESP32-S3 each call made three more: __divsf3 (in ROM) and
+ * rintf twice (newlib, in flash), at the bottom of a call chain deep enough
+ * that the windowed ABI spills registers on the way down and back. Measured
+ * on the board that stage was most of quirc_end() whenever a code was in
+ * view. Here the same arithmetic is done inline:
+ *
+ *  - the division is the very instruction sequence of the ROM's __divsf3
+ *    (div0.s ... divn.s, the FPU's correctly rounded divide), so the quotient
+ *    is bit for bit the one the call returned;
+ *  - the rounding is newlib's rintf algorithm (add and subtract 2^23 in the
+ *    sign's direction, values of 2^22 and up already integral), so the
+ *    integer is the one rint() gave;
+ *  - the products and sums are the same expressions in the same order.
+ *
+ * The located grids, the cell bitmaps and so the decoded payloads are meant
+ * to be identical to the upstream code's: research/quirc-speed checks that
+ * on the host, frame by frame, and on the board the scan log's s: and r:
+ * should not move. Off unless the build defines QUIRC_FAST_PERSPECTIVE.
+ */
+_Static_assert(sizeof(quirc_float_t) == sizeof(float),
+	       "QUIRC_FAST_PERSPECTIVE needs QUIRC_FLOAT_TYPE=float");
+
+static inline __attribute__((always_inline))
+quirc_float_t quirc_fast_div(quirc_float_t a, quirc_float_t b)
+{
+#if defined(__XTENSA__) && defined(__XCHAL_HAVE_FP_DIV) && __XCHAL_HAVE_FP_DIV
+	quirc_float_t q, t2, t3, t4, t5, t6, t7, t8;
+
+	__asm__ (
+		"div0.s    %[t3], %[b]\n\t"
+		"nexp01.s  %[t4], %[b]\n\t"
+		"const.s   %[t5], 1\n\t"
+		"maddn.s   %[t5], %[t4], %[t3]\n\t"
+		"mov.s     %[t6], %[t3]\n\t"
+		"mov.s     %[t7], %[b]\n\t"
+		"nexp01.s  %[t2], %[a]\n\t"
+		"maddn.s   %[t6], %[t5], %[t6]\n\t"
+		"const.s   %[t5], 1\n\t"
+		"const.s   %[q], 0\n\t"
+		"neg.s     %[t8], %[t2]\n\t"
+		"maddn.s   %[t5], %[t4], %[t6]\n\t"
+		"maddn.s   %[q], %[t8], %[t3]\n\t"
+		"mkdadj.s  %[t7], %[a]\n\t"
+		"maddn.s   %[t6], %[t5], %[t6]\n\t"
+		"maddn.s   %[t8], %[t4], %[q]\n\t"
+		"const.s   %[t3], 1\n\t"
+		"maddn.s   %[t3], %[t4], %[t6]\n\t"
+		"maddn.s   %[q], %[t8], %[t6]\n\t"
+		"neg.s     %[t2], %[t2]\n\t"
+		"maddn.s   %[t6], %[t3], %[t6]\n\t"
+		"maddn.s   %[t2], %[t4], %[q]\n\t"
+		"addexpm.s %[q], %[t7]\n\t"
+		"addexp.s  %[t6], %[t7]\n\t"
+		"divn.s    %[q], %[t2], %[t6]"
+		: [q] "=&f" (q), [t2] "=&f" (t2), [t3] "=&f" (t3), [t4] "=&f" (t4),
+		  [t5] "=&f" (t5), [t6] "=&f" (t6), [t7] "=&f" (t7), [t8] "=&f" (t8)
+		: [a] "f" (a), [b] "f" (b));
+	return q;
+#else
+	return a / b;
+#endif
+}
+
+static inline __attribute__((always_inline))
+int quirc_fast_rint(quirc_float_t x)
+{
+	union {
+		float		f;
+		uint32_t	u;
+	} bits;
+
+	bits.f = x;
+	if ((bits.u & 0x7f000000u) > 0x4a800000u)
+		return (int)x;
+	if (!(bits.u & 0x80000000u))
+		x = (x + (quirc_float_t)8388608.0) - (quirc_float_t)8388608.0;
+	else
+		x = (x - (quirc_float_t)8388608.0) + (quirc_float_t)8388608.0;
+	return (int)x;
+}
+
+/* The fast maths against the calls it replaces, on this CPU: n divisors
+ * (random bit patterns, every finite and non-finite class, then the 0.5..2
+ * range perspective_map() lives in) and n roundings (random values, then
+ * exact halves, where round-half-even matters). Returns the number of
+ * results whose bits differ; 0 is the only acceptable answer. The firmware
+ * runs it once when the camera starts and logs it.
+ */
+int quirc_fast_selftest(uint32_t n)
+{
+	uint32_t s = 0x2545f491u;
+	int bad = 0;
+
+	for (uint32_t i = 0; i < 2 * n; i++) {
+		union {
+			uint32_t	u;
+			float		f;
+		} b, want, got;
+		s = s * 1664525u + 1013904223u;
+		b.u = s;
+		if (i >= n)	/* 0.5 <= |b| < 2, both signs */
+			b.u = (s & 0x807fffffu) | (((s >> 23) & 1u) ? 0x3f000000u : 0x3f800000u);
+		volatile quirc_float_t vb = b.f;
+		want.f = (quirc_float_t)1 / vb;
+		got.f = quirc_fast_div((quirc_float_t)1, vb);
+		if (want.u != got.u &&
+		    !(want.f != want.f && got.f != got.f))	/* NaN either way */
+			bad++;
+	}
+	for (uint32_t i = 0; i < 2 * n; i++) {
+		s = s * 1664525u + 1013904223u;
+		quirc_float_t x;
+		if (i < n)	/* -2^23 .. 2^23, any fraction */
+			x = (quirc_float_t)(int32_t)s * (quirc_float_t)(1.0 / 256.0);
+		else		/* exact halves, -32768.5 .. 32767.5 */
+			x = (quirc_float_t)(int16_t)s + (quirc_float_t)0.5;
+		volatile quirc_float_t vx = x;
+		if ((int) rint(vx) != quirc_fast_rint(vx))
+			bad++;
+	}
+	return bad;
+}
+
+static inline __attribute__((always_inline))
+void perspective_map(const quirc_float_t *c,
+		     quirc_float_t u, quirc_float_t v, struct quirc_point *ret)
+{
+	quirc_float_t den = quirc_fast_div((quirc_float_t)1,
+					   c[6]*u + c[7]*v + (quirc_float_t)1.0);
+	quirc_float_t x = (c[0]*u + c[1]*v + c[2]) * den;
+	quirc_float_t y = (c[3]*u + c[4]*v + c[5]) * den;
+
+#ifdef QUIRC_COUNT_MAPS
+	quirc_stage_maps++;
+#endif
+	ret->x = quirc_fast_rint(x);
+	ret->y = quirc_fast_rint(y);
+}
+#else
 static void perspective_map(const quirc_float_t *c,
 			    quirc_float_t u, quirc_float_t v, struct quirc_point *ret)
 {
@@ -104,9 +256,13 @@ static void perspective_map(const quirc_float_t *c,
 	quirc_float_t x = (c[0]*u + c[1]*v + c[2]) * den;
 	quirc_float_t y = (c[3]*u + c[4]*v + c[5]) * den;
 
+#ifdef QUIRC_COUNT_MAPS
+	quirc_stage_maps++;
+#endif
 	ret->x = (int) rint(x);
 	ret->y = (int) rint(y);
 }
+#endif
 
 static void perspective_unmap(const quirc_float_t *c,
 			      const struct quirc_point *in,
@@ -862,7 +1018,13 @@ static void setup_qr_perspective(struct quirc *q, int index)
 	       sizeof(rect[0]));
 	perspective_setup(qr->c, rect, qr->grid_size - 7, qr->grid_size - 7);
 
+#ifdef QUIRC_STAGE_TIMING
+	const uint32_t t0 = STAGE_NOW();
 	jiggle_perspective(q, index);
+	quirc_stage_time[QUIRC_STAGE_JIGGLE] += STAGE_NOW() - t0;
+#else
+	jiggle_perspective(q, index);
+#endif
 }
 
 /* Rotate the capstone with so that corner 0 is the leftmost with respect
@@ -1105,14 +1267,35 @@ void quirc_end(struct quirc *q)
 {
 	int i;
 
+#ifdef QUIRC_STAGE_TIMING
+	uint32_t t0 = STAGE_NOW(), t1;
+
+	quirc_stage_time[QUIRC_STAGE_JIGGLE] = 0;
+	quirc_stage_maps = 0;
+#endif
 	uint8_t threshold = otsu(q);
 	pixels_setup(q, threshold);
+#ifdef QUIRC_STAGE_TIMING
+	t1 = STAGE_NOW();
+	quirc_stage_time[QUIRC_STAGE_THRESHOLD] = t1 - t0;
+	t0 = t1;
+#endif
 
 	for (i = 0; i < q->h; i++)
 		finder_scan(q, i);
+#ifdef QUIRC_STAGE_TIMING
+	t1 = STAGE_NOW();
+	quirc_stage_time[QUIRC_STAGE_FINDER] = t1 - t0;
+	t0 = t1;
+#endif
 
 	for (i = 0; i < q->num_capstones; i++)
 		test_grouping(q, i);
+#ifdef QUIRC_STAGE_TIMING
+	t1 = STAGE_NOW();
+	quirc_stage_time[QUIRC_STAGE_GRID] =
+		t1 - t0 - quirc_stage_time[QUIRC_STAGE_JIGGLE];
+#endif
 }
 
 void quirc_extract(const struct quirc *q, int index,

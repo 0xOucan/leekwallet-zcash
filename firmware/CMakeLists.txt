@@ -64,4 +64,13 @@ if(NOT LEEK_CAMERA_DRIVER)
     set(EXCLUDE_COMPONENTS esp32-camera esp_jpeg quirc)
 endif()
 
+# quirc's perspective_map() inline (components/quirc, lib/identify.c): the
+# same results bit for bit (a boot self-test checks 80,000 cases), about a
+# third to a half less code-search time per frame on the colour kit
+# (2026-11-11 A/B). On by default; -DQUIRC_FAST_PERSPECTIVE=0 for the
+# upstream maths. A CACHE variable so every component's CMakeLists sees it.
+if(NOT DEFINED QUIRC_FAST_PERSPECTIVE)
+    set(QUIRC_FAST_PERSPECTIVE 1 CACHE BOOL "quirc perspective_map inline")
+endif()
+
 project(leekwallet)
