@@ -19,13 +19,59 @@ Each send was a compact NU7 testnet send of 1,373 B:
 | Board → laptop webcam | the board's default mode | 7.4 s (31 codes read) |
 
 **On the board:** 2x zoom (push the knob on the scan screen) and exposure
--4. With a code in view, the board decodes about 3.5 frames a second. A
-frame has to stay up at least twice that long, so do not go below 500 ms
-until the camera is faster.
+-4. The Scan screen opens at 1x after power-up and then keeps the zoom the
+knob last chose until power-off.
+
+### Since 2026-11-11 (decoder and code-search fixes)
+
+Two firmware changes made every setting faster:
+
+- The decoder keeps 64 mixed parts instead of 8, and skips a mixed part it
+  already holds. A full queue used to drop useful parts, so most reads were
+  repeats (30 to 100 a scan). After the fix, 4 to 18.
+- quirc's grid fit does its maths inline (the same results bit for bit; the
+  board's boot self-test compares 80,000 cases). The code search for a v8
+  code went from about 290 ms to 120–190 ms a frame.
+
+From the laptop screen at 2x, with the board's LEDs covered:
+
+| Setting | Board read |
+|---|---|
+| 39–40 B, 250–350 ms | 15–19 s |
+| 49 B, 200–350 ms | 13.5–20 s |
+| 88 B (QR v8), 200–350 ms | 13–16 s (it did not decode at all before) |
+
+At 200 ms the screen changes faster than the board processes frames (about
+5 a second with a code in view), so it gains nothing. 250–350 ms is the
+range to use. A faster sensor setting (VTS 700) was tried and did not help:
+the CPU is still the limit, and more codes failed to read.
 
 **From the board:** the board can't tell a phone from a webcam, so you pick
 the density on the knob (below). A laptop webcam reads the default (v6). A
 phone held close can read the denser v9.
+
+## Signing with a phone
+
+It works, but the phone needs other settings than a laptop screen:
+
+- **Distance and zoom.** The camera has a fixed-focus lens ("this module
+  has no autofocus" in the boot log), sharp from about 30 cm. At 10–15 cm
+  the board found the phone's code 153 times and read it 4 times. Hold the
+  phone about 30 cm away and push the knob to **3x**.
+- **Bigger codes.** In the app, *Big codes* (25 B, QR v4), full screen. The
+  full-screen page is black, with a 2-module white border round the code.
+- **Brightness high.** At half brightness the board ran at its longest
+  exposure with 4x gain and the picture was noisy.
+- **The board's LEDs.** The power LEDs on the board and the OPTIGA module
+  are wired to the supply, so firmware cannot turn them off. Their light
+  reflects in a phone's glossy screen straight back into the camera. Cover
+  them with black tape, or use an opaque case.
+
+Tested on 2026-11-11 (Motorola edge 50 neo, the companion's debug APK): 25 B
+at 300–350 ms, 3x, about 30 cm. The board read the request in 38.7 s (91 s
+on the app's clock, aiming included), and the phone read the board's
+one-code reply in 9.1 s. The other way, the phone read the View key in
+about 5 s at the densest setting.
 
 ## The board's QR screen (colour kit)
 
@@ -89,3 +135,5 @@ wallets ([leek-zcash-ffi](../../host/leek-zcash-ffi/README.md)).
 | `8f3b9264fddce48f6989396336741512e3fdafe66870826c0ceeb63725e73c7d` | `zecz`, the first send by QR in both directions | 4,606,736 |
 | `43f6c901675c3d4c2f4067f84d1db238c10ab6059d20bcea3f16c631d19ac085` | the desktop app | testnet |
 | `859266116ab58e55eaa255041ca22e727f0507ce90cc3b7b1dd2e9f9381e19e9` | the desktop app, faster reply decode (67.9 s end to end) | testnet |
+| `a21ec09bfbd98c19db10aadfcc15ef576b72cb7b01e70582744863c009c848dc` | the desktop app, 50 B / 250 ms | 4,608,435 |
+| `cf3632647a8bb78a00e28150e2f49c7e69ac4b5cea1ea1f02f6790bba428ce21` | the Android companion on a phone, both directions (100.4 s) | testnet |
