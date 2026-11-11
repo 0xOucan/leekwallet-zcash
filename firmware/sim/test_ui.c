@@ -1675,6 +1675,58 @@ static void test_oled_scan_is_unchanged(void)
     camera__set_frame_for_test(NULL, 0, 0);
 }
 
+static void test_colour_qr_backlight(void)
+{
+    printf("== colour kit: a QR opens dim, the knob sets its backlight, leaving restores\n");
+    /* Unlocked, then the colour panel: the wallet stays open for Receive. */
+    boot_unlocked_with_seed();
+    fake_oled_set_panel_rows(240);
+    ui__reset_static_state_for_test();
+    ui_init();
+    ui_render();
+    CHECK(fake_oled_backlight() == 100, "the panel did not start full (%u)", fake_oled_backlight());
+
+    /* The signature QR (any UR): 5 % on entry. */
+    uint8_t msg[90];
+    for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)i;
+    CHECK(ui_show_ur("bytes", msg, sizeof msg, SCREEN_MAIN_MENU), "no UR shown");
+    idle_pump();
+    CHECK(ui_get_screen() == SCREEN_QR_OUT, "the QR screen did not open");
+    CHECK(fake_oled_backlight() == 5, "a QR opened at %u%%, not 5", fake_oled_backlight());
+    const unsigned v0 = fake_oled_qr_version(), s0 = fake_oled_qr_scale();
+    press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight() == 3, "a turn down gave %u%%, not 3", fake_oled_backlight());
+    CHECK(fake_oled_qr_version() == v0 && fake_oled_qr_scale() == s0,
+          "a turn changed the module size on the colour kit");
+    press(BUTTON_UP);
+    press(BUTTON_UP);
+    CHECK(fake_oled_backlight() == 7, "two turns up gave %u%%, not 7", fake_oled_backlight());
+    press(BUTTON_ACCEPT);   /* the module size now */
+    CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK left the QR");
+    CHECK(fake_oled_backlight() == 7, "OK moved the backlight (%u%%)", fake_oled_backlight());
+    CHECK(!fake_nvs_has("leek_ui", "qr_bl"), "saved before leaving the QR");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() != SCREEN_QR_OUT, "Cancel did not finish the QR");
+    CHECK(fake_oled_backlight() == 100, "leaving the QR left %u%%, not 100", fake_oled_backlight());
+    CHECK(fake_nvs_has("leek_ui", "qr_bl"), "the QR level was not saved");
+
+    /* Receive: text at the panel's level, its QR at the remembered 7 %. */
+    go(SCREEN_SHOW_ADDRESS);
+    CHECK(fake_oled_backlight() == 100, "the text page is at %u%%", fake_oled_backlight());
+    int page = 0;
+    while (fake_oled_row_contains(0, "UA ") && page < 8) { press(BUTTON_DOWN); page++; }
+    CHECK(fake_oled_qr_data()[0] != 0, "no receive QR reached");
+    CHECK(fake_oled_backlight() == 7, "the receive QR is at %u%%, not 7", fake_oled_backlight());
+    const int qr_page = ui__receive_page_for_test();
+    press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight() == 5, "a turn on the QR gave %u%%, not 5", fake_oled_backlight());
+    CHECK(ui__receive_page_for_test() == qr_page, "a turn on the QR changed page");
+    press(BUTTON_ACCEPT);   /* back to the text */
+    CHECK(fake_oled_backlight() == 100, "the text came back at %u%%", fake_oled_backlight());
+    press(BUTTON_CANCEL);
+    CHECK(fake_oled_backlight() == 100, "leaving Receive left %u%%", fake_oled_backlight());
+}
+
 static void test_colour_screen_brightness(void)
 {
     printf("== colour kit: Settings > Screen sets the backlight live, saves on OK\n");
@@ -1698,11 +1750,22 @@ static void test_colour_screen_brightness(void)
     CHECK_SCREEN(fake_oled_contains("> Screen 100%"), "Cancel did not restore the line");
     CHECK(!fake_nvs_has("leek_ui", "backlight"), "Cancel saved");
 
-    /* Bounded at 10% and 100%. */
+    /* Finer at the dark end, and bounded at 1% and 100%. */
     press(BUTTON_ACCEPT);
-    for (int i = 0; i < 15; i++) press(BUTTON_DOWN);
-    CHECK(fake_oled_backlight() == 10, "the floor is %u%%, not 10", fake_oled_backlight());
-    for (int i = 0; i < 15; i++) press(BUTTON_UP);
+    for (int i = 0; i < 10; i++) press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight() == 10, "ten turns down gave %u%%, not 10", fake_oled_backlight());
+    {
+        static const uint8_t dark[] = { 7, 5, 3, 2, 1 };
+        for (unsigned i = 0; i < sizeof dark; i++) {
+            press(BUTTON_DOWN);
+            CHECK(fake_oled_backlight() == dark[i], "below 10%%: %u%%, not %u",
+                  fake_oled_backlight(), dark[i]);
+        }
+    }
+    for (int i = 0; i < 5; i++) press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight() == 1, "the floor is %u%%, not 1", fake_oled_backlight());
+    CHECK_SCREEN(fake_oled_contains("1%"), "1%% is not shown");
+    for (int i = 0; i < 20; i++) press(BUTTON_UP);
     CHECK(fake_oled_backlight() == 100, "the ceiling is %u%%, not 100", fake_oled_backlight());
     for (int i = 0; i < 4; i++) press(BUTTON_DOWN);
     press(BUTTON_ACCEPT);
@@ -3678,6 +3741,7 @@ int main(void)
     test_colour_scan_is_a_grayscale_viewfinder();
     test_oled_scan_is_unchanged();
     test_colour_screen_brightness();
+    test_colour_qr_backlight();
     test_oled_brightness_is_unchanged();
     test_colour_preview_true_exposure();
     test_clockwise_raises_the_pin_digit();

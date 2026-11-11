@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bip39.h"
 #include "blake2b.h"
 #include "memzero.h"
 
@@ -33,4 +34,12 @@ WalletError zcash_seed_fingerprint(uint8_t out[32])
         memset(out, 0, 32);
     }
     return err;
+}
+
+void zcash_fp_of_phrase(const char *phrase, uint8_t out[32])
+{
+    uint8_t seed[64];
+    mnemonic_to_seed(phrase, "", seed, NULL);
+    fingerprint_with_seed(seed, out);
+    memzero(seed, sizeof seed);
 }

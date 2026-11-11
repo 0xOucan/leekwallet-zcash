@@ -143,6 +143,30 @@ size_t optiga_apdu_get_random(uint8_t *out, uint16_t len)
     return n;
 }
 
+#if LEEK_SE_CONTAINER_WRITES
+size_t optiga_apdu_set_data(uint8_t *out, size_t cap, uint16_t oid,
+                            bool erase_first, uint16_t offset,
+                            const uint8_t *data, size_t len)
+{
+    /* The whole write path's scope, in one condition. */
+    if (oid != OPTIGA_OID_CONTAINER)
+        return 0;
+    if (!out || !data || len == 0 || len > OPTIGA_SET_CHUNK_MAX ||
+        (size_t)offset + len > OPTIGA_CONTAINER_OBJ_SIZE ||
+        cap < OPTIGA_SET_HEADER + len)
+        return 0;
+    size_t n = header(out, OPTIGA_CMD_FLUSH_ERR | OPTIGA_CMD_SET_DATA,
+                      erase_first ? OPTIGA_SET_PARAM_ERASE : OPTIGA_SET_PARAM_WRITE,
+                      (uint16_t)(4 + len));
+    out[n++] = (uint8_t)(oid >> 8);
+    out[n++] = (uint8_t)oid;
+    out[n++] = (uint8_t)(offset >> 8);
+    out[n++] = (uint8_t)offset;
+    memcpy(&out[n], data, len);
+    return n + len;
+}
+#endif
+
 int optiga_apdu_response(const uint8_t *buf, size_t n,
                          const uint8_t **data, size_t *len)
 {

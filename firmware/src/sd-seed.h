@@ -30,6 +30,7 @@ typedef enum {
     SDSEED_E_PASS,      /* passphrase not 8-64 printable ASCII */
     SDSEED_E_WALLET,    /* no seed open to save, or the vault refused the load */
     SDSEED_E_VERIFY,    /* the file written did not read back; it was removed */
+    SDSEED_E_VAULT_FULL, /* restore to vault: every vault slot is taken */
 } SdSeedResult;
 
 /** Mount if needed and list the .zkv files. Count, or -1 with no card. */
@@ -41,6 +42,26 @@ int sdseed_list(char names[][SDCARD_NAME_MAX + 1], int max);
  * wiped. The vault must be unlocked.
  */
 SdSeedResult sdseed_load(const char *name, const char *pass, size_t pass_len, ZkvContents *meta);
+
+/**
+ * Read `name` and open it with `pass`, nothing more: `c` gets the whole
+ * contents, entropy included, and the caller wipes it (memzero) when done.
+ * The building block for the two restores below and for SD -> SE
+ * (se-backup.h).
+ */
+SdSeedResult sdseed_open(const char *name, const char *pass, size_t pass_len, ZkvContents *c);
+
+/**
+ * Restore `name` into the board vault, under the backup rule
+ * (wallet_store_mnemonic_if_new()): if a slot already holds this seed,
+ * nothing is written and `*already` is true; otherwise a new slot is added
+ * after the last one. No existing seed is ever overwritten or deleted. A full
+ * vault answers SDSEED_E_VAULT_FULL, a vault that refused SDSEED_E_WALLET. `meta`
+ * as for sdseed_load(), entropy wiped. On success the vault's active wallet
+ * is `*slot` only when it was added; the caller selects it.
+ */
+SdSeedResult sdseed_restore_to_vault(const char *name, const char *pass, size_t pass_len,
+                                     ZkvContents *meta, uint8_t *slot, bool *already);
 
 /**
  * Seal the open seed's phrase (stored or temporary) under `pass` into a new

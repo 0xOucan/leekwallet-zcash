@@ -1,13 +1,17 @@
 # leek-se-optiga — OPTIGA Trust M bring-up
 
 **Status: research and testing. Host-tested; not yet run against a chip.**
-Nothing in this component stores a PIN, a key or a seed, and nothing in it
-*can* write to the chip. It finds an Infineon OPTIGA Trust M on the board's
+Nothing in this component stores a PIN, a key or a seed, and in the default
+build nothing in it *can* write to the chip. It finds an Infineon OPTIGA Trust M on the board's
 I2C bus, identifies it, reports its state and checks that the link and the
 chip's TRNG work. The design it is meant to feed is in
 [`docs/RESEARCH-SECURE-ELEMENT.md`](../../docs/RESEARCH-SECURE-ELEMENT.md).
 
 ## What it does, and what it will never do here
+
+With `LEEK_SE_CONTAINER_WRITES` at 0 — the default, and every env in
+`platformio.ini` except the development image `esp32s3cam-color-se`,
+including `esp32s3cam-se-bench` — this table is complete:
 
 | Operation | Command | Effect on the chip |
 |---|---|---|
@@ -26,17 +30,50 @@ simulated chip receives and fails if anything outside this table reaches it.
 The random bytes from `GetRandom` are judged by a smoke test and discarded.
 They never reach `entropy.c` or the wallet.
 
+### With `LEEK_SE_CONTAINER_WRITES=1` (development only)
+
+Exactly one more operation, on exactly one object:
+
+| Operation | Command | Effect on the chip |
+|---|---|---|
+| `SetDataObject`, data only, on `0xF1E0` | `82 00 …` (write) or `82 40 …` (erase, then write) | **persistent**: rewrites the data of `0xF1E0`, nothing else |
+
+This is the Level 1 SE container (`optiga-container.[ch]`, design in
+[`docs/RESEARCH-SECURE-ELEMENT.md`](../../docs/RESEARCH-SECURE-ELEMENT.md#se-container-vault-slot)):
+one blob of up to 1484 bytes in the 1500-byte arbitrary data object `0xF1E0`,
+under a 16-byte header (magic `LKSC`, version, length, CRC-32). Its factory
+access rules are left as they are, so it stays fully reversible: erase
+overwrites all 1500 bytes with zeros.
+
+What the flag still cannot produce: a write to any other object (the builder
+returns nothing for any OID but `0xF1E0`, and the command layer returns
+`OPTIGA_E_PARAM` without touching the bus), a metadata write (`Param 0x01`),
+a counter update (`0x02`), a lifecycle change, key generation, a protected
+update, the shielded connection, or an arbitrary APDU. The builder takes a
+bool for erase-or-not, not a `Param` byte, so the others are not expressible.
+
+The flag reaches the component through CMake, not `build_flags`:
+`-DLEEK_SE_CONTAINER_WRITES=1` in an env's `board_build.cmake_extra_args`.
+One env sets it: `esp32s3cam-color-se`, the development image whose
+Settings > Secure element screen keeps a PIN-sealed copy of the seed here
+(`src/se-backup.c`, `src/se-optiga.c`; docs/BACKUP.md). No release image does.
+Level 1 is storage, not security — anyone with the
+I2C bus can read the blob and rewrite the object's metadata — so only
+already-encrypted data belongs in it.
+
 ## Files
 
 | File | Depends on | Role |
 |---|---|---|
 | `optiga-proto.[ch]` | nothing | CRC, frame build/parse, command APDUs, UID/cert/LCS parsing, TRNG smoke test |
 | `optiga-link.[ch]` | proto | IFX I2C data-link + network layer (ACKs, frame numbers, chaining, retries) over three injected callbacks |
-| `optiga-cmd.[ch]` | link | the three read-only commands end to end, fetching `0xF1C2` on refusal |
+| `optiga-cmd.[ch]` | link | the three read-only commands end to end, fetching `0xF1C2` on refusal; with the flag, the one `0xF1E0` data write |
+| `optiga-container.[ch]` | cmd | flag only: the Level 1 container's format, write order, read-back and erase |
 | `leek-se.[ch]` | ESP-IDF | legacy I2C driver as the bus, a mutex, SHA-256 of the certificate, the public API |
 
 Everything above `leek-se.c` is pure C and is built on the host by
-`sim/test_se_optiga.c` (`make -C sim test`, under ASan/UBSan).
+`sim/test_se_optiga.c` (`make -C sim test`, under ASan/UBSan), twice: as
+`test_se_optiga` with the flag at 0, and as `test_se_container` with it at 1.
 
 ## Why hand-written, not Infineon's host library
 
@@ -154,33 +191,40 @@ Flash the ordinary `esp32s3cam` image afterwards.
   `0xF1C2` read-back, an absent chip, implausible `DATA_REG_LEN`.
 - A mutation check (CRC polynomial, initial frame numbers, idle limit, flush
   bit, stale-frame drain, response chaining) — each mutant fails the suite.
+- Container build only: the `SetDataObject` bytes; that no OID but `0xF1E0`
+  and no `Param` but `0x00`/`0x40` can be built (all 65,536 OIDs); write,
+  read and erase round trips at frame sizes 277/64/32/16 (chained both ways);
+  oversize and empty writes refused with nothing sent; a foreign object left
+  alone; a damaged blob caught by the CRC; a power cut on each command of a
+  write never leaving a blob that reads as valid; a chip that refuses the
+  write; a chip that stores the wrong bytes (caught by the read-back); frame
+  buffers wiped after every operation; 3000 random calls with
+  nothing forbidden reaching the simulated chip.
 
 **Only the board can verify**: that a real Trust M behaves as the simulation
 does. The simulation was written by the same hand from the same spec, so the
 suite proves the two agree, not that either matches silicon. In particular,
 on first contact with hardware, watch for: the exact ACK/data ordering the
 chip uses, the first frame's `ACKNR` after a resync, whether the warm reset
-is accepted, and the I2C guard time at 400 kHz.
+is accepted, and the I2C guard time at 400 kHz. For the container, also:
+what `GetDataObject` returns for a never-written `0xF1E0` (the simulation
+answers with zero bytes), and that erase-and-write leaves the object's
+length at the bytes written (the simulation's reading of the manual).
 
-## Integration hook (for the coordinator)
+## Integration (done, development image only)
 
-The main firmware does not call this component yet: `LEEK_HAS_SE` stays 0 in
-`board.h`, and `board.h`, `ui.c` and the panel code are being reworked on
-another branch. To add a "Secure element" info screen later:
+`esp32s3cam-color-se` builds with `-DLEEK_SE=LEEK_SE_OPTIGA` (so
+`LEEK_HAS_SE` is 1) and the container flag. `src/se-optiga.c` is the glue:
+`se_probe()` (called once from `main.c` after the panel) installs the legacy
+I2C driver on I2C0 when no I2C panel did (the colour kit; on an OLED kit the
+panel's install is reused), calls `leek_se_attach(I2C_NUM_0)`, probes `0x30`
+and opens the application; `se_info_lines()` feeds the Info screen; and the
+four `sebk_store_*` functions put `leek_se_container_*` under
+`src/se-backup.c`. Every call runs on the UI task with a "busy" screen up,
+never on the draw path. Nothing is gated on the chip: without it the screen
+says "No secure element" and the wallet works as before. With `LEEK_SE` left
+at `LEEK_SE_NONE` (every other env) none of this is compiled.
 
-1. In `board.h`, S3CAM block: `#define LEEK_HAS_SE 1` (or a build flag).
-2. After `oled_i2c_init()` in `main.c`: `leek_se_attach(I2C_NUM_0);` — the
-   panel's driver install is reused; never install a second driver.
-3. From a task (not the draw path — a full info read takes a few hundred ms
-   for the certificate):
-   ```c
-   leek_se_info_t info;
-   char lines[8][LEEK_SE_LINE_LEN];
-   size_t n = 0;
-   if (leek_se_probe() && leek_se_info(&info) == ESP_OK)
-       n = leek_se_summary_lines(&info, lines, 8);
-   ```
-   then draw the `n` lines (each ≤ 21 chars) on a Settings > About-style
-   screen, or "No secure element" when `n == 0`.
-4. Do not gate anything on it yet. Until the PIN design below exists, the
-   chip is information, not security.
+`leek_se_last_err()` was added for that glue: the code behind the last
+failure, so a refused write over foreign data, a failed read-back and an
+oversize container can be told apart without parsing text.

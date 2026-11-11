@@ -269,8 +269,80 @@ out:
     return r;
 }
 
+#if LEEK_SE_CONTAINER_WRITES
+size_t leek_se_container_capacity(void)
+{
+    return OPTIGA_CONTAINER_CAPACITY;
+}
+
+esp_err_t leek_se_container_read(uint8_t *out, size_t cap, size_t *len,
+                                 optiga_container_state_t *state)
+{
+    if (!s_lock || !out || !len || !state)
+        return ESP_ERR_INVALID_STATE;
+    *len = 0;
+    *state = OPTIGA_CONTAINER_EMPTY;
+    lock();
+    esp_err_t r = ensure_open();
+    if (r == ESP_OK) {
+        uint8_t ce = 0;
+        int err = optiga_container_read(&s_link, out, cap, len, state, &ce);
+        if (err)
+            r = fail(err, ce);
+    }
+    unlock();
+    return r;
+}
+
+esp_err_t leek_se_container_write(const uint8_t *data, size_t len)
+{
+    if (!s_lock || !data)
+        return ESP_ERR_INVALID_STATE;
+    if (len == 0 || len > OPTIGA_CONTAINER_CAPACITY)
+        return ESP_ERR_INVALID_SIZE;
+    lock();
+    esp_err_t r = ensure_open();
+    if (r == ESP_OK) {
+        uint8_t ce = 0;
+        int err = optiga_container_write(&s_link, data, len, &ce);
+        if (err)
+            r = fail(err, ce);
+    }
+    unlock();
+    return r;
+}
+
+esp_err_t leek_se_container_erase(void)
+{
+    if (!s_lock)
+        return ESP_ERR_INVALID_STATE;
+    lock();
+    esp_err_t r = ensure_open();
+    if (r == ESP_OK) {
+        uint8_t ce = 0;
+        int err = optiga_container_erase(&s_link, &ce);
+        if (err)
+            r = fail(err, ce);
+    }
+    unlock();
+    return r;
+}
+#endif
+
+int leek_se_last_err(void)
+{
+    return s_err;
+}
+
 const char *leek_se_last_error(void)
 {
+#if LEEK_SE_CONTAINER_WRITES
+    if (s_err == OPTIGA_E_FOREIGN || s_err == OPTIGA_E_VERIFY) {
+        snprintf(s_err_text, sizeof s_err_text, "%s",
+                 optiga_container_err_name(s_err));
+        return s_err_text;
+    }
+#endif
     if (s_err == OPTIGA_E_CHIP)
         snprintf(s_err_text, sizeof s_err_text, "%s: 0x%02X %s",
                  optiga_link_err_name(s_err), s_chip_err,

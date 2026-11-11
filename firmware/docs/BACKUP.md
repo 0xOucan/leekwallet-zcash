@@ -97,6 +97,89 @@ moving anything. This is the cheapest check available and it takes seconds.
 - **Write down which wallet a backup is for** if you keep several — the XFP is
   the label that cannot be confused with another seed.
 
+## The device's own copies: vault, SD card, secure element
+
+Everything above is about the phrase on paper or metal. The device can also
+keep encrypted copies of a seed, and on a development image with the OPTIGA
+Trust M fitted (`esp32s3cam-color-se`) it keeps up to three:
+
+| Copy | Where | Opened by | What it is for |
+|---|---|---|---|
+| **NVS vault** | the board's flash | the PIN (PBKDF2-HMAC-SHA512, AES-256-GCM; [VAULT.md](VAULT.md)) | **the master.** Every other copy is made from it or restored into it |
+| **SD `.zkv` file** | `SEEDn.ZKV` on a microSD card | its own passphrase (8-64 characters) | a copy that leaves the board; opens on any LeekWallet or in `zecz` |
+| **SE container** | OPTIGA object `0xF1E0` | the PIN it was made under | a second copy on the board, outside the flash |
+
+The SE copy is **Level 1: the chip is left unlocked**, so the copy there is a
+backup *location*, not extra security. Anyone with the board's I2C bus can read
+it, overwrite it or erase it. It is sealed exactly as the vault seals a seed
+(same KDF, same AES-256-GCM, with a salt of its own) and is exactly as strong as
+the PIN: with a short PIN, a thief who reads the chip can search the PIN space
+offline, as with a flash dump. No attempt counter protects it; that is Level 2
+in [RESEARCH-SECURE-ELEMENT.md](RESEARCH-SECURE-ELEMENT.md), not built. None of
+the three replaces the phrase on paper.
+
+All three show the seed's **ZFP** (its ZIP 32 fingerprint, short form, with no
+passphrase) so copies can be matched by eye. A BIP39 passphrase is never
+stored in any of them: restoring a seed restores the passphrase-less wallet,
+and the passphrase is typed again as always.
+
+### Settings > Secure element
+
+Turn the knob to choose, push to confirm, Cancel to go back. **Every action asks
+for the PIN first**, checked as at unlock: a wrong PIN costs an attempt, and the
+last attempt wipes the device, exactly as at unlock and Change PIN.
+
+| Item | Does |
+|---|---|
+| Info | chip found or not, maker, lifecycle state (LCS), security event counter (SEC), and what the container holds: empty, a LeekWallet copy (with its ZFP if your PIN opens it), other data, or damaged. Never a secret. |
+| Copy seed to SE | seals the open seed (stored or temporary) with its label, birthday and account under your PIN, writes it, reads it back and opens it before saying "Copied". If the SE already holds a *different* seed, or a copy your PIN does not open, it asks before replacing it. Data that is not a LeekWallet copy is never written over: erase it first. |
+| Compare SE copy | opens the copy in RAM and says **Match** or **No match** against the open seed, with the copy's ZFP. Nothing else. |
+| SE copy -> session | loads the copy as this session's temporary seed, as an SD load does: nothing reaches flash, and a lock or reboot forgets it. |
+| SE copy -> vault | stores the copy in the vault under the rule below. |
+| Erase SE copy | after "Erase the SE copy? The board vault and SD files are not touched", zeroes the container. |
+| SD file -> SE | pick a `.zkv`, type its passphrase; the seed goes into the SE under your PIN (asking first if the SE holds a copy). The session's seed does not change. |
+| SD file -> vault | pick a `.zkv`, type its passphrase; the seed goes into the vault under the rule below. |
+
+If the vault's PIN does not open the SE copy (it was made under an earlier PIN,
+or on another board), Compare and both restores offer to type the copy's own
+PIN. That PIN is checked against the copy only, not against the vault's
+attempt counter: the copy is readable off the bus anyway, so a counter here
+would protect nothing.
+
+Saving the open seed to a new `.zkv` and loading one for the session stay
+where they were: the main menu's **SD Card** screen.
+
+### The restore rule
+
+Restoring into the vault (from the SE or from an SD file) **never overwrites or
+deletes a seed that is already in the vault.** Before anything is written, every
+vault slot is decrypted and compared with the seed being restored:
+
+- **A slot already holds this seed:** nothing is written ("Already in the
+  vault", with the slot number).
+- **No slot holds it:** it goes into a new slot after the last one, and becomes
+  the selected wallet (a passphrase typed for the previous seed is dropped, as
+  on any wallet switch).
+- **The vault is full (30 seeds):** refused, nothing written.
+- **A slot does not decrypt:** refused, nothing written. The restore cannot tell
+  whether that slot is this seed, and it does not guess.
+
+There is no path in the code that writes over a vault slot from a backup; the
+only write is the append (`wallet_store_mnemonic_if_new()` in
+`components/leek-wallet`, `sdseed_restore_to_vault()` and
+`sebk_restore_vault()` on top of it, `sim/test_se_backup.c` for the checks).
+
+### If something breaks
+
+- **The vault is lost or the board was wiped:** set a PIN, then Settings >
+  Secure element > *SE copy -> vault* (type the old PIN when asked), or *SD
+  file -> vault* with the card's passphrase. Check the ZFP against your notes.
+- **The SE copy is damaged or erased:** *Copy seed to SE* again from the vault,
+  or *SD file -> SE*.
+- **The SD file is lost:** the main menu's SD Card > *Save open seed* makes a new
+  one from the vault.
+- **All three are gone:** the phrase on paper. That is why it comes first.
+
 ## If you genuinely want threshold backup
 
 SLIP-39 (Shamir's Secret Sharing for mnemonics) is the standard, and it gives

@@ -225,7 +225,7 @@ void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
  * with BLK tied to 3V3 accepts it and nothing changes. Colour panels only;
  * the OLEDs dim through oled_set_contrast().
  */
-#define OLED_BACKLIGHT_MIN  10
+#define OLED_BACKLIGHT_MIN  1
 #define OLED_BACKLIGHT_MAX  100
 esp_err_t oled_set_backlight(uint8_t pct);
 

@@ -23,15 +23,40 @@ are released in
   its time to complete. Every change has a build define to switch it off;
   JOURNAL.md "Camera tuning" has the board checklist. Delete
   `firmware/sdkconfig.esp32s3cam*` before building.
+- **Seed backups in the secure element and back (development image only).**
+  A new env, `esp32s3cam-color-se` (colour kit + OPTIGA Trust M on GPIO47/21),
+  adds Settings > Secure element: copy the open seed into the chip's Level 1
+  container, compare it, restore it to the session or to the vault, erase it,
+  and restore an SD `.zkv` file into the chip or into the vault. Every action
+  asks for the PIN first. The copy is sealed with the vault's own KDF and
+  AES-256-GCM under the PIN, with a salt of its own so it opens on a rebuilt
+  vault; screens show only its ZFP. Restoring into the vault never overwrites
+  or deletes a seed already there: the same seed is a no-op, another goes into
+  a new slot, a full vault refuses. The chip is left unlocked, so this copy is
+  a backup location, not extra security; the vault stays the master
+  (`firmware/docs/BACKUP.md`). Every other image is unchanged. Host-tested
+  (`sim/test_se_backup.c`); not yet run on a chip.
+- **Secure element research, and a development-only SE container.** How
+  Trezor and BitBox use the OPTIGA Trust M, and a design for using it here
+  (`firmware/docs/RESEARCH-SECURE-ELEMENT.md`,
+  `firmware/docs/RESEARCH-OPTIGA-WALLETS.md`). The driver can now store one
+  blob in data object `0xF1E0`, a reversible test of the write path that adds
+  no security, behind `LEEK_SE_CONTAINER_WRITES`. The flag is off by default,
+  so every image, the bench included, stays read-only. The container is not
+  wired to the wallet, and nothing has been written to any chip.
 - **Colour kit: a real camera view, and a backlight setting.** Scan showed
   the OLED's 1-bit preview stretched to a few bars; it is now a 200×150
   grayscale picture, auto-levelled per frame, with rows for the exposure
   (`Light <=O----> -4 23%`), capture size, frames/s, codes located and read,
   a progress bar for animated URs, and fixed hints (Too dark, Too bright,
   Hold steady, Move closer). **Settings → Preview** shows the true exposure
-  instead. **Settings → Screen** dims the backlight (10–100 %, PWM on GPIO43,
+  instead. **Settings → Screen** dims the backlight (1–100 %, finer below 10 %, PWM on GPIO43,
   the header's TX): move the module's BLK from 3V3 to TX to use it
   (WIRING-S3CAM-COLOR.md). The OLED kits are unchanged.
+  Every QR the panel shows (Receive, a signature) opens at its own
+  backlight, 5 % unless turned, so a webcam sees modules rather than glare:
+  turning the knob on the QR sets it (remembered), OK steps the module size,
+  Cancel finishes and puts the panel's own level back.
 - **Colour kit: the screen stayed dark with Bluetooth on.** The colour build
   ran out of internal RAM before the UI task started ("Failed to create UI
   task"). The panel's buffers are smaller, its SPI interrupt code no longer

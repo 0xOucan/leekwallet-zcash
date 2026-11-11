@@ -10,6 +10,15 @@ rather than from a datasheet.
 > bring-up is in `components/leek-se-optiga` and is described in
 > [OPTIGA Trust M](#optiga-trust-m--read-only-bring-up) below. The 608 text
 > is kept because the design questions are the same.
+>
+> **Update 2026-11-10: research on how wallets use the Trust M, and a
+> development-only SE container.** A summary of what Trezor and BitBox do
+> with this chip is [below](#what-other-wallets-do-with-the-trust-m) (full
+> brief: [RESEARCH-OPTIGA-WALLETS.md](RESEARCH-OPTIGA-WALLETS.md)), followed
+> by the [three vault options](#vault-options-nvs-sd-card-and-se-container),
+> the reversible Level 1 container, the hardened Level 2 design, and
+> [open questions](#open-questions-for-the-se-container). Nothing has been
+> written to any chip.
 
 Companion to [BURN-PROCEDURE.md](BURN-PROCEDURE.md), which covers the on-chip
 (eFuse / secure boot) route. The two solve overlapping problems; this one solves
@@ -176,7 +185,10 @@ up: Infineon's own host library uses both.
 
 Only volatile or read-only operations, and the component has no code path
 for anything else (no `SetDataObject`, no metadata writes, no key
-generation, no shielded-connection handshake, no arbitrary APDU):
+generation, no shielded-connection handshake, no arbitrary APDU). The one
+exception is compiled only with `LEEK_SE_CONTAINER_WRITES=1`, which only the
+development env `esp32s3cam-color-se` sets: data writes to `0xF1E0`, the [Level 1 container](#level-1-reversible-development-only).
+The default build, including the bench, does only this:
 
 - I2C scan; ACK probe at `0x30`.
 - `OpenApplication` with a fresh context.
@@ -256,6 +268,311 @@ In order, and each step stays reversible until the last:
   clear, only a power cycle helps. Acceptable for a bench; for a product, a
   GPIO on RST is worth its pin.
 
+## What other wallets do with the Trust M
+
+Summary of [RESEARCH-OPTIGA-WALLETS.md](RESEARCH-OPTIGA-WALLETS.md), which
+has the object tables, the flows step by step and every source. Trezor's code
+(GPL-3.0) was read for design and constants only.
+
+- **Trezor Safe 3 and Safe 5** keep the seed encrypted on the MCU. The Trust
+  M (V3) holds no seed; it gates a 32-byte `PIN_SECRET` (`0xF1D0`) that is
+  released only after the chip has checked a digest of the stretched PIN
+  (`STRETCHED_PIN`, `0xF1D4`, an AUTOREF object). Each check spends a
+  monotonic counter (`0xE120`, limit 16); an HMAC stretching key (`0xF1D8`)
+  has its own counter (`0xE122`), and a lifetime counter (`0xE121`, change
+  Never, 600 000) caps every stretch the chip will ever do. The MCU mixes
+  `PIN_SECRET` and the chip's outputs into the key-encryption key, so the bus
+  only ever carries one-way digests, and a fully broken chip leaves the PIN
+  as strong as MCU-only PBKDF2. Sources: Trezor's
+  [`docs/core/misc/optiga.md`](https://docs.trezor.io/trezor-firmware/core/misc/optiga.html),
+  `core/embed/sec/optiga/optiga.c`, `storage/storage.c` at `95a7289c`.
+- **Trezor's PIN objects do not need the shielded connection.** The pairing
+  secret (`0xE140`) protects only attestation and FIDO keys; if the handshake
+  fails, the PIN still works. **BitBox02 Nova** makes the opposite choice and
+  puts `Conf(E140)` on almost everything, which assumes its MCU keeps the
+  pairing secret secret. Source: `bitbox02-firmware` `src/optiga/optiga.c` at
+  `b27f5f68`.
+- **Both lock their layouts**, and only in production builds: Trezor sets
+  `LcsO = operational` under `PRODUCTION`, BitBox under `FINAL_LCSO_STATE`.
+  Until an object's `LcsO` is operational, anyone on the I2C bus can rewrite
+  its access rules (for example, make a secret readable), so an unlocked
+  layout is a demonstration, not a protection. Locking is permanent.
+- **Chip facts that shape the design** (Infineon SRM v3.70): 12 arbitrary
+  data objects of 140 bytes (`0xF1D0`-`0xF1DB`) and two of 1500 bytes
+  (`0xF1E0`, `0xF1E1`); four 8-byte counters (`0xE120`-`0xE123`), each good
+  for 600 000 updates. **V1 parts lack** Auto, AUTOREF, HMAC and AES, so the
+  pattern above needs **V3**; Express and MTR parts are V3 with `0xF1D0` and
+  `0xE140` already locked to a cloud provisioning service. No Pallas,
+  secp256k1 or BLAKE2 on the chip: signing stays on the ESP32 either way.
+- **Genuineness** is the factory certificate in `0xE0E0` chained to
+  Infineon's CA, plus a fresh challenge signed by its key in `0xE0F0`. That
+  catches a counterfeit or emulated part. It does not stop a lab: EUCLEAK
+  ([CVE-2024-45678](https://eprint.iacr.org/2024/1380)) describes a
+  side-channel leak in Infineon's ECDSA, claimed to affect the Trust M.
+- **The closest ESP32 design without a secure element** is Blockstream
+  Jade's blind PIN server, and it relies on flash encryption and secure boot.
+
+## Vault options: NVS, SD card and SE container
+
+Three places the encrypted seed can live. The first two exist and **are not
+changed by anything in this document**: no data is migrated, rewritten or
+moved out of NVS or off a card. The third is new.
+
+| | NVS vault | SD `.zkv` seed card | SE container |
+|---|---|---|---|
+| Where the ciphertext is | ESP32 flash, NVS namespace `colibri` | a file on a microSD card (`SEEDn.ZKV`) | OPTIGA data object `0xF1E0` |
+| Key | PIN → PBKDF2-HMAC-SHA512 with a per-device salt, AES-256-GCM ([VAULT.md](VAULT.md)) | passphrase → PBKDF2, AES-256-GCM (`src/zkv.h`) | Level 1: the NVS vault's key, unchanged. Level 2: that key mixed with a secret the chip releases only on a correct PIN |
+| Attempt limit | 3, in firmware; a reflash removes it | none: the card can be copied | Level 1: none beyond the NVS vault's. Level 2: a counter in the chip a reflash cannot reset |
+| What a thief with the board gets | the ciphertext (flash dump) and an offline PIN search | the ciphertext, if they also have the card | Level 1: the same as NVS. Level 2: every guess must go through the chip |
+| Capacity | 30 seeds | one seed per file | 1484 bytes: about five GCM mnemonic blobs |
+| Status | shipped | shipped | Level 1 wired to a Settings screen in one development env (`esp32s3cam-color-se`), simulator-tested, not yet run on a chip. Level 2 design only |
+
+### SE container vault slot
+
+#### Level 1: reversible, development only
+
+What exists on this branch, behind `LEEK_SE_CONTAINER_WRITES` (default 0):
+
+- **One data object, default access rules.** `0xF1E0` keeps its factory
+  metadata (read Always, change while `LcsO` < operational on V3 dumps). No
+  metadata is written, `LcsO` stays in creation, and nothing is irreversible:
+  erasing overwrites all 1500 bytes with zeros, after which the object reads
+  as empty, and the next write puts it back. The code cannot build any other
+  write (component README).
+- **The ESP32 does the encryption**, exactly as for the NVS vault: the blob
+  stored would be the same `nonce || ciphertext || tag` that
+  `vault_encrypt()` produces under the PIN-derived key. The container treats
+  it as opaque bytes and adds no crypto of its own.
+- **Unlocked means storage only, with no added security.** Anyone with I2C
+  access to the board can read `0xF1E0`, overwrite it, or rewrite its
+  metadata, because nothing is locked. A thief who can dump the flash can as
+  easily read the chip. Level 1 exists to bring up the write path, the
+  format and the failure handling on real silicon while every step can still
+  be undone; it must not be described to a user as a security feature.
+
+**Why `0xF1E0`, 1500 bytes.** It is the larger of the Trust M's two object
+sizes, so one object holds up to 1484 bytes of payload after the header:
+about five vault blobs (a 24-word mnemonic is at most 256 bytes, so its GCM
+blob is under 290). One object keeps the allowed write list to a single
+entry. It sits outside the objects Trezor's and BitBox's PIN layouts use
+(`0xF1D0`-`0xF1DB`, `0xE120`-`0xE123`, `0xE140`, `0xE200`), so Level 2 can
+take the Trezor-compatible map without moving it, and it is not one of the
+objects Express/MTR parts ship pre-locked. `0xF1E1` is left untouched as a
+spare.
+
+**Format** (`optiga-container.h`): a 16-byte header — magic `LKSC`, format
+version 1, flags (0), payload length (u16), CRC-32 of the payload, 4
+reserved zero bytes — then the payload. Reading classifies the object:
+
+| State | Meaning | Write over it? |
+|---|---|---|
+| empty | never written, or all zeros (erased) | yes |
+| ok | a valid container; the payload is returned | yes |
+| incomplete | our header with the magic still zero: a write was cut | yes |
+| damaged | our magic, but header or CRC wrong | yes |
+| foreign | anything else, including a newer format version | **no**: erase it explicitly first |
+
+The CRC catches a torn or decayed write; it is not authentication, since
+anyone who can write the object can write a matching CRC. The GCM tag inside
+the payload is what detects tampering.
+
+**Write order.** The first command erases the object and writes the header
+with the magic zeroed; the rest of the payload follows in 256-byte chunks at
+increasing offsets; the 4-byte magic goes in last; then the whole object is
+read back and compared. A power cut at any point leaves the old blob (cut
+before the first command lands) or an *incomplete* one, never something that
+reads as valid. The simulator cuts power on each command in turn to check
+this. The previous blob is gone from the first command on, which is
+acceptable only because Level 1 is a copy: the NVS vault stays the master.
+Each write costs about seven chip commands; endurance (2 million programming
+cycles per chip) is not a concern at development rates.
+
+**Hygiene.** The container never logs its contents. The object image, the
+command layer's response buffer and the link's frame buffers are wiped after
+every read, write and erase, on error paths too. All of them are static, in
+internal RAM, and under 2 KB; none is allocated, so none can land in PSRAM.
+
+**What was built** (development image `esp32s3cam-color-se` only; every
+other env compiles none of it). The user-facing description and the restore
+rules are in [BACKUP.md](BACKUP.md#the-devices-own-copies-vault-sd-card-secure-element);
+this is the design record.
+
+- **Wiring.** `-DLEEK_SE=LEEK_SE_OPTIGA` makes `LEEK_HAS_SE` 1, and
+  `src/se-optiga.c` supplies the `se.h` hook: `se_probe()` (already called once
+  from `main.c` after the panel) installs the legacy I2C driver on I2C0
+  (GPIO47/21) because on the colour kit no I2C panel did, attaches the
+  component, probes `0x30` and opens the application. The camera's SCCB stays
+  on I2C1. On an OLED kit the panel's install would be reused.
+- **Settings > Secure element**, knob and Cancel only: *Info*, *Copy seed to
+  SE*, *Compare SE copy*, *SE copy -> session*, *SE copy -> vault*, *Erase SE
+  copy*, *SD file -> SE*, *SD file -> vault*. Each asks for the PIN first,
+  checked by `pin_verify()` as at unlock (an attempt spent when wrong, the wipe
+  at the last one).
+- **What the container holds** is not the vault's NVS blob verbatim, as first
+  proposed above: that blob is keyed through the vault's per-device salt in
+  NVS, so it would die with the vault it is meant to back up. The copy
+  (`src/se-backup.h`, payload magic `LKSV` inside the `LKSC` container) carries
+  its own salt and KDF parameters and is sealed with the vault's own code:
+  `vault_derive_key_with()` (PBKDF2-HMAC-SHA512, the vault's default 2250
+  iterations, domain `leek-enc-v2`) over the PIN, and `vault_encrypt()`
+  (AES-256-GCM, fresh nonce). No new crypto. Inside the ciphertext: the ZIP 32
+  seed fingerprint (no passphrase), then the `.zkv` payload v1 (BIP39 entropy,
+  birthday, account, flags, label), so the SD file and the SE copy carry one
+  seed format. The header sits outside the AEAD (`vault_encrypt()` takes no
+  associated data), so its parameter block must be the canonical encoding and
+  the work factor within 2250-100000, or the copy is refused before any KDF.
+  Total size at most 180 bytes of the 1484.
+- **Copy** reads back and *opens* the copy with the same PIN before reporting
+  success, on top of the container's own byte compare. It refuses to write
+  over data that is not a LeekWallet copy, and asks before replacing a copy of
+  a different seed or one the PIN does not open.
+- **Restore.** *SE copy -> session* makes it the temporary seed (as an SD
+  load). *SE copy -> vault* and *SD file -> vault* go through one new vault
+  call, `wallet_store_mnemonic_if_new()`: every slot is decrypted and compared
+  first; a slot holding the seed means nothing is written; otherwise the seed
+  is appended after the last slot; a full vault or a slot that will not
+  decrypt refuses. No backup path can overwrite or delete a vault seed.
+- **A copy made under another PIN** (an earlier PIN, another board) is
+  opened by typing that PIN when asked. It is checked against the copy only,
+  with no attempt counter: at Level 1 the blob can be read off the bus and
+  attacked offline anyway, so the KDF is the only throttle, here as there.
+- **RAM.** No new static buffer above 200 bytes: the screen reuses the SD
+  screen's passphrase entry and file list, the copy is at most 180 bytes on the
+  UI task's stack, and the component's own buffers are unchanged.
+- **Tests.** `sim/test_se_backup.c` (ASan/UBSan) runs copy, compare, erase and
+  restore through the real vault on the fake NVS and the real container format
+  on a fake chip, with the wrong-PIN, foreign, damaged, cut, tampered,
+  read-back and full-vault cases. `make screens` draws the screens
+  (`render_screens_se`). The link to a real chip is `test_se_container`'s, and
+  only the board can confirm it.
+
+#### Level 2: hardened, future, spare chip first
+
+The design that would make the chip matter. Nothing of it is written; every
+step below waits for a spare V3 module that can be destroyed.
+
+**Layout**, mirroring Trezor's storage v5 so the OIDs match a published,
+reviewed table:
+
+| OID | Role | Type | Read | Change | Execute |
+|---|---|---|---|---|---|
+| `0xF1D0` | `PIN_SECRET`, 32 random bytes | AUTOREF | Auto(`F1D4`) | Always | Always |
+| `0xF1D4` | `STRETCHED_PIN`: digest of the stretched PIN | AUTOREF | Never | Auto(`F1D0`) | Luc(`E120`) |
+| `0xF1D8` | `PIN_HMAC`: HMAC stretching key | PRESSEC | Never | Auto(`F1D4`) | Luc(`E122`) |
+| `0xE120` | guess counter, limit N | UPCTR | Always | Auto(`F1D0`) | Always |
+| `0xE122` | HMAC-use counter, limit N | UPCTR | Always | Auto(`F1D4`) | Always |
+| `0xE121` | lifetime counter, 600 000 | UPCTR | Always | **Never** | Always |
+| `0xE200` | optional AES-CMAC stretching key | AES | Never | Always | Luc(`E121`) |
+| `0xF1E0` | the container: the vault blob | BSTR | Auto(`F1D4`) (option) | Auto(`F1D4`) | Always |
+
+**Unlock.** The ESP32 runs PBKDF2 over the PIN with the device salt, as the
+NVS vault does today. It sends the chip only `HMAC(stretched, "")`, never the
+stretched value. A correct digest satisfies Auto(`F1D4`), spending one count
+of `E120`; the chip then releases `PIN_SECRET`, and the HMAC step through
+`F1D8` spends `E122`. The ESP32 computes
+`KEK = HMAC(stretched, PIN_SECRET ‖ chip outputs)` and decrypts the vault
+key with it. A sniffed bus sees digests and the released secret, which is
+useless without the PIN; a chip that is fully broken leaves exactly today's
+MCU-only PBKDF2 security, never less. Gating the container's read on
+Auto(`F1D4`) as well would keep even the ciphertext off the bus without a
+correct PIN; it costs nothing in the format.
+
+**Counters.** `E120` and `E122` stop at N wrong attempts and can be reset
+only by an Auto state that a correct PIN produces. `E121` (change Never)
+bounds total guesses for the chip's life, across any reset. The firmware's
+own counter is advanced *before* the check, and the two are kept in step, as
+Trezor does; the firmware counter is a convenience a reflash can remove, the
+chip's is the limit. N is an open question below.
+
+**Why the PIN objects must not depend on the shielded connection.** This
+board has no flash encryption. The pairing secret for `0xE140` would sit in
+plain flash, so anyone with a flash dump can open a shielded session;
+`Conf(E140)` would stop only a bus sniffer who has not dumped the flash.
+Worse, by default `0xE140` is readable until it is locked. So the PIN
+objects above have no `Conf(E140)` term, as in Trezor's layout; the
+shielded connection is optional hardening for later (step 3 of
+[What comes next](#what-comes-next)), useful mainly once flash encryption
+or an eFuse-held HMAC key protects the pairing secret.
+
+**V3 required.** Auto, AUTOREF, HMAC and AES do not exist on V1, and
+Express/MTR parts arrive with `0xF1D0` and `0xE140` locked to someone else's
+provisioning. The bench should tell V1 from V3 before any Level 2 work, with
+reads only: the metadata of `0xE200` exists on V3 and not on V1 (to be
+confirmed on the bench), and an Express part shows `0xF1D0` already
+operational.
+
+**Irreversible steps.** Each one is a metadata write, and Level 1 can
+produce none of them:
+
+1. Writing an object's `LcsO` (metadata tag `0xC0`) to **operational**
+   (`0x07`): its access conditions (`D0`, `D1`, `D3`), key usage (`E1`) and
+   data type (`E8`) are frozen for the life of the chip. Protected metadata
+   update could change them later only if a trust anchor and reset type
+   were provisioned for it, which this design never does.
+2. Writing a **change** condition of **Never** (`D0 = FF`) and then locking:
+   that object's data can never be written again. In this layout, `0xE121`.
+3. A counter whose change is Never (`0xE121`) reaching its threshold: every
+   object that spends it is unusable for good. (`E120`/`E122` at their limit
+   are recoverable only with the correct PIN, which by then cannot be tried.)
+4. Writing `0xE140` (pairing secret) with read and change Never and locking
+   it: that module is tied to that secret for ever. Not part of Level 2 on
+   this board.
+5. `LcsO` to **termination** (`0x0F`): the object is unusable. Never used.
+
+Everything before these — writing data, writing metadata while `LcsO` is
+still creation, resetting counters — can be undone on an unlocked chip.
+
+**Locking is a production decision with two keys.** A build flag (say
+`LEEK_SE_PROVISION_LOCK`, default 0, never set in a development env) decides
+whether the code to lock exists at all. Even then, locking runs only after
+an explicit confirmation on the board: a screen that names the objects and
+says "This cannot be undone", confirmed with the knob, Cancel to abort. The
+metadata is read back and compared before and after writing, as Trezor's
+`optiga_set_metadata()` does.
+
+**No silent fallback.** A wallet created in OPTIGA mode records that mode in
+its authenticated vault header. If the chip is missing or does not answer,
+that wallet does not open, and the board says so: retry, or restore from the
+seed backup onto a fresh vault. It never re-keys to MCU-only by itself. A
+separate MCU-only mode (today's NVS vault) stays available for new wallets,
+chosen explicitly.
+
+**Genuineness check.** Before provisioning, and optionally at each boot:
+verify the `0xE0E0` certificate chain to Infineon's CA, then have the chip
+sign a fresh random challenge with `0xE0F0` and verify it against the
+certificate's key. The signature is volatile on the chip (it spends no
+counter, though private-key use raises the security event counter). It is a
+counterfeit check, not lab-grade protection: a relaying chip on a modified
+board passes it, and EUCLEAK suggests the key can be extracted with local
+side-channel equipment.
+
+### Open questions for the SE container
+
+For the user to decide before any of this moves forward:
+
+1. **Object choice.** `0xF1E0` alone (1484 bytes, about five wallets), or
+   also `0xF1E1` for 30 wallets? A second object widens the allowed write
+   list from one entry to two.
+2. **What Level 1 stores.** *Answered for now:* one seed, the one the user
+   copies, sealed with its own salt (see "What was built"), not the NVS blob.
+   Still open: more than one seed in the container?
+3. **Blob format.** *Answered for now:* the copy carries its own salt and KDF
+   parameters, so a container moved to another board opens there with the PIN
+   it was made under, by design: it is a backup. A device identifier was not
+   added.
+4. **N for Level 2.** The firmware wipes after 3 today; Trezor allows 16,
+   BitBox 10. A hardware limit is permanent for the secret it guards, so this
+   wants deciding with the backup flow in view (as for the 608 above).
+5. **Parts.** Is the bench module V3, V1 or Express? Buy two or three plain
+   V3 parts (e.g. SLS 32AIA010MK) as spares before any metadata write.
+6. **eFuse HMAC key for the pairing secret.** Burning one eFuse key block
+   would let the S3's HMAC peripheral derive the pairing secret and a
+   hardware salt without enabling flash encryption. Worth it, given that
+   eFuse burns are permanent (BURN-PROCEDURE.md)?
+7. **Release policy.** Proposed: the Level 1 flag never appears in a
+   released image; Level 2 ships only with its own review and a tested
+   brick-and-restore path.
+
 ## Sources
 
 - Microchip ATECC608B datasheet (`SlotConfig`, `Lock`, monotonic counters,
@@ -268,3 +585,7 @@ In order, and each step stays reversible until the last:
 - Trezor firmware's OPTIGA object layout and PIN design (reference only; the
   code is GPL-3.0 and was not copied):
   <https://github.com/trezor/trezor-firmware/blob/main/docs/core/misc/optiga.md>
+- The 2026-11-10 brief, with commit hashes and every primary source for the
+  sections above: [RESEARCH-OPTIGA-WALLETS.md](RESEARCH-OPTIGA-WALLETS.md)
+  (Trezor `95a7289c`, BitBox02 `b27f5f68`, Infineon SRM v3.70, EUCLEAK,
+  Blockstream Jade)

@@ -14,7 +14,8 @@
  * Exactly one implementation is linked, chosen by LEEK_SE (board.h):
  *
  *   - LEEK_SE_NONE: se-none.c, which reports nothing fitted and touches no
- *     pin. Every build today.
+ *     pin. Every build but the development image esp32s3cam-color-se.
+ *   - LEEK_SE_OPTIGA: se-optiga.c, over components/leek-se-optiga.
  *   - anything else: the component that drives that part provides these two
  *     functions, and se-none.c compiles to nothing so the symbols cannot
  *     collide. It finds its bus in board.h (PIN_I2C_SDA / PIN_I2C_SCL).
@@ -24,8 +25,10 @@
  * without the part still links and still says why it has none.
  */
 
-#ifndef LEEK_SE_H
-#define LEEK_SE_H
+/* Not LEEK_SE_H: that is components/leek-se-optiga/include/leek-se.h, which
+ * se-optiga.c includes beside this one. */
+#ifndef LEEK_SE_HOOK_H
+#define LEEK_SE_HOOK_H
 
 typedef enum {
     SE_NOT_FITTED = 0,   /* this build drives no secure element */
@@ -40,4 +43,15 @@ se_status_t se_probe(void);
 /** A short name for the log: the part's, or "none". */
 const char *se_name(void);
 
-#endif /* LEEK_SE_H */
+/**
+ * The part's identity and state as short screen lines (at most
+ * SE_LINE_LEN - 1 characters each): found or not, maker, lifecycle state,
+ * security event counter. Never a secret, never the container's contents.
+ * Returns the number of lines written; 0 with no part fitted. Blocks for a
+ * few hundred milliseconds on a real chip, so the caller shows something
+ * first.
+ */
+#define SE_LINE_LEN 22
+int se_info_lines(char lines[][SE_LINE_LEN], int max);
+
+#endif /* LEEK_SE_HOOK_H */
