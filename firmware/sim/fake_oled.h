@@ -18,6 +18,7 @@
 #ifndef FAKE_OLED_H
 #define FAKE_OLED_H
 
+#include "oled.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -32,6 +33,9 @@ const char *fake_oled_row(int page);
 
 /** Substring search within one row. */
 bool fake_oled_row_contains(int page, const char *needle);
+
+/** The role text cell `cell` (0..20) of row `page` was drawn in. */
+oled_role_t fake_oled_role_at(int page, int cell);
 
 /** Substring search across every row. */
 bool fake_oled_contains(const char *needle);

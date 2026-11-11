@@ -9,6 +9,9 @@
 #include <string.h>
 
 static char    text[FAKE_OLED_ROWS][FAKE_OLED_COLS + 1];
+/* The role each text cell was drawn in, as oled-core keeps per column. */
+static uint8_t text_role[FAKE_OLED_ROWS][FAKE_OLED_COLS];
+static uint8_t current_role;
 static uint8_t fb[OLED_PAGES][OLED_WIDTH];   /* SSD1306 order: one byte = 8 rows */
 static char    qr_data[400];   /* a version 10 frame is 395 characters */
 static uint8_t qr_version, qr_scale;
@@ -31,6 +34,8 @@ static char trimmed[FAKE_OLED_ROWS][FAKE_OLED_COLS + 1];
 
 static void blank_text(void)
 {
+    memset(text_role, 0, sizeof text_role);
+    current_role = 0;
     for (int p = 0; p < FAKE_OLED_ROWS; p++) {
         memset(text[p], ' ', FAKE_OLED_COLS);
         text[p][FAKE_OLED_COLS] = '\0';
@@ -192,8 +197,20 @@ esp_err_t oled_set_fast_refresh(bool fast)
     return ESP_OK;
 }
 
-/* Roles only colour a colour panel; the text grid has none to show. */
-void oled_set_role(oled_role_t role) { (void)role; }
+/* Roles only colour a colour panel; the grid keeps them per cell so a test
+   can ask what colour a reading was drawn in. */
+void oled_set_role(oled_role_t role)
+{
+    current_role = (role < OLED_ROLE_COUNT) ? (uint8_t)role : OLED_ROLE_AUTO;
+}
+
+oled_role_t fake_oled_role_at(int page, int cell)
+{
+    if (page < 0 || page >= FAKE_OLED_ROWS || cell < 0 || cell >= FAKE_OLED_COLS) {
+        return OLED_ROLE_AUTO;
+    }
+    return (oled_role_t)text_role[page][cell];
+}
 
 esp_err_t oled_set_contrast(uint8_t level)
 {
@@ -227,6 +244,7 @@ esp_err_t oled_draw_char(char c)
         int cell = cursor_col / 6;
         if (cell < FAKE_OLED_COLS) {
             text[cursor_page][cell] = c;
+            text_role[cursor_page][cell] = current_role;
         }
     }
     /* The real driver wraps by advancing 6 px and stopping at the edge. */
@@ -244,6 +262,7 @@ esp_err_t oled_draw_string(uint8_t page, uint8_t col, const char *str)
     int cell = col / 6;
     for (; *str && cell < FAKE_OLED_COLS; str++, cell++) {
         text[page][cell] = *str;
+        if (page < FAKE_OLED_ROWS) { text_role[page][cell] = current_role; }
     }
     return ESP_OK;
 }

@@ -1547,6 +1547,23 @@ static void test_colour_scan_is_a_grayscale_viewfinder(void)
                  "row 5 is not the exposure bar: \"%s\"", fake_oled_row(5));
     CHECK_SCREEN(fake_oled_row_contains(6, "QVGA --fps s:0 r:0"),
                  "row 6 is not the counters: \"%s\"", fake_oled_row(6));
+    /* The percentage is in its level's colour, the bar in body text. */
+    {
+        char row5[FAKE_OLED_COLS + 2];
+        snprintf(row5, sizeof row5, "%s", fake_oled_row(5));
+        const char *pct_at = strrchr(row5, '%');
+        CHECK(pct_at != NULL, "row 5 has no percentage: \"%s\"", row5);
+        if (pct_at) {
+            const unsigned pct = (unsigned)atoi(pct_at - 2);
+            const oled_role_t want = (pct >= 25 && pct <= 60) ? OLED_ROLE_GOOD
+                                   : (pct >= 15 && pct <= 85) ? OLED_ROLE_WARN
+                                                              : OLED_ROLE_DANGER;
+            const int cell = 0 + (int)(pct_at - row5);   /* row 5 is 21 wide: no lead */
+            CHECK(fake_oled_role_at(5, cell) == want && fake_oled_role_at(5, cell - 1) == want,
+                  "%u%% drawn in role %d, not %d", pct, (int)fake_oled_role_at(5, cell), (int)want);
+            CHECK(fake_oled_role_at(5, 0) == OLED_ROLE_TEXT, "the bar is not body text");
+        }
+    }
     /* A bright screen, small in frame, nothing located. */
     CHECK_SCREEN(fake_oled_row_contains(7, "Move closer"),
                  "row 7 gives no hint: \"%s\"", fake_oled_row(7));

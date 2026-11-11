@@ -4452,8 +4452,22 @@ static void scan_render_color(void)
 
     char line[VIEWFINDER_LINE];
     viewfinder_exposure_line(camera_exposure_bias(), scan_gray_stats.mean, line);
-    oled_set_role(OLED_ROLE_TEXT);
-    oled_draw_string_centered(5, line);
+    /* The bar in body text, its percentage in the level's grade: green
+       good, amber medium, red bad (viewfinder_level_grade()). Drawn as two
+       strings at the columns a centred one would use. */
+    const viewfinder_level_t grade = viewfinder_level_grade(scan_gray_stats.mean);
+    const oled_role_t grade_role = grade == VIEWFINDER_LEVEL_GOOD   ? OLED_ROLE_GOOD
+                                 : grade == VIEWFINDER_LEVEL_MEDIUM ? OLED_ROLE_WARN
+                                                                    : OLED_ROLE_DANGER;
+    {
+        const size_t n = strlen(line);
+        const size_t head = n > VIEWFINDER_EXPOSURE_PCT_CHARS ? n - VIEWFINDER_EXPOSURE_PCT_CHARS : 0;
+        const uint8_t col0 = (uint8_t)((OLED_WIDTH - n * 6) / 2);
+        oled_set_role(OLED_ROLE_TEXT);
+        oled_draw_string(5, col0, line);
+        oled_set_role(grade_role);
+        oled_draw_string(5, (uint8_t)(col0 + head * 6), line + head);
+    }
 
     uint32_t frames = 0, read = 0, seen = 0;
     camera_stats(&frames, &read, &seen);
@@ -4472,7 +4486,9 @@ static void scan_render_color(void)
         oled_set_role(OLED_ROLE_TEXT);
         oled_draw_string_centered(7, scan_status);
     } else {
-        oled_set_role(OLED_ROLE_WARN);
+        /* Amber, or red when the level itself is bad ("Too dark" on a
+           red percentage reads as one message). */
+        oled_set_role(grade == VIEWFINDER_LEVEL_BAD ? OLED_ROLE_DANGER : OLED_ROLE_WARN);
         oled_draw_string_centered(7, hint);
     }
     oled_set_role(OLED_ROLE_AUTO);

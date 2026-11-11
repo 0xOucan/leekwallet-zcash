@@ -40,6 +40,7 @@ static const PanelPalette LEEK_PALETTE = {
         [OLED_ROLE_WARN]   = PANEL_RGB565(0xFF, 0xB3, 0x40),
         [OLED_ROLE_OK]     = PANEL_RGB565(0x9C, 0xE0, 0x7A),
         [OLED_ROLE_DANGER] = PANEL_RGB565(0xF2, 0x4C, 0x3D),
+        [OLED_ROLE_GOOD]   = PANEL_RGB565(57, 255, 122),       /* #39FF7A, logo-anim.ts GREEN */
     },
     .select_bg = PANEL_RGB565(0x3F, 0x6E, 0x31),               /* the logo's dark leek */
     .select_fg = PANEL_RGB565(0xFF, 0xFF, 0xFF),

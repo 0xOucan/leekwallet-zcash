@@ -246,6 +246,7 @@ typedef enum {
     OLED_ROLE_WARN,      /* look before you continue */
     OLED_ROLE_OK,        /* done, approved */
     OLED_ROLE_DANGER,    /* destructive, refused, failed */
+    OLED_ROLE_GOOD,      /* a reading in range: the website's bright green */
     OLED_ROLE_COUNT
 } oled_role_t;
 
