@@ -139,8 +139,11 @@ static const struct { uint16_t w, h; framesize_t size; } FRAME_MODES[] = {
 #  define ZOOM_START 0
 #endif
 static const uint8_t frame_mode = FRAME_MODE_START;
-/* The zoom level (camera-tune.h), 1x every time the camera starts. */
+/* The zoom level (camera-tune.h) in use, and the one the next start opens
+   at: 1x after power-up, then the last one the knob chose (the user's
+   pick for their screen and camera), until power-off. Not saved. */
 static uint8_t zoom_level;
+static uint8_t zoom_wanted = ZOOM_START;
 #define FRAME_W     (FRAME_MODES[frame_mode].w)
 #define FRAME_H     (FRAME_MODES[frame_mode].h)
 #define FRAME_SIZE  (FRAME_MODES[frame_mode].size)
@@ -666,11 +669,11 @@ bool camera_start(void)
                  sensor->status.vflip);
     }
 
-    /* 1x on every start (the Scan screen opens at the full field); the
-       bench image may start zoomed. */
+    /* The Scan screen opens at the zoom last chosen (1x after power-up). A
+       sensor that refuses the window stays at the full field. */
     zoom_level = 0;
-    if (ZOOM_START > 0 && ZOOM_START < CAMERA_ZOOM_COUNT && apply_zoom(ZOOM_START)) {
-        zoom_level = ZOOM_START;
+    if (zoom_wanted > 0 && zoom_wanted < CAMERA_ZOOM_COUNT && apply_zoom(zoom_wanted)) {
+        zoom_level = zoom_wanted;
     }
 
     quirc_ctx = quirc_new();
@@ -1115,11 +1118,13 @@ bool camera_next_zoom(void)
     const uint8_t next = camera_tune_zoom_next(zoom_level);
     if (apply_zoom(next)) {
         zoom_level = next;
+        zoom_wanted = next;
         return true;
     }
     /* Back to the full field, which is the driver's own QVGA window. */
     (void)apply_zoom(0);
     zoom_level = 0;
+    zoom_wanted = 0;
     return false;
 }
 
