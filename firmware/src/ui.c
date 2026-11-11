@@ -56,6 +56,7 @@
 #endif
 #include "camera.h"
 #include "viewfinder.h"
+#include "scan-timing.h"
 #include "esp_random.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -4341,11 +4342,39 @@ static void scan_color_reset(void)
 }
 #endif
 
+/* Time to a complete animated UR (scan-timing.h), logged over USB serial
+ * once per message: the number the camera tuning is meant to move. */
+static ScanUrClock scan_ur_clock;
+
+static void scan_ur_log_done(void)
+{
+    uint32_t frames = 0;
+    camera_stats(&frames, NULL, NULL);
+    ScanUrResult r;
+    if (scan_ur_done(&scan_ur_clock, esp_timer_get_time(), frames,
+                     airgap_scan_total(), &r)) {
+        char line[96];
+        scan_ur_format(&r, line, sizeof line);
+        ESP_LOGI(TAG, "%s", line);
+    }
+}
+
 /* One decoded QR string: the same function service_scan() calls per frame,
  * named so the host can drive it without a camera. */
 static void scan_handle(const char *ur, size_t len)
 {
-    switch (airgap_scan_feed(ur, len)) {
+    const AirgapScan res = airgap_scan_feed(ur, len);
+    if (res == AIRGAP_SCAN_ACCEPTED || res == AIRGAP_SCAN_REDUNDANT ||
+        res == AIRGAP_SCAN_PCZT) {
+        uint32_t frames = 0;
+        camera_stats(&frames, NULL, NULL);
+        scan_ur_part(&scan_ur_clock, esp_timer_get_time(), frames,
+                     res == AIRGAP_SCAN_REDUNDANT);
+    }
+    if (res == AIRGAP_SCAN_PCZT) {
+        scan_ur_log_done();
+    }
+    switch (res) {
         case AIRGAP_SCAN_ACCEPTED:
             snprintf(scan_status, sizeof scan_status, "%lu parts to go",
                      (unsigned long)airgap_scan_remaining());
@@ -4427,6 +4456,7 @@ static void qr_sign_review_done(bool approved)
 static void screen_scan_enter(void)
 {
     airgap_scan_reset();
+    scan_ur_reset(&scan_ur_clock);
     scan_preview_live = false;
 #if !BOARD_HAS_SPI_PANEL
     memset(scan_preview, 0, sizeof scan_preview);
@@ -6816,9 +6846,14 @@ void ui_task(void *pvParameters)
 
         service_host_lock();
 
-        /* Re-render if needed */
+        /* Re-render if needed. On the Scan screen timed, as the "draw" stage
+         * of the camera's once-a-second line (scan-timing.h). */
         if (ui_needs_render()) {
+            const int64_t t_draw = esp_timer_get_time();
             ui_render();
+            if (current_screen == SCREEN_SCAN) {
+                camera_note_draw_us((uint32_t)(esp_timer_get_time() - t_draw));
+            }
         }
 
         /* After the repaint, never before: the work deferred here is deferred

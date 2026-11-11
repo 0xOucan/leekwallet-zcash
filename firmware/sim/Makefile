@@ -40,7 +40,7 @@ VAULT_CRYPTO :=                 $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                 $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/aes_modes.c \
                 $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/gf128mul.c
 
-TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_zcash_keys test_zcash_pczt test_zcash_account
+TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_scan_timing test_zcash_keys test_zcash_pczt test_zcash_account
 
 all: $(addprefix $(BUILD)/,$(TESTS))
 
@@ -417,6 +417,11 @@ $(BUILD)/test_button: test_button.c esp_stubs.c ../src/button.c | $(BUILD)
 $(BUILD)/test_viewfinder: test_viewfinder.c ../src/viewfinder.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
+# Per-stage scan timing and the time-to-complete-UR clock: arithmetic and
+# formatting only, like the viewfinder.
+$(BUILD)/test_scan_timing: test_scan_timing.c ../src/scan-timing.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
+
 # Against the real vault, not a stub. src/pin.c no longer stores a verifier of
 # its own, so "does this PIN open the device" is now a question only the real
 # leek-wallet.c can answer - and test_no_fast_verifier_in_nvs() inspects the
@@ -458,7 +463,7 @@ UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
                   ../src/cbor.c ../src/device-wipe.c \
                   ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
-                  ../src/airgap.c ../src/camera.c ../src/viewfinder.c ../src/ur-decoder.c \
+                  ../src/airgap.c ../src/camera.c ../src/viewfinder.c ../src/scan-timing.c ../src/ur-decoder.c \
                   $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                   $(CRYPTO)/sha2.c $(CRYPTO)/pbkdf2.c \
                   $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c \

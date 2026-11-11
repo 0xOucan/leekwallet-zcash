@@ -115,6 +115,13 @@ bool camera_preview_true_exposure(void);
  */
 void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located);
 
+/**
+ * The UI's render + panel flush time for one Scan screen frame, added to the
+ * per-stage timing camera.c logs once a second (scan-timing.h). No-op when
+ * the camera is stopped.
+ */
+void camera_note_draw_us(uint32_t us);
+
 #ifdef LEEK_HOST_TEST
 /*
  * The host build has no sensor; these stand one in for the UI suites. With a

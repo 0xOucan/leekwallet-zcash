@@ -50,8 +50,30 @@ bool camera_preview_true_exposure(void) { return preview_true; }
 #include "quirc.h"
 
 #include "viewfinder.h"
+#include "scan-timing.h"
+
+#include "freertos/FreeRTOS.h"
 
 static const char *TAG = "camera";
+
+/*
+ * Per-stage frame timing (scan-timing.h), one line a second over USB serial.
+ * Under a spinlock because the UI task adds its draw time from another task
+ * than the one decoding once decode has its own task, and a 64-bit add is
+ * not atomic on this core.
+ */
+static ScanTiming timing;
+static portMUX_TYPE timing_mux = portMUX_INITIALIZER_UNLOCKED;
+static int64_t timing_window_us;
+static uint32_t timing_window_frames;
+
+static void timing_add(scan_stage_t stage, int64_t t0_us)
+{
+    const int64_t dt = esp_timer_get_time() - t0_us;
+    portENTER_CRITICAL(&timing_mux);
+    scan_timing_add(&timing, stage, dt > 0 ? (uint32_t)dt : 0);
+    portEXIT_CRITICAL(&timing_mux);
+}
 
 /*
  * QVGA grayscale, which is what both halves of this file want.
@@ -230,6 +252,72 @@ static bool sccb_recover(void)
     return ok;
 }
 
+/*
+ * What the sensor's AEC/AGC settled on, read back once a second: exposure in
+ * lines (0x3500-0x3502, line x 16) and the real gain (0x350A/B, 0x10 = 1x),
+ * printed as gain x10. These are the numbers that show whether the gain
+ * ceiling and the shutter cap are doing what camera_start() asked.
+ */
+static void sensor_exposure(unsigned *lines, unsigned *gain_x10)
+{
+    *lines = 0;
+    *gain_x10 = 0;
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor == NULL || sensor->get_reg == NULL) {
+        return;
+    }
+    const int e0 = sensor->get_reg(sensor, 0x3500, 0xFF);
+    const int e1 = sensor->get_reg(sensor, 0x3501, 0xFF);
+    const int e2 = sensor->get_reg(sensor, 0x3502, 0xFF);
+    const int g0 = sensor->get_reg(sensor, 0x350A, 0xFF);
+    const int g1 = sensor->get_reg(sensor, 0x350B, 0xFF);
+    if (e0 >= 0 && e1 >= 0 && e2 >= 0) {
+        *lines = ((unsigned)(e0 & 0x0F) << 12 | (unsigned)e1 << 4 | (unsigned)e2 >> 4);
+    }
+    if (g0 >= 0 && g1 >= 0) {
+        *gain_x10 = (((unsigned)(g0 & 0x03) << 8) | (unsigned)g1) * 10u / 16u;
+    }
+}
+
+/*
+ * One line a second while scanning, so a bench session is diagnosable over
+ * the cable without swapping in the benchmark image. `s` (located) is the
+ * useful count: none means the code is too small, too dim or out of frame;
+ * located without `r` (decodes) means it is seen and its modules are not
+ * resolved. Nothing here is derived from a decoded payload.
+ */
+static void timing_log_maybe(void)
+{
+    const int64_t now_us = esp_timer_get_time();
+    if (timing_window_us == 0) {
+        timing_window_us = now_us;
+        timing_window_frames = stat_frames;
+        return;
+    }
+    const int64_t dt = now_us - timing_window_us;
+    if (dt < 1000000) {
+        return;
+    }
+    ScanTiming snap;
+    portENTER_CRITICAL(&timing_mux);
+    snap = timing;
+    scan_timing_reset(&timing);
+    portEXIT_CRITICAL(&timing_mux);
+
+    char stages[128];
+    scan_timing_format(&snap, stages, sizeof stages);
+    const uint32_t fps_x10 = (uint32_t)((uint64_t)(stat_frames - timing_window_frames) *
+                                        10000000u / (uint64_t)dt);
+    unsigned lines = 0, gain_x10 = 0;
+    sensor_exposure(&lines, &gain_x10);
+    ESP_LOGI(TAG, "scan %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux",
+             (unsigned)(fps_x10 / 10), (unsigned)(fps_x10 % 10), stages,
+             (unsigned)stat_located, (unsigned)stat_decodes,
+             lines, gain_x10 / 10, gain_x10 % 10);
+    timing_window_us = now_us;
+    timing_window_frames = stat_frames;
+}
+
 #ifndef BOARD_VIEWFINDER_ROTATE
 #define BOARD_VIEWFINDER_ROTATE 0
 #endif
@@ -406,6 +494,8 @@ bool camera_start(void)
     stat_frames = 0;
     stat_decodes = 0;
     stat_located = 0;
+    scan_timing_reset(&timing);
+    timing_window_us = 0;
     running = true;
     ESP_LOGI(TAG, "camera up: %dx%d grayscale", FRAME_W, FRAME_H);
     return true;
@@ -441,19 +531,14 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
         return false;
     }
 
+    const int64_t t_wait = esp_timer_get_time();
     camera_fb_t *fb = esp_camera_fb_get();
     if (fb == NULL) {
         return false;
     }
+    timing_add(SCAN_STAGE_WAIT, t_wait);
     stat_frames++;
 
-    /*
-     * One line a second while scanning, so a bench session is diagnosable over
-     * the cable without swapping in the benchmark image. `located` is the
-     * useful number: none means the code is too small, too dim or out of
-     * frame; located without decodes means it is seen and its modules are not
-     * resolved. Nothing here is derived from a decoded payload.
-     */
     /*
      * Optional: a frame every so often while scanning, without anyone pressing
      * anything. Off by default; built with -DCAMERA_AUTODUMP_MS=5000 for a
@@ -474,16 +559,7 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
     }
 #endif
 
-    {
-        static int64_t last_log_us;
-        const int64_t now_us = esp_timer_get_time();
-        if (now_us - last_log_us > 1000000) {
-            last_log_us = now_us;
-            ESP_LOGI(TAG, "scanning: %u frames, %u located, %u decoded",
-                     (unsigned)stat_frames, (unsigned)stat_located,
-                     (unsigned)stat_decodes);
-        }
-    }
+    timing_log_maybe();
 
     bool got = false;
 
@@ -502,6 +578,7 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
 
         if (CAMERA_PREVIEW_EVERY > 0 &&
             ++preview_tick % CAMERA_PREVIEW_EVERY == 0) {
+            const int64_t t_prev = esp_timer_get_time();
 #if BOARD_HAS_SPI_PANEL
             /* A millisecond or two at QVGA: one pass over the frame for the
                box average, one over the 30 KB preview for the stretch. */
@@ -514,6 +591,7 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
             viewfinder_render(fb->buf, FRAME_W, FRAME_H, preview);
             preview_fresh = true;
 #endif
+            timing_add(SCAN_STAGE_PREVIEW, t_prev);
         }
 
         /*
@@ -526,12 +604,17 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
          * identify stage on the very next line costs.
          */
         int w = 0, h = 0;
+        const int64_t t_copy = esp_timer_get_time();
         uint8_t *img = quirc_begin(quirc_ctx, &w, &h);
         memcpy(img, fb->buf, (size_t)w * (size_t)h);
+        timing_add(SCAN_STAGE_COPY, t_copy);
+        const int64_t t_ident = esp_timer_get_time();
         quirc_end(quirc_ctx);
+        timing_add(SCAN_STAGE_IDENTIFY, t_ident);
 
         const int n = quirc_count(quirc_ctx);
         stat_located += (uint32_t)n;
+        const int64_t t_dec = esp_timer_get_time();
         for (int i = 0; i < n && !got; i++) {
             quirc_extract(quirc_ctx, i, &scan_code);
             if (quirc_decode(&scan_code, &scan_data) != QUIRC_SUCCESS) {
@@ -563,10 +646,23 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
             }
             got = true;
         }
+        if (n > 0) {
+            timing_add(SCAN_STAGE_DECODE, t_dec);
+        }
     }
 
     esp_camera_fb_return(fb);
     return got;
+}
+
+void camera_note_draw_us(uint32_t us)
+{
+    if (!running) {
+        return;
+    }
+    portENTER_CRITICAL(&timing_mux);
+    scan_timing_add(&timing, SCAN_STAGE_DRAW, us);
+    portEXIT_CRITICAL(&timing_mux);
 }
 
 void camera_set_orientation(uint8_t mode)
@@ -824,6 +920,7 @@ void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located)
 #endif
 
 void camera_set_orientation(uint8_t mode) { (void)mode; }
+void camera_note_draw_us(uint32_t us) { (void)us; }
 void camera_dump_frame(void) { }
 uint8_t camera_orientation(void) { return 0; }
 #ifdef LEEK_HOST_TEST
