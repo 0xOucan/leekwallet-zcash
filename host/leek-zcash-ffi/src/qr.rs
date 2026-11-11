@@ -293,10 +293,8 @@ fn progress(d: &Decoder, state: QrPartState, error: Option<String>) -> QrProgres
     let (received, total) = (d.received(), d.seq_len());
     let percent = if state == QrPartState::Complete {
         100
-    } else if total == 0 {
-        0
     } else {
-        (received * 100 / total).min(99) as u8
+        (received * 100).checked_div(total).map_or(0, |p| p.min(99) as u8)
     };
     QrProgress { state, received, total, percent, error }
 }
