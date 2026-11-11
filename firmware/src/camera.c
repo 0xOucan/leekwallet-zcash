@@ -49,6 +49,7 @@ bool camera_preview_true_exposure(void) { return preview_true; }
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "quirc.h"
+#include "quirc_stages.h"   /* empty unless a QUIRC_* option is on */
 
 #include "viewfinder.h"
 #include "scan-timing.h"
@@ -75,6 +76,104 @@ static void timing_add(scan_stage_t stage, int64_t t0_us)
     scan_timing_add(&timing, stage, dt > 0 ? (uint32_t)dt : 0);
     portEXIT_CRITICAL(&timing_mux);
 }
+
+/*
+ * Inside `ident`, by quirc stage, and why located codes fail to decode.
+ *
+ * Only in images built with the CMake variable QUIRC_STAGE_TIMING (envs
+ * esp32s3cam-color-qstages and -qfast; components/quirc/CMakeLists.txt),
+ * which add a second line a second under the `scan` one:
+ *
+ *   I camera: quirc thr 6.1 find 14.2 grid 0.1 jig 160.3/171 ms | fail fmt 0 ecc 12 other 1 | fast 0
+ *
+ * thr = Otsu histogram + binarisation, find = the finder-pattern scan with
+ * its flood fills, grid = grouping and alignment search, jig = the grid fit
+ * (jiggle_perspective), each a mean in ms per frame (jig also its max).
+ * `fail` sorts quirc_decode()'s errors on located codes: fmt is the format
+ * word's ECC (the grid itself is misread: size, perspective, a torn frame),
+ * ecc the data ECC (the grid is right and too many modules are wrong: blur,
+ * glare, threshold), other the rest. `fast 1` is a QUIRC_FAST_PERSPECTIVE
+ * image.
+ */
+#ifdef QUIRC_STAGE_TIMING
+
+static uint64_t qstage_sum_us[QUIRC_STAGE_COUNT];
+static uint32_t qstage_jig_max_us;
+static uint32_t qstage_frames;
+static uint32_t qfail_fmt, qfail_ecc, qfail_other;
+
+static uint32_t qstage_clock_us(void) { return (uint32_t)esp_timer_get_time(); }
+
+static void qstage_add(void)
+{
+    portENTER_CRITICAL(&timing_mux);
+    for (int i = 0; i < QUIRC_STAGE_COUNT; i++) {
+        qstage_sum_us[i] += quirc_stage_time[i];
+    }
+    if (quirc_stage_time[QUIRC_STAGE_JIGGLE] > qstage_jig_max_us) {
+        qstage_jig_max_us = quirc_stage_time[QUIRC_STAGE_JIGGLE];
+    }
+    qstage_frames++;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+static void qstage_fail(quirc_decode_error_t err)
+{
+    portENTER_CRITICAL(&timing_mux);
+    if (err == QUIRC_ERROR_FORMAT_ECC) {
+        qfail_fmt++;
+    } else if (err == QUIRC_ERROR_DATA_ECC) {
+        qfail_ecc++;
+    } else {
+        qfail_other++;
+    }
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+/* A mean in tenths of a millisecond. */
+static unsigned qstage_x10(uint64_t sum_us, uint32_t n)
+{
+    return n ? (unsigned)(sum_us / n / 100u) : 0u;
+}
+
+static void qstage_log(void)
+{
+    uint64_t sum[QUIRC_STAGE_COUNT];
+    portENTER_CRITICAL(&timing_mux);
+    memcpy(sum, qstage_sum_us, sizeof sum);
+    const uint32_t n = qstage_frames, jmax = qstage_jig_max_us;
+    const uint32_t fmt = qfail_fmt, ecc = qfail_ecc, other = qfail_other;
+    memset(qstage_sum_us, 0, sizeof qstage_sum_us);
+    qstage_frames = 0;
+    qstage_jig_max_us = 0;
+    portEXIT_CRITICAL(&timing_mux);
+    const unsigned thr = qstage_x10(sum[QUIRC_STAGE_THRESHOLD], n);
+    const unsigned fnd = qstage_x10(sum[QUIRC_STAGE_FINDER], n);
+    const unsigned grd = qstage_x10(sum[QUIRC_STAGE_GRID], n);
+    const unsigned jig = qstage_x10(sum[QUIRC_STAGE_JIGGLE], n);
+#ifdef QUIRC_FAST_PERSPECTIVE
+    const int fast = 1;
+#else
+    const int fast = 0;
+#endif
+    /* fail counts are cumulative since the camera started, like s: and r:. */
+    ESP_LOGI(TAG, "quirc thr %u.%u find %u.%u grid %u.%u jig %u.%u/%u ms | "
+                  "fail fmt %u ecc %u other %u | fast %d",
+             thr / 10, thr % 10, fnd / 10, fnd % 10, grd / 10, grd % 10,
+             jig / 10, jig % 10, (unsigned)((jmax + 500u) / 1000u),
+             (unsigned)fmt, (unsigned)ecc, (unsigned)other, fast);
+}
+
+static void qstage_reset(void)
+{
+    portENTER_CRITICAL(&timing_mux);
+    memset(qstage_sum_us, 0, sizeof qstage_sum_us);
+    qstage_frames = 0;
+    qstage_jig_max_us = 0;
+    qfail_fmt = qfail_ecc = qfail_other = 0;
+    portEXIT_CRITICAL(&timing_mux);
+}
+#endif
 
 /*
  * QVGA grayscale, which is what both halves of this file want.
@@ -470,6 +569,9 @@ static void timing_log_maybe(void)
              (unsigned)stat_located, (unsigned)stat_decodes,
              lines, gain_x10 / 10, gain_x10 % 10,
              (unsigned)esp_rom_get_cpu_ticks_per_us());
+#ifdef QUIRC_STAGE_TIMING
+    qstage_log();
+#endif
     timing_window_us = now_us;
     timing_window_frames = stat_frames;
 }
@@ -673,6 +775,26 @@ bool camera_start(void)
         zoom_level = ZOOM_START;
     }
 
+#ifdef QUIRC_STAGE_TIMING
+    quirc_stage_clock = qstage_clock_us;
+    qstage_reset();
+#endif
+#ifdef QUIRC_FAST_PERSPECTIVE
+    /* Once per boot, a few ms: the inline divide and round against the ROM's
+       __divsf3 and newlib's rintf on this CPU (quirc_stages.h). Anything
+       but 0 means this image reads codes differently from upstream quirc. */
+    static bool fast_checked;
+    if (!fast_checked) {
+        fast_checked = true;
+        const int bad = quirc_fast_selftest(20000);
+        if (bad == 0) {
+            ESP_LOGI(TAG, "quirc fast perspective: self-test 0 of 80000 differ");
+        } else {
+            ESP_LOGE(TAG, "quirc fast perspective: self-test %d of 80000 DIFFER", bad);
+        }
+    }
+#endif
+
     quirc_ctx = quirc_new();
     if (quirc_ctx == NULL || quirc_resize(quirc_ctx, FRAME_W, FRAME_H) < 0) {
         /* quirc's image and pixel planes are 77 KB each and land in PSRAM.
@@ -846,15 +968,26 @@ static bool process_frame(char *out, size_t out_size, size_t *out_len)
         const int64_t t_ident = esp_timer_get_time();
         quirc_end(quirc_ctx);
         timing_add(SCAN_STAGE_IDENTIFY, t_ident);
+#ifdef QUIRC_STAGE_TIMING
+        qstage_add();
+#endif
 
         const int n = quirc_count(quirc_ctx);
         stat_located += (uint32_t)n;
         const int64_t t_dec = esp_timer_get_time();
         for (int i = 0; i < n && !got; i++) {
             quirc_extract(quirc_ctx, i, &scan_code);
+#ifdef QUIRC_STAGE_TIMING
+            const quirc_decode_error_t qerr = quirc_decode(&scan_code, &scan_data);
+            if (qerr != QUIRC_SUCCESS) {
+                qstage_fail(qerr);
+                continue;   /* blur, glare, a half-refreshed screen */
+            }
+#else
             if (quirc_decode(&scan_code, &scan_data) != QUIRC_SUCCESS) {
                 continue;   /* blur, glare, a half-refreshed screen */
             }
+#endif
             stat_decodes++;
 
             const size_t len = (size_t)scan_data.payload_len;
