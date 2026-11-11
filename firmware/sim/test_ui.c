@@ -1835,10 +1835,10 @@ static void test_colour_qr_screens(void)
         CHECK(strcmp(fake_oled_qr_caption(), want) == 0, "the caption is \"%s\", not \"%s\"",
               fake_oled_qr_caption(), want);
     }
-    /* A turn steps the colour modes: still, v6 5px, v4, v3, v9, and back. */
-    press(BUTTON_DOWN);
+    /* The push steps the density: still, v6 5px, v4, v3, v9, and round. */
+    press(BUTTON_ACCEPT);
     CHECK(fake_oled_qr_version() == 6 && strncmp(fake_oled_qr_data(), "UR:BYTES/1-", 11) == 0,
-          "a turn from still gave v%u \"%.20s\", not v6 part 1", fake_oled_qr_version(),
+          "a push from still gave v%u \"%.20s\", not v6 part 1", fake_oled_qr_version(),
           fake_oled_qr_data());
     CHECK(strncmp(fake_oled_qr_caption(), "v6 5px 1/", 9) == 0 &&
           strstr(fake_oled_qr_caption(), "0.05%") != NULL,
@@ -1848,23 +1848,35 @@ static void test_colour_qr_screens(void)
     idle_pump();
     CHECK(strncmp(fake_oled_qr_caption(), "v6 5px 2/", 9) == 0,
           "the caption did not follow the frame: \"%s\"", fake_oled_qr_caption());
-    press(BUTTON_DOWN);
+    press(BUTTON_ACCEPT);
     CHECK(fake_oled_qr_version() == 4, "then v%u, not v4", fake_oled_qr_version());
-    press(BUTTON_ACCEPT);   /* OK steps too: this panel has no contrast */
+    press(BUTTON_ACCEPT);
     CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK left the QR");
-    CHECK(fake_oled_qr_version() == 3, "OK gave v%u, not v3", fake_oled_qr_version());
-    press(BUTTON_DOWN);
+    CHECK(fake_oled_qr_version() == 3, "then v%u, not v3", fake_oled_qr_version());
+    press(BUTTON_ACCEPT);
     CHECK(fake_oled_qr_version() == 9, "then v%u, not v9", fake_oled_qr_version());
-    press(BUTTON_DOWN);
-    CHECK(fake_oled_qr_version() == v0, "the turn did not come back round to the still code");
+    press(BUTTON_ACCEPT);
+    CHECK(fake_oled_qr_version() == v0, "the push did not come back round to the still code");
+    CHECK(fake_oled_backlight_calls() == calls && fake_oled_backlight_duty() == level,
+          "the density steps touched the backlight (duty %u)", fake_oled_backlight_duty());
+    /* A turn is the backlight, live, on the same table as Settings > Screen. */
     press(BUTTON_UP);
-    CHECK(fake_oled_qr_version() == 9, "a turn back gave v%u, not v9", fake_oled_qr_version());
+    CHECK(fake_oled_qr_version() == v0, "a turn changed the code (v%u)", fake_oled_qr_version());
+    CHECK(fake_oled_backlight_duty() == bl_level_duty(5), "a turn up gave duty %u, not level 5",
+          fake_oled_backlight_duty());
+    CHECK(strstr(fake_oled_qr_caption(), "0.05%") == NULL, "the caption kept the old level: \"%s\"",
+          fake_oled_qr_caption());
+    press(BUTTON_DOWN);
+    press(BUTTON_DOWN);
+    CHECK(fake_oled_backlight_duty() == bl_level_duty(3), "two down gave duty %u, not level 3",
+          fake_oled_backlight_duty());
+    CHECK(!fake_nvs_has("leek_ui", "qr_bl") && !fake_nvs_has("leek_ui", "qr_bl_idx"),
+          "a separate QR level was saved");
     press(BUTTON_CANCEL);
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not finish the QR");
-    CHECK(fake_oled_backlight_calls() == calls && fake_oled_backlight_duty() == level,
-          "a QR touched the backlight (duty %u)", fake_oled_backlight_duty());
-    CHECK(!fake_nvs_has("leek_ui", "qr_bl") && !fake_nvs_has("leek_ui", "qr_bl_idx"),
-          "a QR level was saved");
+    CHECK(fake_oled_backlight_duty() == bl_level_duty(3), "leaving the QR changed the level");
+    CHECK(get_ui_u8("bl_idx") == 3, "the level the camera read at was not saved (%u)", get_ui_u8("bl_idx"));
+    set_ui_u8("bl_idx", 4);
 
     /* A message too long for one 4 px code opens at v6 5px. */
     static uint8_t big[400];

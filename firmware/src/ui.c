@@ -3702,6 +3702,8 @@ static void screen_settings_on_button(button_id_t btn)
  * ============================================================================ */
 
 static screen_id_t qr_out_back = SCREEN_MAIN_MENU;
+/* A turn on the colour panel's QR moved the backlight: saved on exit. */
+static bool qr_out_backlight_moved;
 
 /* A panel big enough to show a whole message as one still code at a size a
  * camera reads (qr-out.h, QR_OUT_MODE_STILL): the 240-row colour TFT. The
@@ -3826,13 +3828,26 @@ static void qr_out_next_color_mode(int dir, int64_t now)
 static void screen_qr_out_on_button(button_id_t btn)
 {
     const int64_t now = esp_timer_get_time();
-    /* The colour kit: a turn steps its own modes (qr-out.h), and so does
-       OK, since its panel has no contrast for OK to step (oled-st7789.c);
-       Cancel is done, as ever. The OLEDs keep turn = size, OK = brightness. */
+    /* The colour kit: a turn sets the backlight live (the same Settings >
+       Screen level, saved when the QR closes), and the push steps the
+       density through its modes (qr-out.h): the board cannot tell a phone
+       from a webcam, so the user dims and sizes the code for the camera in
+       front of it (bench, 2026-11-10). Cancel is done, as ever. The OLEDs
+       keep turn = size, OK = brightness. */
     if (qr_out_still_first() && btn != BUTTON_CANCEL) {
-        if (btn == BUTTON_UP || btn == BUTTON_DOWN || btn == BUTTON_ACCEPT) {
-            qr_out_next_color_mode(btn == BUTTON_UP ? -1 : +1, now);
+        if (btn == BUTTON_ACCEPT) {
+            qr_out_next_color_mode(+1, now);
         }
+#if UI_COLOR_CODE
+        else if (btn == BUTTON_UP || btn == BUTTON_DOWN) {
+            const uint8_t was = backlight_level;
+            backlight_level = bl_level_step(backlight_level, btn == BUTTON_UP ? +1 : -1);
+            if (backlight_level != was) {
+                backlight_show(backlight_level);
+                qr_out_backlight_moved = true;
+            }
+        }
+#endif
         ui_invalidate();
         return;
     }
@@ -3891,6 +3906,14 @@ static void screen_qr_out_enter(void)
 static void screen_qr_out_exit(screen_id_t next)
 {
     (void)next;
+#if UI_COLOR_CODE
+    if (qr_out_backlight_moved) {
+        /* The level the camera read at stays, for every screen: one
+           brightness setting, as Settings > Screen. */
+        backlight_save();
+        qr_out_backlight_moved = false;
+    }
+#endif
     qr_out_stop();
     oled_set_fast_refresh(false);
     oled_set_contrast(BRIGHTNESS_LEVELS[brightness_choice]);
