@@ -18,9 +18,10 @@ Each send was a compact NU7 testnet send of 1,373 B:
 | Host screen → board | 90 B, 500 ms | the board found the v8 code 253 times and decoded it 3 times; the app gave up after 81 s |
 | Board → laptop webcam | the board's default mode | 7.4 s (31 codes read) |
 
-**On the board:** 2x zoom (push the knob on the scan screen) and exposure
--4. The Scan screen opens at 1x after power-up and then keeps the zoom the
-knob last chose until power-off.
+**On the board:** 2x zoom and exposure -4. The Scan screen opens at 2x
+after power-up (laptop screens and tablets); a push on the knob steps
+2x → 3x (a phone, about 30 cm away) → 1x (a big screen or a printed code),
+and the board keeps the last choice until power-off.
 
 ### Since 2026-11-11 (decoder and code-search fixes)
 

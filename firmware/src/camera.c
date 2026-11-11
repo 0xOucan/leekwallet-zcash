@@ -235,11 +235,14 @@ static const struct { uint16_t w, h; framesize_t size; } FRAME_MODES[] = {
 #if defined(LEEK_QR_BENCH) && LEEK_QR_BENCH && defined(CAMERA_BENCH_ZOOM)
 #  define ZOOM_START CAMERA_BENCH_ZOOM
 #else
-#  define ZOOM_START 0
+/* 2x after power-up: the laptop screens and tablets read best there; 3x is
+   for a phone held about 30 cm away (fixed-focus lens), 1x for a big screen
+   or printed code. The knob changes it. */
+#  define ZOOM_START 1
 #endif
 static const uint8_t frame_mode = FRAME_MODE_START;
 /* The zoom level (camera-tune.h) in use, and the one the next start opens
-   at: 1x after power-up, then the last one the knob chose (the user's
+   at: 2x after power-up, then the last one the knob chose (the user's
    pick for their screen and camera), until power-off. Not saved. */
 static uint8_t zoom_level;
 static uint8_t zoom_wanted = ZOOM_START;
@@ -771,7 +774,7 @@ bool camera_start(void)
                  sensor->status.vflip);
     }
 
-    /* The Scan screen opens at the zoom last chosen (1x after power-up). A
+    /* The Scan screen opens at the zoom last chosen (2x after power-up). A
        sensor that refuses the window stays at the full field. */
     zoom_level = 0;
     if (zoom_wanted > 0 && zoom_wanted < CAMERA_ZOOM_COUNT && apply_zoom(zoom_wanted)) {

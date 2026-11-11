@@ -927,7 +927,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     $<HTMLButtonElement>("zwsignsend").disabled = true;
     $<HTMLButtonElement>("zwsignqr").disabled = true;
     say("zwqrsignhelp", "EXPERIMENTAL. On the board: choose Scan and point its camera at this code. It shows the same review; ACCEPT on its last page signs, and the board then shows its signature as a QR code. "
-      + "If the board does not pick it up: push its knob for 2x zoom, then Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
+      + "The board opens at 2x zoom. From a phone: Big codes, full screen, brightness up, the phone about 30 cm away and the board at 3x (one push). If it does not pick it up: Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
     say("zwqrstatus", "");
     say("zwsendstatus", "Signing with QR (experimental)…");
     $("zwqrsign").scrollIntoView?.({ block: "nearest" });

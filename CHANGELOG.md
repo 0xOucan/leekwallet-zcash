@@ -15,8 +15,8 @@ are released in
   does its maths inline, bit-identical (a boot self-test checks 80,000
   cases), which cuts the code search for a v8 code from about 290 ms to
   120–190 ms a frame. Laptop screen at 2x: 13–20 s for 39–88 B fragments,
-  where 88 B did not decode before. The Scan screen keeps the zoom the knob
-  chose until power-off. First phone signature by QR both ways: 25 B at
+  where 88 B did not decode before. The Scan screen opens at 2x and keeps the
+  zoom the knob chose until power-off. First phone signature by QR both ways: 25 B at
   350 ms, 3x, about 30 cm (the lens is fixed-focus). The `-qstages` and
   `-qfast` images log quirc's stage times and why codes fail.
 - **Companion: big codes and a black full screen for phones.** A *Big codes*
