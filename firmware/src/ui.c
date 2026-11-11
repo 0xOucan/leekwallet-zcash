@@ -5174,9 +5174,36 @@ static void scan_ur_log_done(void)
 
 /* One decoded QR string: the same function service_scan() calls per frame,
  * named so the host can drive it without a camera. */
+/* A refused code, once a second at most: what it was (the UR type and part
+ * number, up to the second '/', never the payload) and why. The bench reads
+ * these off the serial log when parts stop counting. */
+static void scan_log_refused(const char *ur, size_t len, AirgapScan res)
+{
+    static int64_t last_us;
+    static unsigned skipped;
+    const int64_t now = esp_timer_get_time();
+    if (now - last_us < 1000000) {
+        skipped++;
+        return;
+    }
+    size_t n = 0, slashes = 0;
+    while (n < len && n < 40 && ur[n] != '\0') {
+        if (ur[n] == '/' && ++slashes == 2) break;
+        n++;
+    }
+    ESP_LOGI(TAG, "scan refused (%s, %u more since): \"%.*s\" %u chars",
+             res == AIRGAP_SCAN_WRONG_TYPE ? "wrong type" : airgap_scan_why(),
+             skipped, (int)n, ur, (unsigned)len);
+    last_us = now;
+    skipped = 0;
+}
+
 static void scan_handle(const char *ur, size_t len)
 {
     const AirgapScan res = airgap_scan_feed(ur, len);
+    if (res == AIRGAP_SCAN_UNREADABLE || res == AIRGAP_SCAN_WRONG_TYPE) {
+        scan_log_refused(ur, len, res);
+    }
     if (res == AIRGAP_SCAN_ACCEPTED || res == AIRGAP_SCAN_REDUNDANT ||
         res == AIRGAP_SCAN_PCZT) {
         uint32_t frames = 0;

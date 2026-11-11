@@ -51,7 +51,14 @@ void airgap_start(void);
 void airgap_scan_reset(void);
 
 /** Feed one decoded QR string. UI task only. */
+/* Parts of another message in a row, none of the current one between, after
+ * which the scan drops what it has and assembles the new one (airgap.c). */
+#define AIRGAP_SCAN_SWITCH_AFTER 3
+
 AirgapScan airgap_scan_feed(const char *ur, size_t len);
+
+/** Why the last AIRGAP_SCAN_UNREADABLE part was refused (ur-decoder.c), or "". */
+const char *airgap_scan_why(void);
 
 /** Parts still missing from the current assembly, for a progress line. */
 uint32_t airgap_scan_remaining(void);

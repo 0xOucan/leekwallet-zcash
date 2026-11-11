@@ -60,6 +60,7 @@ typedef enum {
 
 typedef struct {
     bool     started;
+    const char *why;     /* the last UR_PART_REJECTED reason, for logs */
     char     type[UR_TYPE_MAX + 1];
 
     uint32_t seq_len;

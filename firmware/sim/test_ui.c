@@ -3827,6 +3827,50 @@ static void test_scan_assembles_then_refuses_every_type(void)
     CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "BACK did not leave the scanner");
 }
 
+/* The companion's Bigger/Denser mid-scan: new parts are another message. One
+ * stray part is refused; a few in a row restart the assembly on them. */
+static void test_scan_follows_a_sender_that_switched(void)
+{
+    printf("== the scanner starts over when the sender switches fragment size\n");
+    boot_unlocked_with_seed();
+    go(SCREEN_SCAN);
+    uint8_t msg[300];
+    for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)(i * 7);
+    static UrEncoder a, b;
+    ur_encoder_init(&a, "bytes", msg, sizeof msg, 40);
+    ur_encoder_init(&b, "bytes", msg, sizeof msg, 60);
+    char part[200];
+    for (int i = 0; i < 2; i++) {
+        ur_encoder_next_part(&a, part, sizeof part);
+        ui__scan_feed_for_test(part);
+    }
+    const uint32_t total_a = airgap_scan_total();
+    CHECK(total_a == a.seq_len, "assembling the first message (%u)", (unsigned)total_a);
+
+    ur_encoder_next_part(&b, part, sizeof part);
+    ui__scan_feed_for_test(part);
+    CHECK(airgap_scan_total() == total_a, "one part of another message took over");
+    ur_encoder_next_part(&a, part, sizeof part);
+    ui__scan_feed_for_test(part);   /* the old sender again: the streak ends */
+    for (int i = 0; i < AIRGAP_SCAN_SWITCH_AFTER - 1; i++) {
+        ur_encoder_next_part(&b, part, sizeof part);
+        ui__scan_feed_for_test(part);
+    }
+    CHECK(airgap_scan_total() == total_a, "parts with the old one between took over");
+    ur_encoder_next_part(&b, part, sizeof part);
+    ui__scan_feed_for_test(part);
+    CHECK(airgap_scan_total() == b.seq_len && b.seq_len != total_a,
+          "did not switch to the new message (%u)", (unsigned)airgap_scan_total());
+    for (uint32_t i = 0; i < b.seq_len + 20 && ui_get_screen() == SCREEN_SCAN &&
+                         strstr(ui__scan_status_for_test(), "Not a Zcash") == NULL; i++) {
+        ur_encoder_next_part(&b, part, sizeof part);
+        ui__scan_feed_for_test(part);
+    }
+    CHECK(strcmp(ui__scan_status_for_test(), "Not a Zcash request") == 0,
+          "the new message did not complete (\"%s\")", ui__scan_status_for_test());
+    press(BUTTON_CANCEL);
+}
+
 int main(void)
 {
     test_the_seed_fingerprint_is_shown();
@@ -3839,6 +3883,7 @@ int main(void)
     test_sd_card_signing();
     test_qr_airgap_signing();
     test_scan_assembles_then_refuses_every_type();
+    test_scan_follows_a_sender_that_switched();
     test_qr_out_animates_and_leaves_cleanly();
     test_locking_closes_the_channel();
     test_an_expired_approval_leaves_the_screen();
