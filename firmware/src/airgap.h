@@ -56,4 +56,8 @@ AirgapScan airgap_scan_feed(const char *ur, size_t len);
 /** Parts still missing from the current assembly, for a progress line. */
 uint32_t airgap_scan_remaining(void);
 
+/** Parts the current assembly is cut into (the decoder's pinned seq_len), 0
+ *  before the first part: with the above, a progress bar. */
+uint32_t airgap_scan_total(void);
+
 #endif /* LEEK_AIRGAP_H */

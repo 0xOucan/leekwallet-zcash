@@ -17,6 +17,10 @@ static uint8_t contrast = 0;
 static uint8_t panel_rows = OLED_HEIGHT;
 static const uint8_t *panel_picture;
 static int     picture_flushes;
+static const uint8_t *panel_gray;
+static uint16_t panel_gray_x, panel_gray_y, panel_gray_w, panel_gray_h;
+static uint8_t backlight = 100;
+static int     backlight_calls;
 
 static uint8_t cursor_page;
 static uint8_t cursor_col;
@@ -47,11 +51,41 @@ void fake_oled_reset(void)
     panel_rows = OLED_HEIGHT;
     panel_picture = NULL;
     picture_flushes = 0;
+    panel_gray = NULL;
+    backlight = 100;
+    backlight_calls = 0;
 }
 
 void fake_oled_set_panel_rows(uint8_t rows) { panel_rows = rows; }
 const uint8_t *fake_oled_panel_picture(void) { return panel_picture; }
 int fake_oled_picture_flush_count(void) { return picture_flushes; }
+
+const uint8_t *fake_oled_panel_gray(uint16_t *x, uint16_t *y, uint16_t *w, uint16_t *h)
+{
+    if (x) *x = panel_gray_x;
+    if (y) *y = panel_gray_y;
+    if (w) *w = panel_gray_w;
+    if (h) *h = panel_gray_h;
+    return panel_gray;
+}
+uint8_t fake_oled_backlight(void) { return backlight; }
+int fake_oled_backlight_calls(void) { return backlight_calls; }
+
+void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
+                          uint16_t w, uint16_t h)
+{
+    panel_gray = px;
+    panel_gray_x = x; panel_gray_y = y; panel_gray_w = w; panel_gray_h = h;
+}
+
+esp_err_t oled_set_backlight(uint8_t pct)
+{
+    if (pct < OLED_BACKLIGHT_MIN) pct = OLED_BACKLIGHT_MIN;
+    if (pct > OLED_BACKLIGHT_MAX) pct = OLED_BACKLIGHT_MAX;
+    backlight = pct;
+    backlight_calls++;
+    return ESP_OK;
+}
 
 /* ------------------------------------------------------------ inspection */
 
@@ -135,6 +169,7 @@ esp_err_t oled_clear(void)
     cursor_page = 0;
     cursor_col = 0;
     panel_picture = NULL;
+    panel_gray = NULL;
     return ESP_OK;
 }
 

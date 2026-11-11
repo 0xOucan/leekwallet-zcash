@@ -16,6 +16,15 @@ are released in
   no security, behind `LEEK_SE_CONTAINER_WRITES`. The flag is off by default,
   so every image, the bench included, stays read-only. The container is not
   wired to the wallet, and nothing has been written to any chip.
+- **Colour kit: a real camera view, and a backlight setting.** Scan showed
+  the OLED's 1-bit preview stretched to a few bars; it is now a 200×150
+  grayscale picture, auto-levelled per frame, with rows for the exposure
+  (`Light <=O----> -4 23%`), capture size, frames/s, codes located and read,
+  a progress bar for animated URs, and fixed hints (Too dark, Too bright,
+  Hold steady, Move closer). **Settings → Preview** shows the true exposure
+  instead. **Settings → Screen** dims the backlight (10–100 %, PWM on GPIO43,
+  the header's TX): move the module's BLK from 3V3 to TX to use it
+  (WIRING-S3CAM-COLOR.md). The OLED kits are unchanged.
 - **Colour kit: the screen stayed dark with Bluetooth on.** The colour build
   ran out of internal RAM before the UI task started ("Failed to create UI
   task"). The panel's buffers are smaller, its SPI interrupt code no longer

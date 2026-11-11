@@ -4,6 +4,8 @@
 
 #include "board.h"
 
+#include <string.h>
+
 /*
  * LEEK_CAMERA_DRIVER is set by src/CMakeLists.txt, and only when the build was
  * configured with the camera components present. It is a separate question
@@ -21,6 +23,13 @@
 #  error "camera driver requested on a board whose map has no sensor"
 #endif
 
+/* Settings > Preview on the colour kit: the raw exposure instead of the
+   auto-levelled view. Not secret, kept by ui.c in NVS. */
+static bool preview_true;
+
+void camera_set_preview_true_exposure(bool on) { preview_true = on; }
+bool camera_preview_true_exposure(void) { return preview_true; }
+
 #if LEEK_CAMERA_DRIVER
 
 #include <string.h>
@@ -36,6 +45,7 @@
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "quirc.h"
 
@@ -121,7 +131,14 @@ static bool running;
 static struct quirc_code scan_code;
 static struct quirc_data scan_data;
 
+#if BOARD_HAS_SPI_PANEL
+/* The colour kit's grayscale preview: 30 KB, in PSRAM (viewfinder.h). Taken
+   once and kept, so the UI can point the panel at it between frames. */
+static uint8_t         *gray_preview;
+static ViewfinderStats  gray_stats;
+#else
 static uint8_t  preview[VIEWFINDER_BYTES];
+#endif
 static bool     preview_fresh;
 static uint32_t preview_tick;
 
@@ -213,8 +230,13 @@ static bool sccb_recover(void)
     return ok;
 }
 
+#ifndef BOARD_VIEWFINDER_ROTATE
+#define BOARD_VIEWFINDER_ROTATE 0
+#endif
+
 bool camera_start(void)
 {
+    viewfinder_set_rotation(BOARD_VIEWFINDER_ROTATE);
     if (running) {
         return true;
     }
@@ -375,6 +397,12 @@ bool camera_start(void)
 
     preview_fresh = false;
     preview_tick = 0;
+#if BOARD_HAS_SPI_PANEL
+    if (gray_preview == NULL) {
+        gray_preview = heap_caps_malloc(VIEWFINDER_GRAY_BYTES, MALLOC_CAP_SPIRAM);
+    }
+    memset(&gray_stats, 0, sizeof gray_stats);
+#endif
     stat_frames = 0;
     stat_decodes = 0;
     stat_located = 0;
@@ -400,7 +428,11 @@ void camera_stop(void)
     quirc_destroy(quirc_ctx);
     quirc_ctx = NULL;
     preview_fresh = false;
+#if BOARD_HAS_SPI_PANEL
+    gray_stats.primed = false;
+#else
     memset(preview, 0, sizeof preview);
+#endif
 }
 
 bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
@@ -470,8 +502,18 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
 
         if (CAMERA_PREVIEW_EVERY > 0 &&
             ++preview_tick % CAMERA_PREVIEW_EVERY == 0) {
+#if BOARD_HAS_SPI_PANEL
+            /* A millisecond or two at QVGA: one pass over the frame for the
+               box average, one over the 30 KB preview for the stretch. */
+            if (gray_preview != NULL) {
+                viewfinder_render_gray(fb->buf, FRAME_W, FRAME_H, gray_preview,
+                                       &gray_stats, preview_true);
+                preview_fresh = true;
+            }
+#else
             viewfinder_render(fb->buf, FRAME_W, FRAME_H, preview);
             preview_fresh = true;
+#endif
         }
 
         /*
@@ -627,6 +669,19 @@ void camera_dump_frame(void)
 void camera_set_stream(bool on) { streaming = on; }
 bool camera_streaming(void) { return streaming; }
 
+#if BOARD_HAS_SPI_PANEL
+const uint8_t *camera_preview_take(void) { return NULL; }
+
+const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
+{
+    if (!preview_fresh || gray_preview == NULL) {
+        return NULL;
+    }
+    preview_fresh = false;
+    if (stats != NULL) { *stats = gray_stats; }
+    return gray_preview;
+}
+#else
 const uint8_t *camera_preview_take(void)
 {
     if (!preview_fresh) {
@@ -635,6 +690,13 @@ const uint8_t *camera_preview_take(void)
     preview_fresh = false;
     return preview;
 }
+
+const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
+{
+    (void)stats;
+    return NULL;
+}
+#endif
 
 void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located)
 {
@@ -654,6 +716,84 @@ void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located)
  * not start, which is the truth there.
  */
 
+#ifdef LEEK_HOST_TEST
+/* A stand-in sensor for the UI suites (camera.h). */
+static const uint8_t *test_frame;
+static uint16_t       test_w, test_h;
+static bool           test_running;
+static uint32_t       test_frames, test_located, test_decodes;
+static uint8_t        test_mono[VIEWFINDER_BYTES];
+static uint8_t        test_gray[VIEWFINDER_GRAY_BYTES];
+static ViewfinderStats test_stats;
+static bool           test_mono_fresh, test_gray_fresh;
+
+void camera__set_frame_for_test(const uint8_t *frame, uint16_t w, uint16_t h)
+{
+    test_frame = frame;
+    test_w = w;
+    test_h = h;
+    if (frame == NULL) {
+        test_running = false;
+    }
+}
+
+void camera__set_located_for_test(uint32_t located, uint32_t decodes)
+{
+    test_located = located;
+    test_decodes = decodes;
+}
+
+bool camera_start(void)
+{
+    test_running = test_frame != NULL;
+    test_frames = 0;
+    test_mono_fresh = test_gray_fresh = false;
+    memset(&test_stats, 0, sizeof test_stats);
+    return test_running;
+}
+
+void camera_stop(void) { test_running = false; }
+
+bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
+{
+    (void)out;
+    (void)out_size;
+    (void)out_len;
+    if (!test_running || test_frame == NULL) {
+        return false;
+    }
+    test_frames++;
+    viewfinder_render(test_frame, test_w, test_h, test_mono);
+    viewfinder_render_gray(test_frame, test_w, test_h, test_gray, &test_stats,
+                           preview_true);
+    test_mono_fresh = test_gray_fresh = true;
+    return false;
+}
+
+const uint8_t *camera_preview_take(void)
+{
+    if (!test_mono_fresh) { return NULL; }
+    test_mono_fresh = false;
+    return test_mono;
+}
+
+const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
+{
+    if (!test_gray_fresh) { return NULL; }
+    test_gray_fresh = false;
+    if (stats != NULL) { *stats = test_stats; }
+    return test_gray;
+}
+
+uint16_t camera_frame_width(void) { return test_running ? test_w : 0; }
+
+void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located)
+{
+    if (frames != NULL)  { *frames = test_frames; }
+    if (decodes != NULL) { *decodes = test_decodes; }
+    if (located != NULL) { *located = test_located; }
+}
+#else
 bool camera_start(void) { return false; }
 void camera_stop(void) { }
 
@@ -667,15 +807,13 @@ bool camera_next_qr(char *out, size_t out_size, size_t *out_len)
 
 const uint8_t *camera_preview_take(void) { return NULL; }
 
-void camera_set_orientation(uint8_t mode) { (void)mode; }
-void camera_dump_frame(void) { }
-uint8_t camera_orientation(void) { return 0; }
-void camera_set_exposure_bias(int8_t level) { (void)level; }
-int8_t camera_exposure_bias(void) { return 0; }
+const uint8_t *camera_preview_gray_take(ViewfinderStats *stats)
+{
+    (void)stats;
+    return NULL;
+}
+
 uint16_t camera_frame_width(void) { return 0; }
-bool camera_next_frame_size(void) { return false; }
-void camera_set_stream(bool on) { (void)on; }
-bool camera_streaming(void) { return false; }
 
 void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located)
 {
@@ -683,5 +821,24 @@ void camera_stats(uint32_t *frames, uint32_t *decodes, uint32_t *located)
     if (decodes != NULL) { *decodes = 0; }
     if (located != NULL) { *located = 0; }
 }
+#endif
+
+void camera_set_orientation(uint8_t mode) { (void)mode; }
+void camera_dump_frame(void) { }
+uint8_t camera_orientation(void) { return 0; }
+#ifdef LEEK_HOST_TEST
+static int8_t test_bias = -4;
+void camera_set_exposure_bias(int8_t level)
+{
+    test_bias = (int8_t)(level < -5 ? -5 : (level > 0 ? 0 : level));
+}
+int8_t camera_exposure_bias(void) { return test_bias; }
+#else
+void camera_set_exposure_bias(int8_t level) { (void)level; }
+int8_t camera_exposure_bias(void) { return 0; }
+#endif
+bool camera_next_frame_size(void) { return false; }
+void camera_set_stream(bool on) { (void)on; }
+bool camera_streaming(void) { return false; }
 
 #endif

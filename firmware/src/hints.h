@@ -38,6 +38,9 @@
 #define HINT_HOME             "X:LOCK  TURN  OK:SEL"
 /* Settings: Cancel returns to the menu. */
 #define HINT_SETTINGS         "X:BACK  TURN  OK:SEL"
+/* A setting being adjusted in place (Settings > Screen): turn sets it live,
+   OK keeps it, Cancel puts back what it was. */
+#define HINT_ADJUST           "X:UNDO  TURN OK:SAVE"
 /* Wallet list. */
 #define HINT_WALLET_SELECT    "X:BACK  TURN  OK:SEL"
 /* A screen whose only way on is Cancel. */
@@ -112,6 +115,7 @@
 #define HINT_SCROLL_BACK_SEL  "UP DN  BCK  SEL"
 #define HINT_HOME             "UP DN       SEL"
 #define HINT_SETTINGS         "UP DN       SEL"
+#define HINT_ADJUST           "UP DN  UNDO SAVE"
 #define HINT_WALLET_SELECT    "BCK  UP DN  SEL"
 #define HINT_BACK             "BACK"
 #define HINT_LOCK_CONFIRM     "BACK        LOCK"
@@ -161,7 +165,7 @@
 
 /* Every hint in one list, for the length check here and the host test. */
 #define HINT_FOR_EACH(X) \
-    X(HINT_SCROLL_DEL_SEL) X(HINT_SCROLL_BACK_SEL) X(HINT_HOME) X(HINT_SETTINGS) \
+    X(HINT_SCROLL_DEL_SEL) X(HINT_SCROLL_BACK_SEL) X(HINT_HOME) X(HINT_SETTINGS) X(HINT_ADJUST) \
     X(HINT_WALLET_SELECT) X(HINT_BACK) X(HINT_LOCK_CONFIRM) X(HINT_SHOW_SEED) X(HINT_CREATE) \
     X(HINT_CREATE_LENGTH) X(HINT_SEED_MIDDLE) X(HINT_SEED_LAST) X(HINT_SEED_FIRST) \
     X(HINT_SEED_ONLY) X(HINT_IMPORT_LENGTH) X(HINT_WORD_GROUP) X(HINT_TEXT_SEL) \

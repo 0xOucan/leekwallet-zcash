@@ -41,6 +41,7 @@
 
 #include <string.h>
 
+#include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
 
@@ -167,6 +168,69 @@ static void build_wire_palette(void)
     wire_palette.picture_key = to_wire(p->picture_key);
     wire_palette.picture_spark = to_wire(p->picture_spark);
     wire_palette.picture_halo = to_wire(p->picture_halo);
+    for (int i = 0; i < 64; i++) wire_palette.gray[i] = to_wire(p->gray[i]);
+}
+
+/* ------------------------------------------------------------ backlight */
+
+/*
+ * LEDC PWM on BLK, as the user's ST7735S driver does it: low-speed mode,
+ * 13-bit duty at 5 kHz (far above anything an eye or a phone camera's
+ * shutter beats against), starting at 100%. Its own timer and channel:
+ * esp32-camera drives the sensor's XCLK from LEDC timer 0, channel 0
+ * (camera.c), and sharing either would retune the camera's clock.
+ */
+#define BLK_TIMER       LEDC_TIMER_1
+#define BLK_CHANNEL     LEDC_CHANNEL_1
+#define BLK_RES         LEDC_TIMER_13_BIT
+#define BLK_DUTY_MAX    8191
+#define BLK_HZ          5000
+
+static bool backlight_ready;
+
+static void backlight_init(void)
+{
+    if (PIN_DISPLAY_BLK == GPIO_NUM_NC) {
+        return;
+    }
+    const ledc_timer_config_t timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = BLK_RES,
+        .timer_num = BLK_TIMER,
+        .freq_hz = BLK_HZ,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    const ledc_channel_config_t channel = {
+        .gpio_num = PIN_DISPLAY_BLK,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = BLK_CHANNEL,
+        .timer_sel = BLK_TIMER,
+        .duty = BLK_DUTY_MAX,
+        .hpoint = 0,
+    };
+    esp_err_t err = ledc_timer_config(&timer);
+    if (err == ESP_OK) {
+        err = ledc_channel_config(&channel);
+    }
+    if (err != ESP_OK) {
+        /* Not fatal: the panel works at whatever BLK floats to, and a
+           screen at full brightness is no reason to stop a wallet. */
+        ESP_LOGW(TAG, "backlight PWM on GPIO%d: %s", PIN_DISPLAY_BLK, esp_err_to_name(err));
+        return;
+    }
+    backlight_ready = true;
+}
+
+esp_err_t oled_set_backlight(uint8_t pct)
+{
+    if (pct < OLED_BACKLIGHT_MIN) pct = OLED_BACKLIGHT_MIN;
+    if (pct > OLED_BACKLIGHT_MAX) pct = OLED_BACKLIGHT_MAX;
+    if (!backlight_ready) {
+        return ESP_OK;   /* BLK on 3V3: nothing to dim, and not an error */
+    }
+    const uint32_t duty = (uint32_t)pct * BLK_DUTY_MAX / 100;
+    esp_err_t err = ledc_set_duty(LEDC_LOW_SPEED_MODE, BLK_CHANNEL, duty);
+    return err == ESP_OK ? ledc_update_duty(LEDC_LOW_SPEED_MODE, BLK_CHANNEL) : err;
 }
 
 /* -------------------------------------------------------------------- API */
@@ -200,6 +264,7 @@ esp_err_t oled_init(void)
         .extra_init = PROFILE_INIT,
     };
     build_wire_palette();
+    backlight_init();
     esp_err_t err = st7789_init(&cfg);
     if (err != ESP_OK) {
         /* Said out loud rather than swallowed: main() checks this, and a
@@ -225,6 +290,9 @@ esp_err_t oled_flush(void)
         .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
+    const OledPanelGray g = oled_core_panel_gray();
+    f.gray = g.px;
+    f.gray_x = g.x; f.gray_y = g.y; f.gray_w = g.w; f.gray_h = g.h;
 
     /* Render one band while the previous one is on the wire; flush returns
        once the whole frame is on the glass, which is what it means on the
@@ -252,8 +320,10 @@ esp_err_t oled_set_fast_refresh(bool fast)
 
 esp_err_t oled_set_contrast(uint8_t level)
 {
-    /* The ST7789 has no contrast register, and BLK is wired to 3V3 on both
-       boards, so there is nothing to drive. The setting is still accepted
+    /* The ST7789 has no contrast register. The backlight is
+       oled_set_backlight(), a setting of its own (Settings > Screen): the
+       OLED levels this takes, Dim for every QR among them, would make a TFT
+       unreadable. The setting is still accepted
        and kept by ui.c, so a user's choice survives a move between boards. */
     (void)level;
     return ESP_OK;

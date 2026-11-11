@@ -884,6 +884,48 @@ static int64_t  last_activity_us = 0;
 #define UI_HAS_KNOB_SETTING LEEK_HAS_ENCODER
 #endif
 
+/*
+ * The colour panel's own screens and settings: the grayscale viewfinder, the
+ * backlight (Settings > Screen) and the preview's exposure (Settings >
+ * Preview). Compiled for the colour kit, and on the host, where the fake
+ * panel says at run time which panel it is (color_panel()), so the suites
+ * drive both without a second build. An OLED firmware has none of it.
+ */
+#if BOARD_HAS_SPI_PANEL || defined(LEEK_HOST_TEST)
+#define UI_COLOR_CODE 1
+#else
+#define UI_COLOR_CODE 0
+#endif
+
+/* Settings > Preview: only where there is a viewfinder to set. */
+#ifndef UI_HAS_PREVIEW_SETTING
+#define UI_HAS_PREVIEW_SETTING (BOARD_HAS_SPI_PANEL && LEEK_HAS_CAMERA)
+#endif
+
+/* The backlight, percent, 10..100 in tens (oled.h). Not secret. */
+#define UI_KEY_BACKLIGHT    "backlight"
+/* 1: the viewfinder shows the true exposure rather than auto-levels. */
+#define UI_KEY_PREVIEW      "pv_true"
+
+#if UI_COLOR_CODE
+static bool color_panel(void)
+{
+#if BOARD_HAS_SPI_PANEL
+    return true;
+#else
+    return oled_panel_rows() > 128;   /* the host's fake panel, as asked */
+#endif
+}
+
+/* Full by default: the module was on 3V3 until it had a pin. */
+#define BACKLIGHT_DEFAULT   100
+#define BACKLIGHT_STEP      10
+static uint8_t backlight_pct = BACKLIGHT_DEFAULT;
+/* While adjusting in place: the level to put back on Cancel. */
+static uint8_t backlight_saved = BACKLIGHT_DEFAULT;
+static bool    backlight_editing;
+#endif
+
 /* Four steps rather than a slider: the OLED is legible across the whole range,
  * so fine control buys nothing and costs presses. Low is genuinely useful -
  * a dim screen is harder to read over someone's shoulder. */
@@ -993,6 +1035,17 @@ static void settings_load(void)
     if (nvs_get_u8(nvs, UI_KEY_KNOB_REVERSE, &stored) == ESP_OK) {
         button_set_knob_reversed(stored == 1);
     }
+#if UI_COLOR_CODE
+    if (nvs_get_u8(nvs, UI_KEY_BACKLIGHT, &stored) == ESP_OK &&
+        stored >= OLED_BACKLIGHT_MIN && stored <= OLED_BACKLIGHT_MAX) {
+        backlight_pct = stored;
+    }
+#endif
+#if UI_HAS_PREVIEW_SETTING
+    if (nvs_get_u8(nvs, UI_KEY_PREVIEW, &stored) == ESP_OK) {
+        camera_set_preview_true_exposure(stored == 1);
+    }
+#endif
     nvs_close(nvs);
 }
 
@@ -1010,6 +1063,67 @@ static void knob_reverse_toggle(void)
         nvs_close(nvs);
     }
 }
+
+#if UI_COLOR_CODE
+static void backlight_save(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, UI_KEY_BACKLIGHT, backlight_pct);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+
+/* Adjusting Settings > Screen in place: a turn sets the level live, OK keeps
+ * it, Cancel puts the old one back. True if the button was taken. */
+static bool backlight_edit_button(button_id_t btn)
+{
+    if (!backlight_editing) {
+        return false;
+    }
+    switch (btn) {
+        case BUTTON_UP:
+            if (backlight_pct + BACKLIGHT_STEP <= OLED_BACKLIGHT_MAX) {
+                backlight_pct = (uint8_t)(backlight_pct + BACKLIGHT_STEP);
+            }
+            break;
+        case BUTTON_DOWN:
+            if (backlight_pct >= OLED_BACKLIGHT_MIN + BACKLIGHT_STEP) {
+                backlight_pct = (uint8_t)(backlight_pct - BACKLIGHT_STEP);
+            }
+            break;
+        case BUTTON_ACCEPT:
+            backlight_save();
+            backlight_editing = false;
+            ESP_LOGI(TAG, "Screen backlight %u%%", (unsigned)backlight_pct);
+            break;
+        case BUTTON_CANCEL:
+            backlight_pct = backlight_saved;
+            backlight_editing = false;
+            break;
+        default:
+            return true;
+    }
+    oled_set_backlight(backlight_pct);
+    ui_invalidate();
+    return true;
+}
+#endif
+
+#if UI_HAS_PREVIEW_SETTING
+static void preview_true_toggle(void)
+{
+    const bool on = !camera_preview_true_exposure();
+    camera_set_preview_true_exposure(on);
+    nvs_handle_t nvs;
+    if (nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, UI_KEY_PREVIEW, on ? 1 : 0);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+#endif
 
 static void brightness_apply_and_save(void)
 {
@@ -1310,6 +1424,10 @@ typedef enum {
     SET_ACCOUNT,
     SET_NETWORK,
     SET_BRIGHTNESS,
+#if UI_HAS_PREVIEW_SETTING
+    /* Beside the screen's brightness: both are about what the panel shows. */
+    SET_PREVIEW,
+#endif
     SET_AUTOLOCK,
     SET_ENTRY_STYLE,
     /* Beside Word entry: both are about how the controls behave. */
@@ -1343,6 +1461,9 @@ static const char *settings_items[SETTINGS_ITEMS] = {
     "Account",
     "Network",
     "Brightness",
+#if UI_HAS_PREVIEW_SETTING
+    "Preview",
+#endif
     "Auto-lock",
     "Word entry",
 #if UI_HAS_KNOB_SETTING
@@ -3215,6 +3336,14 @@ static void screen_settings_enter(void)
 {
     ESP_LOGI(TAG, "Settings screen");
     settings_selection = 0;
+#if UI_COLOR_CODE
+    /* Left mid-adjustment (an auto-lock, say): the unsaved level goes. */
+    if (backlight_editing) {
+        backlight_editing = false;
+        backlight_pct = backlight_saved;
+        oled_set_backlight(backlight_pct);
+    }
+#endif
 }
 
 static void screen_settings_render(void)
@@ -3276,6 +3405,28 @@ static void screen_settings_render(void)
             snprintf(line, sizeof(line), "%s Bright %s",
                      item_idx == settings_selection ? ">" : " ",
                      brightness_label(brightness_choice));
+#if UI_COLOR_CODE
+            /* The colour panel's backlight, a percentage, in place of the
+               OLED's levels; "< 70% >" while it is being turned. */
+            if (color_panel()) {
+                const bool sel = item_idx == settings_selection;
+                if (sel && backlight_editing) {
+                    snprintf(line, sizeof(line), "> Screen < %u%% >",
+                             (unsigned)backlight_pct);
+                } else {
+                    snprintf(line, sizeof(line), "%s Screen %u%%", sel ? ">" : " ",
+                             (unsigned)backlight_pct);
+                }
+            }
+#endif
+#if UI_HAS_PREVIEW_SETTING
+        } else if (item_idx == SET_PREVIEW) {
+            /* Auto: levels stretched per frame, for aiming. True: the
+               exposure the decoder gets, for judging the camera settings. */
+            snprintf(line, sizeof(line), "%s Preview %s",
+                     item_idx == settings_selection ? ">" : " ",
+                     camera_preview_true_exposure() ? "True" : "Auto");
+#endif
         } else if (item_idx == SET_ENTRY_STYLE) {
             snprintf(line, sizeof(line), "%s Entry %s",
                      item_idx == settings_selection ? ">" : " ",
@@ -3299,11 +3450,22 @@ static void screen_settings_render(void)
         oled_draw_string(2 + i * 2, 0, line);
     }
 
+#if UI_COLOR_CODE
+    if (backlight_editing) {
+        oled_draw_string(7, 0, HINT_ADJUST);
+        return;
+    }
+#endif
     oled_draw_string(7, 0, HINT_SETTINGS);
 }
 
 static void screen_settings_on_button(button_id_t btn)
 {
+#if UI_COLOR_CODE
+    if (backlight_edit_button(btn)) {
+        return;
+    }
+#endif
     switch (btn) {
         case BUTTON_UP:
             if (settings_selection > 0) {
@@ -3401,11 +3563,25 @@ static void screen_settings_on_button(button_id_t btn)
 #endif
 
                 case SET_BRIGHTNESS:
+#if UI_COLOR_CODE
+                    if (color_panel()) {
+                        backlight_saved = backlight_pct;
+                        backlight_editing = true;
+                        break;
+                    }
+#endif
                     brightness_choice = brightness_next(brightness_choice);
                     brightness_apply_and_save();
                     ESP_LOGI(TAG, "Brightness set to %s",
                              brightness_label(brightness_choice));
                     break;
+#if UI_HAS_PREVIEW_SETTING
+                case SET_PREVIEW:
+                    preview_true_toggle();
+                    ESP_LOGI(TAG, "Preview: %s",
+                             camera_preview_true_exposure() ? "true exposure" : "auto level");
+                    break;
+#endif
                 case SET_AUTOLOCK:
                     lock_timeout_choice = (lock_timeout_choice + 1) % (int)LOCK_TIMEOUT_COUNT;
                     lock_timeout_save();
@@ -4121,8 +4297,49 @@ static char scan_status[22];
  * status line is one of a fixed set of strings this file owns, so a QR code
  * cannot put words of its choosing on the trusted display.
  */
+#if !BOARD_HAS_SPI_PANEL
+/* The OLEDs' bitmap; the colour kit's preview is the camera's own buffer
+   (below), and these 896 bytes of internal RAM are not spent there. */
 static uint8_t scan_preview[VIEWFINDER_BYTES];
+#endif
 static bool    scan_preview_live;
+
+#if UI_COLOR_CODE
+/*
+ * The colour kit's viewfinder (viewfinder.h): the camera's own grayscale
+ * buffer, shown by pointer, across the top five rows, and three rows of
+ * feedback below it, every one of them numbers or fixed strings:
+ *
+ *   row 5  Light <=O----> -4 23%   the exposure bias on a bar, the mean level
+ *   row 6  QVGA 12fps s:3 r:1      capture size, frame rate, located, read
+ *   row 7  progress of an animated UR, an event ("Not a Zcash request"),
+ *          an aiming hint ("Too dark"), or "Point at the QR"
+ *
+ * The 1-bit bitmap above stays the OLEDs' and is not used here.
+ */
+static const uint8_t  *scan_gray;
+static ViewfinderStats scan_gray_stats;
+static bool            scan_gray_located;   /* quirc located a code since the last preview */
+static uint32_t        scan_seen_prev;
+static uint32_t        scan_fps_frames;
+static int64_t         scan_fps_ms = -1;   /* -1: not started */
+static uint16_t        scan_fps = 0xFFFF;   /* unknown until a second has passed */
+/* A message from the decoder outranks a hint for this long. */
+#define SCAN_EVENT_MS  3000
+static int64_t         scan_event_until_ms;
+
+static void scan_color_reset(void)
+{
+    scan_gray = NULL;
+    memset(&scan_gray_stats, 0, sizeof scan_gray_stats);
+    scan_gray_located = false;
+    scan_seen_prev = 0;
+    scan_fps_frames = 0;
+    scan_fps_ms = -1;
+    scan_fps = 0xFFFF;
+    scan_event_until_ms = 0;
+}
+#endif
 
 /* One decoded QR string: the same function service_scan() calls per frame,
  * named so the host can drive it without a camera. */
@@ -4134,7 +4351,12 @@ static void scan_handle(const char *ur, size_t len)
                      (unsigned long)airgap_scan_remaining());
             break;
         case AIRGAP_SCAN_REDUNDANT:
+#if UI_COLOR_CODE
+            ui_invalidate();
+            return;   /* nothing new to say */
+#else
             break;
+#endif
         case AIRGAP_SCAN_UNREADABLE:
             snprintf(scan_status, sizeof scan_status, "Not a UR part");
             break;
@@ -4167,6 +4389,9 @@ static void scan_handle(const char *ur, size_t len)
 #endif
         }
     }
+#if UI_COLOR_CODE
+    scan_event_until_ms = ui_now_ms() + SCAN_EVENT_MS;
+#endif
     ui_invalidate();
 }
 
@@ -4203,7 +4428,12 @@ static void screen_scan_enter(void)
 {
     airgap_scan_reset();
     scan_preview_live = false;
+#if !BOARD_HAS_SPI_PANEL
     memset(scan_preview, 0, sizeof scan_preview);
+#endif
+#if UI_COLOR_CODE
+    scan_color_reset();
+#endif
     /* A camera that refuses to start is a screen that says so, not a hang and
        not a reboot. The rest of this screen works either way: BACK still
        leaves, and the host-driven test path still feeds it strings. */
@@ -4211,19 +4441,66 @@ static void screen_scan_enter(void)
              camera_start() ? "Point at the QR" : "No camera");
 }
 
+#if UI_COLOR_CODE
+static void scan_render_color(void)
+{
+    /* Panel rows 0-149 are the picture: five of the eight 30-row text rows
+       of a 240-row panel, which is why nothing is written on rows 0-4. */
+    const uint16_t panel = oled_panel_rows();
+    oled_show_panel_gray(scan_gray, (uint16_t)((panel - VIEWFINDER_GRAY_W) / 2), 0,
+                         VIEWFINDER_GRAY_W, VIEWFINDER_GRAY_H);
+
+    char line[VIEWFINDER_LINE];
+    viewfinder_exposure_line(camera_exposure_bias(), scan_gray_stats.mean, line);
+    oled_set_role(OLED_ROLE_TEXT);
+    oled_draw_string_centered(5, line);
+
+    uint32_t frames = 0, read = 0, seen = 0;
+    camera_stats(&frames, &read, &seen);
+    viewfinder_stats_line(camera_frame_width(), scan_fps, seen, read, line);
+    oled_set_role(OLED_ROLE_DIM);
+    oled_draw_string_centered(6, line);
+
+    const uint32_t total = airgap_scan_total();
+    const uint32_t left = airgap_scan_remaining();
+    const char *hint = viewfinder_hint(&scan_gray_stats, scan_gray_located);
+    if (total > 0 && left > 0) {
+        viewfinder_progress_line(total, left, line);
+        oled_set_role(OLED_ROLE_OK);
+        oled_draw_string_centered(7, line);
+    } else if (ui_now_ms() < scan_event_until_ms || hint == NULL) {
+        oled_set_role(OLED_ROLE_TEXT);
+        oled_draw_string_centered(7, scan_status);
+    } else {
+        oled_set_role(OLED_ROLE_WARN);
+        oled_draw_string_centered(7, hint);
+    }
+    oled_set_role(OLED_ROLE_AUTO);
+}
+#endif
+
 static void screen_scan_render(void)
 {
     oled_clear();
+
+#if UI_COLOR_CODE
+    if (color_panel() && scan_gray != NULL) {
+        scan_render_color();
+        return;
+    }
+#endif
 
     if (scan_preview_live) {
         /* Pages 0-6 are the preview, page 7 is the status line. Into the
            framebuffer, not straight to the panel: one flush then paints the
            image and the text together, which is what stopped the viewfinder
            flickering. */
+#if !BOARD_HAS_SPI_PANEL
         for (uint8_t page = 0; page < VIEWFINDER_H / 8; page++) {
             oled_blit_page(page, &scan_preview[(size_t)page * VIEWFINDER_W],
                            VIEWFINDER_W);
         }
+#endif
         oled_draw_string_centered(7, scan_status);
         return;
     }
@@ -4256,6 +4533,9 @@ static void screen_scan_on_button(button_id_t btn)
                OK again moves on to the next size. */
             snprintf(scan_status, sizeof scan_status, "%u failed; OK=next",
                      (unsigned)camera_frame_width());
+#if UI_COLOR_CODE
+            scan_event_until_ms = ui_now_ms() + SCAN_EVENT_MS;
+#endif
         }
     } else if (btn == BUTTON_UP || btn == BUTTON_DOWN) {
         camera_set_exposure_bias((int8_t)(camera_exposure_bias() +
@@ -4270,7 +4550,12 @@ static void screen_scan_exit(screen_id_t next)
     camera_stop();
     airgap_scan_reset();
     scan_preview_live = false;
+#if !BOARD_HAS_SPI_PANEL
     memset(scan_preview, 0, sizeof scan_preview);
+#endif
+#if UI_COLOR_CODE
+    scan_color_reset();
+#endif
 }
 
 /* Drain whatever the camera decoded since the last turn of the loop. Bounded,
@@ -4290,9 +4575,41 @@ static void service_scan(void)
     /* The preview costs no frame: camera.c renders it from a frame it has
        already handed to the decoder, one in every CAMERA_PREVIEW_EVERY. What
        arrives here is whatever the last of those produced, or nothing. */
+#if UI_COLOR_CODE
+    if (color_panel()) {
+        ViewfinderStats st;
+        const uint8_t *gray = camera_preview_gray_take(&st);
+        if (gray == NULL) {
+            return;
+        }
+        scan_gray = gray;
+        scan_gray_stats = st;
+        uint32_t frames = 0, read = 0, seen = 0;
+        camera_stats(&frames, &read, &seen);
+        scan_gray_located = seen != scan_seen_prev;
+        scan_seen_prev = seen;
+        /* Frames a second over at least one second: the decode loop's rate,
+           which is the number that matters, not the preview's. */
+        const int64_t now = ui_now_ms();
+        if (scan_fps_ms < 0) {
+            scan_fps_ms = now;
+            scan_fps_frames = frames;
+        } else if (now - scan_fps_ms >= 1000) {
+            const uint64_t f = (uint64_t)(frames - scan_fps_frames) * 1000u /
+                               (uint64_t)(now - scan_fps_ms);
+            scan_fps = (uint16_t)(f > 999 ? 999 : f);
+            scan_fps_ms = now;
+            scan_fps_frames = frames;
+        }
+        ui_invalidate();
+        return;
+    }
+#endif
     const uint8_t *shot = camera_preview_take();
     if (shot != NULL) {
+#if !BOARD_HAS_SPI_PANEL
         memcpy(scan_preview, shot, sizeof scan_preview);
+#endif
         scan_preview_live = true;
         /* Once parts are landing, the status line says how many are left
            rather than still inviting the user to aim. */
@@ -6154,6 +6471,11 @@ void ui_init(void)
 
     settings_load();
     oled_set_contrast(BRIGHTNESS_LEVELS[brightness_choice]);
+#if UI_COLOR_CODE
+    if (color_panel()) {
+        oled_set_backlight(backlight_pct);
+    }
+#endif
 
     ESP_LOGI(TAG, "UI initialized (auto-lock %s, brightness %s)",
              lock_timeout_label(lock_timeout_choice),
@@ -6526,6 +6848,8 @@ void ui__service_host_lock_for_test(void) { service_host_lock(); }
 void ui__service_qr_out_for_test(void) { service_qr_out(); }
 void ui__scan_feed_for_test(const char *ur) { scan_handle(ur, strlen(ur)); }
 const char *ui__scan_status_for_test(void) { return scan_status; }
+/* One turn of the camera half of ui_task's loop. */
+void ui__service_scan_for_test(void) { service_scan(); }
 
 /* The cached fingerprint, which is not on any screen while the device is
  * locked and so cannot be asserted through the framebuffer - the stale-XFP
@@ -6629,6 +6953,14 @@ void ui__reset_static_state_for_test(void)
     lock_timeout_choice = 1;
     lock_timeout_stored_choice = 1;
     brightness_choice = 5;
+#if UI_COLOR_CODE
+    backlight_pct = BACKLIGHT_DEFAULT;
+    backlight_saved = BACKLIGHT_DEFAULT;
+    backlight_editing = false;
+#endif
+#if UI_HAS_PREVIEW_SETTING
+    camera_set_preview_true_exposure(false);
+#endif
     zcash_network = 0;
     wrong_network_pending = 0;
     wrong_network_until_us = 0;

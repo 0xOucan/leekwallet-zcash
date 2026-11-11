@@ -194,6 +194,335 @@ static void test_guards(void)
     printf("  (no crash)\n");
 }
 
+/* ============================================================ grayscale */
+
+#define GW VIEWFINDER_GRAY_W
+#define GH VIEWFINDER_GRAY_H
+
+/* Canaries either side: nothing may be written outside the preview. */
+static uint8_t gray_pad[16 + VIEWFINDER_GRAY_BYTES + 16];
+static uint8_t *const gray = gray_pad + 16;
+static uint8_t big[800 * 600];
+
+static ViewfinderStats fresh_stats(void)
+{
+    ViewfinderStats st;
+    memset(&st, 0, sizeof st);
+    return st;
+}
+
+static void big_scene(int w, int h, uint8_t bg, uint8_t fg)
+{
+    /* The same scene at any size: a block over x 5%..15%, y 10%..30%. */
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const bool in = x >= w * 5 / 100 && x < w * 15 / 100 &&
+                            y >= h * 10 / 100 && y < h * 30 / 100;
+            big[y * w + x] = in ? fg : bg;
+        }
+    }
+}
+
+static uint8_t gpx(int x, int y) { return gray[y * GW + x]; }
+
+/* A bright block near the top-left of the frame is near the top-left of the
+   preview: not mirrored, not flipped, at the same fraction of the picture. */
+static void test_gray_orientation(void)
+{
+    printf("Grayscale orientation and size\n");
+    memset(gray_pad, 0xA5, sizeof gray_pad);
+
+    const struct { int w, h; } modes[] = { { 320, 240 }, { 640, 480 }, { 800, 600 } };
+    for (size_t m = 0; m < sizeof modes / sizeof modes[0]; m++) {
+        const int w = modes[m].w, h = modes[m].h;
+        big_scene(w, h, 0x20, 0xE0);
+        ViewfinderStats st = fresh_stats();
+        viewfinder_render_gray(big, (uint16_t)w, (uint16_t)h, gray, &st, false);
+
+        /* Block: x 10..30, y 15..45 of 200x150. Its middle is lit... */
+        CHECK(gpx(20, 30) == 255, "%dx%d: block centre is %u, not 255", w, h, gpx(20, 30));
+        /* ...its mirror images and the far corner are dark. */
+        CHECK(gpx(GW - 1 - 20, 30) == 0, "%dx%d: mirrored left-right (%u)", w, h, gpx(GW - 21, 30));
+        CHECK(gpx(20, GH - 1 - 30) == 0, "%dx%d: flipped top-bottom (%u)", w, h, gpx(20, GH - 31));
+        CHECK(gpx(GW - 2, GH - 2) == 0, "%dx%d: far corner lit", w, h);
+        /* Edges where they belong, within the one pixel a box straddles. */
+        CHECK(gpx(8, 30) == 0 && gpx(32, 30) == 0, "%dx%d: block too wide", w, h);
+        CHECK(gpx(20, 13) == 0 && gpx(20, 47) == 0, "%dx%d: block too tall", w, h);
+        CHECK(gpx(11, 16) == 255 && gpx(28, 43) == 255, "%dx%d: block too small", w, h);
+    }
+
+    bool canaries = true;
+    for (int i = 0; i < 16; i++) {
+        canaries &= gray_pad[i] == 0xA5 && gray_pad[16 + VIEWFINDER_GRAY_BYTES + i] == 0xA5;
+    }
+    CHECK(canaries, "wrote outside the %d-byte preview", VIEWFINDER_GRAY_BYTES);
+    CHECK(VIEWFINDER_GRAY_W * 3 == VIEWFINDER_GRAY_H * 4, "preview is not 4:3");
+}
+
+/* Every quadrant, one at a time: only that quadrant of the preview lights. */
+static void test_gray_quadrants(void)
+{
+    printf("Grayscale quadrants\n");
+    const struct { int x0, y0; const char *name; } q[4] = {
+        { 0, 0, "top-left" }, { FW / 2, 0, "top-right" },
+        { 0, FH / 2, "bottom-left" }, { FW / 2, FH / 2, "bottom-right" },
+    };
+    for (int i = 0; i < 4; i++) {
+        frame_fill(0x20);
+        frame_rect(q[i].x0, q[i].y0, q[i].x0 + FW / 2, q[i].y0 + FH / 2, 0xF0);
+        ViewfinderStats st = fresh_stats();
+        viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+        int wrong = 0;
+        for (int y = 0; y < GH; y++) {
+            for (int x = 0; x < GW; x++) {
+                const bool want = ((x >= GW / 2) == (q[i].x0 != 0)) &&
+                                  ((y >= GH / 2) == (q[i].y0 != 0));
+                if (gpx(x, y) != (want ? 255 : 0)) wrong++;
+            }
+        }
+        CHECK(wrong == 0, "%s: %d pixels wrong", q[i].name, wrong);
+    }
+}
+
+/* Auto-level: a dim scene fills the range, and the same scene under more
+   light is the same picture. */
+static void test_gray_autolevel(void)
+{
+    printf("Grayscale auto-level\n");
+    static uint8_t dim[VIEWFINDER_GRAY_BYTES];
+
+    frame_fill(0x08);
+    frame_rect(40, 40, 200, 160, 0x68);
+    ViewfinderStats st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(st.lo == 0x08 && st.hi == 0x68, "raw range %02x..%02x", st.lo, st.hi);
+    uint8_t lo = 255, hi = 0;
+    for (int i = 0; i < VIEWFINDER_GRAY_BYTES; i++) {
+        if (gray[i] < lo) lo = gray[i];
+        if (gray[i] > hi) hi = gray[i];
+    }
+    CHECK(lo == 0 && hi == 255, "a dim scene was shown %u..%u, not 0..255", lo, hi);
+    memcpy(dim, gray, sizeof dim);
+
+    frame_fill(0x08 + 0x80);
+    frame_rect(40, 40, 200, 160, 0x68 + 0x80);
+    st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(memcmp(dim, gray, sizeof dim) == 0, "the same scene in more light looked different");
+
+    /* True exposure: no stretch, the raw levels as the decoder sees them. */
+    frame_fill(0x08);
+    frame_rect(40, 40, 200, 160, 0x68);
+    st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, true);
+    CHECK(gpx(2, 2) == 0x08 && gpx(GW / 2, GH / 2) == 0x68,
+          "true exposure showed %02x/%02x, not 08/68", gpx(2, 2), gpx(GW / 2, GH / 2));
+    CHECK(st.lo == 0x08 && st.hi == 0x68 && st.mean > 0x08 && st.mean < 0x68,
+          "statistics differ with true exposure");
+}
+
+/* The gain cap: no contrast is a flat gray at its own level, not amplified
+   noise, and a faint edge stays faint. */
+static void test_gray_gain_cap(void)
+{
+    printf("Grayscale gain cap\n");
+    frame_fill(0x77);
+    ViewfinderStats st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    bool flat = true;
+    for (int i = 1; i < VIEWFINDER_GRAY_BYTES; i++) flat &= gray[i] == gray[0];
+    CHECK(flat, "a flat frame did not render flat");
+    CHECK(gray[0] > 64 && gray[0] < 192, "a mid-gray wall shown as %u", gray[0]);
+
+    frame_fill(0x70);
+    frame_rect(0, 0, FW / 2, FH, 0x78);
+    st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    const int step = gpx(10, 10) - gpx(GW - 10, 10);
+    CHECK(step > 0 && step <= 8 * 255 / VIEWFINDER_MIN_RANGE + 1,
+          "an 8-level edge was stretched to %d", step);
+
+    /* Black stays black and white stays white at the ends of the range. */
+    frame_fill(0x00);
+    st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(gray[0] == 0, "black lens cap shown as %u", gray[0]);
+    frame_fill(0xFF);
+    st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(gray[0] == 255, "white wall shown as %u", gray[0]);
+    CHECK(st.clipped_pct == 100, "white wall %u%% clipped", st.clipped_pct);
+}
+
+/* Motion: the same frame twice is still; a moved block is not. */
+static void test_gray_motion(void)
+{
+    printf("Grayscale motion\n");
+    frame_fill(0x20);
+    frame_rect(40, 40, 120, 120, 0xE0);
+    ViewfinderStats st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(st.motion == 0 && st.primed, "first frame: motion %u", st.motion);
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(st.motion <= 1, "a still scene moved by %u", st.motion);
+
+    frame_fill(0x20);
+    frame_rect(160, 100, 280, 220, 0xE0);
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(st.motion >= 14, "a block jumping across the view moved only %u", st.motion);
+}
+
+static void test_hints(void)
+{
+    printf("Hints\n");
+    ViewfinderStats st = fresh_stats();
+    CHECK(viewfinder_hint(&st, false) == NULL, "a hint before any frame");
+    CHECK(viewfinder_hint(NULL, false) == NULL, "a hint for no statistics");
+
+    st.primed = true;
+    st.lo = 2; st.hi = 40; st.mean = 12;
+    CHECK(viewfinder_hint(&st, false) && !strcmp(viewfinder_hint(&st, false), "Too dark"), "dark");
+
+    st = fresh_stats(); st.primed = true;
+    st.lo = 200; st.hi = 255; st.mean = 240; st.clipped_pct = 60;
+    CHECK(viewfinder_hint(&st, false) && !strcmp(viewfinder_hint(&st, false), "Too bright"), "bright");
+
+    st = fresh_stats(); st.primed = true;
+    st.lo = 10; st.hi = 200; st.mean = 90; st.bright_pct = 40; st.motion = 30;
+    CHECK(viewfinder_hint(&st, true) && !strcmp(viewfinder_hint(&st, true), "Hold steady"), "steady");
+
+    /* A small bright screen in a dim room, and nothing located: closer. */
+    st = fresh_stats(); st.primed = true;
+    st.lo = 10; st.hi = 220; st.mean = 40; st.bright_pct = 8;
+    CHECK(viewfinder_hint(&st, false) && !strcmp(viewfinder_hint(&st, false), "Move closer"), "closer");
+    CHECK(viewfinder_hint(&st, true) == NULL, "closer, with a code already located");
+
+    /* An ordinary, well-lit, located view says nothing. */
+    st = fresh_stats(); st.primed = true;
+    st.lo = 10; st.hi = 230; st.mean = 120; st.bright_pct = 50;
+    CHECK(viewfinder_hint(&st, true) == NULL, "a hint for a good view");
+
+    /* And end to end, from frames. */
+    frame_fill(0x04);
+    frame_rect(100, 80, 140, 120, 0x30);
+    st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(viewfinder_hint(&st, false) && !strcmp(viewfinder_hint(&st, false), "Too dark"),
+          "a dark frame gave %s", viewfinder_hint(&st, false) ? viewfinder_hint(&st, false) : "nothing");
+    frame_fill(0x10);
+    frame_rect(140, 100, 180, 140, 0xF0);
+    st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(viewfinder_hint(&st, false) && !strcmp(viewfinder_hint(&st, false), "Move closer"),
+          "a small bright screen gave %s", viewfinder_hint(&st, false) ? viewfinder_hint(&st, false) : "nothing");
+}
+
+static void test_lines(void)
+{
+    printf("Feedback lines\n");
+    char line[VIEWFINDER_LINE];
+
+    viewfinder_exposure_line(-4, 59, line);
+    CHECK(!strcmp(line, "Light <=O----> -4 23%"), "exposure: \"%s\"", line);
+    viewfinder_exposure_line(0, 255, line);
+    CHECK(!strcmp(line, "Light <=====O>  0 99%"), "exposure at 0: \"%s\"", line);
+    viewfinder_exposure_line(-5, 0, line);
+    CHECK(!strcmp(line, "Light <O-----> -5  0%"), "exposure at -5: \"%s\"", line);
+    viewfinder_exposure_line(-9, 0, line);
+    CHECK(!strcmp(line, "Light <O-----> -5  0%"), "exposure clamps: \"%s\"", line);
+    for (int b = -5; b <= 0; b++) {
+        for (int m = 0; m < 256; m += 17) {
+            viewfinder_exposure_line((int8_t)b, (uint8_t)m, line);
+            CHECK(strlen(line) <= 21, "exposure %d/%d is %zu wide", b, m, strlen(line));
+        }
+    }
+
+    viewfinder_stats_line(320, 12, 3, 1, line);
+    CHECK(!strcmp(line, "QVGA 12fps s:3 r:1"), "stats: \"%s\"", line);
+    viewfinder_stats_line(800, 0xFFFF, 12345, 999, line);
+    CHECK(!strcmp(line, "SVGA --fps s:99 r:99"), "stats clamp: \"%s\"", line);
+    viewfinder_stats_line(640, 500, 0, 0, line);
+    CHECK(!strcmp(line, "VGA 99fps s:0 r:0"), "stats VGA: \"%s\"", line);
+
+    viewfinder_progress_line(10, 6, line);
+    CHECK(!strcmp(line, "[####------] 6 left"), "progress: \"%s\"", line);
+    viewfinder_progress_line(3, 0, line);
+    CHECK(!strcmp(line, "[##########] 0 left"), "progress done: \"%s\"", line);
+    viewfinder_progress_line(5000, 4999, line);
+    CHECK(strlen(line) <= 21 && !strncmp(line, "[----------] 999", 16), "progress clamp: \"%s\"", line);
+    viewfinder_progress_line(0, 0, line);
+    CHECK(!strcmp(line, "[----------] 0 left"), "progress none: \"%s\"", line);
+}
+
+static void test_gray_guards(void)
+{
+    printf("Grayscale guards\n");
+    ViewfinderStats st = fresh_stats();
+    viewfinder_render_gray(NULL, FW, FH, gray, &st, false);
+    viewfinder_render_gray(frame, 0, FH, gray, &st, false);
+    viewfinder_render_gray(frame, FW, 0, gray, &st, false);
+    viewfinder_render_gray(frame, FW, FH, NULL, &st, false);
+    viewfinder_render_gray(frame, FW, FH, gray, NULL, false);
+    CHECK(!st.primed, "a refused call primed the statistics");
+    printf("  (no crash)\n");
+}
+
+/* A quarter turn: the preview shows the frame turned, never mirrored, and
+   letterboxed to 3:4 (112x150 in the middle of 200x150). Each turn is checked
+   pixel by pixel against the frame point under the pixel's centre; pixels
+   whose box straddles the bright quadrant's edge may be any gray. */
+static void test_gray_rotation(void)
+{
+    printf("Grayscale rotation\n");
+    for (int rot = 0; rot < 4; rot++) {
+        viewfinder_set_rotation((uint8_t)rot);
+        const int lw = (rot & 1) ? FH : FW, lh = (rot & 1) ? FW : FH;
+        int vw = GW, vh = GW * lh / lw;
+        if (vh > GH) { vh = GH; vw = GH * lw / lh; }
+        const int vx0 = (GW - vw) / 2, vy0 = (GH - vh) / 2;
+        frame_fill(0x20);
+        frame_rect(FW / 2, 0, FW, FH / 2, 0xF0);   /* top-right of the frame */
+        ViewfinderStats st = fresh_stats();
+        viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+        int wrong = 0, mixed = 0, bars = 0;
+        for (int y = 0; y < GH; y++) {
+            for (int x = 0; x < GW; x++) {
+                const uint8_t v = gpx(x, y);
+                if (x < vx0 || x >= vx0 + vw || y < vy0 || y >= vy0 + vh) {
+                    if (v != 0) bars++;
+                    continue;
+                }
+                const double u = (x - vx0 + 0.5) * lw / vw;
+                const double w = (y - vy0 + 0.5) * lh / vh;
+                double fx, fy;
+                switch (rot) {
+                case 1:  fx = FW - w; fy = u;      break;
+                case 2:  fx = FW - u; fy = FH - w; break;
+                case 3:  fx = w;      fy = FH - u; break;
+                default: fx = u;      fy = w;      break;
+                }
+                const bool want = fx >= FW / 2 && fy < FH / 2;
+                if (v != 0 && v != 255) { mixed++; continue; }
+                if ((v == 255) != want) wrong++;
+            }
+        }
+        CHECK(wrong == 0, "turn %d: %d pixels wrong", rot, wrong);
+        CHECK(mixed <= 2 * (vw + vh), "turn %d: %d edge pixels", rot, mixed);
+        CHECK(bars == 0, "turn %d: %d bar pixels lit", rot, bars);
+        CHECK(vw == ((rot & 1) ? 112 : 200) && vh == 150,
+              "turn %d: view %dx%d", rot, vw, vh);
+    }
+    /* Counter-clockwise by one: the frame's top-right lands top-left. */
+    viewfinder_set_rotation(1);
+    frame_fill(0x20);
+    frame_rect(FW / 2, 0, FW, FH / 2, 0xF0);
+    ViewfinderStats st = fresh_stats();
+    viewfinder_render_gray(frame, FW, FH, gray, &st, false);
+    CHECK(gpx(44 + 10, 10) == 255 && gpx(44 + 100, 10) == 0 &&
+          gpx(44 + 10, 140) == 0, "turn 1: top-right is not shown top-left");
+    viewfinder_set_rotation(0);
+}
+
 int main(void)
 {
     printf("=== viewfinder ===\n");
@@ -202,6 +531,15 @@ int main(void)
     test_threshold_is_per_frame();
     test_flat_frame_is_blank();
     test_guards();
+    test_gray_orientation();
+    test_gray_quadrants();
+    test_gray_rotation();
+    test_gray_autolevel();
+    test_gray_gain_cap();
+    test_gray_motion();
+    test_hints();
+    test_lines();
+    test_gray_guards();
 
     if (failures) {
         printf("\n%d failure(s)\n", failures);

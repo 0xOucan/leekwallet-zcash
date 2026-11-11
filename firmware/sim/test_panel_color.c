@@ -35,6 +35,9 @@ static void render(void)
         .tint = oled_core_panel_tint(),
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
+    const OledPanelGray g = oled_core_panel_gray();
+    f.gray = g.px;
+    f.gray_x = g.x; f.gray_y = g.y; f.gray_w = g.w; f.gray_h = g.h;
     /* In uneven bands, as a transport might, to prove bands join up. */
     for (int y = 0; y < H; y += 17) {
         panel_color_render(&f, panel_color_palette(), W, H, y, (H - y < 17) ? H - y : 17,
@@ -189,6 +192,43 @@ int main(void)
     CHECK(oled_core_panel_tint() == NULL, "the tint outlived a clear");
     oled_show_panel_tint(tint);
     CHECK(oled_core_panel_tint() == NULL, "a tint without a picture");
+
+    /* The viewfinder's grayscale layer: drawn 1:1 at its rectangle over the
+       text rows, in the 64-gray ramp, the rows below it still text, and gone
+       after a clear. A gradient left to right, a dark band on its top row,
+       so position and orientation both show. */
+    {
+        enum { GW = 200, GH = 150, GX = 20 };
+        static uint8_t gpic[GW * GH];
+        for (int y = 0; y < GH; y++)
+            for (int x = 0; x < GW; x++) gpic[y * GW + x] = (uint8_t)(y == 0 ? 0 : x * 255 / (GW - 1));
+        CHECK(pal->gray[0] == PANEL_RGB565(0, 0, 0) && pal->gray[63] == PANEL_RGB565(255, 255, 255),
+              "the gray ramp does not run black to white");
+        int mono = 0;
+        for (int i = 1; i < 64; i++) mono += pal->gray[i] <= pal->gray[i - 1];
+        CHECK(mono == 0, "the gray ramp is not increasing (%d steps)", mono);
+
+        oled_clear();
+        oled_draw_string(6, 0, "H");
+        oled_show_panel_gray(gpic, GX, 0, GW, GH);
+        render();
+        int off = 0;
+        for (int y = 0; y < GH; y++)
+            for (int x = 0; x < GW; x++) off += at(GX + x, y) != pal->gray[gpic[y * GW + x] >> 2];
+        CHECK(off == 0, "%d viewfinder pixels are not the picture, 1:1", off);
+        CHECK(at(GX, 5) == pal->gray[0] && at(GX + GW - 1, 5) == pal->gray[63],
+              "the gradient is mirrored");
+        CHECK(at(GX - 1, 5) == pal->bg && at(GX + GW, 5) == pal->bg && at(GX + 50, GH) == pal->bg,
+              "the viewfinder spills outside its rectangle");
+        CHECK(at(0, 6 * 30 + 3) == pal->fg[OLED_ROLE_TEXT], "text below the viewfinder is gone");
+        oled_clear();
+        CHECK(oled_core_panel_gray().px == NULL, "the viewfinder outlived a clear");
+        /* A rectangle hanging off the panel is clipped, not overrun. */
+        oled_show_panel_gray(gpic, 100, 200, GW, GH);
+        render();
+        CHECK(at(239, 239) == pal->gray[gpic[39 * GW + 139] >> 2], "a clipped viewfinder is wrong");
+        oled_clear();
+    }
 
     printf("%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

@@ -83,6 +83,11 @@ uint32_t airgap_scan_remaining(void)
     return scan_ready ? ur_decoder_remaining(&scan) : 0;
 }
 
+uint32_t airgap_scan_total(void)
+{
+    return scan_ready && scan.started ? scan.seq_len : 0;
+}
+
 AirgapScan airgap_scan_feed(const char *ur, size_t len)
 {
     if (!scan_ready) {

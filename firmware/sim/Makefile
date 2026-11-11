@@ -454,6 +454,8 @@ $(BUILD)/test_ui: CFLAGS += -DAES_VAR
 # The reference board has no encoder, so its build hides Settings > Knob; the
 # suite asks for the item so the setting can be driven through the menu.
 $(BUILD)/test_ui: CFLAGS += -DUI_HAS_KNOB_SETTING=1
+# Likewise Settings > Preview, which only the colour kit has.
+$(BUILD)/test_ui: CFLAGS += -DUI_HAS_PREVIEW_SETTING=1
 # Everything the UI links against except the panel, shared by test_ui (the
 # text-grid fake panel) and render_screens (the real core and colour panel).
 UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
@@ -469,7 +471,7 @@ UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
                   ../src/cbor.c ../src/device-wipe.c \
                   ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
-                  ../src/airgap.c ../src/camera.c ../src/ur-decoder.c \
+                  ../src/airgap.c ../src/camera.c ../src/viewfinder.c ../src/ur-decoder.c \
                   $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                   $(CRYPTO)/sha2.c $(CRYPTO)/pbkdf2.c \
                   $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c \

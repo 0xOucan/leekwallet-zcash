@@ -208,6 +208,27 @@ enum {
 };
 void oled_show_panel_tint(const uint8_t *tint);
 
+/*
+ * A grayscale picture, one byte a pixel, row-major, drawn 1:1 in panel pixels
+ * at (x, y) over the frame's text rows at the next flush, until the next
+ * oled_clear(): the colour kit's camera viewfinder (viewfinder.h). Kept by
+ * pointer. Rows it covers should hold no text; it is drawn over them.
+ *
+ * Colour panels only, like the tint; the host's fake panel records it.
+ */
+void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
+                          uint16_t w, uint16_t h);
+
+/*
+ * The colour panel's backlight, 10..100 percent (clamped), as LEDC PWM on
+ * the module's BLK pin where the board wires one (PIN_DISPLAY_BLK). A board
+ * with BLK tied to 3V3 accepts it and nothing changes. Colour panels only;
+ * the OLEDs dim through oled_set_contrast().
+ */
+#define OLED_BACKLIGHT_MIN  10
+#define OLED_BACKLIGHT_MAX  100
+esp_err_t oled_set_backlight(uint8_t pct);
+
 /**
  * What text means, for a panel that can show it in colour.
  *
