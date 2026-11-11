@@ -156,7 +156,9 @@ void app_main(void)
 
     /* The secure element, if this build drives one (se.h). Asked once and
      * logged; nothing depends on the answer yet, and a build without a part
-     * says so rather than staying silent about it. */
+     * says so rather than staying silent about it. On an OPTIGA build this is
+     * where the chip is attached (se-optiga.c: the I2C0 install when no panel
+     * made one, then leek_se_attach()), after the panel's own init. */
     {
         const se_status_t se = se_probe();
         static const char *const SE_STATUS[] = {

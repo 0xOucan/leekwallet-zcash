@@ -32,9 +32,10 @@ endif()
 # `driver`. Unused code from it is not linked into an OLED build.
 set(app_requires driver esp_driver_spi nvs_flash esp_hw_support bootloader_support
                  esp_driver_usb_serial_jtag trezor-crypto leek-wallet
-                 # The OPTIGA bring-up. Only se-bench.c calls it today, and
-                 # that file is empty outside the se-bench environment, so
-                 # the linker drops it from every other image.
+                 # The OPTIGA bring-up. Called by se-bench.c (the se-bench
+                 # env) and se-optiga.c (LEEK_SE=LEEK_SE_OPTIGA, the
+                 # esp32s3cam-color-se env); both are empty elsewhere, so the
+                 # linker drops it from every other image.
                  leek-se-optiga)
 if(NOT IDF_TARGET STREQUAL "esp32c3")
     # Both signer backends: BOTH mode requires them to agree (zcash-sign.c).

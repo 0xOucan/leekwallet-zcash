@@ -105,6 +105,21 @@ int zkv_peek(const uint8_t *file, size_t len, uint32_t *iterations);
 /** True if `pass` is acceptable as a .zkv passphrase. */
 bool zkv_pass_ok(const char *pass, size_t pass_len);
 
+/**
+ * The payload alone, as it sits inside the ciphertext: the same bytes for a
+ * .zkv file and for the SE container's copy (se-backup.h), so the two
+ * backups carry one format of seed and metadata. Encode returns the length,
+ * or 0 if `c` cannot be represented; decode returns ZKV_OK or ZKV_E_PAYLOAD.
+ */
+size_t zkv_payload_encode(const ZkvContents *c, uint8_t out[ZKV_PAYLOAD_MAX]);
+int zkv_payload_decode(const uint8_t *p, size_t len, ZkvContents *c);
+
+/**
+ * The BIP39 entropy of `phrase` (12-24 words with a valid checksum) into
+ * `c->entropy`/`c->entropy_len`. False, with `c` untouched, otherwise.
+ */
+bool zkv_entropy_from_phrase(const char *phrase, ZkvContents *c);
+
 /** Short human-readable reason for a ZKV_E_* code. */
 const char *zkv_strerror(int code);
 

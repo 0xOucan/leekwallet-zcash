@@ -329,6 +329,11 @@ esp_err_t leek_se_container_erase(void)
 }
 #endif
 
+int leek_se_last_err(void)
+{
+    return s_err;
+}
+
 const char *leek_se_last_error(void)
 {
 #if LEEK_SE_CONTAINER_WRITES

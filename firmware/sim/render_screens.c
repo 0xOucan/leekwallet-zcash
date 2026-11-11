@@ -166,10 +166,73 @@ static void camera_scene(int dim)
                 cam[(oy + y) * 320 + ox + x] = (uint8_t)(0x30 / dim);
 }
 
+#if UI_RENDER_SE
+#include "fake_se_store.h"
+
+/* The PIN, as the knob types it: DOWN steps the digit up from 0, OK takes
+ * it, and once four are in, UP from 0 wraps to the OK option. */
+static void type_pin(const char *pin)
+{
+    for (const char *p = pin; *p; p++) {
+        for (int i = 0; i < *p - '0'; i++) press(BUTTON_DOWN);
+        press(BUTTON_ACCEPT);
+    }
+    press(BUTTON_UP);
+}
+
+/* Settings > Secure element, as the esp32s3cam-color-se image draws it. */
+static int render_se(void)
+{
+    boot(true);
+    fake_se_reset();
+    go(SCREEN_SE_BACKUP);
+    snap("se-01-menu");
+    press(BUTTON_ACCEPT);                 /* Info */
+    type_pin("1234");
+    snap("se-02-pin");
+    press(BUTTON_ACCEPT);
+    snap("se-03-info-empty");
+    press(BUTTON_ACCEPT);
+    press(BUTTON_DOWN);                   /* Copy seed to SE */
+    press(BUTTON_ACCEPT);
+    type_pin("1234");
+    press(BUTTON_ACCEPT);
+    snap("se-04-copied");
+    press(BUTTON_ACCEPT);
+    press(BUTTON_DOWN);                   /* Compare SE copy */
+    press(BUTTON_ACCEPT);
+    type_pin("1234");
+    press(BUTTON_ACCEPT);
+    snap("se-05-compare-match");
+    press(BUTTON_ACCEPT);
+    press(BUTTON_DOWN);
+    press(BUTTON_DOWN);                   /* SE copy -> vault */
+    press(BUTTON_ACCEPT);
+    type_pin("1234");
+    press(BUTTON_ACCEPT);
+    snap("se-06-restore-vault-noop");
+    press(BUTTON_ACCEPT);
+    press(BUTTON_DOWN);                   /* Erase SE copy */
+    press(BUTTON_ACCEPT);
+    type_pin("1234");
+    press(BUTTON_ACCEPT);
+    snap("se-07-erase-confirm");
+    press(BUTTON_ACCEPT);
+    snap("se-08-erased");
+    press(BUTTON_ACCEPT);
+    for (int i = 0; i < 8; i++) press(BUTTON_DOWN);
+    snap("se-09-menu-end");
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     if (argc > 1) out_dir = argv[1];
     printf("== render_screens -> %s\n", out_dir);
+#if UI_RENDER_SE
+    return render_se();
+#endif
 
     boot(false);
     go(SCREEN_BOOT);

@@ -85,6 +85,12 @@ esp_err_t leek_se_selftest(leek_se_selftest_t *st);
  *  command, its 0xF1C2 code. Static storage, valid until the next call. */
 const char *leek_se_last_error(void);
 
+/** The code behind the last failure: an OPTIGA_E_* from optiga-link.h (or,
+ *  with the container, OPTIGA_E_FOREIGN / OPTIGA_E_VERIFY). Meaningful right
+ *  after a call that returned ESP_FAIL; for callers that act on the reason
+ *  rather than print it. */
+int leek_se_last_err(void);
+
 /**
  * The integration hook for an info screen: `info` as short lines of at most
  * LEEK_SE_LINE_LEN-1 characters, the width of the 128 px panel in the 5x7

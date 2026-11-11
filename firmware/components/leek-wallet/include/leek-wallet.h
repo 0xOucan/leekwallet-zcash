@@ -300,6 +300,25 @@ WalletError wallet_select_wallet(uint8_t index);
 uint8_t wallet_add_mnemonic(const char *mnemonic);
 
 /**
+ * Store `mnemonic` in the vault only if no slot holds it yet: the restore
+ * path for backups (SE container, SD .zkv; docs/BACKUP.md).
+ *
+ * Every stored slot is decrypted and compared first. If one already holds
+ * this phrase, nothing is written: `*already_out` is true and `*slot_out`
+ * names that slot. Otherwise the phrase goes into a new slot after the last
+ * one (wallet_add_mnemonic()), which then becomes the active wallet; the
+ * caller should wallet_select_wallet() it, as an import does, so a
+ * passphrase entered for the previous seed is dropped.
+ *
+ * There is no way to overwrite or delete an existing seed through here. A
+ * slot that does not decrypt refuses the whole call
+ * (WALLET_ERROR_STORAGE_FAILED), and a full vault answers
+ * WALLET_ERROR_STORAGE_FULL.
+ */
+WalletError wallet_store_mnemonic_if_new(const char *mnemonic, uint8_t *slot_out,
+                                         bool *already_out);
+
+/**
  * Delete a wallet by index
  * @param index Wallet index (1 to wallet_count)
  * @return WALLET_OK on success

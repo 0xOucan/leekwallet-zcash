@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "aes/aesgcm.h"
+#include "bip39.h"
 #include "memzero.h"
 #include "pbkdf2.h"
 #include "rand.h"
@@ -78,7 +79,7 @@ static void derive_key(const char *pass, size_t pass_len, uint32_t iterations,
 }
 
 /* The payload's bytes; 0 if `c` cannot be represented. */
-static size_t encode_payload(const ZkvContents *c, uint8_t *p)
+size_t zkv_payload_encode(const ZkvContents *c, uint8_t p[ZKV_PAYLOAD_MAX])
 {
     size_t label_len = strnlen(c->label, sizeof c->label);
     if (!entropy_len_ok(c->entropy_len) || c->account >= 0x80000000u ||
@@ -101,7 +102,7 @@ static size_t encode_payload(const ZkvContents *c, uint8_t *p)
     return n + label_len;
 }
 
-static int decode_payload(const uint8_t *p, size_t len, ZkvContents *c)
+int zkv_payload_decode(const uint8_t *p, size_t len, ZkvContents *c)
 {
     if (len < 2 || p[0] != 1 || !entropy_len_ok(p[1])) return ZKV_E_PAYLOAD;
     size_t el = p[1];
@@ -136,7 +137,7 @@ static int seal(const ZkvContents *c, const char *pass, size_t pass_len, uint32_
     if (iterations < ZKV_ITERATIONS_MIN || iterations > ZKV_ITERATIONS_MAX) return ZKV_E_KDF;
 
     uint8_t payload[ZKV_PAYLOAD_MAX];
-    size_t plen = encode_payload(c, payload);
+    size_t plen = zkv_payload_encode(c, payload);
     if (plen == 0) return ZKV_E_ARG;
     size_t total = ZKV_HEADER_SIZE + plen + ZKV_TAG_SIZE;
     if (cap < total) {
@@ -221,7 +222,7 @@ int zkv_open(const uint8_t *file, size_t len, const char *pass, size_t pass_len,
         gcm_decrypt_message(file + OFF_NONCE, NONCE_SIZE, file, ZKV_HEADER_SIZE, payload,
                             (unsigned long)plen, file + ZKV_HEADER_SIZE + plen, ZKV_TAG_SIZE,
                             ctx) == RETURN_GOOD) {
-        rc = decode_payload(payload, plen, out);
+        rc = zkv_payload_decode(payload, plen, out);
     }
     gcm_end(ctx);
     memzero(ctx, sizeof ctx);
@@ -229,6 +230,21 @@ int zkv_open(const uint8_t *file, size_t len, const char *pass, size_t pass_len,
     memzero(payload, sizeof payload);
     if (rc != ZKV_OK) memzero(out, sizeof *out);
     return rc;
+}
+
+bool zkv_entropy_from_phrase(const char *phrase, ZkvContents *c)
+{
+    if (!phrase || !c) return false;
+    uint8_t bits[33];
+    int nbits = mnemonic_to_bits(phrase, bits);
+    /* ENT + ENT/32 bits: 132 for 12 words up to 264 for 24. */
+    bool ok = nbits >= 132 && nbits <= 264 && nbits % 33 == 0;
+    if (ok) {
+        c->entropy_len = (uint8_t)(nbits * 32 / 33 / 8);
+        memcpy(c->entropy, bits, c->entropy_len);
+    }
+    memzero(bits, sizeof bits);
+    return ok;
 }
 
 const char *zkv_strerror(int code)

@@ -27,4 +27,12 @@ void zcash_short_fp(const uint8_t fp[32], char out[ZCASH_FP_CHARS + 1]);
  */
 WalletError zcash_seed_fingerprint(uint8_t out[32]);
 
+/**
+ * The same fingerprint for a phrase that is not the open seed, with no BIP39
+ * passphrase: what identifies a backup copy (se-backup.h). One BIP39 stretch
+ * (2048 rounds of PBKDF2-HMAC-SHA512, about half a second on the S3) on the
+ * caller's stack; the seed is wiped before it returns.
+ */
+void zcash_fp_of_phrase(const char *phrase, uint8_t out[32]);
+
 #endif /* LEEK_ZCASH_FP_H */

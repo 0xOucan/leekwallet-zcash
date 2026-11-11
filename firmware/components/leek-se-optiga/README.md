@@ -10,7 +10,8 @@ chip's TRNG work. The design it is meant to feed is in
 ## What it does, and what it will never do here
 
 With `LEEK_SE_CONTAINER_WRITES` at 0 — the default, and every env in
-`platformio.ini`, including `esp32s3cam-se-bench` — this table is complete:
+`platformio.ini` except the development image `esp32s3cam-color-se`,
+including `esp32s3cam-se-bench` — this table is complete:
 
 | Operation | Command | Effect on the chip |
 |---|---|---|
@@ -53,8 +54,10 @@ bool for erase-or-not, not a `Param` byte, so the others are not expressible.
 
 The flag reaches the component through CMake, not `build_flags`:
 `-DLEEK_SE_CONTAINER_WRITES=1` in an env's `board_build.cmake_extra_args`.
-No env sets it, and nothing in `src/` calls the container: it is not wired
-to the vault or the UI. Level 1 is storage, not security — anyone with the
+One env sets it: `esp32s3cam-color-se`, the development image whose
+Settings > Secure element screen keeps a PIN-sealed copy of the seed here
+(`src/se-backup.c`, `src/se-optiga.c`; docs/BACKUP.md). No release image does.
+Level 1 is storage, not security — anyone with the
 I2C bus can read the blob and rewrite the object's metadata — so only
 already-encrypted data belongs in it.
 
@@ -208,25 +211,20 @@ what `GetDataObject` returns for a never-written `0xF1E0` (the simulation
 answers with zero bytes), and that erase-and-write leaves the object's
 length at the bytes written (the simulation's reading of the manual).
 
-## Integration hook (for the coordinator)
+## Integration (done, development image only)
 
-The main firmware does not call this component yet: `LEEK_HAS_SE` stays 0 in
-`board.h`, and `board.h`, `ui.c` and the panel code are being reworked on
-another branch. To add a "Secure element" info screen later:
+`esp32s3cam-color-se` builds with `-DLEEK_SE=LEEK_SE_OPTIGA` (so
+`LEEK_HAS_SE` is 1) and the container flag. `src/se-optiga.c` is the glue:
+`se_probe()` (called once from `main.c` after the panel) installs the legacy
+I2C driver on I2C0 when no I2C panel did (the colour kit; on an OLED kit the
+panel's install is reused), calls `leek_se_attach(I2C_NUM_0)`, probes `0x30`
+and opens the application; `se_info_lines()` feeds the Info screen; and the
+four `sebk_store_*` functions put `leek_se_container_*` under
+`src/se-backup.c`. Every call runs on the UI task with a "busy" screen up,
+never on the draw path. Nothing is gated on the chip: without it the screen
+says "No secure element" and the wallet works as before. With `LEEK_SE` left
+at `LEEK_SE_NONE` (every other env) none of this is compiled.
 
-1. In `board.h`, S3CAM block: `#define LEEK_HAS_SE 1` (or a build flag).
-2. After `oled_i2c_init()` in `main.c`: `leek_se_attach(I2C_NUM_0);` — the
-   panel's driver install is reused; never install a second driver.
-3. From a task (not the draw path — a full info read takes a few hundred ms
-   for the certificate):
-   ```c
-   leek_se_info_t info;
-   char lines[8][LEEK_SE_LINE_LEN];
-   size_t n = 0;
-   if (leek_se_probe() && leek_se_info(&info) == ESP_OK)
-       n = leek_se_summary_lines(&info, lines, 8);
-   ```
-   then draw the `n` lines (each ≤ 21 chars) on a Settings > About-style
-   screen, or "No secure element" when `n == 0`.
-4. Do not gate anything on it yet. Until the PIN design below exists, the
-   chip is information, not security.
+`leek_se_last_err()` was added for that glue: the code behind the last
+failure, so a refused write over foreign data, a failed read-back and an
+oversize container can be told apart without parsing text.

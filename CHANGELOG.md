@@ -8,6 +8,19 @@ are released in
 
 ## Unreleased
 
+- **Seed backups in the secure element and back (development image only).**
+  A new env, `esp32s3cam-color-se` (colour kit + OPTIGA Trust M on GPIO47/21),
+  adds Settings > Secure element: copy the open seed into the chip's Level 1
+  container, compare it, restore it to the session or to the vault, erase it,
+  and restore an SD `.zkv` file into the chip or into the vault. Every action
+  asks for the PIN first. The copy is sealed with the vault's own KDF and
+  AES-256-GCM under the PIN, with a salt of its own so it opens on a rebuilt
+  vault; screens show only its ZFP. Restoring into the vault never overwrites
+  or deletes a seed already there: the same seed is a no-op, another goes into
+  a new slot, a full vault refuses. The chip is left unlocked, so this copy is
+  a backup location, not extra security; the vault stays the master
+  (`firmware/docs/BACKUP.md`). Every other image is unchanged. Host-tested
+  (`sim/test_se_backup.c`); not yet run on a chip.
 - **Secure element research, and a development-only SE container.** How
   Trezor and BitBox use the OPTIGA Trust M, and a design for using it here
   (`firmware/docs/RESEARCH-SECURE-ELEMENT.md`,
