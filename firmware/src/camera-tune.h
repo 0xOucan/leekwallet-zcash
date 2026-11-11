@@ -57,4 +57,51 @@ uint16_t camera_tune_gain_ceiling_reg(unsigned times);
 uint8_t camera_tune_band_3c00(unsigned hz);
 uint8_t camera_tune_band_3c01(unsigned hz);
 
+/*
+ * Shutter cap: the AEC's maximum exposure, so it reaches for gain (now that
+ * gain has a real ceiling) before it reaches for blur.
+ *
+ * {0x3A02, 0x3A03} is the 60 Hz maximum and {0x3A14[3:0], 0x3A15} the 50 Hz
+ * one (16 bits, big-endian); camera.c writes both, so the cap holds under
+ * either banding setting. In lines: the driver and OmniVision's own init
+ * tables write 0x03D8 = 984 = VTS there, "one frame". (The datasheet's reset
+ * default 0x3D80 is 984 x 16, which would mean 1/16-line units; if the
+ * scan log's "exp" never rises above cap/16 lines, that is the reading, and
+ * the cap should be multiplied by 16. TODO(board): confirm.)
+ *
+ * Line time is 1 / (sensor fps x VTS): at the ~8-12 fps the driver's QVGA PLL
+ * gives (to be measured: bench fps with no code in view), 85-128 us, so 96
+ * lines is about 8-12 ms, under one 60 Hz band (8.3 ms at the faster
+ * estimate) and over the 2-4 ms a PWM-dimmed phone OLED needs to not band.
+ * Clamped to 1..vts: more than a frame stretches the frame.
+ */
+uint16_t camera_tune_shutter_cap(unsigned lines, unsigned vts);
+
+/*
+ * Centre-weighted AEC: 0x5688-0x568F hold a 4x4 grid of 4-bit zone weights,
+ * two zones a register, "Window r(c+1) weight" in bits 7:4 and "Window rc"
+ * in bits 3:0 (datasheet, AEC weight table; reset 0x11 everywhere, i.e.
+ * flat). camera_tune_aec_pack() turns grid[row][col] into the eight
+ * register values. CAMERA_TUNE_AEC_CENTRE is 15 on the middle 2x2 and 1
+ * elsewhere: the phone in the middle of the view sets the exposure and the
+ * dark room around it barely counts. Symmetric, so it does not matter
+ * whether the datasheet's "rc" is row-column or column-row.
+ */
+void camera_tune_aec_pack(const uint8_t grid[4][4], uint8_t out[8]);
+extern const uint8_t CAMERA_TUNE_AEC_CENTRE[4][4];
+
+/*
+ * The knob's exposure bias (-5..0, as the Scan screen shows it) to the
+ * sensor's AE level (-5..5, ov5640.c set_ae_level(): target (level+5)*10+5).
+ *
+ * The bias was tuned with whole-frame metering, where a screen filling a
+ * quarter of the view at target 15 (bias -4) landed at about 60/255. Centre-
+ * weighted, the screen IS most of the metered average, and the same target
+ * would leave it at about 18: black. So with centre weighting the sensor
+ * gets bias + offset (3 by default: -4 -> -1, target 45, the screen ~54/255,
+ * close to what the user tuned), and the knob keeps its scale and its
+ * default. Clamped to -5..5.
+ */
+int camera_tune_ae_level(int bias, bool centre_weighted, int offset);
+
 #endif /* LEEK_CAMERA_TUNE_H */

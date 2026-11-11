@@ -154,6 +154,36 @@ static uint8_t frame_mode = 0;
 #  define CAMERA_MAINS_HZ  60
 #endif
 
+/*
+ * Shutter cap in lines (camera-tune.h): 96 ~ 8-12 ms at the driver's QVGA
+ * timing. 0 leaves the driver's one-frame maximum. Measure: the scan log's
+ * "exp" stays at or under this, "gain" makes up the rest, and the PC stream
+ * of a phone moved by hand smears less.
+ */
+#ifndef CAMERA_SHUTTER_CAP_LINES
+#  define CAMERA_SHUTTER_CAP_LINES  96
+#endif
+/* The driver's VTS for every binned mode (QVGA..SVGA): 1968 / 2. */
+#define CAMERA_DRIVER_VTS  984
+
+/*
+ * Centre-weighted metering, and the offset that keeps the knob's -5..0 scale
+ * landing where the user tuned it (camera-tune.h). 0 restores flat metering
+ * and the bias as it was. Measure: with a phone filling the middle of the
+ * view, the row-5 level stays green (25-60%) whether the room is lit or not.
+ */
+#ifndef CAMERA_AEC_CENTRE
+#  define CAMERA_AEC_CENTRE  1
+#endif
+#ifndef CAMERA_AEC_BIAS_OFFSET
+#  define CAMERA_AEC_BIAS_OFFSET  3
+#endif
+
+static int sensor_ae_level(int8_t bias)
+{
+    return camera_tune_ae_level(bias, CAMERA_AEC_CENTRE != 0, CAMERA_AEC_BIAS_OFFSET);
+}
+
 static struct quirc *quirc_ctx;
 static bool running;
 
@@ -430,7 +460,7 @@ bool camera_start(void)
          */
         if (sensor->set_gain_ctrl != NULL)     { sensor->set_gain_ctrl(sensor, 1); }
         if (sensor->set_exposure_ctrl != NULL) { sensor->set_exposure_ctrl(sensor, 1); }
-        if (sensor->set_ae_level != NULL)      { sensor->set_ae_level(sensor, exposure_bias); }
+        if (sensor->set_ae_level != NULL)      { sensor->set_ae_level(sensor, sensor_ae_level(exposure_bias)); }
 
         /*
          * A QR profile, not a photo profile: nothing here is looked at by a
@@ -466,6 +496,22 @@ bool camera_start(void)
                             camera_tune_band_3c01(CAMERA_MAINS_HZ));
             sensor->set_reg(sensor, 0x3C00, CAMERA_TUNE_BAND_3C00_MASK,
                             camera_tune_band_3c00(CAMERA_MAINS_HZ));
+        }
+        /* Cap the shutter, both banding variants, and weight the metering
+           to the middle of the view. Exposure stays automatic: no manual
+           value that could stretch a frame (see above). */
+        if (sensor->set_reg != NULL && CAMERA_SHUTTER_CAP_LINES > 0) {
+            const uint16_t cap = camera_tune_shutter_cap(CAMERA_SHUTTER_CAP_LINES,
+                                                         CAMERA_DRIVER_VTS);
+            sensor->set_reg(sensor, 0x3A02, 0xFFFF, cap);
+            sensor->set_reg(sensor, 0x3A14, 0x0FFF, cap);
+        }
+        if (sensor->set_reg != NULL && CAMERA_AEC_CENTRE) {
+            uint8_t w[8];
+            camera_tune_aec_pack(CAMERA_TUNE_AEC_CENTRE, w);
+            for (int i = 0; i < 8; i++) {
+                sensor->set_reg(sensor, 0x5688 + i, 0xFF, w[i]);
+            }
         }
         if (sensor->set_contrast != NULL)      { sensor->set_contrast(sensor, 2); }
         if (sensor->set_sharpness != NULL)     { sensor->set_sharpness(sensor, 1); }
@@ -723,7 +769,7 @@ void camera_set_exposure_bias(int8_t level)
     exposure_bias = (int8_t)(level < -5 ? -5 : (level > 0 ? 0 : level));
     sensor_t *sensor = esp_camera_sensor_get();
     if (running && sensor != NULL && sensor->set_ae_level != NULL) {
-        sensor->set_ae_level(sensor, exposure_bias);
+        sensor->set_ae_level(sensor, sensor_ae_level(exposure_bias));
     }
 }
 
