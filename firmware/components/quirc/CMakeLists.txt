@@ -18,3 +18,18 @@ idf_component_register(
 target_compile_options(${COMPONENT_LIB} PRIVATE -O2)
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     QUIRC_FLOAT_TYPE=float QUIRC_USE_TGMATH)
+
+# Two options for the QR speed work (docs: research/quirc-speed), both off
+# unless platformio.ini passes the CMake variable (cmake_extra_args, envs
+# esp32s3cam-color-qstages and esp32s3cam-color-qfast). PUBLIC, so camera.c
+# sees the same definitions and can report what quirc measured.
+#
+# QUIRC_STAGE_TIMING: quirc_end() times its stages (lib/quirc_stages.h).
+# QUIRC_FAST_PERSPECTIVE: perspective_map() inline, without __divsf3 and
+#   rintf calls, bit-identical by construction (lib/identify.c).
+if(QUIRC_STAGE_TIMING)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC QUIRC_STAGE_TIMING=1)
+endif()
+if(QUIRC_FAST_PERSPECTIVE)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC QUIRC_FAST_PERSPECTIVE=1)
+endif()
