@@ -60,3 +60,26 @@ int camera_tune_ae_level(int bias, bool centre_weighted, int offset)
     if (level > 5)  { level = 5; }
     return level;
 }
+
+#ifndef CAMERA_ZOOM_VTS
+#  define CAMERA_ZOOM_VTS  984
+#endif
+/* A build asking for a VTS shorter than a window's rows plus the driver's
+   8 rows of blanking gets the floor instead of a stretched frame. */
+#define ZOOM_VTS(rows) ((CAMERA_ZOOM_VTS) < (rows) + 8 ? (rows) + 8 : (CAMERA_ZOOM_VTS))
+
+static const CameraZoom ZOOMS[CAMERA_ZOOM_COUNT] = {
+    { "1x",   0,   0, 2623, 1951, 16, 8, 2060, 984,             320, 240, true, true },
+    { "2x", 640, 480, 1983, 1471, 16, 8, 2060, ZOOM_VTS(496),   320, 240, true, true },
+    { "3x", 800, 600, 1823, 1351, 16, 8, 2060, ZOOM_VTS(376), 320, 240, true, true },
+};
+
+const CameraZoom *camera_tune_zoom(uint8_t level)
+{
+    return &ZOOMS[level < CAMERA_ZOOM_COUNT ? level : 0];
+}
+
+uint8_t camera_tune_zoom_next(uint8_t level)
+{
+    return (uint8_t)(level + 1 < CAMERA_ZOOM_COUNT ? level + 1 : 0);
+}

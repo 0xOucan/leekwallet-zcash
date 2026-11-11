@@ -104,4 +104,58 @@ extern const uint8_t CAMERA_TUNE_AEC_CENTRE[4][4];
  */
 int camera_tune_ae_level(int bias, bool centre_weighted, int offset);
 
+/*
+ * Digital zoom on the sensor: the Scan screen's knob push.
+ *
+ * The output is always QVGA 320x240 grayscale; what changes is how much of
+ * the 2624x1952 pixel array feeds it. The OV5640 reads a window of the array
+ * (X/Y_ADDR_ST/END, 0x3800-0x3807), bins it 2x2 (as the driver does for
+ * every mode up to 1280x960), drops an ISP offset from each edge
+ * (0x3810-0x3813) and scales what is left down to the output (0x3808-0x380B,
+ * ISP_CONTROL_01 bit 5). So each zoom level is real sensor pixels, always
+ * DOWNscaled - never an interpolated upscale - and quirc's cost is the same
+ * 320x240 at every level.
+ *
+ * The windows, centred on the array (1312, 976), binned, offsets 16/8:
+ *
+ *   level  window (sx,sy)-(ex,ey)   binned - offsets   to 320x240   field
+ *   1x     (0,0)-(2623,1951)        1280 x 960         4:1          full
+ *   2x     (640,480)-(1983,1471)    640 x 480          2:1          1/2
+ *   3x     (800,600)-(1823,1351)    480 x 360          3:2          1/2.67
+ *
+ * 1x is exactly the driver's own QVGA (ratio_table[4:3], binned). "3x" is
+ * 2.67x of the field: the nearest window whose binned size scales to
+ * 320x240 by a simple ratio (3 sensor pixels per output pixel, 2x2 binned
+ * then 3:2), where a true 3x (853.3 x 640) has none.
+ *
+ * HTS stays the driver's 2060. VTS (ty) is the driver's 984 at every level
+ * unless built with -DCAMERA_ZOOM_VTS=N for 2x and 3x (item 8 of the tuning
+ * list): a zoomed window reads half or fewer of the rows, so it can run at a
+ * shorter frame - try 700, then 600 - for more frames a second. Even at 984
+ * the zoomed rolling readout is half as long (fewer rows each line time),
+ * which already tears fewer animated frames. TODO(board): measure fps with
+ * no code in view at each VTS; back off on any capture timeout.
+ *
+ * Expected on the board: at 2x a phone code about twice as wide on row 6's
+ * viewfinder, "s" (located) at a distance where 1x found nothing, and
+ * sender fragments of 120-150 bytes decoding where 1x managed 50-90.
+ */
+typedef struct {
+    const char *label;          /* row 6: "1x", "2x", "3x" */
+    uint16_t sx, sy, ex, ey;    /* array window, inclusive */
+    uint16_t ox, oy;            /* ISP offset, binned pixels, each edge */
+    uint16_t tx, ty;            /* HTS, VTS */
+    uint16_t ow, oh;            /* output: always 320 x 240 */
+    bool     binning, scale;
+} CameraZoom;
+
+#define CAMERA_ZOOM_COUNT  3
+#define CAMERA_ARRAY_W     2624
+#define CAMERA_ARRAY_H     1952
+
+/** Level 0..CAMERA_ZOOM_COUNT-1; out of range is level 0 (1x). */
+const CameraZoom *camera_tune_zoom(uint8_t level);
+/** The push: 1x -> 2x -> 3x -> 1x. */
+uint8_t camera_tune_zoom_next(uint8_t level);
+
 #endif /* LEEK_CAMERA_TUNE_H */

@@ -438,12 +438,17 @@ static void test_lines(void)
         }
     }
 
-    viewfinder_stats_line(320, 12, 3, 1, line);
-    CHECK(!strcmp(line, "QVGA 12fps s:3 r:1"), "stats: \"%s\"", line);
-    viewfinder_stats_line(800, 0xFFFF, 12345, 999, line);
-    CHECK(!strcmp(line, "SVGA --fps s:99 r:99"), "stats clamp: \"%s\"", line);
-    viewfinder_stats_line(640, 500, 0, 0, line);
-    CHECK(!strcmp(line, "VGA 99fps s:0 r:0"), "stats VGA: \"%s\"", line);
+    viewfinder_stats_line("1x", 12, 3, 1, line);
+    CHECK(!strcmp(line, "1x 12fps s:3 r:1"), "stats: \"%s\"", line);
+    viewfinder_stats_line("3x", 0xFFFF, 12345, 999, line);
+    CHECK(!strcmp(line, "3x --fps s:99 r:99"), "stats clamp: \"%s\"", line);
+    viewfinder_stats_line("2x", 500, 0, 0, line);
+    CHECK(!strcmp(line, "2x 99fps s:0 r:0"), "stats 2x: \"%s\"", line);
+    /* A long label is cut so the row still fits; no label is "?". */
+    viewfinder_stats_line("ZOOMZOOM", 99, 99, 99, line);
+    CHECK(!strcmp(line, "ZOOM 99fps s:99 r:99") && strlen(line) <= 21, "stats long: \"%s\"", line);
+    viewfinder_stats_line(NULL, 1, 0, 0, line);
+    CHECK(!strcmp(line, "? 1fps s:0 r:0"), "stats no label: \"%s\"", line);
 
     viewfinder_progress_line(10, 6, line);
     CHECK(!strcmp(line, "[####------] 6 left"), "progress: \"%s\"", line);

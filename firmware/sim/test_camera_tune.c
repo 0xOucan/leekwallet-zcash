@@ -101,6 +101,54 @@ static void test_ae_level(void)
         CHECK(camera_tune_ae_level(b, true, 3) < camera_tune_ae_level(b + 1, true, 3), "not monotonic at %d", b);
 }
 
+static void test_zoom(void)
+{
+    printf("Zoom windows\n");
+    static const char *const labels[CAMERA_ZOOM_COUNT] = { "1x", "2x", "3x" };
+    /* Binned, offsets dropped: what the scaler is given, and the ratio
+       (x2, so 3:2 is an integer) it scales down by. */
+    static const unsigned used_w[CAMERA_ZOOM_COUNT] = { 1280, 640, 480 };
+    for (uint8_t z = 0; z < CAMERA_ZOOM_COUNT; z++) {
+        const CameraZoom *c = camera_tune_zoom(z);
+        CHECK(!strcmp(c->label, labels[z]), "level %u is \"%s\"", z, c->label);
+        CHECK(c->ow == 320 && c->oh == 240, "level %u outputs %ux%u, not QVGA", z, c->ow, c->oh);
+        CHECK(c->binning && c->scale, "level %u not binned+scaled", z);
+        CHECK(c->ex < CAMERA_ARRAY_W && c->ey < CAMERA_ARRAY_H && c->sx < c->ex && c->sy < c->ey,
+              "level %u window off the array", z);
+        /* Centred: start + end is the array's last index. */
+        CHECK(c->sx + c->ex == CAMERA_ARRAY_W - 1 && c->sy + c->ey == CAMERA_ARRAY_H - 1,
+              "level %u not centred", z);
+        /* Even starts, odd ends: whole 2x2 Bayer cells for binning. */
+        CHECK(c->sx % 2 == 0 && c->sy % 2 == 0 && c->ex % 2 == 1 && c->ey % 2 == 1,
+              "level %u not on Bayer cells", z);
+        const unsigned w = (unsigned)(c->ex - c->sx + 1) / 2 - 2u * c->ox;
+        const unsigned h = (unsigned)(c->ey - c->sy + 1) / 2 - 2u * c->oy;
+        CHECK(w == used_w[z], "level %u feeds %u wide, not %u", z, w, used_w[z]);
+        CHECK(w * 3 == h * 4, "level %u is %ux%u, not 4:3", z, w, h);
+        /* Never an upscale, and a ratio that is a whole number of halves. */
+        CHECK(w >= c->ow && h >= c->oh, "level %u upscales (%ux%u)", z, w, h);
+        CHECK((w * 2) % c->ow == 0 && (h * 2) % c->oh == 0, "level %u ratio is not n/2", z);
+        /* VTS covers the rows read, with at least the driver's own 8 rows
+           of blanking (1x: 976 rows, VTS 984). */
+        CHECK(c->ty >= (c->ey - c->sy + 1) / 2 + 8, "level %u VTS %u is shorter than its rows", z, c->ty);
+        CHECK(c->tx == 2060, "level %u HTS moved", z);
+    }
+    /* 1x is the driver's own QVGA: whole array, VTS 1968/2. */
+    const CameraZoom *one = camera_tune_zoom(0);
+    CHECK(one->sx == 0 && one->sy == 0 && one->ex == 2623 && one->ey == 1951 && one->ty == 984,
+          "1x is not the driver's QVGA");
+    /* Each level magnifies more than the last. */
+    for (uint8_t z = 1; z < CAMERA_ZOOM_COUNT; z++) {
+        CHECK(camera_tune_zoom(z)->ex - camera_tune_zoom(z)->sx <
+              camera_tune_zoom(z - 1)->ex - camera_tune_zoom(z - 1)->sx, "level %u does not zoom in", z);
+    }
+    /* The push cycles 1x -> 2x -> 3x -> 1x, and nonsense is 1x. */
+    CHECK(camera_tune_zoom_next(0) == 1 && camera_tune_zoom_next(1) == 2 &&
+          camera_tune_zoom_next(2) == 0, "the cycle is wrong");
+    CHECK(camera_tune_zoom_next(200) == 0, "an unknown level does not return to 1x");
+    CHECK(camera_tune_zoom(200) == camera_tune_zoom(0), "an unknown level is not 1x");
+}
+
 int main(void)
 {
     printf("=== camera tune ===\n");
@@ -109,6 +157,7 @@ int main(void)
     test_shutter_cap();
     test_aec_weights();
     test_ae_level();
+    test_zoom();
     if (failures) {
         printf("\n%d failure(s)\n", failures);
         return 1;

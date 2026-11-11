@@ -300,13 +300,14 @@ void viewfinder_exposure_line(int8_t bias, uint8_t mean, char out[VIEWFINDER_LIN
     snprintf(out, VIEWFINDER_LINE, "Light %s %2d %2u%%", bar, (int)bias, level_pct(mean));
 }
 
-void viewfinder_stats_line(uint16_t frame_w, uint16_t fps, uint32_t seen,
+void viewfinder_stats_line(const char *zoom, uint16_t fps, uint32_t seen,
                            uint32_t read, char out[VIEWFINDER_LINE])
 {
-    const char *size = frame_w == 320 ? "QVGA" : frame_w == 640 ? "VGA"
-                     : frame_w == 800 ? "SVGA" : "?";
-    /* Each number clamped to two digits in a buffer of its own, so the line
-       provably fits: "SVGA 99fps s:99 r:99" is 20. */
+    /* The label cut to four, and each number clamped to two digits in a
+       buffer of its own, so the line provably fits: "2.7x 99fps s:99 r:99"
+       is 20. */
+    char size[5];
+    snprintf(size, sizeof size, "%s", zoom != NULL ? zoom : "?");
     char rate[3], s[3], r[3];
     if (fps == 0xFFFF) {
         memcpy(rate, "--", 3);

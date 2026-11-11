@@ -63,8 +63,16 @@ uint8_t camera_orientation(void);
 void camera_set_exposure_bias(int8_t level);
 int8_t camera_exposure_bias(void);
 
-/** Step the capture size QVGA -> VGA -> SVGA and (re)start the camera. */
-bool camera_next_frame_size(void);
+/**
+ * Digital zoom on the sensor (camera-tune.h): 1x -> 2x -> 3x -> 1x, applied
+ * live, output always 320x240. 1x again on every camera_start(). False when
+ * the level would not apply, in which case the camera is back at 1x.
+ */
+bool camera_next_zoom(void);
+uint8_t camera_zoom(void);
+/** "1x", "2x" or "3x". */
+const char *camera_zoom_label(void);
+
 uint16_t camera_frame_width(void);
 
 /**
@@ -131,6 +139,8 @@ void camera_note_draw_us(uint32_t us);
  */
 void camera__set_frame_for_test(const uint8_t *frame, uint16_t w, uint16_t h);
 void camera__set_located_for_test(uint32_t located, uint32_t decodes);
+/* Make the next camera_next_zoom() fail, as a sensor refusing the window. */
+void camera__set_zoom_fails_for_test(bool fails);
 #endif
 
 #endif /* LEEK_CAMERA_H */

@@ -1545,7 +1545,7 @@ static void test_colour_scan_is_a_grayscale_viewfinder(void)
     }
     CHECK_SCREEN(strncmp(fake_oled_row(5), "Light <=O----> -4", 17) == 0,
                  "row 5 is not the exposure bar: \"%s\"", fake_oled_row(5));
-    CHECK_SCREEN(fake_oled_row_contains(6, "QVGA --fps s:0 r:0"),
+    CHECK_SCREEN(fake_oled_row_contains(6, "1x --fps s:0 r:0"),
                  "row 6 is not the counters: \"%s\"", fake_oled_row(6));
     /* The percentage is in its level's colour, the bar in body text. */
     {
@@ -1584,10 +1584,42 @@ static void test_colour_scan_is_a_grayscale_viewfinder(void)
     fake_clock_advance_us(1000 * 1000);
     ui__service_scan_for_test();
     ui_render();
-    CHECK_SCREEN(fake_oled_row_contains(6, "QVGA 1fps s:3 r:1"),
+    CHECK_SCREEN(fake_oled_row_contains(6, "1x 1fps s:3 r:1"),
                  "row 6 is \"%s\"", fake_oled_row(6));
     CHECK_SCREEN(fake_oled_row_contains(7, "Point at the QR"),
                  "row 7 is \"%s\"", fake_oled_row(7));
+
+    /* Push: the sensor zoom, 1x -> 2x -> 3x -> 1x, on row 6; the capture
+       stays 320x240. */
+    CHECK(camera_zoom() == 0, "Scan did not open at 1x");
+    press(BUTTON_ACCEPT);
+    CHECK(camera_zoom() == 1, "the push did not zoom to 2x (%u)", camera_zoom());
+    CHECK_SCREEN(fake_oled_row_contains(6, "2x "), "row 6 does not say 2x: \"%s\"", fake_oled_row(6));
+    press(BUTTON_ACCEPT);
+    CHECK_SCREEN(fake_oled_row_contains(6, "3x "), "row 6 does not say 3x: \"%s\"", fake_oled_row(6));
+    press(BUTTON_ACCEPT);
+    CHECK(camera_zoom() == 0, "3x did not wrap to 1x");
+    CHECK_SCREEN(fake_oled_row_contains(6, "1x "), "row 6 does not say 1x: \"%s\"", fake_oled_row(6));
+    CHECK(camera_frame_width() == 320, "the zoom changed the capture size");
+    /* Leaving and coming back opens at 1x, whatever the zoom was. */
+    press(BUTTON_ACCEPT);
+    CHECK(camera_zoom() == 1, "no 2x before leaving");
+    press(BUTTON_CANCEL);
+    go(SCREEN_SCAN);
+    CHECK(camera_zoom() == 0, "Scan reopened at %s, not 1x", camera_zoom_label());
+    ui__service_scan_for_test();
+    ui_render();
+    /* A level the sensor refuses: a fixed string, and the full field. */
+    camera__set_zoom_fails_for_test(true);
+    press(BUTTON_ACCEPT);
+    camera__set_zoom_fails_for_test(false);
+    CHECK(camera_zoom() == 0, "a failed zoom did not fall back to 1x");
+    CHECK_SCREEN(fake_oled_row_contains(7, "Zoom failed; 1x"),
+                 "no word of the failed zoom: \"%s\"", fake_oled_row(7));
+    /* The knob turn is still the exposure. */
+    press(BUTTON_UP);
+    CHECK(camera_exposure_bias() == -3, "the turn is no longer exposure (%d)", camera_exposure_bias());
+    camera_set_exposure_bias(-4);
 
     /* Parts of an animated UR: a progress bar of the decoder's own counts. */
     static uint8_t cbor[1200];
@@ -1633,7 +1665,7 @@ static void test_oled_scan_is_unchanged(void)
     ui__service_scan_for_test();
     ui_render();
     CHECK(fake_oled_panel_gray(NULL, NULL, NULL, NULL) == NULL, "a grayscale picture on an OLED");
-    CHECK_SCREEN(fake_oled_row_contains(7, "320 e-4 f1 s2 r0"),
+    CHECK_SCREEN(fake_oled_row_contains(7, "1x e-4 f1 s2 r0"),
                  "the status line is \"%s\"", fake_oled_row(7));
     /* The bitmap: lit where the bright screen is (x 40..160 of 320 -> panel
        16..64 after the letterbox at 17), dark at the far right. */

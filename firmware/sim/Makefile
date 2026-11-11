@@ -468,7 +468,7 @@ UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
                   ../src/cbor.c ../src/device-wipe.c \
                   ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
-                  ../src/airgap.c ../src/camera.c ../src/viewfinder.c ../src/scan-timing.c ../src/ur-decoder.c \
+                  ../src/airgap.c ../src/camera.c ../src/camera-tune.c ../src/viewfinder.c ../src/scan-timing.c ../src/ur-decoder.c \
                   $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                   $(CRYPTO)/sha2.c $(CRYPTO)/pbkdf2.c \
                   $(CRYPTO)/hmac.c $(CRYPTO)/memzero.c $(CRYPTO)/rand.c \

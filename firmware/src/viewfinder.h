@@ -163,9 +163,10 @@ viewfinder_level_t viewfinder_level_grade(uint8_t mean);
    characters, so a caller can colour that part on its own. */
 #define VIEWFINDER_EXPOSURE_PCT_CHARS 3
 
-/** "QVGA 12fps s:3 r:1": capture size, frames a second, codes located and
- *  read. Unknown fps (0xFFFF) prints as "--". */
-void viewfinder_stats_line(uint16_t frame_w, uint16_t fps, uint32_t seen,
+/** "1x 12fps s:3 r:1": the zoom (at most 4 characters, longer is cut),
+ *  frames a second, codes located and read. Unknown fps (0xFFFF) prints as
+ *  "--". */
+void viewfinder_stats_line(const char *zoom, uint16_t fps, uint32_t seen,
                            uint32_t read, char out[VIEWFINDER_LINE]);
 
 /** "[####------] 12 left": parts of an animated UR assembled, of `total`. */

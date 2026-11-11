@@ -3,6 +3,7 @@
 #include "camera.h"
 
 #include "board.h"
+#include "camera-tune.h"
 
 #include <string.h>
 
@@ -51,7 +52,6 @@ bool camera_preview_true_exposure(void) { return preview_true; }
 
 #include "viewfinder.h"
 #include "scan-timing.h"
-#include "camera-tune.h"
 
 #include "freertos/FreeRTOS.h"
 
@@ -108,13 +108,39 @@ static void timing_add(scan_stage_t stage, int64_t t0_us)
  * the frames a second, and the companion's medium fragments still resolve
  * with the phone held close. Applied by restarting the camera.
  */
+/*
+ * 2026-11-10: the Scan screen no longer steps the size. Its output is always
+ * QVGA, and the push zooms on the sensor instead (camera_next_zoom(),
+ * camera-tune.h): the same 320x240 decode cost with two or more times the
+ * real pixels per module, where VGA and SVGA quadrupled the cost for the
+ * same field of view. VGA and SVGA stay for measurement, in the bench image
+ * only: pio run -e esp32s3cam-bench with -DCAMERA_BENCH_FRAME_W=640 (or 800),
+ * and -DCAMERA_BENCH_ZOOM=1 (2x) or 2 (3x) for a zoom at QVGA.
+ */
 static const struct { uint16_t w, h; framesize_t size; } FRAME_MODES[] = {
     { 320, 240, FRAMESIZE_QVGA },
     { 640, 480, FRAMESIZE_VGA  },
     { 800, 600, FRAMESIZE_SVGA },
 };
-#define FRAME_MODE_COUNT (sizeof FRAME_MODES / sizeof FRAME_MODES[0])
-static uint8_t frame_mode = 0;
+#if defined(LEEK_QR_BENCH) && LEEK_QR_BENCH && defined(CAMERA_BENCH_FRAME_W)
+#  if CAMERA_BENCH_FRAME_W == 640
+#    define FRAME_MODE_START 1
+#  elif CAMERA_BENCH_FRAME_W == 800
+#    define FRAME_MODE_START 2
+#  else
+#    define FRAME_MODE_START 0
+#  endif
+#else
+#  define FRAME_MODE_START 0
+#endif
+#if defined(LEEK_QR_BENCH) && LEEK_QR_BENCH && defined(CAMERA_BENCH_ZOOM)
+#  define ZOOM_START CAMERA_BENCH_ZOOM
+#else
+#  define ZOOM_START 0
+#endif
+static const uint8_t frame_mode = FRAME_MODE_START;
+/* The zoom level (camera-tune.h), 1x every time the camera starts. */
+static uint8_t zoom_level;
 #define FRAME_W     (FRAME_MODES[frame_mode].w)
 #define FRAME_H     (FRAME_MODES[frame_mode].h)
 #define FRAME_SIZE  (FRAME_MODES[frame_mode].size)
@@ -183,6 +209,8 @@ static int sensor_ae_level(int8_t bias)
 {
     return camera_tune_ae_level(bias, CAMERA_AEC_CENTRE != 0, CAMERA_AEC_BIAS_OFFSET);
 }
+
+static bool apply_zoom(uint8_t level);
 
 static struct quirc *quirc_ctx;
 static bool running;
@@ -353,7 +381,9 @@ static void timing_log_maybe(void)
                                         10000000u / (uint64_t)dt);
     unsigned lines = 0, gain_x10 = 0;
     sensor_exposure(&lines, &gain_x10);
-    ESP_LOGI(TAG, "scan %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux",
+    ESP_LOGI(TAG, "scan %s %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux",
+             FRAME_W == 320 ? camera_tune_zoom(zoom_level)->label
+                            : (FRAME_W == 640 ? "VGA" : "SVGA"),
              (unsigned)(fps_x10 / 10), (unsigned)(fps_x10 % 10), stages,
              (unsigned)stat_located, (unsigned)stat_decodes,
              lines, gain_x10 / 10, gain_x10 % 10);
@@ -551,6 +581,13 @@ bool camera_start(void)
         ESP_LOGI(TAG, "sensor 0x%04x, hmirror %d, vflip %d",
                  (unsigned)sensor->id.PID, sensor->status.hmirror,
                  sensor->status.vflip);
+    }
+
+    /* 1x on every start (the Scan screen opens at the full field); the
+       bench image may start zoomed. */
+    zoom_level = 0;
+    if (ZOOM_START > 0 && ZOOM_START < CAMERA_ZOOM_COUNT && apply_zoom(ZOOM_START)) {
+        zoom_level = ZOOM_START;
     }
 
     quirc_ctx = quirc_new();
@@ -777,15 +814,44 @@ int8_t camera_exposure_bias(void) { return exposure_bias; }
 
 uint16_t camera_frame_width(void) { return FRAME_W; }
 
-bool camera_next_frame_size(void)
+/*
+ * Point the sensor's window at a zoom level, live: no restart, the
+ * framebuffers stay 320x240. set_res_raw() also re-applies mirror and flip
+ * (set_image_options()), so the orientation survives. A frame or two around
+ * the switch may be mixed; quirc simply misses them.
+ */
+static bool apply_zoom(uint8_t level)
 {
-    frame_mode = (uint8_t)((frame_mode + 1) % FRAME_MODE_COUNT);
-    /* The driver fixes the frame size at init, so a change is a restart.
-       Started even if the previous size failed to start, or one size that
-       will not come up would strand OK there for good. */
-    camera_stop();
-    return camera_start();
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor == NULL || sensor->set_res_raw == NULL || FRAME_W != 320) {
+        return level == 0;
+    }
+    const CameraZoom *z = camera_tune_zoom(level);
+    const int err = sensor->set_res_raw(sensor, z->sx, z->sy, z->ex, z->ey, z->ox, z->oy,
+                                        z->tx, z->ty, z->ow, z->oh, z->scale, z->binning);
+    ESP_LOGI(TAG, "zoom %s: window (%u,%u)-(%u,%u) VTS %u -> %s", z->label,
+             z->sx, z->sy, z->ex, z->ey, z->ty, err ? "FAILED" : "ok");
+    return err == 0;
 }
+
+bool camera_next_zoom(void)
+{
+    if (!running) {
+        return false;
+    }
+    const uint8_t next = camera_tune_zoom_next(zoom_level);
+    if (apply_zoom(next)) {
+        zoom_level = next;
+        return true;
+    }
+    /* Back to the full field, which is the driver's own QVGA window. */
+    (void)apply_zoom(0);
+    zoom_level = 0;
+    return false;
+}
+
+uint8_t camera_zoom(void) { return zoom_level; }
+const char *camera_zoom_label(void) { return camera_tune_zoom(zoom_level)->label; }
 
 
 
@@ -921,8 +987,10 @@ void camera__set_located_for_test(uint32_t located, uint32_t decodes)
     test_decodes = decodes;
 }
 
+static uint8_t test_zoom;
 bool camera_start(void)
 {
+    test_zoom = 0;
     test_running = test_frame != NULL;
     test_frames = 0;
     test_mono_fresh = test_gray_fresh = false;
@@ -1016,7 +1084,30 @@ int8_t camera_exposure_bias(void) { return test_bias; }
 void camera_set_exposure_bias(int8_t level) { (void)level; }
 int8_t camera_exposure_bias(void) { return 0; }
 #endif
-bool camera_next_frame_size(void) { return false; }
+#ifdef LEEK_HOST_TEST
+/* The host stand-in's zoom: the real table and cycle, and a switch for a
+   level that fails to apply. */
+static bool    test_zoom_fails;
+void camera__set_zoom_fails_for_test(bool fails) { test_zoom_fails = fails; }
+bool camera_next_zoom(void)
+{
+    if (!test_running) {
+        return false;
+    }
+    if (test_zoom_fails) {
+        test_zoom = 0;
+        return false;
+    }
+    test_zoom = camera_tune_zoom_next(test_zoom);
+    return true;
+}
+uint8_t camera_zoom(void) { return test_zoom; }
+const char *camera_zoom_label(void) { return camera_tune_zoom(test_zoom)->label; }
+#else
+bool camera_next_zoom(void) { return false; }
+uint8_t camera_zoom(void) { return 0; }
+const char *camera_zoom_label(void) { return camera_tune_zoom(0)->label; }
+#endif
 void camera_set_stream(bool on) { (void)on; }
 bool camera_streaming(void) { return false; }
 

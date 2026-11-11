@@ -4312,7 +4312,7 @@ static bool    scan_preview_live;
  * feedback below it, every one of them numbers or fixed strings:
  *
  *   row 5  Light <=O----> -4 23%   the exposure bias on a bar, the mean level
- *   row 6  QVGA 12fps s:3 r:1      capture size, frame rate, located, read
+ *   row 6  1x 12fps s:3 r:1        sensor zoom, frame rate, located, read
  *   row 7  progress of an animated UR, an event ("Not a Zcash request"),
  *          an aiming hint ("Too dark"), or "Point at the QR"
  *
@@ -4501,7 +4501,7 @@ static void scan_render_color(void)
 
     uint32_t frames = 0, read = 0, seen = 0;
     camera_stats(&frames, &read, &seen);
-    viewfinder_stats_line(camera_frame_width(), scan_fps, seen, read, line);
+    viewfinder_stats_line(camera_zoom_label(), scan_fps, seen, read, line);
     oled_set_role(OLED_ROLE_DIM);
     oled_draw_string_centered(6, line);
 
@@ -4562,8 +4562,9 @@ static void screen_scan_on_button(button_id_t btn)
         ui_set_screen(SCREEN_MAIN_MENU);
         return;
     }
-    /* Bench controls for comparing combinations; orientation stays f2.
-       UP brighter, DOWN darker, OK steps the capture size, and OK with UP
+    /* Turn (UP brighter, DOWN darker) is the exposure bias; the push steps
+       the sensor zoom 1x -> 2x -> 3x -> 1x (the capture stays QVGA, and the
+       viewfinder shows exactly the zoomed frame quirc reads); OK with UP
        held toggles live video to the PC viewer.
 
        A knob cannot be held on UP, so on the S3 CAM kit (knob + Cancel, no
@@ -4574,11 +4575,11 @@ static void screen_scan_on_button(button_id_t btn)
     } else if (btn == BUTTON_ACCEPT) {
         if (button_is_pressed(BUTTON_UP)) {
             camera_set_stream(!camera_streaming());
-        } else if (!camera_next_frame_size()) {
-            /* Said on the screen, not left as a view that stopped moving;
-               OK again moves on to the next size. */
-            snprintf(scan_status, sizeof scan_status, "%u failed; OK=next",
-                     (unsigned)camera_frame_width());
+        } else if (!camera_next_zoom()) {
+            /* Said on the screen, not left as a view that stopped changing.
+               The camera is back at the full field; the next push tries
+               2x again. */
+            snprintf(scan_status, sizeof scan_status, "Zoom failed; 1x");
 #if UI_COLOR_CODE
             scan_event_until_ms = ui_now_ms() + SCAN_EVENT_MS;
 #endif
@@ -4675,13 +4676,13 @@ static void service_scan(void)
             /* "f0 s12 r0": flip mode, codes seen, codes read. Short because
                the row is 21 characters and the numbers matter more than the
                words. */
-            /* "640 e-5 f123 s3 r1": capture width, exposure, frames
-               captured, codes seen, codes read. Frames still climbing on a
-               blank view means the camera is live and the picture is dark;
-               frames stopped means capture itself stopped. */
+            /* "1x e-4 f123 s3 r1": zoom, exposure, frames captured, codes
+               seen, codes read. Frames still climbing on a blank view means
+               the camera is live and the picture is dark; frames stopped
+               means capture itself stopped. */
             char line[48];
-            snprintf(line, sizeof line, "%u e%d f%u s%u r%u",
-                     (unsigned)camera_frame_width(),
+            snprintf(line, sizeof line, "%s e%d f%u s%u r%u",
+                     camera_zoom_label(),
                      (int)camera_exposure_bias(),
                      (unsigned)(cam_frames > 999 ? 999 : cam_frames),
                      (unsigned)(cam_seen > 99 ? 99 : cam_seen),
