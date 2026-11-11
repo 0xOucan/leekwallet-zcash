@@ -51,6 +51,7 @@ bool camera_preview_true_exposure(void) { return preview_true; }
 
 #include "viewfinder.h"
 #include "scan-timing.h"
+#include "camera-tune.h"
 
 #include "freertos/FreeRTOS.h"
 
@@ -139,6 +140,12 @@ static uint8_t frame_mode = 0;
  */
 #ifndef CAMERA_PREVIEW_EVERY
 #  define CAMERA_PREVIEW_EVERY   4
+#endif
+
+/* The AGC ceiling, in whole x (camera-tune.h). 4x: noise lands on the module
+   edges quirc thresholds, but blur from a long shutter is worse. */
+#ifndef CAMERA_GAIN_CEILING_X
+#  define CAMERA_GAIN_CEILING_X  4
 #endif
 
 static struct quirc *quirc_ctx;
@@ -422,7 +429,7 @@ bool camera_start(void)
         /*
          * A QR profile, not a photo profile: nothing here is looked at by a
          * person except through a 128x64 preview. Night mode off, because it
-         * exists to choose long exposures. Gain capped at 4x, because gain
+         * exists to choose long exposures. Gain capped at 4x (below), because gain
          * noise lands exactly on the module edges quirc thresholds. Contrast
          * up to separate black from white modules, a little sharpening and a
          * little denoise - more of either softens or haloes the edges. White
@@ -430,7 +437,21 @@ bool camera_start(void)
          * moving the picture between frames is one fewer cause of a miss.
          */
         if (sensor->set_aec2 != NULL)          { sensor->set_aec2(sensor, 0); }
-        if (sensor->set_gainceiling != NULL)   { sensor->set_gainceiling(sensor, GAINCEILING_4X); }
+        /*
+         * Not set_gainceiling(): the vendored driver writes its enum value
+         * raw into 0x3A18/19, and GAINCEILING_4X is 1, which in the
+         * register's real-gain format (0x10 = 1x) is a 1/16x ceiling. That
+         * pinned AGC at its minimum from the first bench session on, so all
+         * brightness came from shutter time - the blur the exposure bias was
+         * then fighting. A real CAMERA_GAIN_CEILING_X, through set_reg()
+         * (camera-tune.h). Measure: the scan log's "gain" now climbs above
+         * 1.0x on a dim screen and "exp" falls; try 8 with
+         * -DCAMERA_GAIN_CEILING_X=8 for dim phones.
+         */
+        if (sensor->set_reg != NULL) {
+            sensor->set_reg(sensor, 0x3A18, 0x3FF,
+                            camera_tune_gain_ceiling_reg(CAMERA_GAIN_CEILING_X));
+        }
         if (sensor->set_contrast != NULL)      { sensor->set_contrast(sensor, 2); }
         if (sensor->set_sharpness != NULL)     { sensor->set_sharpness(sensor, 1); }
         if (sensor->set_denoise != NULL)       { sensor->set_denoise(sensor, 1); }
