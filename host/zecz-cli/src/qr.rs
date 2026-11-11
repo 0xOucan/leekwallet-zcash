@@ -26,17 +26,18 @@ use anyhow::{anyhow, bail, Context, Result};
 use leek_ur::{Decoder, Encoder, Received, UR_ZSIG};
 use qrcode::{Color, EcLevel, QrCode, Version};
 
-/// The default fragment size, bytes (the app's "Safe" preset).
-pub const DEFAULT_FRAGMENT: usize = 90;
+/// The default fragment size, bytes (the app's "Safe" preset). The board
+/// bench of 2026-11-10 read 50 B in 71 s at 2x zoom and 40 B in 60 s; it
+/// found 90 B codes but rarely decoded them (docs/zcash/QR-BENCH.md).
+pub const DEFAULT_FRAGMENT: usize = 50;
 /// The default frame interval, ms.
 pub const DEFAULT_INTERVAL_MS: u64 = 500;
 
 /// The sweep's presets, (fragment bytes, frame ms), safest first. The app's
-/// Safe / Balanced / Fast are 90/500, 120/400 and 150/250. The board scans
-/// at about 7 fps in QVGA today, so by the twice-the-capture rule frames
-/// under ~300 ms and fragments over ~120 B wait for the camera tuning (a
-/// 2x/3x zoom); they are here to measure that.
-pub const PRESETS: [(usize, u64); 6] = [(90, 500), (90, 350), (120, 400), (150, 350), (150, 250), (200, 300)];
+/// Safe / Balanced / Fast are 50/500, 50/400 and 50/300. The board decodes
+/// about 3.5 frames a second with a code in view, so frames under ~300 ms
+/// and fragments over ~50 B are here to measure, not to use yet.
+pub const PRESETS: [(usize, u64); 6] = [(50, 500), (40, 500), (30, 500), (50, 400), (50, 300), (90, 500)];
 /// A quiet zone of four modules, as the QR standard asks.
 const QUIET: usize = 4;
 
@@ -471,7 +472,7 @@ mod tests {
     #[test]
     fn sweep_presets_and_table() {
         assert_eq!(PRESETS[0], (DEFAULT_FRAGMENT, DEFAULT_INTERVAL_MS));
-        assert_eq!((DEFAULT_FRAGMENT, DEFAULT_INTERVAL_MS), (90, 500));
+        assert_eq!((DEFAULT_FRAGMENT, DEFAULT_INTERVAL_MS), (50, 500));
         let view = [0x5A; 1373];
         for &(frag, _) in &PRESETS {
             let e = Encoder::leek_pczt(&view, frag).unwrap();
@@ -490,9 +491,9 @@ mod tests {
         let f = frames(&e).unwrap();
         assert_eq!(f.frames.len(), 255);
         assert!(f.frames.iter().all(|(_, q)| q.version() == Version::Normal(f.version)));
-        assert!(f.version <= 8, "90-byte fragments should stay at version 8 or less, got v{}", f.version);
+        assert!(f.version <= 6, "50-byte fragments should stay at version 6 or less, got v{}", f.version);
         let t = terminal_frame(&f, 0, 500);
-        assert!(t.contains("Part 1-16") && t.contains("EXPERIMENTAL"));
+        assert!(t.contains("Part 1-28") && t.contains("EXPERIMENTAL"));
     }
 
     #[test]
