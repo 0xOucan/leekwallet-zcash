@@ -367,9 +367,9 @@
                   <p class="qrsign__count" id="zwqrcount" aria-live="off"></p>
                   <label class="field qrsign__speed"><span>Speed</span>
                     <select id="zwqrspeed">
-                      <option value="safe">Safe (90 B, 500 ms)</option>
-                      <option value="balanced">Balanced (120 B, 400 ms)</option>
-                      <option value="fast">Fast (150 B, 250 ms)</option>
+                      <option value="safe">Safe (50 B, 500 ms)</option>
+                      <option value="balanced">Balanced (50 B, 400 ms)</option>
+                      <option value="fast">Fast (50 B, 300 ms)</option>
                       <option value="custom">Custom</option>
                       <option value="manual">Manual (one part per Next)</option>
                     </select></label>
@@ -380,6 +380,13 @@
                     <button type="button" id="zwqrfaster" class="secondary">Faster</button>
                     <button type="button" id="zwqrnext" class="primary" hidden title="Manual: the next part (or press Space)">Next part</button>
                   </div>
+                  <div class="row qrsign__bench">
+                    <button type="button" id="zwqrbench" class="secondary" title="Step through fragment sizes and paces, timing each until the board shows its review">Bench sweep</button>
+                    <button type="button" id="zwqrbenchgot" class="primary" hidden title="The board shows its review: record the time, Cancel on the board, Scan again">Board has it → next</button>
+                    <button type="button" id="zwqrbenchskip" class="secondary" hidden>Gave up → next</button>
+                    <button type="button" id="zwqrbenchcopy" class="secondary" hidden>Copy results</button>
+                  </div>
+                  <pre class="qrsign__benchrows" id="zwqrbenchrows" hidden></pre>
                   <div class="row">
                     <button type="button" id="zwqrscan" class="primary">The board shows its signature: scan it</button>
                   </div>

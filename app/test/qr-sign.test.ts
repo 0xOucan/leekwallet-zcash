@@ -9,8 +9,8 @@
  */
 
 import {
-  bigQrAvail, frameCaption, loadQrSettings, moduleScale, qrVersionFor, saveQrSettings, scanCaption, timingCaption,
-  QrSigner, QR_BATCH, QR_FRAGMENTS, QR_PRESETS, QR_INTERVALS, QR_SETTINGS_KEY, type Clock, type ScanProgress,
+  bigQrAvail, benchTable, frameCaption, loadQrSettings, moduleScale, qrVersionFor, saveQrSettings, scanCaption, timingCaption,
+  QrSigner, QR_BATCH, QR_BENCH_CONFIGS, QR_FRAGMENTS, QR_PRESETS, QR_INTERVALS, QR_SETTINGS_KEY, type Clock, type ScanProgress,
 } from "../src/qr-sign.ts";
 import type { Invoke } from "../src/tauri-transport.ts";
 
@@ -75,19 +75,19 @@ function fakeBackend(view: Uint8Array, need = 3) {
 
 const VIEW = new Uint8Array(1373).fill(7);
 
-group("defaults 90 B / 500 ms, and remembered");
+group("defaults 50 B / 500 ms, and remembered");
 {
   const s = memStore();
-  check(loadQrSettings(s).fragment === 90 && loadQrSettings(s).interval === 500, "defaults 90 B / 500 ms");
-  check((QR_FRAGMENTS as readonly number[]).includes(90) && QR_FRAGMENTS[0] === 50 && (QR_INTERVALS as readonly number[]).includes(500), "offered lists hold the defaults and 50 B");
+  check(loadQrSettings(s).fragment === 50 && loadQrSettings(s).interval === 500, "defaults 50 B / 500 ms");
+  check((QR_FRAGMENTS as readonly number[]).includes(50) && QR_FRAGMENTS[0] === 30 && (QR_INTERVALS as readonly number[]).includes(500), "offered lists hold the default and 30 B");
   for (const p of Object.values(QR_PRESETS)) {
     check((QR_FRAGMENTS as readonly number[]).includes(p.fragment) && (QR_INTERVALS as readonly number[]).includes(p.interval), `preset ${p.fragment}/${p.interval} is reachable by the buttons`);
   }
   saveQrSettings({ fragment: 120, interval: 250 }, s);
   check(loadQrSettings(s).fragment === 120 && loadQrSettings(s).interval === 250, "saved and read back");
   const bad = memStore({ [QR_SETTINGS_KEY]: JSON.stringify({ fragment: 999, interval: 7 }) });
-  check(loadQrSettings(bad).fragment === 90 && loadQrSettings(bad).interval === 500, "unknown values fall back");
-  check(loadQrSettings(memStore({ [QR_SETTINGS_KEY]: "{not json" })).fragment === 90, "garbage falls back");
+  check(loadQrSettings(bad).fragment === 50 && loadQrSettings(bad).interval === 500, "unknown values fall back");
+  check(loadQrSettings(memStore({ [QR_SETTINGS_KEY]: "{not json" })).fragment === 50, "garbage falls back");
 }
 
 group("the large-QR rules");
@@ -114,18 +114,18 @@ group("showing the loop, the counter and the batches");
   await q.show(VIEW);
   let f = q.frame();
   check(q.phase === "showing" && f !== null, "showing");
-  check(f?.part === "1-16" && f.shown === 1 && f.seqLen === 16 && f.version === 8, `first frame ${JSON.stringify(f)}`);
+  check(f?.part === "1-28" && f.shown === 1 && f.seqLen === 28 && f.version === 5, `first frame ${JSON.stringify(f)}`);
   check(c.ms === 500, "next frame after 500 ms");
-  check(frameCaption(f!).includes("Part 1-16") && frameCaption(f!).includes("500 ms"), frameCaption(f!));
+  check(frameCaption(f!).includes("Part 1-28") && frameCaption(f!).includes("500 ms"), frameCaption(f!));
   const first = b.calls.find((x) => x.cmd === "qr_pczt_frames")!;
-  check(first.args!.maxFragment === 90 && first.args!.start === 0 && first.args!.count === QR_BATCH, "asked for the first batch at 50 B");
+  check(first.args!.maxFragment === 50 && first.args!.start === 0 && first.args!.count === QR_BATCH, "asked for the first batch at 50 B");
   check((first.args!.view as number[]).length === VIEW.length, "the signer view itself goes to the encoder");
   await c.fire();
-  check(q.frame()?.part === "2-16" && q.frame()?.shown === 2, "advanced to part 2");
+  check(q.frame()?.part === "2-28" && q.frame()?.shown === 2, "advanced to part 2");
   for (let i = 0; i < QR_BATCH - 1; i++) await c.fire();
   const fetches = b.calls.filter((x) => x.cmd === "qr_pczt_frames");
   check(fetches.length === 2 && fetches[1]!.args!.start === QR_BATCH, "the next batch carries on the fountain");
-  check(q.frame()?.part === `${QR_BATCH + 1}-16`, `fountain part ${q.frame()?.part}`);
+  check(q.frame()?.part === `${QR_BATCH + 1}-28`, `fountain part ${q.frame()?.part}`);
   check(changes > QR_BATCH, "the screen was told of each frame");
 }
 
@@ -136,40 +136,40 @@ group("speed presets, and bigger / denser / slower / faster");
   const c = fakeClock();
   const q = new QrSigner(b.invoke, c.clock, s);
   await q.show(VIEW);
-  check(q.preset() === "safe", "starts on Safe");
+  check(q.preset() === "safe" && c.ms === 500, "starts on Safe, 500 ms");
+  check(q.frame()?.part === "1-28", `50 B is 28 parts: ${q.frame()?.part}`);
   q.setPreset("fast");
   await flush();
-  let last = b.calls.filter((x) => x.cmd === "qr_pczt_frames").at(-1)!;
-  check(q.preset() === "fast" && last.args!.maxFragment === 150 && c.ms === 250, "Fast: 150 B at 250 ms, a new encoder");
-  check(q.frame()?.part === "1-10" && q.frame()?.shown === 1, `restarted at part 1: ${q.frame()?.part}`);
+  check(q.preset() === "fast" && q.settings.fragment === 50 && c.ms === 300, "Fast: 50 B at 300 ms");
   q.setPreset("balanced");
   await flush();
-  check(q.preset() === "balanced" && q.settings.fragment === 120 && c.ms === 400, "Balanced: 120 B at 400 ms");
+  check(q.preset() === "balanced" && c.ms === 400, "Balanced: 50 B at 400 ms");
   q.setPreset("safe");
   await flush();
   q.bigger();
   await flush();
-  last = b.calls.filter((x) => x.cmd === "qr_pczt_frames").at(-1)!;
-  check(q.preset() === "custom" && last.args!.maxFragment === 50 && !q.canBigger(), "Bigger from Safe: 50 B, Custom");
-  check(q.frame()?.part === "1-28", `50 B is 28 parts: ${q.frame()?.part}`);
+  let last = b.calls.filter((x) => x.cmd === "qr_pczt_frames").at(-1)!;
+  check(q.preset() === "custom" && last.args!.maxFragment === 40, "Bigger from Safe: 40 B, Custom");
+  q.bigger();
+  await flush();
+  check(q.settings.fragment === 30 && !q.canBigger(), "then 30 B, the floor");
   const before = b.calls.filter((x) => x.cmd === "qr_pczt_frames").length;
   q.bigger();
   await flush();
   check(b.calls.filter((x) => x.cmd === "qr_pczt_frames").length === before, "bigger at the floor changes nothing");
-  q.denser(); q.denser();
+  q.denser(); q.denser(); q.denser();
   await flush();
-  check(q.settings.fragment === 120, "denser steps 50 -> 90 -> 120");
+  check(q.settings.fragment === 90, "denser steps 30 -> 40 -> 50 -> 90");
   const at = q.frame()?.part;
   q.faster();
   await flush();
   check(q.settings.interval === 400 && c.ms === 400, "faster: 500 -> 400 ms, rescheduled");
   check(q.frame()?.part === at, "speed changes keep the frame");
-  check(q.preset() === "balanced", "120/400 is Balanced again");
   for (let i = 0; i < 9; i++) q.slower();
   check(q.settings.interval === 800 && !q.canSlower(), "slowest is 800 ms");
   for (let i = 0; i < 9; i++) q.faster();
   check(q.settings.interval === 200 && !q.canFaster(), "fastest is 200 ms");
-  check(loadQrSettings(s).fragment === 120 && loadQrSettings(s).interval === 200, "remembered");
+  check(loadQrSettings(s).fragment === 90 && loadQrSettings(s).interval === 200, "remembered");
   q.setPreset("custom");
   check(q.settings.interval === 200, "Custom keeps the settings");
 }
@@ -238,7 +238,7 @@ group("the bench stopwatch: board read, reply read, total, and a speed change re
   const m = q.timing();
   check(m.showMs === 42_000 && m.readMs === 4500 && m.qrReads === 3, `stopped at completion ${JSON.stringify(m)}`);
   const line = timingCaption(m);
-  check(line.includes("90 B / 800 ms") && line.includes("board read 42.0 s") && line.includes("reply read 4.5 s (3 QR)")
+  check(line.includes("50 B / 800 ms") && line.includes("board read 42.0 s") && line.includes("reply read 4.5 s (3 QR)")
     && line.includes("total 46.5 s"), line);
 }
 
@@ -256,9 +256,41 @@ group("manual: one part per Next, and Slower/Faster go back to automatic");
   q.next(); await flush();
   check(q.frame()!.shown === p0 + 2 && c.ms === null, `two Nexts, two parts (${q.frame()!.shown - p0})`);
   check(frameCaption(q.frame()!).includes("manual"), frameCaption(q.frame()!));
-  check(timingCaption(q.timing()).includes("90 B / manual"), timingCaption(q.timing()));
+  check(timingCaption(q.timing()).includes("50 B / manual"), timingCaption(q.timing()));
   q.slower(); await flush();
   check(q.preset() !== "manual" && c.ms === 800, `Slower is automatic again (${c.ms})`);
+}
+
+group("the bench sweep: each setting timed to the board's review, then the next");
+{
+  const b = fakeBackend(VIEW);
+  const c = fakeClock();
+  let t = 0;
+  c.clock.now = () => t;
+  const q = new QrSigner(b.invoke, c.clock, memStore());
+  await q.show(VIEW);
+  q.startBench();
+  await flush();
+  check(q.settings.fragment === 30 && q.settings.interval === 500 && q.frame()?.shown === 1, "starts at the first setting, part 1");
+  t += 12_000;
+  for (let i = 0; i < 5; i++) await c.fire();
+  check(q.benchNext() && q.settings.fragment === 40, "the board had it: next setting");
+  await flush();
+  check(q.frame()?.shown === 1, "the next setting starts its loop again");
+  t += 3000;
+  q.benchNext(true);
+  await flush();
+  const r = q.bench!.rows;
+  check(r.length === 2 && r[0]!.fragment === 30 && r[0]!.ms === 12_000 && r[0]!.frames === 6 && r[1]!.ms === null, JSON.stringify(r));
+  /* Same fragment, new pace (50/500 -> 50/400): the loop restarts too. */
+  for (let i = 0; i < 3; i++) await c.fire();   /* on 50/500 */
+  q.benchNext(); await flush();                  /* to 50/400 */
+  check(q.settings.fragment === 50 && q.settings.interval === 400 && q.frame()?.shown === 1,
+    `a pace change restarts at part 1 (${q.settings.fragment}/${q.settings.interval}, frame ${q.frame()?.shown})`);
+  while (q.benchNext()) await flush();
+  check(q.bench!.rows.length === QR_BENCH_CONFIGS.length, "one row per setting");
+  const md = benchTable(q.bench!.rows);
+  check(md.includes("| 30 | 500 |") && md.includes("| 12.0 |") && md.includes("gave up"), md);
 }
 
 group("show again, cancel, failure");
@@ -270,7 +302,7 @@ group("show again, cancel, failure");
   await c.fire();
   await q.startScan();
   await q.showAgain();
-  check(q.phase === "showing" && q.frame()?.part === "1-16", "back to the loop from part 1");
+  check(q.phase === "showing" && q.frame()?.part === "1-28", "back to the loop from part 1");
   q.cancel();
   check(q.phase === "cancelled" && c.ms === null && q.frame() === null, "cancel stops the loop");
   await c.fire();

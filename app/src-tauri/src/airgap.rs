@@ -25,7 +25,12 @@ use tauri::State;
 /// 50 the Zodl fork's; the larger ones are fewer frames for a camera that
 /// resolves the denser code (the board's camera tuning, a 2x/3x zoom, aims
 /// at ~150). Module size against frame count: only the bench can say.
-pub const FRAGMENTS: [usize; 6] = [50, 90, 120, 150, 200, 250];
+///
+/// Board bench, 2026-11-10: from a 1080p laptop screen the board found a
+/// 90 B code (v8) 253 times and decoded it 3 times; 50 B (v6) at 2x zoom
+/// read 58 parts in 70 s. 50 B is the default since; 40 and 30 B are
+/// bigger still, for a board at 1x or further away.
+pub const FRAGMENTS: [usize; 8] = [30, 40, 50, 90, 120, 150, 200, 250];
 /// The frame intervals offered, ms. 500 is the default: a frame stays up at
 /// least twice the board camera's capture interval (~7 fps in QVGA today).
 pub const INTERVALS: [u64; 7] = [800, 500, 400, 350, 300, 250, 200];
@@ -202,6 +207,6 @@ mod tests {
             // airgap.c's 16 KB of fragments.
             assert!(r.seq_len as usize * r.fragment_len <= 16384);
         }
-        assert!(INTERVALS.contains(&500) && FRAGMENTS.contains(&90) && FRAGMENTS[0] == 50);
+        assert!(INTERVALS.contains(&500) && FRAGMENTS.contains(&50) && FRAGMENTS[0] == 30);
     }
 }

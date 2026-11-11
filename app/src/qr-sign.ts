@@ -27,7 +27,7 @@
  * the board camera's capture interval (300 ms made it miss most frames).
  * The Zodl fork signed at 50 B / 500 ms; 50 is one "Bigger" away.
  *
- * Speed: Safe (90/500), Balanced (120/400), Fast (150/250), or Custom with
+ * Speed: Safe (50/500), Balanced (50/400), Fast (50/300), or Custom with
  * Bigger / Denser / Slower / Faster, for the camera-tuning sweep (the board
  * scans at ~7 fps in QVGA today; Balanced and Fast wait for its zoom). The
  * same presets are `zecz qr-show --sweep`'s first ones; results go in
@@ -40,16 +40,44 @@
 import type { Invoke } from "./tauri-transport.ts";
 
 /** Fragment sizes offered, bytes (airgap.rs FRAGMENTS). */
-export const QR_FRAGMENTS = [50, 90, 120, 150, 200, 250] as const;
+export const QR_FRAGMENTS = [30, 40, 50, 90, 120, 150, 200, 250] as const;
 /** Frame intervals offered, ms (airgap.rs INTERVALS). */
 export const QR_INTERVALS = [800, 500, 400, 350, 300, 250, 200] as const;
 /** The speed presets; anything else is "custom". */
+/* The board bench (2026-11-10): 90 B (QR v8) from a laptop screen was found
+ * and almost never decoded; 50 B (v6) read. The presets keep 50 B and step
+ * the pace; Bigger goes to 40 and 30 B. */
 export const QR_PRESETS = {
-  safe: { fragment: 90, interval: 500 },
-  balanced: { fragment: 120, interval: 400 },
-  fast: { fragment: 150, interval: 250 },
+  safe: { fragment: 50, interval: 500 },
+  balanced: { fragment: 50, interval: 400 },
+  fast: { fragment: 50, interval: 300 },
 } as const;
 export type QrPreset = keyof typeof QR_PRESETS | "custom" | "manual";
+
+/**
+ * The bench sweep's settings, in order (docs/zcash/QR-BENCH.md): the module
+ * size first at a pace the board keeps up with, then the pace at the sizes
+ * that read, and 90 B as the control that did not. Each row is timed from
+ * its loop's first frame to the board's review; the table is what other
+ * companions and forks take their defaults from.
+ */
+export const QR_BENCH_CONFIGS: readonly QrSettings[] = [
+  { fragment: 30, interval: 500 }, { fragment: 40, interval: 500 }, { fragment: 50, interval: 500 },
+  { fragment: 50, interval: 400 }, { fragment: 40, interval: 400 }, { fragment: 30, interval: 400 },
+  { fragment: 50, interval: 300 }, { fragment: 40, interval: 300 }, { fragment: 30, interval: 300 },
+  { fragment: 30, interval: 250 }, { fragment: 90, interval: 500 },
+];
+
+/** One bench row: a setting and how long the board took, or null if it gave up. */
+export interface QrBenchRow {
+  fragment: number;
+  interval: number;
+  seqLen: number;
+  version: number;
+  ms: number | null;
+  /** Frames the loop showed before the board had it. */
+  frames: number;
+}
 export const QR_SETTINGS_KEY = "leek.qr.send";
 /** Frames fetched from the backend at a time. */
 export const QR_BATCH = 64;
@@ -189,6 +217,8 @@ export class QrSigner {
   private showMs: number | null = null;
   private qrReads = 0;
   private timedSettings: QrSettings | null = null;
+  /** The sweep in progress: the index into QR_BENCH_CONFIGS, and its rows. */
+  bench: { at: number; rows: QrBenchRow[] } | null = null;
 
   private readonly invoke: Invoke;
   private readonly clock: Clock;
@@ -423,6 +453,38 @@ export class QrSigner {
     this.onChange();
   }
 
+  /** Start the bench sweep from its first setting. */
+  startBench(): void {
+    if (this.phase !== "showing") return;
+    this.bench = { at: 0, rows: [] };
+    const same = QR_BENCH_CONFIGS[0]!.fragment === this.settings.fragment;
+    this.change({ ...QR_BENCH_CONFIGS[0]! });
+    if (same) void this.restart();
+  }
+
+  /**
+   * The board has it (its review is up), or `gaveUp`: record this setting's
+   * row and move to the next. False once the sweep is over.
+   */
+  benchNext(gaveUp = false): boolean {
+    const b = this.bench;
+    if (!b || this.phase !== "showing") return false;
+    const t = this.timing();
+    b.rows.push({
+      fragment: t.fragment, interval: t.interval, seqLen: t.seqLen, version: t.version,
+      ms: gaveUp ? null : t.showMs, frames: this.shown,
+    });
+    b.at++;
+    if (b.at >= QR_BENCH_CONFIGS.length) { this.onChange(); return false; }
+    const next = QR_BENCH_CONFIGS[b.at]!;
+    const same = next.fragment === this.settings.fragment;
+    this.change({ ...next });
+    /* Same fragment size, new pace: the board scans again from part 1, so
+       the loop does too. */
+    if (same) void this.restart();
+    return true;
+  }
+
   /** The stopwatch so far (live while a phase runs). */
   timing(): QrTiming {
     const s = this.timedSettings ?? this.settings;
@@ -457,6 +519,13 @@ export function timingCaption(t: QrTiming): string {
   const total = t.showMs !== null && t.readMs !== null ? ` · total ${secs(t.showMs + t.readMs)}` : "";
   return `⏱ ${t.fragment} B / ${t.manual ? "manual" : `${t.interval} ms`} (${t.seqLen} fragment${t.seqLen === 1 ? "" : "s"}, QR v${t.version}) · board read ${secs(t.showMs)}`
     + ` · reply read ${secs(t.readMs)}${t.readMs !== null ? ` (${t.qrReads} QR)` : ""}${total}`;
+}
+
+/** The bench rows as a Markdown table, for QR-BENCH.md and the forks. */
+export function benchTable(rows: readonly QrBenchRow[], note = ""): string {
+  const head = "| Fragment B | Interval ms | Parts | QR v | Board read s | Frames shown | Loops |\n|---|---|---|---|---|---|---|";
+  const body = rows.map((r) => `| ${r.fragment} | ${r.interval} | ${r.seqLen} | ${r.version} | ${r.ms === null ? "gave up" : (r.ms / 1000).toFixed(1)} | ${r.frames} | ${(r.frames / Math.max(1, r.seqLen)).toFixed(1)} |`);
+  return [note ? `${note}\n` : "", head, ...body].filter(Boolean).join("\n");
 }
 
 /** The scan's progress line. */

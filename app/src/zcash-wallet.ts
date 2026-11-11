@@ -47,7 +47,7 @@ import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
 import qrcodegen from "qrcode-generator";
-import { bigQrAvail, drawQr, frameCaption, scanCaption, timingCaption, QrSigner } from "./qr-sign.ts";
+import { benchTable, bigQrAvail, drawQr, frameCaption, scanCaption, timingCaption, QR_BENCH_CONFIGS, QrSigner } from "./qr-sign.ts";
 import { txHead } from "./tx-labels.ts";
 import { initSwapView, type Proposal } from "./swap-view.ts";
 
@@ -827,6 +827,17 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     }
     $<HTMLSelectElement>("zwqrspeed").value = q.preset();
     $("zwqrnext").hidden = !(showing && q.settings.manual);
+    const bench = q.bench;
+    const running = !!bench && bench.at < QR_BENCH_CONFIGS.length;
+    $("zwqrbench").hidden = running;
+    $("zwqrbenchgot").hidden = !running || !showing;
+    $("zwqrbenchskip").hidden = !running || !showing;
+    $("zwqrbenchcopy").hidden = !bench?.rows.length;
+    $("zwqrbenchrows").hidden = !bench?.rows.length;
+    if (bench?.rows.length) {
+      $("zwqrbenchrows").textContent = benchTable(bench.rows)
+        + (running ? `\n\nNext: ${q.settings.fragment} B / ${q.settings.interval} ms (${bench.at + 1} of ${QR_BENCH_CONFIGS.length}). Cancel on the board, then Scan.` : "\n\nSweep done.");
+    }
     say("zwqrtimer", timingCaption(q.timing()));
     const f = q.frame();
     if (f) {
@@ -871,7 +882,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     $<HTMLButtonElement>("zwsignsend").disabled = true;
     $<HTMLButtonElement>("zwsignqr").disabled = true;
     say("zwqrsignhelp", "EXPERIMENTAL. On the board: choose Scan and point its camera at this code. It shows the same review; ACCEPT on its last page signs, and the board then shows its signature as a QR code. "
-      + "If the board does not pick it up: Speed Safe, then Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
+      + "If the board does not pick it up: push its knob for 2x zoom, then Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
     say("zwqrstatus", "");
     say("zwsendstatus", "Signing with QR (experimental)…");
     $("zwqrsign").scrollIntoView?.({ block: "nearest" });
@@ -1268,6 +1279,24 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   });
   $("zwqrbigger").addEventListener("click", () => qrSign?.bigger());
   $("zwqrnext").addEventListener("click", () => qrSign?.next());
+  $("zwqrbench").addEventListener("click", () => {
+    qrSign?.startBench();
+    deps.log("zcash: QR bench sweep started; on the board: Scan, and press \"Board has it\" when its review shows");
+  });
+  const benchStep = (gaveUp: boolean) => {
+    const q = qrSign;
+    if (!q?.bench) return;
+    const more = q.benchNext(gaveUp);
+    const r = q.bench.rows.at(-1);
+    if (r) deps.log(`zcash: QR bench ${r.fragment} B / ${r.interval} ms (${r.seqLen} parts, v${r.version}): ${r.ms === null ? "gave up" : `${(r.ms / 1000).toFixed(1)} s`}, ${r.frames} frames`);
+    if (!more) deps.log(`zcash: QR bench sweep done\n${benchTable(q.bench.rows)}`);
+  };
+  $("zwqrbenchgot").addEventListener("click", () => benchStep(false));
+  $("zwqrbenchskip").addEventListener("click", () => benchStep(true));
+  $("zwqrbenchcopy").addEventListener("click", () => {
+    const rows = qrSign?.bench?.rows;
+    if (rows?.length) void navigator.clipboard?.writeText(benchTable(rows)).catch(() => undefined);
+  });
   /* Manual mode: Space steps the parts while the code is up, unless typing. */
   document.addEventListener("keydown", (e) => {
     const q = qrSign;
