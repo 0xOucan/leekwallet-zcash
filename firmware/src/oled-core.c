@@ -57,6 +57,8 @@ static const uint8_t *panel_picture;
 static const uint8_t *panel_tint;
 /* The viewfinder's grayscale picture (oled.h); same lifetime. */
 static OledPanelGray panel_gray;
+/* The line under a QR (oled_set_qr_caption()), until the next clear. */
+static char qr_caption[OLED_QR_CAPTION_MAX + 1];
 #endif
 
 static uint8_t cursor_page = 0;
@@ -110,6 +112,22 @@ void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
 }
 
 OledPanelGray oled_core_panel_gray(void) { return panel_gray; }
+
+void oled_set_qr_caption(const char *text)
+{
+    size_t n = 0;
+    while (text != NULL && text[n] && n < OLED_QR_CAPTION_MAX) {
+        qr_caption[n] = text[n];
+        n++;
+    }
+    qr_caption[n] = '\0';
+}
+
+const char *oled_core_qr_caption(void) { return qr_caption[0] ? qr_caption : NULL; }
+
+#else
+/* Nothing to show it on: a 64- or 128-row panel's QR has no room for a line. */
+void oled_set_qr_caption(const char *text) { (void)text; }
 #endif
 
 void oled_blit_page(uint8_t page, const uint8_t *cols, size_t len)
@@ -137,6 +155,7 @@ esp_err_t oled_clear(void)
 #if BOARD_HAS_SPI_PANEL
     panel_tint = NULL;
     panel_gray.px = NULL;
+    qr_caption[0] = '\0';
 #endif
     return ESP_OK;
 }

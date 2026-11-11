@@ -199,8 +199,12 @@ $(BUILD)/test_panel128: test_panel128.c ../src/panel128.c ../src/oled-core.c ../
 
 # The colour panel (240x240 ST7789): crisp glyphs, roles, native-scale QR.
 $(BUILD)/test_panel_color: CFLAGS += -DLEEK_BOARD_S3CAM -DLEEK_DISPLAY=LEEK_DISPLAY_ST7789
+# With the real QR return path, so every colour mode's frames are drawn and
+# scanned back at the module size the mode is named for.
 $(BUILD)/test_panel_color: test_panel_color.c ../src/panel-color.c ../src/oled-core.c ../src/font5x7.c \
-                           ../src/qrcode.c host_stubs.c ../../vectors/keys_vectors.h | $(BUILD)
+                           ../src/qrcode.c host_stubs.c ../../vectors/keys_vectors.h \
+                           ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
+                           ../src/cbor.c $(CRYPTO)/sha2.c $(CRYPTO)/memzero.c | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -o $@ $(filter %.c,$^)
 
 # The boot splash: timing, both renderings, the version line. With --pgm DIR
@@ -499,6 +503,7 @@ UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
                   ../src/entropy.c ../src/session.c ../src/text-entry.c \
                   ../src/cbor.c ../src/device-wipe.c \
                   ../src/qr-out.c ../src/ur-encoder.c ../src/ur.c ../src/ur-fountain.c \
+                  ../src/backlight-level.c \
                   ../src/airgap.c ../src/camera.c ../src/camera-tune.c ../src/viewfinder.c ../src/scan-timing.c ../src/ur-decoder.c \
                   $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                   $(CRYPTO)/sha2.c $(CRYPTO)/pbkdf2.c \

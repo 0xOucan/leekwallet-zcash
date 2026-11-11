@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "qr-out.h"
 #include "qrcode.h"
@@ -127,7 +128,8 @@ static void test_refusals_and_modes(void)
     CHECK(qr_out_seq_num() == 2, "did not advance");
     CHECK(qr_out_set_mode(2, 10000000) && qr_out_seq_num() == 1 &&
           qr_out_current_mode() == 2, "a mode switch did not restart at part 1");
-    CHECK(!qr_out_set_mode(9, 0) && qr_out_current_mode() == 2 && qr_out_frame() != NULL,
+    CHECK(!qr_out_set_mode(QR_OUT_MODE_COUNT, 0) && qr_out_current_mode() == 2 &&
+          qr_out_frame() != NULL,
           "a bad mode switch blanked the running one");
 
     /* Section 32's arithmetic, now measured: a 90-byte signature is one
@@ -168,8 +170,37 @@ static void test_still(void)
     qr_out_stop();
 }
 
+/* The colour panel's modes (qr-out.h): never on an OLED's list, each bigger
+ * version carrying a 108-byte .zsig in fewer frames. */
+static void test_colour_modes(void)
+{
+    printf("== colour modes: a .zsig in fewer frames as the version grows\n");
+    uint8_t msg[108];
+    for (size_t i = 0; i < sizeof msg; i++) msg[i] = (uint8_t)(i * 13 + 7);
+    static const uint8_t ORDER[] = { QR_OUT_MODE_C_V3, QR_OUT_MODE_C_V4, QR_OUT_MODE_C_V6,
+                                     QR_OUT_MODE_C_V9 };
+    uint32_t prev = UINT32_MAX;
+    printf("   ");
+    for (size_t k = 0; k < sizeof ORDER; k++) {
+        const QrOutMode *m = qr_out_mode_info(ORDER[k]);
+        CHECK(m->color && !m->inverted, "%s is not a colour mode", m->name);
+        CHECK(qr_out_start("leek-zsig", msg, sizeof msg, ORDER[k], 0), "%s did not start", m->name);
+        printf(" %s %u", m->name, qr_out_seq_len());
+        CHECK(qr_out_seq_len() < prev, "%s needs %u frames", m->name, qr_out_seq_len());
+        prev = qr_out_seq_len();
+    }
+    printf("\n");
+    CHECK(prev == 1, "v9 needs %u frames for a .zsig", prev);
+    CHECK(QR_OUT_COLOR_MODE_DEFAULT == QR_OUT_MODE_C_V6, "the colour default moved");
+    for (uint8_t mode = 0; mode < QR_OUT_MODE_C_V9; mode++) {
+        CHECK(!qr_out_mode_info(mode)->color, "an OLED index is a colour mode");
+    }
+    qr_out_stop();
+}
+
 int main(void)
 {
+    test_colour_modes();
     test_every_frame_fits_and_decodes();
     test_still();
     test_the_wrap();
