@@ -951,7 +951,7 @@ static bool select_menu_item(const char *label)
     return false;
 }
 
-/* Roadmap 1.6: Receive pages the whole UA, then its QR, then the t-address
+/* Roadmap 1.6: Receive pages the whole Orchard-only UA, then its QR, then the t-address
  * (called public) and its QR; OK flips between an address and its QR; the
  * network comes from Settings. fake_zcash.c answers with the librustzcash
  * vector, so what is checked is that the screen shows that address whole. */
@@ -968,14 +968,14 @@ static void walk_receive(const zv_key_vector *v)
         press(BUTTON_DOWN);
         page++;
     }
-    CHECK(strcmp(ua, v->ua) == 0, "the UA does not reassemble:\n  %s\n  %s", ua, v->ua);
-    CHECK(strcmp(fake_oled_qr_data(), v->ua) == 0, "the UA QR carries \"%s\"",
+    CHECK(strcmp(ua, v->ua_orchard_only) == 0, "the UA does not reassemble:\n  %s\n  %s", ua, v->ua_orchard_only);
+    CHECK(strcmp(fake_oled_qr_data(), v->ua_orchard_only) == 0, "the UA QR carries \"%s\"",
           fake_oled_qr_data());
 
     press(BUTTON_ACCEPT);
     CHECK(ui__receive_page_for_test() == 0, "OK on the QR did not return to the text");
     press(BUTTON_ACCEPT);
-    CHECK(strcmp(fake_oled_qr_data(), v->ua) == 0, "OK on the text did not show its QR");
+    CHECK(strcmp(fake_oled_qr_data(), v->ua_orchard_only) == 0, "OK on the text did not show its QR");
 
     press(BUTTON_DOWN);
     CHECK_SCREEN(fake_oled_contains("T-addr") && fake_oled_contains("PUBLIC"),
@@ -1813,7 +1813,7 @@ static void test_colour_qr_screens(void)
     press(BUTTON_UP);
     CHECK_SCREEN(fake_oled_contains("T-addr"), "UP from the t-address QR is not its text");
     press(BUTTON_UP);
-    CHECK(strcmp(fake_oled_qr_data(), ZV_KEYS[0].ua) == 0, "UP did not reach the UA QR");
+    CHECK(strcmp(fake_oled_qr_data(), ZV_KEYS[0].ua_orchard_only) == 0, "UP did not reach the UA QR");
     press(BUTTON_UP);
     CHECK_SCREEN(fake_oled_row_contains(0, "UA "), "UP did not reach the UA text");
     press(BUTTON_CANCEL);

@@ -32,6 +32,7 @@ WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount
             memcpy(out->keys.seed_fingerprint, v->seed_fingerprint, 32);
             strcpy(out->keys.ufvk, v->ufvk);
             strcpy(out->keys.ua, v->ua);
+            strcpy(out->ua_orchard, v->ua_orchard_only);
             strcpy(out->t_address, v->transparent_address);
             return WALLET_OK;
         }

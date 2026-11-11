@@ -18,9 +18,16 @@
 /* QR capacity in bytes at ECC_LOW, versions 1-10 (ISO/IEC 18004 table 7). */
 static const uint16_t BYTE_CAPACITY[10] = { 17, 32, 53, 78, 106, 134, 154, 192, 230, 271 };
 
+/* The shielded address Receive shows: Orchard only when the derivation
+ * encoded it (zcash-receive.h), else the full UA. */
+static const char *shown_ua(const ZcashAccount *a)
+{
+    return a->ua_orchard[0] ? a->ua_orchard : a->keys.ua;
+}
+
 static int ua_text_pages(const ZcashAccount *a)
 {
-    int len = (int)strlen(a->keys.ua);
+    int len = (int)strlen(shown_ua(a));
     return len == 0 ? 1 : (len + UA_CHARS_PER_PAGE - 1) / UA_CHARS_PER_PAGE;
 }
 
@@ -78,7 +85,7 @@ bool zrecv_render(const ZcashAccount *a, int page, ZRecvPage *out)
         snprintf(title, sizeof title, "UA %d/%d  acct %u  %s", page + 1, ua_pages,
                  (unsigned)a->account, net_label(a));
         put_row(out, 0, title, (int)strlen(title));
-        const char *ua = a->keys.ua;
+        const char *ua = shown_ua(a);
         int len = (int)strlen(ua);
         int at = page * UA_CHARS_PER_PAGE;
         for (int r = 0; r < UA_ROWS_PER_PAGE && at < len; r++, at += ZRECV_COLS) {
@@ -88,7 +95,7 @@ bool zrecv_render(const ZcashAccount *a, int page, ZRecvPage *out)
         return true;
     }
     if (page == ua_pages) {
-        return qr_page(a->keys.ua, out);
+        return qr_page(shown_ua(a), out);
     }
     if (page == ua_pages + 1) {
         out->kind = ZRECV_TEXT;
