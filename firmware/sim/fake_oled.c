@@ -4,6 +4,7 @@
 
 #include "fake_oled.h"
 #include "oled.h"
+#include "backlight-level.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -19,8 +20,9 @@ static const uint8_t *panel_picture;
 static int     picture_flushes;
 static const uint8_t *panel_gray;
 static uint16_t panel_gray_x, panel_gray_y, panel_gray_w, panel_gray_h;
-static uint8_t backlight = 100;
+static uint16_t backlight = BL_DUTY_MAX;
 static int     backlight_calls;
+static char    qr_caption[OLED_QR_CAPTION_MAX + 1];
 
 static uint8_t cursor_page;
 static uint8_t cursor_col;
@@ -52,8 +54,9 @@ void fake_oled_reset(void)
     panel_picture = NULL;
     picture_flushes = 0;
     panel_gray = NULL;
-    backlight = 100;
+    backlight = BL_DUTY_MAX;
     backlight_calls = 0;
+    qr_caption[0] = '\0';
 }
 
 void fake_oled_set_panel_rows(uint8_t rows) { panel_rows = rows; }
@@ -68,7 +71,13 @@ const uint8_t *fake_oled_panel_gray(uint16_t *x, uint16_t *y, uint16_t *w, uint1
     if (h) *h = panel_gray_h;
     return panel_gray;
 }
-uint8_t fake_oled_backlight(void) { return backlight; }
+uint16_t fake_oled_backlight_duty(void) { return backlight; }
+const char *fake_oled_qr_caption(void) { return qr_caption; }
+
+void oled_set_qr_caption(const char *text)
+{
+    snprintf(qr_caption, sizeof qr_caption, "%s", text ? text : "");
+}
 int fake_oled_backlight_calls(void) { return backlight_calls; }
 
 void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
@@ -78,11 +87,11 @@ void oled_show_panel_gray(const uint8_t *px, uint16_t x, uint16_t y,
     panel_gray_x = x; panel_gray_y = y; panel_gray_w = w; panel_gray_h = h;
 }
 
-esp_err_t oled_set_backlight(uint8_t pct)
+esp_err_t oled_set_backlight_duty(uint16_t duty)
 {
-    if (pct < OLED_BACKLIGHT_MIN) pct = OLED_BACKLIGHT_MIN;
-    if (pct > OLED_BACKLIGHT_MAX) pct = OLED_BACKLIGHT_MAX;
-    backlight = pct;
+    if (duty < 1) duty = 1;
+    if (duty > BL_DUTY_MAX) duty = BL_DUTY_MAX;
+    backlight = duty;
     backlight_calls++;
     return ESP_OK;
 }
@@ -170,6 +179,7 @@ esp_err_t oled_clear(void)
     cursor_col = 0;
     panel_picture = NULL;
     panel_gray = NULL;
+    qr_caption[0] = '\0';
     return ESP_OK;
 }
 

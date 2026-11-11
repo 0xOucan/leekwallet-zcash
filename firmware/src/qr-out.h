@@ -55,9 +55,10 @@ typedef struct {
     uint16_t    period_ms;
     const char *name;        /* six characters or fewer, for the footer */
     bool        inverted;    /* lit modules on a dark background */
+    bool        color;       /* the 240x240 colour panel's, below; never an OLED's */
 } QrOutMode;
 
-#define QR_OUT_MODE_COUNT 6
+#define QR_OUT_MODE_COUNT 10
 /* v3 at scale 2: the chunkiest modules, 2 panel pixels each. Measured by
    rendering this panel's framebuffer and blurring it: the scale-1 modes need a
    camera to resolve at least 3 of its pixels per 0.17 mm OLED pixel, which a
@@ -76,6 +77,47 @@ typedef struct {
  * to the animated modes for a message too long for one code.
  */
 #define QR_OUT_MODE_STILL 5
+
+/*
+ * The colour panel's own animated modes.
+ *
+ * The OLED modes are sized for 64 rows: v3 x2 exists because nothing bigger
+ * than 2 px a module fits there. The 240x240 panel redraws every code from
+ * its modules at the largest whole size that keeps a two-module quiet zone
+ * (panel-color.c), so there a mode is just a version, and the module size
+ * follows from it:
+ *
+ *     mode     chars/frame   px/module   code     a 108-byte .zsig
+ *     v9 4px       335           4       212 px   1 frame (= still)
+ *     v6 5px       195           5       205 px   2 frames
+ *     v4 6px       114           6       198 px   4 frames
+ *     v3 7px        77           7       203 px   9 frames
+ *
+ * (0.0975 mm a pixel on a 1.3" panel: 4 px is 0.39 mm, 7 px 0.68 mm; the
+ * OLED's v3 x2 is 0.34 mm.) Each line is the largest version at its module
+ * size, so no mode is beaten on both counts by another.
+ *
+ * What the colour panel shows first: one still code (QR_OUT_MODE_STILL) if
+ * the message fits one at version 9 or below, i.e. 4 px or more; a .zsig for
+ * one transparent input is a v8 still. Nothing to reassemble, nothing to
+ * miss, and 4 px is already bigger than the OLED default a webcam reads.
+ * A longer message (several spends) starts at v6 5px: 2.5 times the OLED
+ * default's characters a frame, so a third of its frames, at modules 1.4
+ * times as big. A turn (and OK, which has no contrast to step on this
+ * panel) goes through still, v6, v4, v3, v9, so a camera that cannot
+ * resolve 4-5 px gets 6 and 7 one detent at a time.
+ *
+ * Appended, so the OLED indices above never move, and skipped by the OLED's
+ * cycle (QrOutMode.color). Their OLED scale is 1, which every version up to
+ * 10 fits in 64 rows: the 1-bit frame under the colour panel is never shown.
+ */
+#define QR_OUT_MODE_C_V9  6
+#define QR_OUT_MODE_C_V6  7
+#define QR_OUT_MODE_C_V4  8
+#define QR_OUT_MODE_C_V3  9
+#define QR_OUT_COLOR_MODE_DEFAULT QR_OUT_MODE_C_V6
+/* The largest still version the colour panel shows first (4 px a module). */
+#define QR_OUT_COLOR_STILL_MAX_VERSION 9
 
 const QrOutMode *qr_out_mode_info(uint8_t mode);
 

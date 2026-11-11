@@ -66,54 +66,123 @@ const PanelPalette *panel_color_palette(void) { return &LEEK_PALETTE; }
 
 /* ------------------------------------------------------------------ QR */
 
-/* ISO 18004 asks for four modules of quiet zone. Two is the fallback for a
- * code that would otherwise not fit at all, which on 240 rows means nothing
- * this firmware draws. */
+/*
+ * The largest whole number of panel pixels per module that leaves at least
+ * two modules of quiet zone each side. ISO 18004 asks for four; the whole
+ * panel around the code is drawn light (render_qr), so the quiet zone is
+ * everything up to the glass's edge, and it is four modules or more wherever
+ * the scale leaves that much room anyway. Insisting on four before choosing
+ * the scale cost a whole pixel per module for nothing: a version 3 code was
+ * 6 px a module where 7 fits with 2.6 modules of margin (board, 2026-11-10:
+ * "we are not using the full 240x240"). Two is the floor because below it
+ * the bezel's dark edge reaches the finder patterns.
+ */
 uint8_t panel_color_qr_scale(uint8_t modules, int width, int height)
 {
     const int side = width < height ? width : height;
-    for (int quiet = 4; quiet >= 2; quiet -= 2) {
-        const int s = side / (modules + 2 * quiet);
-        if (s >= 1) {
-            return (uint8_t)(s > 255 ? 255 : s);
-        }
+    if (modules == 0) {
+        return 0;
     }
-    return 0;
+    const int s = side / (modules + 2 * PANEL_QR_MIN_QUIET);
+    return (uint8_t)(s < 1 ? 0 : (s > 255 ? 255 : s));
 }
 
-static void render_qr(const QRCode *qr, bool inverted, uint8_t scale,
+/* The caption's glyph size under a code at `scale`: the largest of 2x3 (the
+ * UI's own), 2x2 and 1x1 panel pixels per font pixel that fits between the
+ * minimum quiet zone and the bottom of the panel, and across it; 0 if none
+ * does. A caption never shrinks the code: it is laid out after the scale. */
+static void caption_fit(const char *text, uint8_t scale, int px, int width, int height,
+                        int *xs, int *ys)
+{
+    static const uint8_t SIZES[][2] = { { 2, 3 }, { 2, 2 }, { 1, 1 } };
+    *xs = *ys = 0;
+    if (text == NULL || !text[0]) {
+        return;
+    }
+    const int oy = (height - px) / 2;
+    const int room = height - (oy + px) - PANEL_QR_MIN_QUIET * scale;
+    const int n = (int)strlen(text);
+    for (size_t i = 0; i < sizeof SIZES / sizeof SIZES[0]; i++) {
+        if (7 * SIZES[i][1] <= room && n * 6 * SIZES[i][0] - SIZES[i][0] <= width) {
+            *xs = SIZES[i][0];
+            *ys = SIZES[i][1];
+            return;
+        }
+    }
+}
+
+bool panel_color_qr_caption_rows(const char *text, uint8_t modules, int width, int height,
+                                 int *y0, int *rows)
+{
+    const uint8_t scale = panel_color_qr_scale(modules, width, height);
+    int xs, ys;
+    caption_fit(text, scale, modules * scale, width, height, &xs, &ys);
+    if (!xs) {
+        return false;
+    }
+    const int px = modules * scale;
+    const int top = (height - px) / 2 + px + PANEL_QR_MIN_QUIET * scale;
+    if (y0) *y0 = top + (height - top - 7 * ys) / 2;
+    if (rows) *rows = 7 * ys;
+    return true;
+}
+
+static void render_qr(const QRCode *qr, bool inverted, uint8_t scale, const char *caption,
                       const PanelPalette *pal, int width, int height,
                       int y0, int rows, uint16_t *out)
 {
     const int px = qr->size * scale;
     const int ox = (width - px) / 2;
     const int oy = (height - px) / 2;
-    const int quiet = 4 * scale;
     /*
-     * Normal polarity: dark modules on a lit square that runs to the edge of
-     * the quiet zone, the rest of the panel dark - the same FRAMED look as
-     * the OLEDs (oled-core.c), which costs an LCD nothing and keeps one
-     * picture of "the QR screen" across boards. Inverted: lit modules on dark,
-     * as the user chose it.
+     * Dark modules on light, the light running to every edge of the panel:
+     * the whole glass is the code's quiet zone, so a camera finds a light
+     * square with the code in it and nothing else (the OLEDs frame theirs in
+     * dark because their lit area glared; here the backlight is turned down
+     * for every QR instead, ui.c). Inverted: lit modules on dark, as the user
+     * chose it.
      */
     const uint16_t lit = inverted ? pal->qr_light : pal->qr_dark;
     const uint16_t field = inverted ? pal->qr_dark : pal->qr_light;
+
+    /* The caption, if one fits under the code. */
+    int cxs, cys;
+    caption_fit(caption, scale, px, width, height, &cxs, &cys);
+    int cy0 = 0, cx0 = 0, clen = 0;
+    if (cxs) {
+        panel_color_qr_caption_rows(caption, qr->size, width, height, &cy0, NULL);
+        clen = (int)strlen(caption);
+        cx0 = (width - (clen * 6 * cxs - cxs)) / 2;
+    }
+
     for (int r = 0; r < rows; r++) {
         const int y = y0 + r;
         uint16_t *row = out + (size_t)r * width;
-        const bool in_frame = !inverted && y >= oy - quiet && y < oy + px + quiet;
         const int my = (y - oy) / scale;
         const bool in_code_y = y >= oy && my < qr->size;
         for (int x = 0; x < width; x++) {
-            uint16_t c = pal->qr_dark;
-            if (in_frame && x >= ox - quiet && x < ox + px + quiet) {
-                c = field;
+            row[x] = field;
+        }
+        if (in_code_y) {
+            for (int mx = 0; mx < qr->size; mx++) {
+                if (qrcode_getModule((QRCode *)qr, (uint8_t)mx, (uint8_t)my)) {
+                    uint16_t *p = row + ox + mx * scale;
+                    for (int k = 0; k < scale; k++) p[k] = lit;
+                }
             }
-            if (in_code_y && x >= ox && x < ox + px &&
-                qrcode_getModule((QRCode *)qr, (uint8_t)((x - ox) / scale), (uint8_t)my)) {
-                c = lit;
+        }
+        if (cxs && y >= cy0 && y < cy0 + 7 * cys) {
+            const int bit = (y - cy0) / cys;
+            for (int c = 0; c < clen; c++) {
+                const uint8_t *cols = font_5x7_glyph(caption[c]);
+                for (int gx = 0; gx < 5; gx++) {
+                    if (!((cols[gx] >> bit) & 1)) continue;
+                    const int x = cx0 + (c * 6 + gx) * cxs;
+                    for (int k = 0; k < cxs; k++) {
+                        if (x + k >= 0 && x + k < width) row[x + k] = lit;
+                    }
+                }
             }
-            row[x] = c;
         }
     }
 }
@@ -304,7 +373,7 @@ void panel_color_render(const PanelFrame *f, const PanelPalette *pal,
     }
     const uint8_t scale = f->qr ? panel_color_qr_scale(f->qr->size, width, height) : 0;
     if (scale) {
-        render_qr(f->qr, f->qr_inverted, scale, pal, width, height, y0, rows, out);
+        render_qr(f->qr, f->qr_inverted, scale, f->qr_caption, pal, width, height, y0, rows, out);
         return;
     }
     render_text(f, pal, width, height, y0, rows, out);

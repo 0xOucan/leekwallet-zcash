@@ -49,9 +49,11 @@ int fake_oled_picture_flush_count(void);
 /** The grayscale picture oled_show_panel_gray() set, and where, or NULL
  *  since a clear. Any out-pointer may be NULL. */
 const uint8_t *fake_oled_panel_gray(uint16_t *x, uint16_t *y, uint16_t *w, uint16_t *h);
-/** The last oled_set_backlight() level (100 after a reset), and how many
- *  calls set it. */
-uint8_t fake_oled_backlight(void);
+/** The last oled_set_backlight_duty() duty (BL_DUTY_MAX after a reset), and
+ *  how many calls set it. */
+uint16_t fake_oled_backlight_duty(void);
+/** The caption oled_set_qr_caption() set, "" if none since a clear. */
+const char *fake_oled_qr_caption(void);
 int fake_oled_backlight_calls(void);
 
 /** Payload of the last oled_draw_qrcode(), or "" if none. */

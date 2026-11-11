@@ -12,16 +12,22 @@
    QR_OUT_MODE_DEFAULT in qr-out.h, and it is the chunky one. Periods are a
    starting guess for the bench to replace. */
 static const QrOutMode MODES[QR_OUT_MODE_COUNT] = {
-    { 6,  1, 300, "v6",    false },
-    { 10, 1, 400, "v10",   false },
-    { 3,  2, 250, "v3 x2", false },
+    { 6,  1, 300, "v6",    false, false },
+    { 10, 1, 400, "v10",   false, false },
+    { 3,  2, 250, "v3 x2", false, false },
     /* Inverted variants, appended so the indices above do not move. They
        follow the default in the UP/DOWN cycle, so one press from the default
        compares the same module size with the lit area swapped. */
-    { 3,  2, 250, "v3 x2i", true },
-    { 6,  1, 300, "v6 i",   true },
+    { 3,  2, 250, "v3 x2i", true,  false },
+    { 6,  1, 300, "v6 i",   true,  false },
     /* QR_OUT_MODE_STILL: version chosen per message, never animated. */
-    { 0,  1, 0,   "still",  false },
+    { 0,  1, 0,   "still",  false, false },
+    /* The colour panel's (qr-out.h); module size is the panel's, not
+       `scale`. Periods as the OLED modes of similar size. */
+    { 9,  1, 400, "v9 4px", false, true },
+    { 6,  1, 300, "v6 5px", false, true },
+    { 4,  1, 250, "v4 6px", false, true },
+    { 3,  1, 250, "v3 7px", false, true },
 };
 
 /* ISO 18004 table 7, alphanumeric column at level L. */
