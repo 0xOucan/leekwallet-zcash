@@ -10,6 +10,8 @@ src/bin/uniffi-bindgen.rs       the generator, same uniffi as the scaffolding
 uniffi.toml                     Kotlin package io.leekwallet.zcash.sdk, Swift module LeekZcash
 scripts/generate.sh             regenerates bindings/ from the built library
 scripts/kotlin-smoke.sh         compiles bindings/kotlin + tests/kotlin/Smoke.kt and runs it on the JVM
+scripts/build-android.sh        the Android .so (arm64-v8a, x86_64) + bindings + R8 rules, checked
+android/consumer-rules.pro      R8 / ProGuard keep rules for the bindings and JNA
 bindings/kotlin/                generated: io/leekwallet/zcash/sdk/leek_zcash_ffi.kt
 bindings/swift/                 generated: LeekZcash.swift, LeekZcashFFI.h, LeekZcashFFI.modulemap
 tests/ffi.rs                    the FFI layer from Rust, against the zdev simulator
@@ -201,16 +203,92 @@ per-function checksums at load time, so stale bindings fail loudly.
 
 ## Build for Android (arm64-v8a, x86_64)
 
-With the NDK and [cargo-ndk](https://github.com/bbqsrc/cargo-ndk):
+64-bit only, as the app: no armv7, no x86. Needs the NDK (default
+`~/Android/Sdk/ndk/27.2.12479018`, or `ANDROID_NDK_HOME`) and the two Rust
+targets; plain cargo with the NDK's clang as the linker, no cargo-ndk.
 
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
-cargo ndk -t arm64-v8a -t x86_64 -o <app>/src/main/jniLibs build --release -p leek-zcash-ffi
-cp -r leek-zcash-ffi/bindings/kotlin/io <app>/src/main/java/
+leek-zcash-ffi/scripts/build-android.sh [out]    # from host/; out defaults to host/target/android
 ```
 
-The app depends on `net.java.dev.jna:jna:5.14.0@aar` (5.12 or later: the
-bindings use `com.sun.jna.internal.Cleaner`). 64-bit only, as the app.
+It builds `cargo build --release --locked -p leek-zcash-ffi --lib` for
+`aarch64-linux-android` and `x86_64-linux-android` (API 27, the app's
+minSdk; `ANDROID_API` changes it) with `-Wl,-z,max-page-size=16384` and
+local paths remapped (`/leek/host`, `/cargo`, `/rustup`), as the fork's
+release script does. Then it:
+
+1. regenerates the Kotlin bindings from the arm64 library just built
+   (UniFFI library mode) and **refuses** if they differ from the committed
+   `bindings/kotlin` in any byte: run `scripts/generate.sh` and commit;
+2. strips the libraries with `llvm-strip --strip-all` (after step 1: UniFFI
+   reads its metadata from `.symtab`; the exported functions stay in
+   `.dynsym`);
+3. refuses a library that needs anything but `libc`, `libm`, `libdl`,
+   `liblog`, or with a `LOAD` segment not aligned to 16 KB (Android 15+).
+
+Output, ready to drop into an Android module:
+
+```
+<out>/jniLibs/arm64-v8a/libleek_zcash_ffi.so     3.4 MiB
+<out>/jniLibs/x86_64/libleek_zcash_ffi.so        3.8 MiB
+<out>/kotlin/io/leekwallet/zcash/sdk/leek_zcash_ffi.kt
+<out>/consumer-rules.pro                         (a copy of android/consumer-rules.pro)
+```
+
+In the app module (the fork's `feature-leekwallet`):
+
+```kotlin
+android {
+    sourceSets["main"].jniLibs.srcDir("<out>/jniLibs")          // or copy the ABI folders into src/main/jniLibs
+    sourceSets["main"].kotlin.srcDir("<out>/kotlin")            // or copy io/ into src/main/java
+    defaultConfig { consumerProguardFiles("<out>/consumer-rules.pro") } // a library module
+    // an app module: buildTypes.release { proguardFiles(..., "<out>/consumer-rules.pro") }
+}
+dependencies { implementation("net.java.dev.jna:jna:5.14.0@aar") }
+```
+
+Measured on the build of 2026-11-11 (both ABIs): `NEEDED` is `libdl.so` and
+`libc.so` only; the four `LOAD` segments are aligned to `0x4000`; no
+`.symtab` or debug sections; 178 exported `uniffi_*` functions (100
+`uniffi_leek_zcash_ffi_fn_*`, 78 `uniffi_leek_zcash_ffi_checksum_*`), plus
+57 `ffi_leek_zcash_ffi_*` helpers (RustBuffer, futures, contract version), 110
+`UNIFFI_META_*` metadata statics, and the C
+`rustsecp256k1_v0_14_*` symbols. Changing one binding line made the script
+fail as it should.
+
+**JNA.** The bindings load the library through JNA, so the app depends on
+`net.java.dev.jna:jna:5.14.0@aar` (5.12 or later: the bindings use
+`com.sun.jna.internal.Cleaner`; the `@aar` form carries Android's
+`libjnidispatch.so`, the plain jar does not). That AAR ships
+`libjnidispatch.so` for every ABI; a 64-bit app keeps only its own with
+`ndk { abiFilters += listOf("arm64-v8a") }` (release) or
+`packaging.jniLibs.excludes`. JNA is Apache-2.0 / LGPL-2.1 and its prebuilt
+`libjnidispatch.so` needs the F-Droid / reproducibility review.
+
+**R8.** `android/consumer-rules.pro` must be applied: JNA finds native
+functions by the Kotlin method names of the `UniffiLib` proxy interfaces,
+reads `Structure` fields by the names in `@Structure.FieldOrder`, and the
+Rust side calls Kotlin through `com.sun.jna.Callback` vtables (behind
+`FrameTransport`, `KeyWrapper`, `PairingListener`, `SignListener`). The
+rules keep `com.sun.jna.**`, everything in `io.leekwallet.zcash.sdk`,
+every class implementing those four interfaces, and the runtime
+annotations. Without them a minified release build fails at the first call.
+
+**No AAR yet.** A Gradle library module was tried offline against the local
+Gradle cache (AGP 8.13.2, Kotlin 2.3.10, Gradle 8.14.4: all present) and
+failed only on `net.java.dev.jna:jna:5.14.0`, which is not cached (only JNA
+5.6.0 is, too old for the bindings). With network access a module that
+points its `jniLibs` and `kotlin` source dirs at `<out>` and declares
+`consumerProguardFiles` and `api("net.java.dev.jna:jna:5.14.0@aar")` is all
+it takes; until then use the drop-in layout above.
+
+**Not tested:** nothing has run on a device or an emulator. The libraries
+were built and inspected, and the same bindings pass the JVM smoke test
+against the host build; loading the `.so` through JNA on Android, R8 with
+the rules in a release build, and the `libjnidispatch.so` packaging are
+for the fork (an `assembleZcashmainnetFossRelease` and an emulator load of
+`minFirmwareCompat()` / `qrDefaults()`).
 
 ## Build for iOS / macOS
 
