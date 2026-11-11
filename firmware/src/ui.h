@@ -94,6 +94,10 @@ typedef enum {
      * data?", with the app identifier in full, the account and the pairing
      * code. Answered through the sign-outcome channel. */
     SCREEN_STORAGE_KEY,
+    /* Settings -> Secure element: the seed's copy in the OPTIGA container,
+     * and SD -> SE / vault restores (se-backup.h). Registered only in a
+     * development image with the chip (UI_HAS_SE_BACKUP in ui.c). */
+    SCREEN_SE_BACKUP,
     SCREEN_COUNT
 } screen_id_t;
 

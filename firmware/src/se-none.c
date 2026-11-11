@@ -11,4 +11,11 @@ se_status_t se_probe(void) { return SE_NOT_FITTED; }
 
 const char *se_name(void) { return "none"; }
 
+int se_info_lines(char lines[][SE_LINE_LEN], int max)
+{
+    (void)lines;
+    (void)max;
+    return 0;
+}
+
 #endif

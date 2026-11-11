@@ -54,6 +54,15 @@
 #else
 #define UI_HAS_SD_SEED 0
 #endif
+/* Settings > Secure element: a development image with the OPTIGA and its
+ * Level 1 container write path (esp32s3cam-color-se). No shipped image. */
+#if LEEK_HAS_SE && LEEK_SE_CONTAINER_WRITES && UI_HAS_SD_SEED
+#include "se.h"
+#include "se-backup.h"
+#define UI_HAS_SE_BACKUP 1
+#else
+#define UI_HAS_SE_BACKUP 0
+#endif
 #include "camera.h"
 #include "viewfinder.h"
 #include "esp_random.h"
@@ -225,6 +234,12 @@ static void screen_sd_seed_enter(void);
 static void screen_sd_seed_exit(screen_id_t next);
 static void screen_sd_seed_render(void);
 static void screen_sd_seed_on_button(button_id_t btn);
+#if UI_HAS_SE_BACKUP
+static void screen_se_enter(void);
+static void screen_se_exit(screen_id_t next);
+static void screen_se_render(void);
+static void screen_se_on_button(button_id_t btn);
+#endif
 static void screen_show_address_enter(void);
 static void screen_show_address_exit(screen_id_t next);
 static void screen_show_address_render(void);
@@ -411,6 +426,15 @@ static const screen_t screen_sd_seed = {
     .on_button = screen_sd_seed_on_button,
     .exit = screen_sd_seed_exit
 };
+
+#if UI_HAS_SE_BACKUP
+static const screen_t screen_se = {
+    .enter = screen_se_enter,
+    .render = screen_se_render,
+    .on_button = screen_se_on_button,
+    .exit = screen_se_exit
+};
+#endif
 
 static const screen_t screen_show_address = {
     .enter = screen_show_address_enter,
@@ -1317,6 +1341,10 @@ typedef enum {
     SET_KNOB,
 #endif
     SET_CHANGE_PIN,
+#if UI_HAS_SE_BACKUP
+    /* The OPTIGA backup copy; development images only. */
+    SET_SECURE_ELEMENT,
+#endif
 /* The Wi-Fi AP is a test fixture, not a feature (AUDIT S8g). It brings up an
  * access point with a hardcoded password on a device holding seeds, so it is
  * compiled out unless a build asks for it. The enum and the label array below
@@ -1349,6 +1377,9 @@ static const char *settings_items[SETTINGS_ITEMS] = {
     "Knob direction",
 #endif
     "Change PIN",
+#if UI_HAS_SE_BACKUP
+    "Secure element",
+#endif
 #ifdef CONFIG_ESP_WIFI_ENABLED
     "WiFi Test",
 #endif
@@ -3415,6 +3446,11 @@ static void screen_settings_on_button(button_id_t btn)
                 case SET_CHANGE_PIN:
                     ui_set_screen(SCREEN_PIN_CHANGE);
                     break;
+#if UI_HAS_SE_BACKUP
+                case SET_SECURE_ELEMENT:
+                    ui_set_screen(SCREEN_SE_BACKUP);
+                    break;
+#endif
 #ifdef CONFIG_ESP_WIFI_ENABLED
                 case SET_WIFI: wifi_test_toggle(); break;
 #endif
@@ -3953,6 +3989,667 @@ static void screen_sd_seed_on_button(button_id_t btn)
 #endif
     ui_invalidate();
 }
+
+/* ============================================================================
+ * Secure Element Screen (Settings, development images only)
+ *
+ * The OPTIGA's Level 1 container as a backup LOCATION for the seed, beside
+ * the vault (the master) and the SD card's .zkv files. Compiled only into an
+ * image with the chip and the container write path (UI_HAS_SE_BACKUP); every
+ * shipped image has neither, and this whole block is absent from them.
+ *
+ * Every action starts with a fresh PIN entry that is checked exactly as an
+ * unlock is (pin_verify(): it costs an attempt when wrong, and the device
+ * wipes when the attempts run out, as for Change PIN). That PIN is also the
+ * key the copy is sealed under (se-backup.h). A copy made under an earlier
+ * PIN, or on another board, can still be opened: when the vault's PIN does not
+ * open it, the screen offers to type the copy's own PIN, which is checked
+ * against the copy only (its KDF is the only throttle; the ciphertext is
+ * readable by anyone with the bus anyway, so no retry counter could protect
+ * it - Level 1 is storage, not security).
+ *
+ * Fixed strings and the short fingerprint only; no screen here shows a
+ * phrase. The restore rules are se-backup.c's and leek-wallet.c's, not this
+ * file's: a vault seed is never overwritten or deleted from here, because no
+ * path below can ask for that.
+ * ============================================================================ */
+
+#if UI_HAS_SE_BACKUP
+typedef enum {
+    SEA_INFO,
+    SEA_COPY,
+    SEA_COMPARE,
+    SEA_RESTORE_SESSION,
+    SEA_RESTORE_VAULT,
+    SEA_ERASE,
+    SEA_SD_TO_SE,
+    SEA_SD_TO_VAULT,
+    SEA_BACK,
+    SEA_COUNT
+} SeAction;
+
+static const char *const SE_ITEMS[SEA_COUNT] = {
+    "Info",
+    "Copy seed to SE",
+    "Compare SE copy",
+    "SE copy -> session",
+    "SE copy -> vault",
+    "Erase SE copy",
+    "SD file -> SE",
+    "SD file -> vault",
+    "Back",
+};
+
+typedef enum {
+    SES_MENU,
+    SES_PIN,        /* the vault PIN, pin_verify()'d */
+    SES_COPY_PIN,   /* the SE copy's own PIN, checked against the copy only */
+    SES_CONFIRM,    /* erase, or replace a different copy */
+    SES_SD_LIST,
+    SES_SD_PASS,
+    SES_RESULT,
+} SeStage;
+
+#define SE_MSG_LINES 6
+
+static SeStage  se_stage;
+static SeAction se_action;
+static int      se_sel;
+static bool     se_go_home;
+static char     se_pin[PIN_MAX_LENGTH + 1];       /* the verified PIN, while it is needed */
+static char     se_copy_pin[PIN_MAX_LENGTH + 1];  /* the copy's own PIN, ditto */
+static char     se_msg[SE_MSG_LINES][22];
+static char     se_confirm_zfp[9];
+
+static void se_forget(void)
+{
+    memzero(se_pin, sizeof se_pin);
+    memzero(se_copy_pin, sizeof se_copy_pin);
+    memzero(pin_entry, sizeof pin_entry);
+    pin_cursor = 0;
+    current_digit = 0;
+    sd_forget();
+}
+
+static void se_result(bool home, const char *a, const char *b, const char *c, const char *d,
+                      const char *e)
+{
+    const char *lines[SE_MSG_LINES] = { a, b, c, d, e, NULL };
+    for (int i = 0; i < SE_MSG_LINES; i++) {
+        snprintf(se_msg[i], sizeof se_msg[i], "%s", lines[i] ? lines[i] : "");
+    }
+    se_go_home = home;
+    se_stage = SES_RESULT;
+    /* The PINs are done with: every result ends the action. */
+    se_forget();
+}
+
+/* The key the copy opens with: its own PIN when one was typed, else the vault's. */
+static const char *se_key(void)
+{
+    return se_copy_pin[0] ? se_copy_pin : se_pin;
+}
+
+static void se_say_zfp(char *out, size_t n, const char *zfp)
+{
+    snprintf(out, n, "ZFP %s", zfp && zfp[0] ? zfp : "--------");
+}
+
+/* The copy does not open with this PIN: offer the copy's own, once. */
+static void se_offer_copy_pin(void)
+{
+    if (se_copy_pin[0]) {
+        se_result(false, "SE copy not opened", "That PIN does not", "open it either", NULL, NULL);
+        return;
+    }
+    pin_entry_reset();
+    se_stage = SES_COPY_PIN;
+}
+
+static void se_do_info(void)
+{
+    sd_busy("Reading SE...");
+    char lines[SE_MSG_LINES][SE_LINE_LEN];
+    memset(lines, 0, sizeof lines);
+    int n = se_info_lines(lines, 4);
+    if (n == 0) snprintf(lines[n++], SE_LINE_LEN, "Chip: not found");
+    SeBackupPeek peek;
+    SeBackupResult r = sebk_peek(se_key(), &peek);
+    if (r == SEBK_OK || r == SEBK_E_PIN) {
+        snprintf(lines[n++], SE_LINE_LEN, "Copy: %s", sebk_state_name(peek.state));
+        if (r == SEBK_E_PIN) {
+            snprintf(lines[n++], SE_LINE_LEN, "(under another PIN)");
+        } else if (peek.opened) {
+            se_say_zfp(lines[n++], SE_LINE_LEN, peek.zfp);
+        }
+    } else if (r != SEBK_E_NOCHIP) {
+        snprintf(lines[n++], SE_LINE_LEN, "Copy: %s", sebk_strerror(r));
+    }
+    se_result(false, lines[0], lines[1], lines[2], lines[3], lines[4]);
+    snprintf(se_msg[5], sizeof se_msg[5], "%s", lines[5]);
+    memzero(&peek, sizeof peek);
+}
+
+static void se_do_copy(bool replace)
+{
+    sd_busy("Sealing to SE...");
+    ZcashMeta zm;
+    memset(&zm, 0, sizeof zm);
+    zmeta_get(hd_account, zcash_network, &zm);
+    char zfp[9];
+    SeBackupResult r = sebk_copy_open_seed(se_pin, zm.label, zm.birthday, hd_account, replace,
+                                           zfp);
+    if (r == SEBK_E_OTHER) {
+        /* Say whose copy it is, if this PIN opens it, before it is replaced. */
+        SeBackupPeek peek;
+        se_confirm_zfp[0] = '\0';
+        if (sebk_peek(se_pin, &peek) == SEBK_OK && peek.opened) {
+            snprintf(se_confirm_zfp, sizeof se_confirm_zfp, "%s", peek.zfp);
+        }
+        se_stage = SES_CONFIRM;
+        return;
+    }
+    if (r != SEBK_OK) {
+        se_result(false, "Not copied", sebk_strerror(r), NULL, NULL, NULL);
+        return;
+    }
+    char l2[22];
+    se_say_zfp(l2, sizeof l2, zfp);
+    se_result(false, "Copied to the SE", l2, "Read back: OK", "Opens with this PIN", NULL);
+}
+
+static void se_do_compare(void)
+{
+    sd_busy("Comparing...");
+    SeBackupPeek peek;
+    SeBackupResult r = sebk_peek(se_key(), &peek);
+    if (r == SEBK_E_PIN) {
+        se_offer_copy_pin();
+        return;
+    }
+    if (r != SEBK_OK) {
+        se_result(false, "Not compared", sebk_strerror(r), NULL, NULL, NULL);
+        return;
+    }
+    if (!peek.opened) {
+        char l2[22];
+        snprintf(l2, sizeof l2, "SE copy: %s", sebk_state_name(peek.state));
+        se_result(false, "Nothing to compare", l2, NULL, NULL, NULL);
+        return;
+    }
+    char l2[22];
+    se_say_zfp(l2, sizeof l2, peek.zfp);
+    se_result(false, peek.matches_open ? "Match" : "No match", l2,
+              peek.matches_open ? "SE copy = open seed" : "The SE holds another",
+              peek.matches_open ? NULL : "seed", NULL);
+}
+
+static void se_apply_meta(const SeBackupPeek *peek)
+{
+    if (peek->account < HD_ACCOUNT_COUNT) {
+        hd_account_set(peek->account);
+    }
+    ZcashMeta zm;
+    memset(&zm, 0, sizeof zm);
+    zm.birthday = peek->birthday;
+    snprintf(zm.label, sizeof zm.label, "%s", peek->label);
+    zmeta_set(peek->account, zcash_network, &zm);
+}
+
+static void se_do_restore_session(void)
+{
+    sd_busy("Opening SE copy...");
+    SeBackupPeek peek;
+    SeBackupResult r = sebk_restore_session(se_key(), &peek);
+    if (r == SEBK_E_PIN) {
+        se_offer_copy_pin();
+        return;
+    }
+    if (r != SEBK_OK) {
+        se_result(false, "Not loaded", sebk_strerror(r), NULL, NULL, NULL);
+        return;
+    }
+    se_apply_meta(&peek);
+    char l2[22];
+    se_say_zfp(l2, sizeof l2, peek.zfp);
+    se_result(true, "Loaded the SE copy", l2, "for this session;", "gone on lock/reboot", NULL);
+}
+
+/* Say what a restore to the vault did. `meta` is filed for the seed only
+ * when it was added, and after it is selected: records follow the open seed. */
+static void se_say_vault(bool ok, uint8_t slot, bool already, const char *zfp, const char *err,
+                         const SeBackupPeek *meta)
+{
+    char l2[22], l3[22];
+    if (!ok) {
+        se_result(false, "Not restored", err, "No vault seed was", "changed", NULL);
+        return;
+    }
+    se_say_zfp(l2, sizeof l2, zfp);
+    snprintf(l3, sizeof l3, "Vault wallet %u", (unsigned)slot);
+    if (already) {
+        se_result(false, "Already in the vault", l3, l2, "Nothing was written", NULL);
+        return;
+    }
+    /* As an import does: select it, which drops a passphrase typed for the
+     * previous seed. */
+    wallet_select_wallet(slot);
+    if (meta) se_apply_meta(meta);
+    se_result(true, "Restored to vault", l3, l2, "(a new slot)", NULL);
+}
+
+static void se_do_restore_vault(void)
+{
+    sd_busy("Opening SE copy...");
+    SeBackupPeek peek;
+    uint8_t slot = 0;
+    bool already = false;
+    SeBackupResult r = sebk_restore_vault(se_key(), &peek, &slot, &already);
+    if (r == SEBK_E_PIN) {
+        se_offer_copy_pin();
+        return;
+    }
+    se_say_vault(r == SEBK_OK, slot, already, peek.zfp, sebk_strerror(r), &peek);
+}
+
+static void se_do_erase(void)
+{
+    sd_busy("Erasing SE copy...");
+    SeBackupResult r = sebk_erase();
+    if (r != SEBK_OK) {
+        se_result(false, "Not erased", sebk_strerror(r), NULL, NULL, NULL);
+        return;
+    }
+    se_result(false, "SE copy erased", "The vault and the", "SD files are as", "they were", NULL);
+}
+
+/* SD -> SE and SD -> vault, once the passphrase is typed. */
+static void se_do_sd(void)
+{
+    const char *name = sd_names[sd_load_index >= 0 ? sd_load_index : 0];
+    char l1[22];
+    if (se_action == SEA_SD_TO_VAULT) {
+        sd_busy("Opening card...");
+        ZkvContents meta;
+        uint8_t slot = 0;
+        bool already = false;
+        SdSeedResult r = sdseed_restore_to_vault(name, sd_entry.text, (size_t)sd_entry.length,
+                                                 &meta, &slot, &already);
+        sd_forget();
+        SeBackupPeek m;
+        memset(&m, 0, sizeof m);
+        m.birthday = meta.birthday;
+        m.account = meta.account;
+        snprintf(m.label, sizeof m.label, "%s", meta.label);
+        memzero(&meta, sizeof meta);
+        se_say_vault(r == SDSEED_OK, slot, already, NULL, sdseed_strerror(r), &m);
+        if (r == SDSEED_OK) {
+            /* No fingerprint computed for a card file; the home screen shows it. */
+            snprintf(se_msg[2], sizeof se_msg[2], "from %s", name);
+        }
+        return;
+    }
+    sd_busy("Card -> SE...");
+    ZkvContents c;
+    SdSeedResult sr = sdseed_open(name, sd_entry.text, (size_t)sd_entry.length, &c);
+    sd_forget();
+    if (sr != SDSEED_OK) {
+        memzero(&c, sizeof c);
+        se_result(false, "Not copied", sdseed_strerror(sr), NULL, NULL, NULL);
+        return;
+    }
+    char zfp[9];
+    /* Replacing was confirmed before the card was opened (SES_CONFIRM). */
+    SeBackupResult r = sebk_copy_contents(se_pin, &c, true, zfp);
+    memzero(&c, sizeof c);
+    if (r != SEBK_OK) {
+        se_result(false, "Not copied", sebk_strerror(r), NULL, NULL, NULL);
+        return;
+    }
+    char l2[22];
+    snprintf(l1, sizeof l1, "%s -> SE", name);
+    se_say_zfp(l2, sizeof l2, zfp);
+    se_result(false, l1, l2, "Read back: OK", "Opens with your PIN", NULL);
+}
+
+static void se_open_sd_list(void)
+{
+    sdcard_unmount();
+    sd_count = sdseed_list(sd_names, SDCARD_FILES_MAX);
+    se_sel = 0;
+    if (sd_count < 0) {
+        se_result(false, "No SD card", NULL, NULL, NULL, NULL);
+    } else if (sd_count == 0) {
+        se_result(false, "No seed files", "on the card", NULL, NULL, NULL);
+    } else {
+        se_stage = SES_SD_LIST;
+    }
+}
+
+/* SD -> SE writes over the container, so what is there is said first. */
+static void se_sd_to_se_start(void)
+{
+    sd_busy("Reading SE...");
+    SeBackupPeek peek;
+    SeBackupResult r = sebk_peek(se_pin, &peek);
+    if (r != SEBK_OK && r != SEBK_E_PIN) {
+        se_result(false, "Not copied", sebk_strerror(r), NULL, NULL, NULL);
+        return;
+    }
+    if (peek.state == SEBK_STATE_FOREIGN) {
+        se_result(false, "Not copied", sebk_strerror(SEBK_E_FOREIGN), "Erase SE copy first", NULL,
+                  NULL);
+        return;
+    }
+    if (peek.state == SEBK_STATE_COPY) {
+        snprintf(se_confirm_zfp, sizeof se_confirm_zfp, "%s", peek.opened ? peek.zfp : "");
+        se_stage = SES_CONFIRM;
+        return;
+    }
+    se_open_sd_list();
+}
+
+/* The vault PIN checked: do what was chosen. */
+static void se_pin_ok(void)
+{
+    snprintf(se_pin, sizeof se_pin, "%s", pin_entry);
+    pin_entry_reset();
+    if (!ensure_wallet_unlocked()) {
+        se_result(false, "Unlock failed", NULL, NULL, NULL, NULL);
+        return;
+    }
+    switch (se_action) {
+        case SEA_INFO:            se_do_info(); break;
+        case SEA_COPY:            se_do_copy(false); break;
+        case SEA_COMPARE:         se_do_compare(); break;
+        case SEA_RESTORE_SESSION: se_do_restore_session(); break;
+        case SEA_RESTORE_VAULT:   se_do_restore_vault(); break;
+        case SEA_ERASE:           se_confirm_zfp[0] = '\0'; se_stage = SES_CONFIRM; break;
+        case SEA_SD_TO_SE:        se_sd_to_se_start(); break;
+        case SEA_SD_TO_VAULT:     se_open_sd_list(); break;
+        default:                  se_stage = SES_MENU; break;
+    }
+}
+
+static void se_copy_pin_ok(void)
+{
+    snprintf(se_copy_pin, sizeof se_copy_pin, "%s", pin_entry);
+    pin_entry_reset();
+    switch (se_action) {
+        case SEA_COMPARE:         se_do_compare(); break;
+        case SEA_RESTORE_SESSION: se_do_restore_session(); break;
+        case SEA_RESTORE_VAULT:   se_do_restore_vault(); break;
+        default:                  se_stage = SES_MENU; break;
+    }
+}
+
+static void screen_se_enter(void)
+{
+    se_stage = SES_MENU;
+    se_sel = 0;
+    se_forget();
+}
+
+static void screen_se_exit(screen_id_t next)
+{
+    (void)next;
+    se_forget();
+    memzero(se_msg, sizeof se_msg);
+}
+
+static void se_render_pin(const char *title)
+{
+    oled_draw_string_centered(0, title);
+    char digit_line[22];
+    pin_option_label(digit_line, sizeof(digit_line));
+    oled_draw_string_centered(2, digit_line);
+    char display[PIN_DISPLAY_LEN + 3];
+    display[0] = '[';
+    for (int i = 0; i < PIN_DISPLAY_LEN; i++) display[i + 1] = i < pin_cursor ? '*' : '_';
+    display[PIN_DISPLAY_LEN + 1] = ']';
+    display[PIN_DISPLAY_LEN + 2] = '\0';
+    oled_draw_string_centered(4, display);
+    char line[22];
+    if (se_stage == SES_PIN) {
+        snprintf(line, sizeof line, "Tries: %d%s", pin_get_remaining_attempts(),
+                 pin_can_submit() ? " - pick OK" : "");
+    } else {
+        snprintf(line, sizeof line, "%s", pin_can_submit() ? "PIN of the copy - OK" : "PIN of the copy");
+    }
+    oled_draw_string_centered(5, line);
+    oled_draw_string(7, 0, pin_cursor > 0 ? HINT_SCROLL_DEL_SEL : HINT_SCROLL_BACK_SEL);
+}
+
+static void screen_se_render(void)
+{
+    oled_clear();
+    switch (se_stage) {
+        case SES_MENU: {
+            oled_draw_string_centered(0, "Secure element");
+            int start = se_sel > 2 ? se_sel - 2 : 0;
+            if (start > SEA_COUNT - 5) start = SEA_COUNT - 5;
+            for (int i = 0; i < 5 && start + i < SEA_COUNT; i++) {
+                char line[22];
+                snprintf(line, sizeof line, "%s %s", start + i == se_sel ? ">" : " ",
+                         SE_ITEMS[start + i]);
+                oled_draw_string(1 + i, 0, line);
+            }
+            oled_draw_string(7, 0, HINT_SD_LIST);
+            return;
+        }
+        case SES_PIN:
+            se_render_pin("PIN for the SE");
+            return;
+        case SES_COPY_PIN:
+            se_render_pin("SE copy's own PIN");
+            return;
+        case SES_CONFIRM: {
+            if (se_action == SEA_ERASE) {
+                oled_draw_string_centered(0, "Erase the SE copy?");
+                oled_draw_string_centered(2, "The board vault and");
+                oled_draw_string_centered(3, "SD files are not");
+                oled_draw_string_centered(4, "touched");
+            } else {
+                oled_draw_string_centered(0, "Replace SE copy?");
+                oled_draw_string_centered(2, se_action == SEA_SD_TO_SE ? "The SE holds a copy"
+                                                                       : "SE has another seed");
+                char l[22];
+                if (se_confirm_zfp[0]) {
+                    se_say_zfp(l, sizeof l, se_confirm_zfp);
+                } else {
+                    snprintf(l, sizeof l, "(under another PIN)");
+                }
+                oled_draw_string_centered(3, l);
+                oled_draw_string_centered(4, "It will be replaced");
+            }
+            oled_draw_string(7, 0, HINT_NO_YES);
+            return;
+        }
+        case SES_SD_LIST: {
+            oled_draw_string_centered(0, se_action == SEA_SD_TO_SE ? "SD file -> SE"
+                                                                   : "SD file -> vault");
+            int start = se_sel > 2 ? se_sel - 2 : 0;
+            for (int i = 0; i < 4 && start + i < sd_count; i++) {
+                char line[22];
+                snprintf(line, sizeof line, "%s %s", start + i == se_sel ? ">" : " ",
+                         sd_names[start + i]);
+                oled_draw_string(2 + i, 0, line);
+            }
+            oled_draw_string(7, 0, HINT_SD_LIST);
+            return;
+        }
+        case SES_SD_PASS: {
+            oled_draw_string_centered(0, "Card passphrase");
+            const int len = sd_entry.length;
+            const char *tail = len > 18 ? sd_entry.text + (len - 18) : sd_entry.text;
+            char shown[24];
+            size_t out = 0;
+            if (len > 18) shown[out++] = '<';
+            for (size_t i = 0; tail[i] != '\0' && out < sizeof(shown) - 1; i++) shown[out++] = tail[i];
+            shown[out] = '\0';
+            oled_draw_string(2, 0, len ? shown : "(8-64 characters)");
+            char prev[8], cur[8], next[8], sel[32];
+            text_entry_label_offset(&sd_entry, -1, prev, sizeof prev);
+            text_entry_label_offset(&sd_entry, 0, cur, sizeof cur);
+            text_entry_label_offset(&sd_entry, 1, next, sizeof next);
+            snprintf(sel, sizeof sel, "%s <%s> %s", prev, cur, next);
+            oled_draw_string_centered(4, sel);
+            oled_draw_string(7, 0, text_entry_hint(&sd_entry));
+            return;
+        }
+        case SES_RESULT:
+            for (int i = 0; i < SE_MSG_LINES; i++) oled_draw_string_centered(1 + i, se_msg[i]);
+            oled_draw_string(7, 0, HINT_OK);
+            return;
+    }
+}
+
+/* The PIN widget's keys, shared by both PIN stages. Returns true on submit. */
+static bool se_pin_key(button_id_t btn)
+{
+    switch (btn) {
+        case BUTTON_UP:   pin_option_scroll(-1); break;   /* see PICKER_FORWARD */
+        case BUTTON_DOWN: pin_option_scroll(1); break;
+        case BUTTON_CANCEL:
+            if (pin_cursor > 0) {
+                pin_entry_backspace();
+                current_digit = 0;
+            } else {
+                se_forget();
+                se_stage = SES_MENU;
+            }
+            break;
+        case BUTTON_ACCEPT:
+            if (current_digit != PIN_OPTION_SUBMIT) {
+                if (pin_cursor < PIN_MAX_LENGTH) pin_entry_add_digit(current_digit);
+                current_digit = 0;
+            } else if (pin_can_submit()) {
+                current_digit = 0;
+                return true;
+            }
+            break;
+        default:
+            break;
+    }
+    return false;
+}
+
+static void screen_se_on_button(button_id_t btn)
+{
+    switch (se_stage) {
+        case SES_MENU:
+            if (btn == BUTTON_CANCEL) {
+                ui_set_screen(SCREEN_SETTINGS);
+                return;
+            }
+            if (btn == BUTTON_DOWN && se_sel < SEA_COUNT - 1) se_sel++;
+            if (btn == BUTTON_UP && se_sel > 0) se_sel--;
+            if (btn == BUTTON_ACCEPT) {
+                if (se_sel == SEA_BACK) {
+                    ui_set_screen(SCREEN_SETTINGS);
+                    return;
+                }
+                se_action = (SeAction)se_sel;
+                se_forget();
+                pin_entry_reset();
+                se_stage = SES_PIN;
+            }
+            break;
+        case SES_PIN:
+            if (se_pin_key(btn)) {
+                /* Each submit here costs one of the attempts, as at unlock. */
+                if (pin_verify(pin_entry)) {
+                    se_pin_ok();
+                    button_drain();
+                } else {
+                    pin_entry_reset();
+                    if (pin_should_wipe()) {
+                        se_forget();
+                        device_wipe();
+                        ui_set_screen(SCREEN_PIN_SETUP);
+                        return;
+                    }
+                    char l2[22];
+                    snprintf(l2, sizeof l2, "Tries left: %d", pin_get_remaining_attempts());
+                    se_result(false, "Wrong PIN", l2, NULL, NULL, NULL);
+                }
+            }
+            break;
+        case SES_COPY_PIN:
+            if (se_pin_key(btn)) {
+                se_copy_pin_ok();
+                button_drain();
+            }
+            break;
+        case SES_CONFIRM:
+            if (btn == BUTTON_CANCEL) {
+                se_result(false, se_action == SEA_ERASE ? "Not erased" : "Not copied",
+                          "Nothing was changed", NULL, NULL, NULL);
+            } else if (btn == BUTTON_ACCEPT) {
+                if (se_action == SEA_ERASE) {
+                    se_do_erase();
+                } else if (se_action == SEA_SD_TO_SE) {
+                    se_open_sd_list();
+                } else {
+                    se_do_copy(true);
+                }
+                button_drain();
+            }
+            break;
+        case SES_SD_LIST:
+            if (btn == BUTTON_CANCEL) {
+                se_forget();
+                se_stage = SES_MENU;
+            } else if (btn == BUTTON_DOWN && se_sel < sd_count - 1) {
+                se_sel++;
+            } else if (btn == BUTTON_UP && se_sel > 0) {
+                se_sel--;
+            } else if (btn == BUTTON_ACCEPT) {
+                sd_load_index = se_sel;
+                text_entry_reset(&sd_entry);
+                se_stage = SES_SD_PASS;
+            }
+            break;
+        case SES_SD_PASS:
+            if (btn == BUTTON_UP) {
+                text_entry_scroll(&sd_entry, -1);   /* PICKER_FORWARD */
+            } else if (btn == BUTTON_DOWN) {
+                text_entry_scroll(&sd_entry, 1);
+            } else if (btn == BUTTON_CANCEL) {
+                if (!text_entry_back(&sd_entry)) {
+                    sd_forget();
+                    se_stage = SES_SD_LIST;
+                }
+            } else if (btn == BUTTON_ACCEPT) {
+                TextEntryResult r = text_entry_accept(&sd_entry);
+                if (r == TEXT_ENTRY_CANCELLED) {
+                    sd_forget();
+                    se_stage = SES_SD_LIST;
+                } else if (r == TEXT_ENTRY_DONE) {
+                    if (!zkv_pass_ok(sd_entry.text, (size_t)sd_entry.length)) {
+                        sd_forget();
+                        se_result(false, "Passphrase must be", "8-64 characters", NULL, NULL,
+                                  NULL);
+                    } else {
+                        se_do_sd();
+                        button_drain();
+                    }
+                }
+            }
+            break;
+        case SES_RESULT:
+            if (btn == BUTTON_ACCEPT || btn == BUTTON_CANCEL) {
+                if (se_go_home) {
+                    ui_set_screen(SCREEN_MAIN_MENU);
+                    return;
+                }
+                se_stage = SES_MENU;
+            }
+            break;
+    }
+    ui_invalidate();
+}
+#endif /* UI_HAS_SE_BACKUP */
 
 /* ============================================================================
  * Receive Screen (roadmap 1.6)
@@ -6140,6 +6837,9 @@ void ui_init(void)
     screens[SCREEN_QR_OUT] = &screen_qr_out;
     screens[SCREEN_SHOW_ADDRESS] = &screen_show_address;
     screens[SCREEN_SD_SEED] = &screen_sd_seed;
+#if UI_HAS_SE_BACKUP
+    screens[SCREEN_SE_BACKUP] = &screen_se;
+#endif
 #if LEEK_HAS_ZCASH
     screens[SCREEN_ADDRESS_CHECK] = &screen_address_check;
     screens[SCREEN_SHARE_VIEW_KEY] = &screen_share_view_key;

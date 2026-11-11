@@ -379,6 +379,24 @@ $(BUILD)/test_se_container: $(SE_OPTIGA_SRC) $(SE_OPTIGA)/optiga-container.c | $
 TESTS += test_se_container
 all: $(BUILD)/test_se_container
 
+# The seed's backup copies (docs/BACKUP.md): the copy in the SE container
+# (src/se-backup.c) and the SD -> vault restore, through the real vault, the
+# real .zkv format, a directory as the card and the real LKSC container format
+# over a fake chip (fake_se_store.c). Built as the esp32s3cam-color-se image
+# builds them: an OPTIGA fitted, the container write path compiled in.
+SE_BACKUP_SRC := test_se_backup.c fake_se_store.c ../src/se-backup.c ../src/sd-seed.c ../src/sdcard.c \
+                 ../src/zkv.c ../src/zcash-fp.c esp_stubs.c host_stubs.c \
+                 $(SE_OPTIGA)/optiga-proto.c $(SE_OPTIGA)/optiga-link.c $(SE_OPTIGA)/optiga-cmd.c \
+                 $(SE_OPTIGA)/optiga-container.c $(VAULT_SRC) $(VAULT_CRYPTO)
+$(BUILD)/test_se_backup: CFLAGS += -DAES_VAR -DLEEK_SE=LEEK_SE_OPTIGA -DLEEK_SE_CONTAINER_WRITES=1
+$(BUILD)/test_se_backup: $(SE_BACKUP_SRC) $(HEADERS) ../../vectors/keys_vectors.h | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(SE_OPTIGA)/include -DLEEK_HOST_TEST \
+	      -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+	      -o $@ $(SE_BACKUP_SRC) -lm
+
+TESTS += test_se_backup
+all: $(BUILD)/test_se_backup
+
 # SLIP-39. The core has no ESP-IDF dependency, so the host drives it directly;
 # entropy.c comes along because share values must come from the entropy gate.
 # shamir.c and slip39_english.c are trezor-crypto's own (the SLIP-39 authors'),
@@ -499,8 +517,21 @@ $(BUILD)/render_screens: render_screens.c ../src/oled-core.c ../src/panel-color.
                          ../src/qrcode.c $(UI_SRC) $(UI_LIBS) $(HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -DLEEK_HOST_TEST -o $@ \
 	    $(filter %.c,$^) $(UI_LIBS) -lpthread -ldl -lm
-screens: $(BUILD)/render_screens
+# The same for the development image with the OPTIGA backup screen
+# (esp32s3cam-color-se): Settings > Secure element over the fake chip.
+$(BUILD)/render_screens_se: CFLAGS += -DAES_VAR -DLEEK_BOARD_S3CAM -DLEEK_DISPLAY=LEEK_DISPLAY_ST7789 \
+                                      -DLEEK_SE=LEEK_SE_OPTIGA -DLEEK_SE_CONTAINER_WRITES=1 -DUI_RENDER_SE=1
+$(BUILD)/render_screens_se: render_screens.c ../src/oled-core.c ../src/panel-color.c ../src/panel128.c \
+                            ../src/qrcode.c ../src/se-backup.c fake_se_store.c \
+                            ../components/leek-wallet/vault-kdf.c ../components/leek-wallet/vault-crypt.c \
+                            $(SE_OPTIGA)/optiga-proto.c $(SE_OPTIGA)/optiga-link.c $(SE_OPTIGA)/optiga-cmd.c \
+                            $(SE_OPTIGA)/optiga-container.c \
+                            $(UI_SRC) $(UI_LIBS) $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -I$(SE_OPTIGA)/include -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(UI_LIBS) -lpthread -ldl -lm
+screens: $(BUILD)/render_screens $(BUILD)/render_screens_se
 	mkdir -p $(BUILD)/screens && ./$(BUILD)/render_screens $(BUILD)/screens
+	./$(BUILD)/render_screens_se $(BUILD)/screens
 
 # The only suite that links the real components/leek-wallet.c. It has to: the
 # crash-safety of a PIN change is entirely a property of that file's write
