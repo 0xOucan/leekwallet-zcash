@@ -1,0 +1,12 @@
+[package]
+name = "leek-ur"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+description = "BC-UR for the LeekWallet QR air gap (ur:leek-pczt out, ur:leek-zsig back): Bytewords, CRC-32, the fountain code, a multi-part encoder and a bounded decoder. The host twin of firmware/src/ur*.c, held to the same bc-ur vectors."
+
+# One dependency, already in every tree that uses this crate (zecz-core, the
+# app, leek-android): the fountain's seed is a SHA-256.
+[dependencies]
+sha2 = "0.10"

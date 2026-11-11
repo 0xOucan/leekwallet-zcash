@@ -950,6 +950,46 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -990,6 +1030,10 @@ fun uniffi_leek_zcash_ffi_checksum_func_preflight(
 fun uniffi_leek_zcash_ffi_checksum_func_prepare_for_signer(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_prepare_sd_sign(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_qr_defaults(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_qr_part_type(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_sign_result_from_bytes(
 ): Short
@@ -1037,6 +1081,30 @@ fun uniffi_leek_zcash_ffi_checksum_method_leekdevice_sign_pczt(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code(
 ): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrencoder_fragment_len(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrencoder_frame(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrencoder_frames(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrencoder_is_single_part(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrencoder_longest_frame(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrencoder_seq_len(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrencoder_ur_type(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrscanner_account_record(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrscanner_feed(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrscanner_is_complete(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrscanner_reset(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_method_qrscanner_zsig(
+): Short
 fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_account(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_method_quickunlock_app_id(
@@ -1078,6 +1146,14 @@ fun uniffi_leek_zcash_ffi_checksum_method_storagekey_seal_ufvk(
 fun uniffi_leek_zcash_ffi_checksum_method_storagekey_subkey(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_account_record(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_pczt(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_zsig(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_constructor_qrscanner_new(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_create(
 ): Short
@@ -1196,6 +1272,46 @@ fun uniffi_leek_zcash_ffi_fn_init_callback_vtable_pairinglistener(`vtable`: Unif
 ): Unit
 fun uniffi_leek_zcash_ffi_fn_method_pairinglistener_on_pairing_code(`ptr`: Pointer,`code`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+fun uniffi_leek_zcash_ffi_fn_clone_qrencoder(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_free_qrencoder(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_leek_zcash_ffi_fn_constructor_qrencoder_account_record(`record`: RustBuffer.ByValue,`maxFragmentLen`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_constructor_qrencoder_pczt(`view`: RustBuffer.ByValue,`maxFragmentLen`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_constructor_qrencoder_zsig(`zsig`: RustBuffer.ByValue,`maxFragmentLen`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_method_qrencoder_fragment_len(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+fun uniffi_leek_zcash_ffi_fn_method_qrencoder_frame(`ptr`: Pointer,`index`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_qrencoder_frames(`ptr`: Pointer,`start`: Long,`count`: Int,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_qrencoder_is_single_part(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+fun uniffi_leek_zcash_ffi_fn_method_qrencoder_longest_frame(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+fun uniffi_leek_zcash_ffi_fn_method_qrencoder_seq_len(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+fun uniffi_leek_zcash_ffi_fn_method_qrencoder_ur_type(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_clone_qrscanner(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_free_qrscanner(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_leek_zcash_ffi_fn_constructor_qrscanner_new(`kind`: RustBuffer.ByValue,`network`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Pointer
+fun uniffi_leek_zcash_ffi_fn_method_qrscanner_account_record(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_qrscanner_feed(`ptr`: Pointer,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_method_qrscanner_is_complete(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+fun uniffi_leek_zcash_ffi_fn_method_qrscanner_reset(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+fun uniffi_leek_zcash_ffi_fn_method_qrscanner_zsig(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_clone_quickunlock(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
 ): Pointer
 fun uniffi_leek_zcash_ffi_fn_free_quickunlock(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -1281,6 +1397,10 @@ fun uniffi_leek_zcash_ffi_fn_func_preflight(`pczt`: RustBuffer.ByValue,`account`
 fun uniffi_leek_zcash_ffi_fn_func_prepare_for_signer(`pczt`: RustBuffer.ByValue,`ufvk`: RustBuffer.ByValue,`seedFingerprint`: RustBuffer.ByValue,`index`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_prepare_sd_sign(`pczt`: RustBuffer.ByValue,`account`: RustBuffer.ByValue,`view`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_qr_defaults(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_qr_part_type(`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_sign_result_from_bytes(`record`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1459,6 +1579,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_func_prepare_sd_sign() != 38004.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_qr_defaults() != 13012.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_qr_part_type() != 55273.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_sign_result_from_bytes() != 27611.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1528,6 +1654,42 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code() != 41350.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrencoder_fragment_len() != 25829.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrencoder_frame() != 1390.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrencoder_frames() != 41597.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrencoder_is_single_part() != 44960.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrencoder_longest_frame() != 54975.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrencoder_seq_len() != 30451.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrencoder_ur_type() != 13197.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrscanner_account_record() != 18145.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrscanner_feed() != 41422.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrscanner_is_complete() != 34699.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrscanner_reset() != 18517.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_method_qrscanner_zsig() != 25467.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_leek_zcash_ffi_checksum_method_quickunlock_account() != 47227.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1589,6 +1751,18 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new() != 20437.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_account_record() != 60571.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_pczt() != 50093.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_zsig() != 53983.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_constructor_qrscanner_new() != 7823.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_create() != 45728.toShort()) {
@@ -1772,6 +1946,29 @@ private class JavaLangRefCleanable(
     val cleanable: java.lang.ref.Cleaner.Cleanable
 ) : UniffiCleaner.Cleanable {
     override fun clean() = cleanable.clean()
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterUByte: FfiConverter<UByte, Byte> {
+    override fun lift(value: Byte): UByte {
+        return value.toUByte()
+    }
+
+    override fun read(buf: ByteBuffer): UByte {
+        return lift(buf.get())
+    }
+
+    override fun lower(value: UByte): Byte {
+        return value.toByte()
+    }
+
+    override fun allocationSize(value: UByte) = 1UL
+
+    override fun write(value: UByte, buf: ByteBuffer) {
+        buf.put(value.toByte())
+    }
 }
 
 /**
@@ -3503,6 +3700,760 @@ public object FfiConverterTypePairingListener: FfiConverter<PairingListener, Poi
 
 
 /**
+ * The frames of one animated QR. Every frame is uppercase (the QR's
+ * alphanumeric mode) and at most [`QrEncoder::longest_frame`] characters,
+ * so the code keeps one size while it animates: pick the QR version once.
+ */
+public interface QrEncoderInterface {
+    
+    fun `fragmentLen`(): kotlin.UInt
+    
+    /**
+     * Frame `index` (0-based) of an endless loop: the first `seq_len`
+     * are the fragments themselves, the rest fountain mixes that fill in
+     * whatever the camera missed. Keep counting up; it wraps by itself.
+     */
+    fun `frame`(`index`: kotlin.ULong): kotlin.String
+    
+    /**
+     * `count` frames from `start` (at most [`QR_MAX_BATCH`]; one for a
+     * single-part message).
+     */
+    fun `frames`(`start`: kotlin.ULong, `count`: kotlin.UInt): List<kotlin.String>
+    
+    /**
+     * One frame holds it all: show it still.
+     */
+    fun `isSinglePart`(): kotlin.Boolean
+    
+    /**
+     * The longest frame, in characters: choose the QR version for this.
+     */
+    fun `longestFrame`(): kotlin.UInt
+    
+    /**
+     * Fragments in the message: about how many frames a good camera needs.
+     */
+    fun `seqLen`(): kotlin.UInt
+    
+    fun `urType`(): kotlin.String
+    
+    companion object
+}
+
+/**
+ * The frames of one animated QR. Every frame is uppercase (the QR's
+ * alphanumeric mode) and at most [`QrEncoder::longest_frame`] characters,
+ * so the code keeps one size while it animates: pick the QR version once.
+ */
+open class QrEncoder: Disposable, AutoCloseable, QrEncoderInterface
+{
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_free_qrencoder(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_clone_qrencoder(pointer!!, status)
+        }
+    }
+
+    override fun `fragmentLen`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrencoder_fragment_len(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Frame `index` (0-based) of an endless loop: the first `seq_len`
+     * are the fragments themselves, the rest fountain mixes that fill in
+     * whatever the camera missed. Keep counting up; it wraps by itself.
+     */override fun `frame`(`index`: kotlin.ULong): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrencoder_frame(
+        it, FfiConverterULong.lower(`index`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * `count` frames from `start` (at most [`QR_MAX_BATCH`]; one for a
+     * single-part message).
+     */override fun `frames`(`start`: kotlin.ULong, `count`: kotlin.UInt): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrencoder_frames(
+        it, FfiConverterULong.lower(`start`),FfiConverterUInt.lower(`count`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * One frame holds it all: show it still.
+     */override fun `isSinglePart`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrencoder_is_single_part(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The longest frame, in characters: choose the QR version for this.
+     */override fun `longestFrame`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrencoder_longest_frame(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Fragments in the message: about how many frames a good camera needs.
+     */override fun `seqLen`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrencoder_seq_len(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `urType`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrencoder_ur_type(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+    companion object {
+        
+    /**
+     * `ur:leek-zcash-accounts`: what the board's View key screen shows,
+     * for a wallet passing an account on, and for tests.
+     */
+    @Throws(LeekException::class) fun `accountRecord`(`record`: AccountRecord, `maxFragmentLen`: kotlin.UInt): QrEncoder {
+            return FfiConverterTypeQrEncoder.lift(
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_constructor_qrencoder_account_record(
+        FfiConverterTypeAccountRecord.lower(`record`),FfiConverterUInt.lower(`maxFragmentLen`),_status)
+}
+    )
+    }
+    
+
+        
+    /**
+     * `ur:leek-pczt` for the board: `view` is `signer_view_bytes` (after
+     * `prepare_for_signer`). `max_fragment_len` is clamped to 10..=512;
+     * [`QR_FRAGMENT_LEN`] is the default.
+     */
+    @Throws(LeekException::class) fun `pczt`(`view`: kotlin.ByteArray, `maxFragmentLen`: kotlin.UInt): QrEncoder {
+            return FfiConverterTypeQrEncoder.lift(
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_constructor_qrencoder_pczt(
+        FfiConverterByteArray.lower(`view`),FfiConverterUInt.lower(`maxFragmentLen`),_status)
+}
+    )
+    }
+    
+
+        
+    /**
+     * `ur:leek-zsig`: the board's reply, for tests and simulators.
+     */
+    @Throws(LeekException::class) fun `zsig`(`zsig`: kotlin.ByteArray, `maxFragmentLen`: kotlin.UInt): QrEncoder {
+            return FfiConverterTypeQrEncoder.lift(
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_constructor_qrencoder_zsig(
+        FfiConverterByteArray.lower(`zsig`),FfiConverterUInt.lower(`maxFragmentLen`),_status)
+}
+    )
+    }
+    
+
+        
+    }
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQrEncoder: FfiConverter<QrEncoder, Pointer> {
+
+    override fun lower(value: QrEncoder): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): QrEncoder {
+        return QrEncoder(value)
+    }
+
+    override fun read(buf: ByteBuffer): QrEncoder {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: QrEncoder) = 8UL
+
+    override fun write(value: QrEncoder, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * Assembles one message from camera texts. Feed every decoded string,
+ * in any order and with repeats; it is safe to call from the camera's
+ * thread.
+ */
+public interface QrScannerInterface {
+    
+    /**
+     * The record, once complete (an [`QrScanKind::AccountRecord`] scanner).
+     * Check the seed fingerprint and import each UFVK as a hardware
+     * (board) account; derive the address from the UFVK yourself.
+     */
+    fun `accountRecord`(): AccountRecord?
+    
+    /**
+     * One decoded QR text.
+     */
+    fun `feed`(`text`: kotlin.String): QrProgress
+    
+    fun `isComplete`(): kotlin.Boolean
+    
+    /**
+     * Start over (a new scan, or after [`QrPartState::Refused`]).
+     */
+    fun `reset`()
+    
+    /**
+     * The `.zsig`, once complete (a [`QrScanKind::Zsig`] scanner): pass it
+     * to `apply_zsig` with the view that was shown.
+     */
+    fun `zsig`(): kotlin.ByteArray?
+    
+    companion object
+}
+
+/**
+ * Assembles one message from camera texts. Feed every decoded string,
+ * in any order and with repeats; it is safe to call from the camera's
+ * thread.
+ */
+open class QrScanner: Disposable, AutoCloseable, QrScannerInterface
+{
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+    /**
+     * A scanner for `kind`. For [`QrScanKind::AccountRecord`], `network`
+     * (when given) refuses a viewing key of the other network.
+     */
+    constructor(`kind`: QrScanKind, `network`: Network?) :
+        this(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_constructor_qrscanner_new(
+        FfiConverterTypeQrScanKind.lower(`kind`),FfiConverterOptionalTypeNetwork.lower(`network`),_status)
+}
+    )
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_free_qrscanner(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_clone_qrscanner(pointer!!, status)
+        }
+    }
+
+    
+    /**
+     * The record, once complete (an [`QrScanKind::AccountRecord`] scanner).
+     * Check the seed fingerprint and import each UFVK as a hardware
+     * (board) account; derive the address from the UFVK yourself.
+     */override fun `accountRecord`(): AccountRecord? {
+            return FfiConverterOptionalTypeAccountRecord.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrscanner_account_record(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * One decoded QR text.
+     */override fun `feed`(`text`: kotlin.String): QrProgress {
+            return FfiConverterTypeQrProgress.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrscanner_feed(
+        it, FfiConverterString.lower(`text`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `isComplete`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrscanner_is_complete(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Start over (a new scan, or after [`QrPartState::Refused`]).
+     */override fun `reset`()
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrscanner_reset(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * The `.zsig`, once complete (a [`QrScanKind::Zsig`] scanner): pass it
+     * to `apply_zsig` with the view that was shown.
+     */override fun `zsig`(): kotlin.ByteArray? {
+            return FfiConverterOptionalByteArray.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_method_qrscanner_zsig(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+    
+    companion object
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQrScanner: FfiConverter<QrScanner, Pointer> {
+
+    override fun lower(value: QrScanner): Pointer {
+        return value.uniffiClonePointer()
+    }
+
+    override fun lift(value: Pointer): QrScanner {
+        return QrScanner(value)
+    }
+
+    override fun read(buf: ByteBuffer): QrScanner {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: QrScanner) = 8UL
+
+    override fun write(value: QrScanner, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
  * Quick unlock: the Storage Key kept wrapped by the app's [`KeyWrapper`],
  * so the app opens with the user's biometric or device PIN instead of the
  * board (`leek_zcash::QuickUnlock`; the record format is in its docs).
@@ -4860,6 +5811,122 @@ public object FfiConverterTypeKeyWrapperInfo: FfiConverterRustBuffer<KeyWrapperI
 
 
 /**
+ * Recommended settings, for a settings screen and its defaults.
+ */
+data class QrDefaults (
+    /**
+     * Bytes per fragment, host screen to the board's camera.
+     */
+    var `fragmentLen`: kotlin.UInt, 
+    /**
+     * Milliseconds per frame.
+     */
+    var `frameMs`: kotlin.UInt, 
+    var `fragmentChoices`: List<kotlin.UInt>, 
+    var `frameMsChoices`: List<kotlin.UInt>, 
+    /**
+     * The board's camera zoom the defaults were measured at.
+     */
+    var `boardZoom`: kotlin.UInt
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQrDefaults: FfiConverterRustBuffer<QrDefaults> {
+    override fun read(buf: ByteBuffer): QrDefaults {
+        return QrDefaults(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceUInt.read(buf),
+            FfiConverterSequenceUInt.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: QrDefaults) = (
+            FfiConverterUInt.allocationSize(value.`fragmentLen`) +
+            FfiConverterUInt.allocationSize(value.`frameMs`) +
+            FfiConverterSequenceUInt.allocationSize(value.`fragmentChoices`) +
+            FfiConverterSequenceUInt.allocationSize(value.`frameMsChoices`) +
+            FfiConverterUInt.allocationSize(value.`boardZoom`)
+    )
+
+    override fun write(value: QrDefaults, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`fragmentLen`, buf)
+            FfiConverterUInt.write(value.`frameMs`, buf)
+            FfiConverterSequenceUInt.write(value.`fragmentChoices`, buf)
+            FfiConverterSequenceUInt.write(value.`frameMsChoices`, buf)
+            FfiConverterUInt.write(value.`boardZoom`, buf)
+    }
+}
+
+
+
+/**
+ * The scanner's state after a text, for a progress bar.
+ */
+data class QrProgress (
+    var `state`: QrPartState, 
+    /**
+     * Fragments known.
+     */
+    var `received`: kotlin.UInt, 
+    /**
+     * Fragments in the message; 0 until the first part of it.
+     */
+    var `total`: kotlin.UInt, 
+    /**
+     * 0..=100.
+     */
+    var `percent`: kotlin.UByte, 
+    /**
+     * Why a part was rejected or the message refused. Never contains key
+     * material: safe to show and log.
+     */
+    var `error`: kotlin.String?
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQrProgress: FfiConverterRustBuffer<QrProgress> {
+    override fun read(buf: ByteBuffer): QrProgress {
+        return QrProgress(
+            FfiConverterTypeQrPartState.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: QrProgress) = (
+            FfiConverterTypeQrPartState.allocationSize(value.`state`) +
+            FfiConverterUInt.allocationSize(value.`received`) +
+            FfiConverterUInt.allocationSize(value.`total`) +
+            FfiConverterUByte.allocationSize(value.`percent`) +
+            FfiConverterOptionalString.allocationSize(value.`error`)
+    )
+
+    override fun write(value: QrProgress, buf: ByteBuffer) {
+            FfiConverterTypeQrPartState.write(value.`state`, buf)
+            FfiConverterUInt.write(value.`received`, buf)
+            FfiConverterUInt.write(value.`total`, buf)
+            FfiConverterUByte.write(value.`percent`, buf)
+            FfiConverterOptionalString.write(value.`error`, buf)
+    }
+}
+
+
+
+/**
  * **Experimental.** What to write to the SD card (`prepare_sd_sign`).
  */
 data class SdRequest (
@@ -5592,6 +6659,104 @@ public object FfiConverterTypeNetwork: FfiConverterRustBuffer<Network> {
 
 
 /**
+ * What one scanned text did.
+ */
+
+enum class QrPartState {
+    
+    /**
+     * A new part; keep scanning.
+     */
+    ACCEPTED,
+    /**
+     * A valid part with nothing new (a repeat).
+     */
+    REDUNDANT,
+    /**
+     * Not for this scanner and harmless: not a UR, or one of the codes
+     * the wallet itself shows (seen in a mirror or on a second screen).
+     */
+    IGNORED,
+    /**
+     * A broken part or another UR type; nothing changed, keep scanning.
+     */
+    REJECTED,
+    /**
+     * The message assembled but cannot be used (another network, a
+     * malformed record). The scanner started over; stop the camera and
+     * show `error`.
+     */
+    REFUSED,
+    /**
+     * Done: read the result with [`QrScanner::account_record`] or
+     * [`QrScanner::zsig`].
+     */
+    COMPLETE;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQrPartState: FfiConverterRustBuffer<QrPartState> {
+    override fun read(buf: ByteBuffer) = try {
+        QrPartState.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: QrPartState) = 4UL
+
+    override fun write(value: QrPartState, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
+ * What a [`QrScanner`] waits for.
+ */
+
+enum class QrScanKind {
+    
+    /**
+     * `ur:leek-zcash-accounts` from the board's View key screen.
+     */
+    ACCOUNT_RECORD,
+    /**
+     * `ur:leek-zsig`, the board's signatures after a `ur:leek-pczt`.
+     */
+    ZSIG;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQrScanKind: FfiConverterRustBuffer<QrScanKind> {
+    override fun read(buf: ByteBuffer) = try {
+        QrScanKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: QrScanKind) = 4UL
+
+    override fun write(value: QrScanKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+/**
  * What a wallet can do about an error (`leek_zcash::Recovery`).
  */
 
@@ -5983,6 +7148,38 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteArray?> {
+    override fun read(buf: ByteBuffer): kotlin.ByteArray? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterByteArray.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ByteArray?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterByteArray.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ByteArray?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterByteArray.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeSignListener: FfiConverterRustBuffer<SignListener?> {
     override fun read(buf: ByteBuffer): SignListener? {
         if (buf.get().toInt() == 0) {
@@ -6005,6 +7202,38 @@ public object FfiConverterOptionalTypeSignListener: FfiConverterRustBuffer<SignL
         } else {
             buf.put(1)
             FfiConverterTypeSignListener.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeAccountRecord: FfiConverterRustBuffer<AccountRecord?> {
+    override fun read(buf: ByteBuffer): AccountRecord? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeAccountRecord.read(buf)
+    }
+
+    override fun allocationSize(value: AccountRecord?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeAccountRecord.allocationSize(value)
+        }
+    }
+
+    override fun write(value: AccountRecord?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeAccountRecord.write(value, buf)
         }
     }
 }
@@ -6318,6 +7547,28 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
     uniffiRustCallWithError(LeekException) { _status ->
     UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_prepare_sd_sign(
         FfiConverterByteArray.lower(`pczt`),FfiConverterTypeAccountMeta.lower(`account`),FfiConverterTypeSignerView.lower(`view`),_status)
+}
+    )
+    }
+    
+ fun `qrDefaults`(): QrDefaults {
+            return FfiConverterTypeQrDefaults.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_qr_defaults(
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * The UR type a scanned string names (lowercase), or None for a text that
+         * is not a UR (a `zcash:` URI, an address).
+         */ fun `qrPartType`(`text`: kotlin.String): kotlin.String? {
+            return FfiConverterOptionalString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_qr_part_type(
+        FfiConverterString.lower(`text`),_status)
 }
     )
     }

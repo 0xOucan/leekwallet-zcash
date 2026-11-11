@@ -25,6 +25,9 @@ use zeroize::Zeroizing;
 
 uniffi::setup_scaffolding!();
 
+mod qr;
+pub use qr::*;
+
 // ---------------------------------------------------------------- errors
 
 /// What a wallet can do about an error (`leek_zcash::Recovery`).

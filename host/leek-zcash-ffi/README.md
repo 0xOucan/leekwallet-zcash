@@ -36,6 +36,9 @@ Swift use camelCase.
 | `check_broadcast(tx, network, tip)` | before each broadcast: `WrongBranch` (518) or `Expired` (519) means build and sign again |
 | `check_mined(signed_tx, mined_tx) -> MinedCheck`, `tx_txid(tx)` | after mining |
 | `encode_account_record(AccountRecord)`, `decode_account_record(bytes)`, `account_record_type()` | the `leek-zcash-accounts` record |
+| `QrEncoder.pczt(view, fragment_len)`, `.account_record(..)`, `.zsig(..)` | **experimental** animated QR: `frame(i)`, `frames(start, count)`, `seq_len()`, `longest_frame()` |
+| `QrScanner(QrScanKind, network?)` | **experimental**: `feed(text) -> QrProgress`, `account_record()`, `zsig()`, `reset()` |
+| `qr_defaults()`, `qr_part_type(text)` | bench-measured settings; the UR type a scanned text names |
 | `LeekDevice(FrameTransport, LinkKind)` | a board over the app's link |
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
 | `.seed_fingerprint(network?)` | which seed the board holds (32 bytes), with no question on the board: call it on every connect, `get_account` only when the UFVK is needed. A stable identifier of the seed that every paired host can read |
@@ -125,6 +128,40 @@ software: offline, a six-digit PIN falls in hours to days even behind a
 slow, memory-hard function. Without a suitable
 platform key, do not offer quick unlock
 ([leek-zcash: Stored app data](../leek-zcash/README.md#stored-app-data-three-tiers)).
+
+### Animated QR (experimental)
+
+For a board kept off USB and Bluetooth. QR is never used for pairing: USB
+and Bluetooth keep the 6-digit code. The parts are byte-identical to bc-ur's
+(`host/leek-ur`, the code the companion and `zecz` use).
+
+- **Import the board's account.** On the board: Main menu → View key. Feed
+  every text your camera decodes to
+  `QrScanner(QrScanKind.ACCOUNT_RECORD, Network.TEST)` with `feed(text)`. It
+  returns `QrProgress` (`state`, `received`/`total`, `percent`, `error`).
+  Show the progress, stop the camera on `COMPLETE` or `REFUSED`, then read
+  `accountRecord()`. The record holds the seed fingerprint and, for each
+  account, the UFVK, the index and, when the board knows them, the label and
+  birthday. Import each UFVK as a hardware (board) account, and derive the
+  address from it yourself. Use the record's birthday when there is one;
+  otherwise ask, and for a new seed use today's tip.
+- **Sign.** Show `QrEncoder.pczt(signerViewBytes(...), fragmentLen)` frame by
+  frame: `frame(0)`, `frame(1)`, … for as long as the user scans. Every frame
+  is uppercase, for the QR alphanumeric mode, and no longer than
+  `longestFrame()`. Choose the QR version once for that length, so the code
+  keeps one size as it animates. Then scan the board's reply with
+  `QrScanner(QrScanKind.ZSIG, null)` and pass `zsig()` to `applyZsig`.
+- The scanner ignores plain text, a `zcash:` URI and the wallet's own codes,
+  even when seen in a mirror. It rejects broken parts and other UR types, and
+  scanning goes on. After three parts of another message in a row, it
+  follows the new sender, as the board does.
+- **Defaults** (`qrDefaults()`, from the board bench of 2026-11-10): from a
+  computer screen to the board's camera at 2x zoom, 50 B fragments and
+  500 ms per frame. 40 B was the fastest at 60 s for a compact NU7 send.
+  90 B and above were located but rarely decoded. `fragmentChoices` and
+  `frameMsChoices` are what a settings screen should offer. In the other
+  direction the board picks the density on its knob, and phones read its
+  denser modes.
 
 ## Host-side protection
 

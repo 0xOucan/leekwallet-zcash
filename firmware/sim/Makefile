@@ -40,7 +40,7 @@ VAULT_CRYPTO :=                 $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                 $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/aes_modes.c \
                 $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/gf128mul.c
 
-TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_qr_out test_oled_qr test_viewfinder test_zcash_keys test_zcash_pczt test_zcash_account
+TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_ur_fixtures test_qr_out test_oled_qr test_viewfinder test_zcash_keys test_zcash_pczt test_zcash_account
 
 all: $(addprefix $(BUILD)/,$(TESTS))
 
@@ -60,6 +60,11 @@ $(BUILD)/test_ur_encoder: $(UR_ENCODER_SRC) | $(BUILD)
 $(BUILD)/test_ur_encoder_asan: $(UR_ENCODER_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=all \
 	      -fno-omit-frame-pointer -o $@ $^
+
+# The air-gap fixtures the host's UR crate (host/leek-ur) wrote, in vectors/ur:
+# the board's encoder must print them and its decoder must read them.
+$(BUILD)/test_ur_fixtures: test_ur_fixtures.c host_stubs.c ../src/ur-encoder.c ../src/ur-decoder.c ../src/ur.c ../src/ur-fountain.c ../src/cbor.c $(CRYPTO)/sha2.c $(CRYPTO)/memzero.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
 
 # The return path's schedule, against the real QR encoder: every frame of every
 # mode has to fit the version it will be drawn at.

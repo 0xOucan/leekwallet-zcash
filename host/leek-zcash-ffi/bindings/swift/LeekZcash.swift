@@ -406,6 +406,22 @@ private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
+    typealias FfiType = UInt8
+    typealias SwiftType = UInt8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: UInt8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
     typealias FfiType = UInt16
     typealias SwiftType = UInt16
@@ -1551,6 +1567,481 @@ public func FfiConverterTypePairingListener_lift(_ pointer: UnsafeMutableRawPoin
 #endif
 public func FfiConverterTypePairingListener_lower(_ value: PairingListener) -> UnsafeMutableRawPointer {
     return FfiConverterTypePairingListener.lower(value)
+}
+
+
+
+
+
+
+/**
+ * The frames of one animated QR. Every frame is uppercase (the QR's
+ * alphanumeric mode) and at most [`QrEncoder::longest_frame`] characters,
+ * so the code keeps one size while it animates: pick the QR version once.
+ */
+public protocol QrEncoderProtocol: AnyObject, Sendable {
+    
+    func fragmentLen()  -> UInt32
+    
+    /**
+     * Frame `index` (0-based) of an endless loop: the first `seq_len`
+     * are the fragments themselves, the rest fountain mixes that fill in
+     * whatever the camera missed. Keep counting up; it wraps by itself.
+     */
+    func frame(index: UInt64)  -> String
+    
+    /**
+     * `count` frames from `start` (at most [`QR_MAX_BATCH`]; one for a
+     * single-part message).
+     */
+    func frames(start: UInt64, count: UInt32)  -> [String]
+    
+    /**
+     * One frame holds it all: show it still.
+     */
+    func isSinglePart()  -> Bool
+    
+    /**
+     * The longest frame, in characters: choose the QR version for this.
+     */
+    func longestFrame()  -> UInt32
+    
+    /**
+     * Fragments in the message: about how many frames a good camera needs.
+     */
+    func seqLen()  -> UInt32
+    
+    func urType()  -> String
+    
+}
+/**
+ * The frames of one animated QR. Every frame is uppercase (the QR's
+ * alphanumeric mode) and at most [`QrEncoder::longest_frame`] characters,
+ * so the code keeps one size while it animates: pick the QR version once.
+ */
+open class QrEncoder: QrEncoderProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_leek_zcash_ffi_fn_clone_qrencoder(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_leek_zcash_ffi_fn_free_qrencoder(pointer, $0) }
+    }
+
+    
+    /**
+     * `ur:leek-zcash-accounts`: what the board's View key screen shows,
+     * for a wallet passing an account on, and for tests.
+     */
+public static func accountRecord(record: AccountRecord, maxFragmentLen: UInt32)throws  -> QrEncoder  {
+    return try  FfiConverterTypeQrEncoder_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_constructor_qrencoder_account_record(
+        FfiConverterTypeAccountRecord_lower(record),
+        FfiConverterUInt32.lower(maxFragmentLen),$0
+    )
+})
+}
+    
+    /**
+     * `ur:leek-pczt` for the board: `view` is `signer_view_bytes` (after
+     * `prepare_for_signer`). `max_fragment_len` is clamped to 10..=512;
+     * [`QR_FRAGMENT_LEN`] is the default.
+     */
+public static func pczt(view: Data, maxFragmentLen: UInt32)throws  -> QrEncoder  {
+    return try  FfiConverterTypeQrEncoder_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_constructor_qrencoder_pczt(
+        FfiConverterData.lower(view),
+        FfiConverterUInt32.lower(maxFragmentLen),$0
+    )
+})
+}
+    
+    /**
+     * `ur:leek-zsig`: the board's reply, for tests and simulators.
+     */
+public static func zsig(zsig: Data, maxFragmentLen: UInt32)throws  -> QrEncoder  {
+    return try  FfiConverterTypeQrEncoder_lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_constructor_qrencoder_zsig(
+        FfiConverterData.lower(zsig),
+        FfiConverterUInt32.lower(maxFragmentLen),$0
+    )
+})
+}
+    
+
+    
+open func fragmentLen() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrencoder_fragment_len(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Frame `index` (0-based) of an endless loop: the first `seq_len`
+     * are the fragments themselves, the rest fountain mixes that fill in
+     * whatever the camera missed. Keep counting up; it wraps by itself.
+     */
+open func frame(index: UInt64) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrencoder_frame(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(index),$0
+    )
+})
+}
+    
+    /**
+     * `count` frames from `start` (at most [`QR_MAX_BATCH`]; one for a
+     * single-part message).
+     */
+open func frames(start: UInt64, count: UInt32) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrencoder_frames(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(start),
+        FfiConverterUInt32.lower(count),$0
+    )
+})
+}
+    
+    /**
+     * One frame holds it all: show it still.
+     */
+open func isSinglePart() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrencoder_is_single_part(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * The longest frame, in characters: choose the QR version for this.
+     */
+open func longestFrame() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrencoder_longest_frame(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Fragments in the message: about how many frames a good camera needs.
+     */
+open func seqLen() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrencoder_seq_len(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func urType() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrencoder_ur_type(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQrEncoder: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = QrEncoder
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> QrEncoder {
+        return QrEncoder(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: QrEncoder) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QrEncoder {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: QrEncoder, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrEncoder_lift(_ pointer: UnsafeMutableRawPointer) throws -> QrEncoder {
+    return try FfiConverterTypeQrEncoder.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrEncoder_lower(_ value: QrEncoder) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeQrEncoder.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Assembles one message from camera texts. Feed every decoded string,
+ * in any order and with repeats; it is safe to call from the camera's
+ * thread.
+ */
+public protocol QrScannerProtocol: AnyObject, Sendable {
+    
+    /**
+     * The record, once complete (an [`QrScanKind::AccountRecord`] scanner).
+     * Check the seed fingerprint and import each UFVK as a hardware
+     * (board) account; derive the address from the UFVK yourself.
+     */
+    func accountRecord()  -> AccountRecord?
+    
+    /**
+     * One decoded QR text.
+     */
+    func feed(text: String)  -> QrProgress
+    
+    func isComplete()  -> Bool
+    
+    /**
+     * Start over (a new scan, or after [`QrPartState::Refused`]).
+     */
+    func reset() 
+    
+    /**
+     * The `.zsig`, once complete (a [`QrScanKind::Zsig`] scanner): pass it
+     * to `apply_zsig` with the view that was shown.
+     */
+    func zsig()  -> Data?
+    
+}
+/**
+ * Assembles one message from camera texts. Feed every decoded string,
+ * in any order and with repeats; it is safe to call from the camera's
+ * thread.
+ */
+open class QrScanner: QrScannerProtocol, @unchecked Sendable {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_leek_zcash_ffi_fn_clone_qrscanner(self.pointer, $0) }
+    }
+    /**
+     * A scanner for `kind`. For [`QrScanKind::AccountRecord`], `network`
+     * (when given) refuses a viewing key of the other network.
+     */
+public convenience init(kind: QrScanKind, network: Network?) {
+    let pointer =
+        try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_constructor_qrscanner_new(
+        FfiConverterTypeQrScanKind_lower(kind),
+        FfiConverterOptionTypeNetwork.lower(network),$0
+    )
+}
+    self.init(unsafeFromRawPointer: pointer)
+}
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_leek_zcash_ffi_fn_free_qrscanner(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * The record, once complete (an [`QrScanKind::AccountRecord`] scanner).
+     * Check the seed fingerprint and import each UFVK as a hardware
+     * (board) account; derive the address from the UFVK yourself.
+     */
+open func accountRecord() -> AccountRecord?  {
+    return try!  FfiConverterOptionTypeAccountRecord.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrscanner_account_record(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * One decoded QR text.
+     */
+open func feed(text: String) -> QrProgress  {
+    return try!  FfiConverterTypeQrProgress_lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrscanner_feed(self.uniffiClonePointer(),
+        FfiConverterString.lower(text),$0
+    )
+})
+}
+    
+open func isComplete() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrscanner_is_complete(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Start over (a new scan, or after [`QrPartState::Refused`]).
+     */
+open func reset()  {try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrscanner_reset(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * The `.zsig`, once complete (a [`QrScanKind::Zsig`] scanner): pass it
+     * to `apply_zsig` with the view that was shown.
+     */
+open func zsig() -> Data?  {
+    return try!  FfiConverterOptionData.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_method_qrscanner_zsig(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQrScanner: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = QrScanner
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> QrScanner {
+        return QrScanner(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: QrScanner) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QrScanner {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: QrScanner, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrScanner_lift(_ pointer: UnsafeMutableRawPointer) throws -> QrScanner {
+    return try FfiConverterTypeQrScanner.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrScanner_lower(_ value: QrScanner) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeQrScanner.lower(value)
 }
 
 
@@ -2949,6 +3440,244 @@ public func FfiConverterTypeKeyWrapperInfo_lower(_ value: KeyWrapperInfo) -> Rus
 
 
 /**
+ * Recommended settings, for a settings screen and its defaults.
+ */
+public struct QrDefaults {
+    /**
+     * Bytes per fragment, host screen to the board's camera.
+     */
+    public var fragmentLen: UInt32
+    /**
+     * Milliseconds per frame.
+     */
+    public var frameMs: UInt32
+    public var fragmentChoices: [UInt32]
+    public var frameMsChoices: [UInt32]
+    /**
+     * The board's camera zoom the defaults were measured at.
+     */
+    public var boardZoom: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Bytes per fragment, host screen to the board's camera.
+         */fragmentLen: UInt32, 
+        /**
+         * Milliseconds per frame.
+         */frameMs: UInt32, fragmentChoices: [UInt32], frameMsChoices: [UInt32], 
+        /**
+         * The board's camera zoom the defaults were measured at.
+         */boardZoom: UInt32) {
+        self.fragmentLen = fragmentLen
+        self.frameMs = frameMs
+        self.fragmentChoices = fragmentChoices
+        self.frameMsChoices = frameMsChoices
+        self.boardZoom = boardZoom
+    }
+}
+
+#if compiler(>=6)
+extension QrDefaults: Sendable {}
+#endif
+
+
+extension QrDefaults: Equatable, Hashable {
+    public static func ==(lhs: QrDefaults, rhs: QrDefaults) -> Bool {
+        if lhs.fragmentLen != rhs.fragmentLen {
+            return false
+        }
+        if lhs.frameMs != rhs.frameMs {
+            return false
+        }
+        if lhs.fragmentChoices != rhs.fragmentChoices {
+            return false
+        }
+        if lhs.frameMsChoices != rhs.frameMsChoices {
+            return false
+        }
+        if lhs.boardZoom != rhs.boardZoom {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(fragmentLen)
+        hasher.combine(frameMs)
+        hasher.combine(fragmentChoices)
+        hasher.combine(frameMsChoices)
+        hasher.combine(boardZoom)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQrDefaults: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QrDefaults {
+        return
+            try QrDefaults(
+                fragmentLen: FfiConverterUInt32.read(from: &buf), 
+                frameMs: FfiConverterUInt32.read(from: &buf), 
+                fragmentChoices: FfiConverterSequenceUInt32.read(from: &buf), 
+                frameMsChoices: FfiConverterSequenceUInt32.read(from: &buf), 
+                boardZoom: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: QrDefaults, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.fragmentLen, into: &buf)
+        FfiConverterUInt32.write(value.frameMs, into: &buf)
+        FfiConverterSequenceUInt32.write(value.fragmentChoices, into: &buf)
+        FfiConverterSequenceUInt32.write(value.frameMsChoices, into: &buf)
+        FfiConverterUInt32.write(value.boardZoom, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrDefaults_lift(_ buf: RustBuffer) throws -> QrDefaults {
+    return try FfiConverterTypeQrDefaults.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrDefaults_lower(_ value: QrDefaults) -> RustBuffer {
+    return FfiConverterTypeQrDefaults.lower(value)
+}
+
+
+/**
+ * The scanner's state after a text, for a progress bar.
+ */
+public struct QrProgress {
+    public var state: QrPartState
+    /**
+     * Fragments known.
+     */
+    public var received: UInt32
+    /**
+     * Fragments in the message; 0 until the first part of it.
+     */
+    public var total: UInt32
+    /**
+     * 0..=100.
+     */
+    public var percent: UInt8
+    /**
+     * Why a part was rejected or the message refused. Never contains key
+     * material: safe to show and log.
+     */
+    public var error: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(state: QrPartState, 
+        /**
+         * Fragments known.
+         */received: UInt32, 
+        /**
+         * Fragments in the message; 0 until the first part of it.
+         */total: UInt32, 
+        /**
+         * 0..=100.
+         */percent: UInt8, 
+        /**
+         * Why a part was rejected or the message refused. Never contains key
+         * material: safe to show and log.
+         */error: String?) {
+        self.state = state
+        self.received = received
+        self.total = total
+        self.percent = percent
+        self.error = error
+    }
+}
+
+#if compiler(>=6)
+extension QrProgress: Sendable {}
+#endif
+
+
+extension QrProgress: Equatable, Hashable {
+    public static func ==(lhs: QrProgress, rhs: QrProgress) -> Bool {
+        if lhs.state != rhs.state {
+            return false
+        }
+        if lhs.received != rhs.received {
+            return false
+        }
+        if lhs.total != rhs.total {
+            return false
+        }
+        if lhs.percent != rhs.percent {
+            return false
+        }
+        if lhs.error != rhs.error {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(state)
+        hasher.combine(received)
+        hasher.combine(total)
+        hasher.combine(percent)
+        hasher.combine(error)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQrProgress: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QrProgress {
+        return
+            try QrProgress(
+                state: FfiConverterTypeQrPartState.read(from: &buf), 
+                received: FfiConverterUInt32.read(from: &buf), 
+                total: FfiConverterUInt32.read(from: &buf), 
+                percent: FfiConverterUInt8.read(from: &buf), 
+                error: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: QrProgress, into buf: inout [UInt8]) {
+        FfiConverterTypeQrPartState.write(value.state, into: &buf)
+        FfiConverterUInt32.write(value.received, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterUInt8.write(value.percent, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrProgress_lift(_ buf: RustBuffer) throws -> QrProgress {
+    return try FfiConverterTypeQrProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrProgress_lower(_ value: QrProgress) -> RustBuffer {
+    return FfiConverterTypeQrProgress.lower(value)
+}
+
+
+/**
  * **Experimental.** What to write to the SD card (`prepare_sd_sign`).
  */
 public struct SdRequest {
@@ -3891,6 +4620,208 @@ extension Network: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * What one scanned text did.
+ */
+
+public enum QrPartState {
+    
+    /**
+     * A new part; keep scanning.
+     */
+    case accepted
+    /**
+     * A valid part with nothing new (a repeat).
+     */
+    case redundant
+    /**
+     * Not for this scanner and harmless: not a UR, or one of the codes
+     * the wallet itself shows (seen in a mirror or on a second screen).
+     */
+    case ignored
+    /**
+     * A broken part or another UR type; nothing changed, keep scanning.
+     */
+    case rejected
+    /**
+     * The message assembled but cannot be used (another network, a
+     * malformed record). The scanner started over; stop the camera and
+     * show `error`.
+     */
+    case refused
+    /**
+     * Done: read the result with [`QrScanner::account_record`] or
+     * [`QrScanner::zsig`].
+     */
+    case complete
+}
+
+
+#if compiler(>=6)
+extension QrPartState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQrPartState: FfiConverterRustBuffer {
+    typealias SwiftType = QrPartState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QrPartState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .accepted
+        
+        case 2: return .redundant
+        
+        case 3: return .ignored
+        
+        case 4: return .rejected
+        
+        case 5: return .refused
+        
+        case 6: return .complete
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: QrPartState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .accepted:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .redundant:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .ignored:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .rejected:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .refused:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .complete:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrPartState_lift(_ buf: RustBuffer) throws -> QrPartState {
+    return try FfiConverterTypeQrPartState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrPartState_lower(_ value: QrPartState) -> RustBuffer {
+    return FfiConverterTypeQrPartState.lower(value)
+}
+
+
+extension QrPartState: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * What a [`QrScanner`] waits for.
+ */
+
+public enum QrScanKind {
+    
+    /**
+     * `ur:leek-zcash-accounts` from the board's View key screen.
+     */
+    case accountRecord
+    /**
+     * `ur:leek-zsig`, the board's signatures after a `ur:leek-pczt`.
+     */
+    case zsig
+}
+
+
+#if compiler(>=6)
+extension QrScanKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQrScanKind: FfiConverterRustBuffer {
+    typealias SwiftType = QrScanKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QrScanKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .accountRecord
+        
+        case 2: return .zsig
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: QrScanKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .accountRecord:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .zsig:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrScanKind_lift(_ buf: RustBuffer) throws -> QrScanKind {
+    return try FfiConverterTypeQrScanKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrScanKind_lower(_ value: QrScanKind) -> RustBuffer {
+    return FfiConverterTypeQrScanKind.lower(value)
+}
+
+
+extension QrScanKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * What a wallet can do about an error (`leek_zcash::Recovery`).
  */
 
@@ -4325,6 +5256,30 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
+    typealias SwiftType = Data?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterData.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSignListener: FfiConverterRustBuffer {
     typealias SwiftType = SignListener?
 
@@ -4341,6 +5296,30 @@ fileprivate struct FfiConverterOptionTypeSignListener: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSignListener.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAccountRecord: FfiConverterRustBuffer {
+    typealias SwiftType = AccountRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAccountRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAccountRecord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -4610,6 +5589,23 @@ public func prepareSdSign(pczt: Data, account: AccountMeta, view: SignerView)thr
     )
 })
 }
+public func qrDefaults() -> QrDefaults  {
+    return try!  FfiConverterTypeQrDefaults_lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_func_qr_defaults($0
+    )
+})
+}
+/**
+ * The UR type a scanned string names (lowercase), or None for a text that
+ * is not a UR (a `zcash:` URI, an address).
+ */
+public func qrPartType(text: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_func_qr_part_type(
+        FfiConverterString.lower(text),$0
+    )
+})
+}
 /**
  * Reads `SignResult.record` back (txid and sighash re-checked).
  */
@@ -4725,6 +5721,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_func_prepare_sd_sign() != 38004) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_func_qr_defaults() != 13012) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_func_qr_part_type() != 55273) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_func_sign_result_from_bytes() != 27611) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4794,6 +5796,42 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_method_pairinglistener_on_pairing_code() != 41350) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrencoder_fragment_len() != 25829) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrencoder_frame() != 1390) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrencoder_frames() != 41597) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrencoder_is_single_part() != 44960) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrencoder_longest_frame() != 54975) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrencoder_seq_len() != 30451) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrencoder_ur_type() != 13197) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrscanner_account_record() != 18145) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrscanner_feed() != 41422) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrscanner_is_complete() != 34699) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrscanner_reset() != 18517) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_method_qrscanner_zsig() != 25467) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_leek_zcash_ffi_checksum_method_quickunlock_account() != 47227) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4855,6 +5893,18 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_constructor_leekdevice_new() != 20437) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_account_record() != 60571) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_pczt() != 50093) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_constructor_qrencoder_zsig() != 53983) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_constructor_qrscanner_new() != 7823) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_constructor_quickunlock_create() != 45728) {

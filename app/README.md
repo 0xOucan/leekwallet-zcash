@@ -375,7 +375,37 @@ code is used):
 - *Contacts* (add, edit, remove, pay), *Settings* (server per network,
   checked before it is saved; wallet info; forget this network's wallet).
 
-**QR scanner.** Send only, Zcash only; no QR flow for pairing or signing.
+**Sign with QR (experimental).** An opt-in second button under the Send and
+Shield review, for a board kept off USB and Bluetooth; never for pairing,
+and USB and Bluetooth stay the everyday links. The same compact signer view
+`zw_propose_*` built is shown as an animated `ur:leek-pczt` (fountain parts,
+uppercase for the QR alphanumeric mode) from `src-tauri/src/airgap.rs` over
+`host/leek-ur`, the UR implementation `zecz` uses, tested against the
+firmware's vectors. The code follows the Zodl fork's large-QR rules: as big
+as the screen allows (min of 96 % of the width, 70 % of the height), error
+correction L, whole pixels per module, a four-module quiet zone, black on
+white, one QR version for the whole loop. *Speed*: *Safe* (90-byte
+fragments at 500 ms, the default: 16 frames for a 1.4 KB view, where the
+Ethereum LeekWallet's benches on this board settled, with the rule that a
+frame stays up at least twice the board camera's capture interval),
+*Balanced* (120 B, 400 ms), *Fast* (150 B, 250 ms; for the board camera's
+coming zoom) or *Custom*: *Bigger* / *Denser* step the fragment (50, 90,
+120, 150, 200, 250 B; 50 is what the Zodl fork signed with), *Slower* /
+*Faster* the frame (800 to 200 ms). A part and frame counter runs under the
+code; the choice is remembered (`leek.qr.send`). Record bench results in
+[docs/zcash/QR-BENCH.md](../docs/zcash/QR-BENCH.md). On the board: *Scan*,
+review, ACCEPT. Then *The board shows its signature: scan it* opens the
+camera, and every code it reads goes to the backend's decoder, with
+progress, until the `ur:leek-zsig` is whole. The `.zsig` goes to
+`zw_finish` exactly as one signed over USB: checked against the view's
+hash, each signature against its rk, proved, broadcast after the same
+upgrade and expiry checks; mainnet keeps its real-funds confirmation. Over
+QR the app cannot first check the board holds the wallet's seed (no
+session); the board refuses a PCZT that does not spend its own notes.
+State machine: `src/qr-sign.ts`, tested in `test/qr-sign.test.ts`.
+
+**QR scanner.** Send only, Zcash only: an address or payment request, and
+the board's reply in *Sign with QR* above. No QR flow for pairing.
 `packages/core/src/zip321.ts` parses the code strictly: the address (unified,
 Sapling, transparent, TEX), `amount` (at most 8 decimals, at most 21 million),
 `memo` (base64url, UTF-8 text, at most 512 bytes, never to a transparent

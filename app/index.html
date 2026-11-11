@@ -95,6 +95,47 @@
           <ul class="zhist" id="wlist"></ul>
           <p class="muted" id="wliststatus" role="status" aria-live="polite"></p>
 
+          <!-- Air-gapped set-up (src/qr-accounts.ts): the board's account off
+               its own screen, a one-way import. Never pairing: USB and
+               Bluetooth keep their 6-digit pairing code. -->
+          <h3>Import from the board's QR <span class="badge">experimental</span></h3>
+          <p class="muted">For a board kept off USB and Bluetooth. On the
+            board: Main menu → View key, confirm there, and hold its screen
+            up to this camera. The viewing key lets this computer see all of
+            the account's history and balance, but never spend: every send
+            still needs the board's signature. This only reads the account;
+            it does not pair (USB and Bluetooth keep their 6-digit pairing
+            code).</p>
+          <label class="field"><span>Network</span>
+            <select id="wqrnet">
+              <option value="test">Testnet (coins without value)</option>
+              <option value="main">Mainnet (real ZEC)</option>
+            </select></label>
+          <div class="row">
+            <button type="button" class="secondary" id="wqrscan">Import from the board's QR (experimental)</button>
+          </div>
+          <div class="zscan" id="wqrscanbox" hidden>
+            <video id="wqrvideo" playsinline muted></video>
+            <progress id="wqrbar" value="0" max="1"></progress>
+            <div class="row">
+              <button type="button" class="secondary" id="wqrstop">Stop the camera</button>
+            </div>
+          </div>
+          <div id="wqrfound" hidden>
+            <dl class="kv" id="wqrinfo"></dl>
+            <label class="field"><span>Birthday height (empty: a new seed, starts near today's tip)</span>
+              <input id="wqrbday" inputmode="numeric" autocomplete="off" /></label>
+            <p class="muted">For a seed that already has funds, enter the
+              block height it was created at (or earlier): nothing before the
+              birthday is scanned.</p>
+            <div class="row">
+              <button type="button" class="primary" id="wqrimport">Import this account</button>
+              <button type="button" class="secondary" id="wqrtip">Use today's tip</button>
+              <button type="button" class="secondary" id="wqrdiscard">Discard</button>
+            </div>
+          </div>
+          <p class="muted" id="wqrstatus" role="status" aria-live="polite"></p>
+
           <h3>Import a viewing key (watch-only)</h3>
           <p class="muted">A unified full viewing key (uview1… on mainnet,
             uviewtest1… on testnet) lets this app see an account's funds
@@ -349,7 +390,69 @@
                     the recipient and amount on the board's screen.</span></label>
                 <div class="row">
                   <button type="button" id="zwsignsend" class="primary">Sign on the board and send</button>
+                  <button type="button" id="zwsignqr" class="secondary" title="Experimental: for a board kept off USB and Bluetooth">Sign with QR (experimental)</button>
                   <button type="button" id="zwcancel" class="secondary">Cancel</button>
+                </div>
+              </section>
+              <!-- Sign with QR, EXPERIMENTAL and opt-in (src/qr-sign.ts): the
+                   signer view as an animated ur:leek-pczt for the board's
+                   camera, then the board's ur:leek-zsig read with this
+                   camera. Never for pairing; USB and Bluetooth stay the
+                   everyday links. -->
+              <section class="preview qrsign" id="zwqrsign" hidden aria-labelledby="zwqrsignhead">
+                <h4 id="zwqrsignhead">Sign with QR <span class="badge">experimental</span></h4>
+                <p class="muted" id="zwqrsignhelp"></p>
+                <p class="qrsign__count" id="zwqrtimer" aria-live="off"></p>
+                <div class="qrsign__show" id="zwqrshow">
+                  <canvas id="zwqrcanvas" class="qrsign__code" role="img" aria-label="Animated QR code of the transaction for the board"></canvas>
+                  <p class="qrsign__count" id="zwqrcount" aria-live="off"></p>
+                  <label class="field qrsign__speed"><span>Speed</span>
+                    <select id="zwqrspeed">
+                      <option value="safe">Safe (50 B, 500 ms)</option>
+                      <option value="balanced">Balanced (50 B, 400 ms)</option>
+                      <option value="fast">Fast (50 B, 300 ms)</option>
+                      <option value="custom">Custom</option>
+                      <option value="manual">Manual (one part per Next)</option>
+                    </select></label>
+                  <div class="row">
+                    <button type="button" id="zwqrbigger" class="secondary" title="Bigger modules: smaller fragments, more frames">Bigger</button>
+                    <button type="button" id="zwqrdenser" class="secondary" title="Denser code: larger fragments, fewer frames">Denser</button>
+                    <button type="button" id="zwqrslower" class="secondary">Slower</button>
+                    <button type="button" id="zwqrfaster" class="secondary">Faster</button>
+                    <button type="button" id="zwqrnext" class="primary" hidden title="Manual: the next part (or press Space)">Next part</button>
+                    <button type="button" id="zwqrfull" class="secondary" title="The code as large as this screen allows (or click the code); Esc or a click exits">Full screen</button>
+                  </div>
+                  <div class="row qrsign__bench">
+                    <button type="button" id="zwqrbench" class="secondary" title="Step through fragment sizes and paces, timing each until the board shows its review">Bench sweep</button>
+                    <button type="button" id="zwqrbenchgot" class="primary" hidden title="The board shows its review: record the time, Cancel on the board, Scan again">Board has it → next</button>
+                    <button type="button" id="zwqrbenchskip" class="secondary" hidden>Gave up → next</button>
+                    <button type="button" id="zwqrbenchcopy" class="secondary" hidden>Copy results</button>
+                  </div>
+                  <pre class="qrsign__benchrows" id="zwqrbenchrows" hidden></pre>
+                  <div class="row">
+                    <button type="button" id="zwqrscan" class="primary">The board shows its signature: scan it</button>
+                  </div>
+                </div>
+                <div class="zscan" id="zwqrscanbox" hidden>
+                  <video id="zwqrvideo" playsinline muted></video>
+                  <progress id="zwqrbar" value="0" max="1"></progress>
+                  <p class="muted zscan__tip">The board's screen is bright: lower the brightness or zoom in on the scanner if it does not read, and keep the code in the middle.</p>
+                  <div class="row">
+                    <button type="button" id="zwqragain" class="secondary">Show the transaction again</button>
+                  </div>
+                </div>
+                <!-- The same loop on white, as large as the window allows: the
+                     Fullscreen API where the webview has it, else a fixed
+                     overlay. Inside #zwqrsign so it hides with the wallet. -->
+                <div class="qrfull" id="zwqrfs" hidden tabindex="-1" role="dialog" aria-label="Transaction QR code, full screen">
+                  <canvas id="zwqrfscanvas" class="qrsign__code" role="img" aria-label="Animated QR code of the transaction for the board"></canvas>
+                  <p class="qrfull__cap" id="zwqrfscount" aria-live="off"></p>
+                  <p class="qrfull__cap" id="zwqrfstimer" aria-live="off"></p>
+                  <p class="qrfull__cap" id="zwqrfshint">Esc or click to exit<span id="zwqrfsmanual" hidden> · Space: next part</span></p>
+                </div>
+                <p class="muted" id="zwqrstatus" role="status" aria-live="polite"></p>
+                <div class="row">
+                  <button type="button" id="zwqrcancel" class="secondary">Cancel QR signing</button>
                 </div>
               </section>
               <progress id="zwsendbar" value="0" max="1" hidden></progress>

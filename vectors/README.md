@@ -10,6 +10,7 @@ reference, not against itself.
 | `keys.json`, `keys_vectors.h` | Accounts derived from public test mnemonics (e.g. "abandon … art"), mainnet and testnet, with and without a passphrase: seed fingerprint, Orchard FVK and address, transparent account key and address, UFVK, UA |
 | `pczt.json`, `pczt_vectors.h`, `pczt/*.pczt` | 51 PCZTs: valid sends (Ironwood, Orchard→Ironwood, NU7, mainnet, mainnet NU7 either side of its activation, transparent shields and mixed, compact views) with their expected summaries and sighashes, and `r_*` refusals each with the error code the device must return |
 | `zsig/` | A `.zsig` for `iw_send_shielded.pczt` |
+| `ur/` | The QR air gap (experimental): `ur:leek-pczt` parts of two NU7 compact views and `ur:leek-zsig` parts of the `.zsig`, one part per line, as `host/leek-ur` encodes them. `firmware/sim/test_ur_fixtures.c` checks the board's encoder prints the same lines and its decoder reads them; `host/leek-ur/tests/fixtures.rs` checks the host's side (`LEEK_UR_REGEN=1` to write a new one) |
 | `zkv/` | A golden `.zkv` SD seed card (format v1) |
 | `gen/` | The generators |
 

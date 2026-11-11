@@ -114,8 +114,13 @@ export interface DecodePass {
  * middle with software contrast, the middle with the other binarizer.
  * With the software brightness lowered, every pass gets the contrast.
  */
-export function decodePasses(n: number, softwareDarken = 0): DecodePass[] {
+export function decodePasses(n: number, softwareDarken = 0, animated = false): DecodePass[] {
   const always = softwareDarken < 0;
+  /* An animated reply (the board's ur:leek-zsig): a frame missed is shown
+   * again a loop later, so a quick attempt every frame beats a thorough one
+   * on a few. The middle only, the rotating pass every third frame. */
+  if (animated && n % 3 !== 0) return [{ region: "center", binarizer: "LocalAverage", contrast: always }];
+  const k = animated ? Math.floor(n / 3) : n;
   const extra: DecodePass[] = [
     { region: "full", binarizer: "LocalAverage", contrast: always },
     { region: "center", binarizer: "LocalAverage", contrast: true },
@@ -123,7 +128,7 @@ export function decodePasses(n: number, softwareDarken = 0): DecodePass[] {
   ];
   return [
     { region: "center", binarizer: "LocalAverage", contrast: always },
-    extra[((n % extra.length) + extra.length) % extra.length]!,
+    extra[((k % extra.length) + extra.length) % extra.length]!,
   ];
 }
 
