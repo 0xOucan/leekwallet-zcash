@@ -59,6 +59,8 @@ static const uint8_t *panel_tint;
 static OledPanelGray panel_gray;
 /* The line under a QR (oled_set_qr_caption()), until the next clear. */
 static char qr_caption[OLED_QR_CAPTION_MAX + 1];
+/* The next QR fills the panel (oled_set_qr_fill()), until the next clear. */
+static bool qr_fill;
 #endif
 
 static uint8_t cursor_page = 0;
@@ -125,9 +127,14 @@ void oled_set_qr_caption(const char *text)
 
 const char *oled_core_qr_caption(void) { return qr_caption[0] ? qr_caption : NULL; }
 
+void oled_set_qr_fill(bool fill) { qr_fill = fill; }
+bool oled_core_qr_fill(void) { return qr_fill; }
+
 #else
 /* Nothing to show it on: a 64- or 128-row panel's QR has no room for a line. */
 void oled_set_qr_caption(const char *text) { (void)text; }
+/* Their modules are whole pixels of a 64- or 128-row panel already. */
+void oled_set_qr_fill(bool fill) { (void)fill; }
 #endif
 
 void oled_blit_page(uint8_t page, const uint8_t *cols, size_t len)
@@ -156,6 +163,7 @@ esp_err_t oled_clear(void)
     panel_tint = NULL;
     panel_gray.px = NULL;
     qr_caption[0] = '\0';
+    qr_fill = false;
 #endif
     return ESP_OK;
 }

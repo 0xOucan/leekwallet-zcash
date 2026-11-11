@@ -26,6 +26,7 @@ static uint16_t panel_gray_x, panel_gray_y, panel_gray_w, panel_gray_h;
 static uint16_t backlight = BL_DUTY_MAX;
 static int     backlight_calls;
 static char    qr_caption[OLED_QR_CAPTION_MAX + 1];
+static bool    qr_fill;
 
 static uint8_t cursor_page;
 static uint8_t cursor_col;
@@ -62,6 +63,7 @@ void fake_oled_reset(void)
     backlight = BL_DUTY_MAX;
     backlight_calls = 0;
     qr_caption[0] = '\0';
+    qr_fill = false;
 }
 
 void fake_oled_set_panel_rows(uint8_t rows) { panel_rows = rows; }
@@ -78,6 +80,8 @@ const uint8_t *fake_oled_panel_gray(uint16_t *x, uint16_t *y, uint16_t *w, uint1
 }
 uint16_t fake_oled_backlight_duty(void) { return backlight; }
 const char *fake_oled_qr_caption(void) { return qr_caption; }
+bool fake_oled_qr_fill(void) { return qr_fill; }
+void oled_set_qr_fill(bool fill) { qr_fill = fill; }
 
 void oled_set_qr_caption(const char *text)
 {
@@ -185,6 +189,7 @@ esp_err_t oled_clear(void)
     panel_picture = NULL;
     panel_gray = NULL;
     qr_caption[0] = '\0';
+    qr_fill = false;
     return ESP_OK;
 }
 

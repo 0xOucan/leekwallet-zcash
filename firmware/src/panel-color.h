@@ -87,6 +87,7 @@ typedef struct {
     const QRCode  *qr;        /* last code drawn, or NULL */
     bool           qr_inverted;
     const char    *qr_caption; /* the line under it (oled_set_qr_caption()), or NULL */
+    bool           qr_fill;    /* fill the panel, uneven modules (oled_set_qr_fill()) */
     /* A grayscale picture over the text (oled_show_panel_gray()), 1:1 in
        panel pixels at (gray_x, gray_y), or gray NULL. */
     const uint8_t *gray;
@@ -99,6 +100,14 @@ typedef struct {
 /** Module size, in panel pixels, of a `modules`-wide code on a width x height
  *  panel: the largest whole size that keeps PANEL_QR_MIN_QUIET; 0 if none fits. */
 uint8_t panel_color_qr_scale(uint8_t modules, int width, int height);
+
+/** Quiet zone of a filled code (PanelFrame.qr_fill), in modules, each side. */
+#define PANEL_QR_FILL_QUIET 1
+
+/** The side, in panel pixels, of a filled `modules`-wide code: the panel's
+ *  smaller side less PANEL_QR_FILL_QUIET modules each side. Module m spans
+ *  [m * side / modules, (m + 1) * side / modules) from the code's corner. */
+int panel_color_qr_fill_side(uint8_t modules, int width, int height);
 
 /** Where `text` goes under a `modules`-wide code: true and its panel rows if
  *  it fits below the quiet zone at the code's own scale, else false. */

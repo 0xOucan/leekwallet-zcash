@@ -58,6 +58,8 @@ const uint8_t *fake_oled_panel_gray(uint16_t *x, uint16_t *y, uint16_t *w, uint1
 uint16_t fake_oled_backlight_duty(void);
 /** The caption oled_set_qr_caption() set, "" if none since a clear. */
 const char *fake_oled_qr_caption(void);
+/** What oled_set_qr_fill() asked for since the last clear. */
+bool fake_oled_qr_fill(void);
 int fake_oled_backlight_calls(void);
 
 /** Payload of the last oled_draw_qrcode(), or "" if none. */

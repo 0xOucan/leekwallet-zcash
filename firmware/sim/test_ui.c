@@ -1838,11 +1838,17 @@ static void test_colour_qr_screens(void)
         CHECK(strcmp(fake_oled_qr_caption(), want) == 0, "the caption is \"%s\", not \"%s\"",
               fake_oled_qr_caption(), want);
     }
-    /* The push steps the density: still, v6 5px, v4, v3, v9, and round. */
+    /* The push fills the panel with the same code (same version, same
+       frame), then moves to the next density, plain: still, v6 5px, v4,
+       v3, v9, each followed by its filled form, and round. */
+    CHECK(!fake_oled_qr_fill(), "the code opened filled");
     press(BUTTON_ACCEPT);
-    CHECK(fake_oled_qr_version() == 6 && strncmp(fake_oled_qr_data(), "UR:BYTES/1-", 11) == 0,
-          "a push from still gave v%u \"%.20s\", not v6 part 1", fake_oled_qr_version(),
-          fake_oled_qr_data());
+    CHECK(fake_oled_qr_fill() && fake_oled_qr_version() == v0, "a push did not fill the still code");
+    press(BUTTON_ACCEPT);
+    CHECK(!fake_oled_qr_fill() && fake_oled_qr_version() == 6 &&
+          strncmp(fake_oled_qr_data(), "UR:BYTES/1-", 11) == 0,
+          "a push from the filled still gave v%u \"%.20s\"%s, not v6 part 1", fake_oled_qr_version(),
+          fake_oled_qr_data(), fake_oled_qr_fill() ? " filled" : "");
     CHECK(strncmp(fake_oled_qr_caption(), "v6 5px 1/", 9) == 0 &&
           strstr(fake_oled_qr_caption(), "0.05%") != NULL,
           "the caption is \"%s\"", fake_oled_qr_caption());
@@ -1852,14 +1858,26 @@ static void test_colour_qr_screens(void)
     CHECK(strncmp(fake_oled_qr_caption(), "v6 5px 2/", 9) == 0,
           "the caption did not follow the frame: \"%s\"", fake_oled_qr_caption());
     press(BUTTON_ACCEPT);
-    CHECK(fake_oled_qr_version() == 4, "then v%u, not v4", fake_oled_qr_version());
+    CHECK(fake_oled_qr_fill() && fake_oled_qr_version() == 6 &&
+          strncmp(fake_oled_qr_data(), "UR:BYTES/2-", 11) == 0,
+          "filling v6 restarted or changed it (v%u \"%.12s\")", fake_oled_qr_version(), fake_oled_qr_data());
+    fake_clock_advance_us(400000);
+    ui__service_qr_out_for_test();
+    idle_pump();
+    CHECK(fake_oled_qr_fill() && strncmp(fake_oled_qr_data(), "UR:BYTES/3-", 11) == 0,
+          "the filled code did not animate on");
+    static const unsigned NEXT[] = { 4, 3, 9 };
+    for (size_t i = 0; i < 3; i++) {
+        press(BUTTON_ACCEPT);
+        CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK left the QR");
+        CHECK(!fake_oled_qr_fill() && fake_oled_qr_version() == NEXT[i], "then v%u%s, not v%u plain",
+              fake_oled_qr_version(), fake_oled_qr_fill() ? " filled" : "", NEXT[i]);
+        press(BUTTON_ACCEPT);
+        CHECK(fake_oled_qr_fill() && fake_oled_qr_version() == NEXT[i], "v%u did not fill", NEXT[i]);
+    }
     press(BUTTON_ACCEPT);
-    CHECK(ui_get_screen() == SCREEN_QR_OUT, "OK left the QR");
-    CHECK(fake_oled_qr_version() == 3, "then v%u, not v3", fake_oled_qr_version());
-    press(BUTTON_ACCEPT);
-    CHECK(fake_oled_qr_version() == 9, "then v%u, not v9", fake_oled_qr_version());
-    press(BUTTON_ACCEPT);
-    CHECK(fake_oled_qr_version() == v0, "the push did not come back round to the still code");
+    CHECK(fake_oled_qr_version() == v0 && !fake_oled_qr_fill(),
+          "the push did not come back round to the plain still code");
     CHECK(fake_oled_backlight_calls() == calls && fake_oled_backlight_duty() == level,
           "the density steps touched the backlight (duty %u)", fake_oled_backlight_duty());
     /* A turn is the backlight, live, on the same table as Settings > Screen. */

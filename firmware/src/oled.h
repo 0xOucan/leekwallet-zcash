@@ -181,6 +181,16 @@ esp_err_t oled_draw_qrcode_ex(const char *data, uint8_t version, uint8_t scale,
 #define OLED_QR_CAPTION_MAX 20
 void oled_set_qr_caption(const char *text);
 
+/**
+ * Draw the next QR as large as the colour panel allows: one module of quiet
+ * zone each side and modules of a fractional size, so some are a pixel
+ * wider than others (a v6 at 5 or 6 px fills 228 of 240 px, where whole
+ * 5 px modules fill 205). No caption fits under it. Experimental: a
+ * camera's reading of uneven modules is what the bench measures. The OLEDs
+ * ignore it. Cleared, like the caption, by the next clear.
+ */
+void oled_set_qr_fill(bool fill);
+
 
 /** True once a panel answered at init; false on a headless board. */
 bool oled_present(void);

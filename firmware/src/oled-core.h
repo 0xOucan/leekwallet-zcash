@@ -63,6 +63,10 @@ OledPanelGray oled_core_panel_gray(void);
  *  Colour panels only (BOARD_HAS_SPI_PANEL). */
 const char *oled_core_qr_caption(void);
 
+/** Whether oled_set_qr_fill() asked for the panel-filling layout since the
+ *  last clear. Colour panels only. */
+bool oled_core_qr_fill(void);
+
 /** Five columns of a 5x7 glyph, bit 0 the top row. Unprintables render blank. */
 const uint8_t *font_5x7_glyph(char c);
 

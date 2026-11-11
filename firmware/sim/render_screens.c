@@ -76,6 +76,7 @@ static void snap(const char *name)
     };
     f.qr = oled_core_last_qr(&f.qr_inverted);
     f.qr_caption = oled_core_qr_caption();
+    f.qr_fill = oled_core_qr_fill();
     const OledPanelGray g = oled_core_panel_gray();
     f.gray = g.px;
     f.gray_x = g.x; f.gray_y = g.y; f.gray_w = g.w; f.gray_h = g.h;

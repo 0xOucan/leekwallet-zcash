@@ -88,6 +88,17 @@ uint8_t panel_color_qr_scale(uint8_t modules, int width, int height)
     return (uint8_t)(s < 1 ? 0 : (s > 255 ? 255 : s));
 }
 
+int panel_color_qr_fill_side(uint8_t modules, int width, int height)
+{
+    const int side = width < height ? width : height;
+    if (modules == 0) {
+        return 0;
+    }
+    /* Whole multiples of `modules` would be the plain layout again; any side
+       will do, as each module edge is rounded on its own. */
+    return side * modules / (modules + 2 * PANEL_QR_FILL_QUIET);
+}
+
 /* The caption's glyph size under a code at `scale`: the largest of 2x3 (the
  * UI's own), 2x2 and 1x1 panel pixels per font pixel that fits between the
  * minimum quiet zone and the bottom of the panel, and across it; 0 if none
@@ -126,6 +137,42 @@ bool panel_color_qr_caption_rows(const char *text, uint8_t modules, int width, i
     if (y0) *y0 = top + (height - top - 7 * ys) / 2;
     if (rows) *rows = 7 * ys;
     return true;
+}
+
+/*
+ * The filled layout (PanelFrame.qr_fill): the code `side` pixels square,
+ * module m from m * side / n to (m + 1) * side / n, so modules are the
+ * floor or the ceiling of side / n pixels and the code ends exactly at
+ * `side`. One module of quiet zone each side and no caption.
+ */
+static void render_qr_fill(const QRCode *qr, bool inverted, const PanelPalette *pal,
+                           int width, int height, int y0, int rows, uint16_t *out)
+{
+    const int n = qr->size;
+    const int side = panel_color_qr_fill_side((uint8_t)n, width, height);
+    const int ox = (width - side) / 2;
+    const int oy = (height - side) / 2;
+    const uint16_t lit = inverted ? pal->qr_light : pal->qr_dark;
+    const uint16_t field = inverted ? pal->qr_dark : pal->qr_light;
+    for (int r = 0; r < rows; r++) {
+        const int y = y0 + r;
+        uint16_t *row = out + (size_t)r * width;
+        for (int x = 0; x < width; x++) {
+            row[x] = field;
+        }
+        if (y < oy || y >= oy + side) {
+            continue;
+        }
+        /* The module whose span [m*side/n, (m+1)*side/n) holds this row:
+           the largest m with m*side/n <= y - oy. */
+        const int m = ((y - oy + 1) * n - 1) / side;
+        for (int mx = 0; mx < n; mx++) {
+            if (!qrcode_getModule((QRCode *)qr, (uint8_t)mx, (uint8_t)m)) continue;
+            const int xa = ox + mx * side / n;
+            const int xb = ox + (mx + 1) * side / n;
+            for (int x = xa; x < xb; x++) row[x] = lit;
+        }
+    }
 }
 
 static void render_qr(const QRCode *qr, bool inverted, uint8_t scale, const char *caption,
@@ -373,6 +420,10 @@ void panel_color_render(const PanelFrame *f, const PanelPalette *pal,
         return;
     }
     const uint8_t scale = f->qr ? panel_color_qr_scale(f->qr->size, width, height) : 0;
+    if (scale && f->qr_fill) {
+        render_qr_fill(f->qr, f->qr_inverted, pal, width, height, y0, rows, out);
+        return;
+    }
     if (scale) {
         render_qr(f->qr, f->qr_inverted, scale, f->qr_caption, pal, width, height, y0, rows, out);
         return;

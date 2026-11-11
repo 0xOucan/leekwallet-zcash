@@ -3714,6 +3714,9 @@ static void screen_settings_on_button(button_id_t btn)
 static screen_id_t qr_out_back = SCREEN_MAIN_MENU;
 /* A turn on the colour panel's QR moved the backlight: saved on exit. */
 static bool qr_out_backlight_moved;
+/* The colour panel's code fills the glass, modules uneven (oled_set_qr_fill):
+ * each mode of COLOR_QR_CYCLE is shown plain, then filled, then the next. */
+static bool qr_out_fill;
 
 /* A panel big enough to show a whole message as one still code at a size a
  * camera reads (qr-out.h, QR_OUT_MODE_STILL): the 240-row colour TFT. The
@@ -3769,6 +3772,7 @@ bool ui_show_ur(const char *type, const uint8_t *cbor, size_t len,
         return false;
     }
     qr_out_back = back;
+    qr_out_fill = false;
     ui_set_screen(SCREEN_QR_OUT);
     return true;
 }
@@ -3805,6 +3809,7 @@ static void screen_qr_out_render(void)
     const char *frame = qr_out_frame();
     const QrOutMode *m = qr_out_mode_info(qr_out_current_mode());
     qr_out_caption();
+    oled_set_qr_fill(qr_out_fill);
     if (frame == NULL || m == NULL ||
         oled_draw_qrcode_ex(frame, qr_out_current_version(), m->scale,
                             m->inverted) != ESP_OK) {
@@ -3817,9 +3822,17 @@ static void screen_qr_out_render(void)
 }
 
 /* On the colour panel: the next mode of COLOR_QR_CYCLE (dir > 0) or the one
- * before that carries this message, from wherever the current one sits. */
+ * before that carries this message, from wherever the current one sits.
+ * Forward, each mode first fills the panel (same frames, bigger modules),
+ * and the push after that moves on to the next mode, plain. */
 static void qr_out_next_color_mode(int dir, int64_t now)
 {
+    if (dir > 0 && !qr_out_fill) {
+        qr_out_fill = true;
+        ESP_LOGI(TAG, "QR out: v%u fill", (unsigned)qr_out_current_version());
+        return;
+    }
+    qr_out_fill = false;
     const size_t n = sizeof COLOR_QR_CYCLE;
     size_t at = 0;
     for (size_t i = 0; i < n; i++) {
@@ -3835,6 +3848,12 @@ static void qr_out_next_color_mode(int dir, int64_t now)
     (void)qr_out_set_mode(was, now);   /* nothing else carries it */
 }
 
+/* The mode a push left the colour code in, for the bench log. */
+static void qr_out_log_mode(void)
+{
+    ESP_LOGI(TAG, "QR out: v%u%s", (unsigned)qr_out_current_version(), qr_out_fill ? " fill" : "");
+}
+
 static void screen_qr_out_on_button(button_id_t btn)
 {
     const int64_t now = esp_timer_get_time();
@@ -3846,7 +3865,11 @@ static void screen_qr_out_on_button(button_id_t btn)
        keep turn = size, OK = brightness. */
     if (qr_out_still_first() && btn != BUTTON_CANCEL) {
         if (btn == BUTTON_ACCEPT) {
+            const bool was_fill = qr_out_fill;
             qr_out_next_color_mode(+1, now);
+            if (was_fill) {
+                qr_out_log_mode();
+            }
         }
 #if UI_COLOR_CODE
         else if (btn == BUTTON_UP || btn == BUTTON_DOWN) {
