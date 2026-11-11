@@ -212,6 +212,74 @@ static int sensor_ae_level(int8_t bias)
 
 static bool apply_zoom(uint8_t level);
 
+/*
+ * 240 MHz while the camera runs, 160 otherwise.
+ *
+ * The CAM board runs at 160 MHz because 240 got it very hot beside the
+ * OV5640 (sdkconfig.s3cam). quirc is CPU-bound, so the Scan screen is the
+ * one place 240 pays: up to 1.5x on identify and decode. Dynamic frequency
+ * scaling (CONFIG_PM_ENABLE, sdkconfig.s3cam) between 160 and 240 only -
+ * the floor is 160, never XTAL, and light sleep stays off, so the APB stays
+ * at 80 MHz and no peripheral sees a clock change; only the CPU divider of
+ * the 480 MHz PLL moves. The camera's XCLK comes from the fixed 160 MHz PLL
+ * tap, not the CPU clock. A CPU_FREQ_MAX lock is held from camera_start()
+ * to camera_stop(), so the heat is only while scanning.
+ *
+ * Measure: the scan log's "cpu 240" field, and `ident` falling to about
+ * two-thirds of its 160 MHz value. Heat: touch the module after five
+ * minutes on Scan. -DCAMERA_SCAN_CPU_MHZ=0 keeps 160 for an A/B.
+ * A build whose generated sdkconfig.<env> predates this (PlatformIO does not
+ * regenerate it) has no PM and logs that it stays at 160:
+ * rm firmware/sdkconfig.esp32s3cam* and rebuild.
+ */
+#ifndef CAMERA_SCAN_CPU_MHZ
+#  define CAMERA_SCAN_CPU_MHZ  240
+#endif
+#if CONFIG_PM_ENABLE && CAMERA_SCAN_CPU_MHZ > 0
+#include "esp_pm.h"
+static esp_pm_lock_handle_t cpu_lock;
+
+static void scan_cpu_boost(bool on)
+{
+    static bool configured;
+    if (!configured) {
+        configured = true;
+        const esp_pm_config_t pm = {
+            .max_freq_mhz = CAMERA_SCAN_CPU_MHZ,
+            .min_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+            .light_sleep_enable = false,
+        };
+        esp_err_t err = esp_pm_configure(&pm);
+        if (err == ESP_OK) {
+            err = esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "scan", &cpu_lock);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "no scan-time CPU boost: %s", esp_err_to_name(err));
+            cpu_lock = NULL;
+        }
+    }
+    if (cpu_lock == NULL) {
+        return;
+    }
+    if (on) {
+        esp_pm_lock_acquire(cpu_lock);
+    } else {
+        esp_pm_lock_release(cpu_lock);
+    }
+}
+#else
+static void scan_cpu_boost(bool on)
+{
+    static bool said;
+    if (on && !said && CAMERA_SCAN_CPU_MHZ > 0) {
+        said = true;
+        ESP_LOGW(TAG, "CONFIG_PM_ENABLE is off in this sdkconfig: the CPU stays at "
+                      "%d MHz while scanning (rm sdkconfig.<env> and rebuild)",
+                 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
+    }
+}
+#endif
+
 static struct quirc *quirc_ctx;
 static bool running;
 
@@ -381,12 +449,13 @@ static void timing_log_maybe(void)
                                         10000000u / (uint64_t)dt);
     unsigned lines = 0, gain_x10 = 0;
     sensor_exposure(&lines, &gain_x10);
-    ESP_LOGI(TAG, "scan %s %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux",
+    ESP_LOGI(TAG, "scan %s %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux | cpu %u",
              FRAME_W == 320 ? camera_tune_zoom(zoom_level)->label
                             : (FRAME_W == 640 ? "VGA" : "SVGA"),
              (unsigned)(fps_x10 / 10), (unsigned)(fps_x10 % 10), stages,
              (unsigned)stat_located, (unsigned)stat_decodes,
-             lines, gain_x10 / 10, gain_x10 % 10);
+             lines, gain_x10 / 10, gain_x10 % 10,
+             (unsigned)esp_rom_get_cpu_ticks_per_us());
     timing_window_us = now_us;
     timing_window_frames = stat_frames;
 }
@@ -615,6 +684,7 @@ bool camera_start(void)
     stat_located = 0;
     scan_timing_reset(&timing);
     timing_window_us = 0;
+    scan_cpu_boost(true);
     running = true;
     ESP_LOGI(TAG, "camera up: %dx%d grayscale", FRAME_W, FRAME_H);
     return true;
@@ -636,6 +706,7 @@ void camera_stop(void)
     esp_camera_deinit();
     quirc_destroy(quirc_ctx);
     quirc_ctx = NULL;
+    scan_cpu_boost(false);
     preview_fresh = false;
 #if BOARD_HAS_SPI_PANEL
     gray_stats.primed = false;
