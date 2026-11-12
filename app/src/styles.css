@@ -704,7 +704,7 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
 .swap__id code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); overflow-wrap: anywhere; min-width: 0; flex: 1; }
 .swap__id button { flex: none; }
 
-/* Sign with QR (experimental, src/qr-sign.ts): the code as large as the
+/* Sign with QR (src/qr-sign.ts): the code as large as the
  * screen allows, black on white whatever the theme, never smoothed. */
 .qrsign__show { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
 .qrsign__code { image-rendering: pixelated; background: #fff; max-width: 100%; }
@@ -723,4 +723,3 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
 .qrfull__btn { margin-top: var(--space-2); min-height: 40px; padding: 0 var(--space-3); background: #222; color: #ddd; border: 1px solid #555; border-radius: 6px; cursor: pointer; }
 .qrfull__btn[hidden] { display: none; }
 .qrfull__cap { margin: 0; font-size: 11px; line-height: 1.3; font-variant-numeric: tabular-nums; text-align: center; color: #aaa; }
-.qrsign .badge { font-size: 0.75em; padding: 0 0.4em; border: 1px solid currentColor; border-radius: 4px; vertical-align: middle; }

@@ -1,4 +1,4 @@
-//! BC-UR for the LeekWallet QR air gap (experimental).
+//! BC-UR for the LeekWallet QR air gap.
 //!
 //! The companion shows the board's signer view as an animated
 //! `ur:leek-pczt`, and reads the board's signatures back as `ur:leek-zsig`.

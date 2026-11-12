@@ -190,10 +190,10 @@ $T send --to <address> --amount 0.005 --zec --compact --out /media/$USER/SD/LEEK
 $T finish --pczt /media/$USER/SD/LEEKZ/unsigned.pczt --sigs /media/$USER/SD/LEEKZ/signed.zsig
 ```
 
-### QR instead of a cable (experimental)
+### QR instead of a cable
 
-EXPERIMENTAL, and opt-in: for a board kept off USB and Bluetooth. It is
-slow (a 1.4 KB compact view is 28 frames at the default 50-byte fragments
+Opt-in, for a board kept off USB and Bluetooth. It is
+slower than a cable (a 1.4 KB compact view is 28 frames at the default 50-byte fragments
 and 500 ms a frame; the colour kit read it in about 70 s at 2x zoom); USB and Bluetooth stay the everyday
 links. Never for pairing. The UR (`ur:leek-pczt` out, `ur:leek-zsig` back)
 is [`leek-ur`](../leek-ur), the one the Zcash LeekWallet app uses.

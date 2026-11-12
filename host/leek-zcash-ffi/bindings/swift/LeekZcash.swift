@@ -3591,8 +3591,8 @@ public func FfiConverterTypeQrDefaults_lower(_ value: QrDefaults) -> RustBuffer 
 
 
 /**
- * How to show the animated `ur:leek-pczt` so the board's camera reads it
- * (experimental). Brightness is the user's (system by default, adjustable
+ * How to show the animated `ur:leek-pczt` so the board's camera reads it.
+ * Brightness is the user's (system by default, adjustable
  * on the QR page); the screen is kept on. From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
  * "Signing with a phone"), with the board firmware of that day; older
  * firmware reads [`qr_defaults`] better. The same values and words as the
@@ -5877,8 +5877,8 @@ public func accountRecordType() -> String  {
 })
 }
 /**
- * **Experimental.** The line to show by that QR: "On the board: Main menu →
- * Check address (experimental), then scan this code."
+ * The line to show by that QR: "On the board: Main menu → Check address,
+ * then scan this code."
  */
 public func addressCheckHint() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
@@ -5887,7 +5887,7 @@ public func addressCheckHint() -> String  {
 })
 }
 /**
- * **Experimental.** The text of the QR to show for the board's Check
+ * The text of the QR to show for the board's Check
  * address (Main menu → Check address): the board scans it and says whether
  * the address is its own, with the account and diversifier index. `address`
  * is a unified, Sapling or transparent address or a `zcash:` URI with one
@@ -6150,10 +6150,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_leek_zcash_ffi_checksum_func_account_record_type() != 975) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_leek_zcash_ffi_checksum_func_address_check_hint() != 13970) {
+    if (uniffi_leek_zcash_ffi_checksum_func_address_check_hint() != 19475) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_leek_zcash_ffi_checksum_func_address_check_qr() != 21180) {
+    if (uniffi_leek_zcash_ffi_checksum_func_address_check_qr() != 56397) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337) {

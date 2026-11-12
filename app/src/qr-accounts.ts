@@ -1,5 +1,5 @@
 /**
- * Import from the board's QR (EXPERIMENTAL): a wallet set up on a companion
+ * Import from the board's QR: a wallet set up on a companion
  * that has never reached the board over USB or Bluetooth.
  *
  *   1. On the board: Main menu → View key, confirmed there. It shows its

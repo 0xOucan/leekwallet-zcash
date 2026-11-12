@@ -203,6 +203,37 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 
 ---
 
+## Where things stand (2026-11-12)
+
+**The QR air gap is done and no longer experimental.** Testnet sends were
+signed by QR in both directions from `zecz` (first:
+`8f3b9264fddce48f6989396336741512e3fdafe66870826c0ceeb63725e73c7d`), the
+desktop app, the app on an Android phone (first from a phone:
+`cf3632647a8bb78a00e28150e2f49c7e69ac4b5cea1ea1f02f6790bba428ce21`), our Zodl
+fork and our Zingo fork. The board's View key QR sets up a wallet without
+connecting the board. QR is never used for pairing.
+
+**Wallets and links:**
+
+| Wallet | USB | Bluetooth | QR |
+|---|---|---|---|
+| Zcash LeekWallet, desktop and Android (`app/`) | done | done | done |
+| Chrome extension (`chrome/`) | done | done | not planned |
+| Zodl fork ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`): on the LeekWallet SDK, View key import over QR, voting refused for LeekWallet accounts | done | done | done |
+| Zingo fork ([zingo-mobile](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr), [zingolib](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)), on Zingo Labs' PCZT work ([zingolib PR #3147](https://github.com/zingolabs/zingolib/pull/3147), by Dorian) | done | built, in testing | done |
+| `zingo-cli` (same zingolib fork, `--leek-port`) | done (first: `43e42f8cc2e68f332ad36183d6c0f0b412f37b2f35bc7ff7b21a533f59cb9378`) | - | - |
+| `zecz` | done | - | done |
+
+The Zingo fork is not an official Zingo release; it is offered to the Zingo
+team.
+
+**Next:**
+1. Zingo over Bluetooth: finish the tests.
+2. The board's Check address (Main menu): new, not yet tested on the board.
+3. A first mainnet send by QR.
+4. The QR screen's filled layout on a camera, and QR on the OLED kit.
+5. Offer the hardware-signer layer upstream: Zodl (6.11) and Zingo.
+
 ## Where things stand (2026-10-16)
 
 **Done and tested on the board (S3 CAM + SH1107 + EC11 + OV5640):**
@@ -215,7 +246,7 @@ There are no dates. Each step ends in a **done when** check. We do one step, deb
 |---|---|---|---|---|
 | USB | done | done | Phase 8 | Phase 9 |
 | Bluetooth | - | done | Phase 8 | Phase 9 |
-| QR | experimental, tested on the board (8.5) | done (slow, see 7) | experimental, tested on the board (8.5) | not planned (USB and Bluetooth only) |
+| QR | done, tested on the board (8.5) | done (slow, see 7) | done, tested on the board (8.5) | not planned (USB and Bluetooth only) |
 | SD card | done | not planned (see 6.x) | Phase 8 | - |
 
 **Recommendation to users:** USB or Bluetooth for everyday signing. QR or the SD card when the device must stay off every link.
@@ -244,6 +275,7 @@ One codebase for both: our app is the Zodl fork with our branding. The hardware 
 - 6.4 A testnet send signed over USB.
 - 6.7 Bluetooth LE.
 - QR signing (`ur:leek-pczt` / `ur:leek-zsig`).
+- On the LeekWallet SDK (2026-11-12, merged in the fork's `leekwallet`): the board through `leek-zcash-ffi`, over USB, Bluetooth and QR, with the account importable from the board's View key QR. Governance voting is refused for a LeekWallet account.
 
 **6.5 Passphrase restore (S).** An optional BIP39 passphrase field on software-wallet restore (§P). Done when: the passphrase key vectors restore to the same addresses in the app.
 
@@ -373,9 +405,8 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
 
 **8.5 Air gap (M).**
 - QR both ways with the webcam: the large-QR rules from Android, plus LeekWallet's manual exposure.
-  - Done on PC (2026-11-10), EXPERIMENTAL and opt-in, the board next: "Sign
-    with QR (experimental)" under the app's Send and Shield review (desktop
-    and Android share it), and `zecz send --qr` / `--qr-html`, `zecz
+  - Done (2026-11-10), opt-in: "Sign with QR" under the app's Send and
+    Shield review (desktop and Android share it), and `zecz send --qr` / `--qr-html`, `zecz
     qr-show`, `zecz qr-scan` (webcam behind the `qr-camera` feature, or a
     parts file). One UR implementation for both, `host/leek-ur`, held to
     the firmware's bc-ur vectors; the shared fixtures in `vectors/ur/` are
@@ -389,8 +420,12 @@ Not planned: SD card in the app. Android's removable-storage rules and missing s
     `ur:leek-zcash-accounts`, label and birthday included, and the app
     imports it as a board wallet, tested with the board unplugged. The SDK's
     `QrScanner` and `QrEncoder` give other wallets the same.
-  - Left: QR from a phone (the Android app, the Zodl fork), the filled QR
-    layout on a camera, and the OLED kit.
+  - From a phone (2026-11-11): the Android app signed by QR both ways
+    (`cf363264…ce21`), after the board's decoder fixes; the Zodl and Zingo
+    forks sign by QR through the SDK. No longer experimental (2026-11-12).
+  - Check address (Main menu): the board scans a wallet's receive QR and
+    says whether the address is its own. New, not yet tested on the board.
+  - Left: the filled QR layout on a camera, and the OLED kit.
 - SD card: write `LEEKZ/unsigned.pczt`, read `LEEKZ/signed.zsig`.
 
 **8.6 NEAR Intents (M). Done (2026-10-20): the first mainnet swap, ZEC → USDC on Base, deposit signed on the board over Bluetooth, arrived.**
@@ -545,7 +580,7 @@ Not the thin forwarder planned before: its own software wallets, the board over 
 
 ## Later (after the hackathon)
 
-- QR airgap with the CAM board.
+- QR airgap with the CAM board. Done (8.5).
 - ST7735 160×80 colour LCD.
 - E-ink.
 - ATECC608B PIN gate.

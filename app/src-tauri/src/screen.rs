@@ -1,5 +1,5 @@
 //! The phone's screen while a QR code for the board is up (Sign with QR,
-//! Check address; EXPERIMENTAL): the screen kept on, and the window at the
+//! Check address): the screen kept on, and the window at the
 //! brightness the user picked on the QR page (the system's by default), both
 //! put back after. The display rules are `leek_ur::display` (the SDK's
 //! `qr_display_hints()`): forcing 100 % washed the code out for the board on

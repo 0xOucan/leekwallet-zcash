@@ -1,8 +1,9 @@
-# QR signing bench (experimental)
+# QR signing bench
 
-QR signing is experimental. USB and Bluetooth are still the everyday links.
-QR is never used for pairing: USB and Bluetooth always ask for the 6-digit
-code. This page says how fast the board reads a `ur:leek-pczt` loop and how
+QR signing works: testnet sends were signed by QR in both directions from
+`zecz`, the desktop app and the Android app on a phone, and from our Zodl
+and Zingo forks. QR is never used for pairing: USB and Bluetooth always
+ask for the 6-digit code. This page says how fast the board reads a `ur:leek-pczt` loop and how
 fast a host reads the board's reply, with the settings that worked.
 
 ## Recommended settings
@@ -167,7 +168,9 @@ imported with the board's birthday (block 4,506,700) and synced to the tip,
 with the board unplugged. The SDK's `QrScanner` does the same for other
 wallets ([leek-zcash-ffi](../../host/leek-zcash-ffi/README.md)).
 
-## Check address: is the phone's address the board's? (experimental)
+## Check address: is the phone's address the board's?
+
+New, not yet tested on the board.
 
 Over USB or Bluetooth the app asks the board to show an address
 (`zShowAddress`). With QR only, nothing asks, so the board reads the

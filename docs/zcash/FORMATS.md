@@ -161,7 +161,7 @@ flushes it and renames it, and removes a leftover temporary at the next mount.
 /LEEKZ/signed.zsig        written by the device
 ```
 
-## Animated QR (experimental)
+## Animated QR
 
 The QR air gap carries three Uniform Resources (bc-ur's multi-part
 fountain encoding, uppercase in the QR's alphanumeric mode, read in either
@@ -188,7 +188,7 @@ of one payment (`zcash:<address>?…` or `zcash:?address=…`), the forms
 `address_check_qr()` makes; numbered payments are refused. A UA's Sapling
 receiver is not checked (the board has no Sapling keys) and the screen
 says so. See
-[QR-BENCH.md](QR-BENCH.md#check-address-is-the-phones-address-the-boards-experimental).
+[QR-BENCH.md](QR-BENCH.md#check-address-is-the-phones-address-the-boards).
 
 ### Showing `ur:leek-pczt` to the board
 
@@ -217,7 +217,7 @@ the SDK's `qr_display_hints()`; measured 2026-11-11 in
 With board firmware older than 2026-11-11, `qr_defaults()` (50 B, 500 ms)
 is the safe choice.
 
-### Check address (experimental): a plain address QR
+### Check address: a plain address QR
 
 The board's Main menu → Check address scans a plain Zcash address (unified,
 Sapling or transparent) or a `zcash:` URI (ZIP 321) with one address, and

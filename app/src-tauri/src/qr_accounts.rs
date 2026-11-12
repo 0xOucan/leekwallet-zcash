@@ -1,4 +1,4 @@
-//! The board's account off its "View key" QR (EXPERIMENTAL): an air-gapped
+//! The board's account off its "View key" QR: an air-gapped
 //! wallet set-up, for a companion that has never reached the board over USB
 //! or Bluetooth.
 //!

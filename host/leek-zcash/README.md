@@ -14,6 +14,16 @@ Bluetooth, a Kotlin or JavaScript callback, the zdev simulator). The PCZT
 side is plain functions over bytes and `pczt::Pczt`, built on the same
 librustzcash releases as the rest of `host/`.
 
+Wallets on it: our Zodl fork
+([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android),
+branch `leekwallet`) and our Zingo fork through
+[`leek-zcash-ffi`](../leek-zcash-ffi/README.md), and `zingo-cli` from
+[our zingolib fork](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)
+directly (USB, `--leek-port`). The QR air gap (`QrEncoder`, `QrScanner`,
+`qr_display_hints()`) is in `leek-zcash-ffi`, over
+[`leek-ur`](../leek-ur). Which wallet uses which link:
+[Wallets and links](../../README.md#wallets-and-links).
+
 ```
 src/lib.rs        the public API (re-exports) and crate docs
 src/account.rs    seed_fingerprint, get_account, show_address, set_birthday, get_features; Network, Account, Features

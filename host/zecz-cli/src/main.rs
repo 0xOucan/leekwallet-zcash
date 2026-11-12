@@ -47,14 +47,14 @@ struct Cli {
     cmd: Cmd,
 }
 
-/// Showing the signer view as an animated ur:leek-pczt QR (EXPERIMENTAL).
+/// Showing the signer view as an animated ur:leek-pczt QR.
 #[derive(clap::Args, Clone, Debug)]
 struct QrShow {
-    /// EXPERIMENTAL: show the signer view as an animated ur:leek-pczt QR in
+    /// Show the signer view as an animated ur:leek-pczt QR in
     /// this terminal for the board's camera (implies --compact).
     #[arg(long)]
     qr: bool,
-    /// EXPERIMENTAL: write a self-contained HTML page that loops the QR in a
+    /// Write a self-contained HTML page that loops the QR in a
     /// browser, for a terminal too small for the code (implies --compact).
     #[arg(long, value_name = "FILE")]
     qr_html: Option<PathBuf>,
@@ -186,7 +186,7 @@ enum Cmd {
         #[command(flatten)]
         qr: QrShow,
     },
-    /// EXPERIMENTAL: show an unsigned PCZT (from `send --out`) as an animated
+    /// Show an unsigned PCZT (from `send --out`) as an animated
     /// ur:leek-pczt QR, in the terminal (default) or as an HTML page.
     QrShow {
         #[arg(long = "in")]
@@ -202,7 +202,7 @@ enum Cmd {
         #[arg(long, value_name = "B/MS,...", requires = "sweep")]
         presets: Option<String>,
     },
-    /// EXPERIMENTAL: read the board's animated ur:leek-zsig and write the
+    /// Read the board's animated ur:leek-zsig and write the
     /// .zsig for `finish --sigs`. From a webcam (build with --features
     /// qr-camera, Linux V4L2), or from a file of UR parts, one per line.
     QrScan {
@@ -439,7 +439,7 @@ fn cmd_shield(profile: Profile, out: &Path, compact: bool, qr: &QrShow) -> Resul
     show_qr(&p.signer_view, qr, false)
 }
 
-/// The signer view as an animated ur:leek-pczt (EXPERIMENTAL): an HTML page
+/// The signer view as an animated ur:leek-pczt: an HTML page
 /// if asked, then the terminal loop if asked (or if nothing else was, for
 /// `qr-show`).
 fn show_qr(view: &[u8], qr: &QrShow, terminal_by_default: bool) -> Result<()> {
@@ -448,7 +448,7 @@ fn show_qr(view: &[u8], qr: &QrShow, terminal_by_default: bool) -> Result<()> {
     }
     let e = leek_ur::Encoder::leek_pczt(view, qr.qr_fragment).map_err(|e| anyhow!("{e}"))?;
     println!(
-        "QR signing is EXPERIMENTAL. ur:leek-pczt: {} B in {} fragment(s) of {} B, {} ms a frame.",
+        "QR signing. ur:leek-pczt: {} B in {} fragment(s) of {} B, {} ms a frame.",
         view.len(),
         e.seq_len(),
         e.fragment_len(),
@@ -473,7 +473,7 @@ fn cmd_qr_show(input: &Path, qr: &QrShow, sweep: bool, presets: Option<&str>) ->
             Some(p) => parse_presets(p)?,
             None => qr::PRESETS.to_vec(),
         };
-        println!("QR signing is EXPERIMENTAL. Sweep of {} preset(s) over {} ({} B).", list.len(), input.display(), view.len());
+        println!("QR signing. Sweep of {} preset(s) over {} ({} B).", list.len(), input.display(), view.len());
         qr::sweep(&view, &list)?;
         return Ok(());
     }
@@ -496,7 +496,6 @@ fn parse_presets(s: &str) -> Result<Vec<(usize, u64)>> {
 }
 
 fn cmd_qr_scan(out: &Path, from_file: Option<&Path>, camera: &Path, timeout: u64, pczt: Option<&Path>) -> Result<()> {
-    println!("QR signing is EXPERIMENTAL.");
     let zsig = match from_file {
         Some(f) => qr::zsig_from_parts_file(f)?,
         None => scan_camera(camera, timeout)?,

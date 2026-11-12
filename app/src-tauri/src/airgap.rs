@@ -1,4 +1,4 @@
-//! The QR air gap (EXPERIMENTAL, opt-in): the signer view `zw_propose_*`
+//! The QR air gap (opt-in): the signer view `zw_propose_*`
 //! built goes to the board as an animated `ur:leek-pczt`, and the board's
 //! `.zsig` comes back as `ur:leek-zsig` through the webview's camera. The
 //! `.zsig` then goes to `zw_finish` exactly as one signed over USB or
@@ -92,7 +92,7 @@ pub struct DisplayHints {
     pub default_brightness: Option<f32>,
     pub phone_tips: Vec<&'static str>,
     pub large_screen_tips: Vec<&'static str>,
-    /// By the address QR for the board's Check address (experimental).
+    /// By the address QR for the board's Check address.
     pub address_check_hint: &'static str,
 }
 
