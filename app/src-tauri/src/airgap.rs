@@ -78,16 +78,22 @@ pub fn qr_pczt_frames(view: Vec<u8>, max_fragment: usize, start: u64, count: u32
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayHints {
-    /// This build runs on a phone (Android): show `phone_tips`, and the
-    /// screen is held at full brightness while the code is up (screen.rs).
+    /// This build runs on a phone (Android): show `phone_tips` and the
+    /// brightness button; the screen is kept on while the code is up
+    /// (screen.rs).
     pub phone: bool,
     pub phone_fragment_len: usize,
     pub phone_frame_ms: u32,
     pub large_screen_fragment_len: usize,
     pub large_screen_frame_ms: u32,
     pub quiet_zone_modules: u32,
+    /// The QR page's brightness steps (`None`: the system's), never forced.
+    pub brightness_levels: Vec<Option<f32>>,
+    pub default_brightness: Option<f32>,
     pub phone_tips: Vec<&'static str>,
     pub large_screen_tips: Vec<&'static str>,
+    /// By the address QR for the board's Check address (experimental).
+    pub address_check_hint: &'static str,
 }
 
 pub fn display_hints(phone: bool) -> DisplayHints {
@@ -99,8 +105,11 @@ pub fn display_hints(phone: bool) -> DisplayHints {
         large_screen_fragment_len: h.large_screen_fragment_len,
         large_screen_frame_ms: h.large_screen_frame_ms,
         quiet_zone_modules: h.quiet_zone_modules,
+        brightness_levels: h.brightness_levels.to_vec(),
+        default_brightness: h.default_brightness,
         phone_tips: h.phone_tips.to_vec(),
         large_screen_tips: h.large_screen_tips.to_vec(),
+        address_check_hint: leek_ur::display::ADDRESS_CHECK_HINT,
     }
 }
 
@@ -259,5 +268,8 @@ mod tests {
         assert!(!display_hints(false).phone);
         let j = serde_json::to_value(display_hints(false)).unwrap();
         assert!(j["phoneTips"].is_array() && j["largeScreenTips"].is_array());
+        assert_eq!(j["brightnessLevels"], serde_json::json!([null, 0.6f32, 0.8f32, 1.0]));
+        assert!(j["defaultBrightness"].is_null());
+        assert!(j["addressCheckHint"].as_str().unwrap().contains("Check address"));
     }
 }

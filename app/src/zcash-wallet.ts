@@ -47,7 +47,10 @@ import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
 import qrcodegen from "qrcode-generator";
-import { benchTable, bigQrAvail, displayTip, drawQr, frameCaption, fullQrAvail, loadDisplayHints, scanCaption, timingCaption, QR_BENCH_CONFIGS, QR_FULL_QUIET, QrSigner, ScreenBoost, type DisplayHints } from "./qr-sign.ts";
+import {
+  benchTable, bigQrAvail, brightnessLabel, displayTip, drawQr, frameCaption, fullQrAvail, loadBrightness, loadDisplayHints, nextBrightness, saveBrightness,
+  scanCaption, timingCaption, ADDRESS_CHECK_HINT, BRIGHTNESS_LEVELS, QR_BENCH_CONFIGS, QR_FULL_QUIET, QrSigner, ScreenBoost, type DisplayHints,
+} from "./qr-sign.ts";
 import { txHead } from "./tx-labels.ts";
 import { initSwapView, type Proposal } from "./swap-view.ts";
 
@@ -607,6 +610,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
      * still the one shown: a payer may be scanning it. */
     const now = qrShown?.button === "zwuaqr" ? sv.ua : qrShown?.button === "zwtqr" ? tv.address : null;
     if (!qrShown || now !== qrShown.text) closeQr();
+    if (chkText !== null && chkText !== sv.ua && chkText !== tv.address) closeCheckQr();
   }
 
   /** A fresh shielded address: each time Receive opens, and on "New address". */
@@ -635,6 +639,48 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     qrShown = { button, text };
     $(button).setAttribute("aria-expanded", "true");
     $(button).textContent = "Hide QR code";
+  }
+
+  /* Check on board (QR), EXPERIMENTAL: the plain address full screen for
+   * the board's Main menu → Check address, which says whether it is its
+   * own (account and diversifier index). The air-gapped twin of Verify on
+   * the board; the same text as a payer's QR (the SDK's address_check_qr). */
+  let chkText: string | null = null;
+
+  function drawCheckQr(): void {
+    if (chkText === null) return;
+    const fs = $("zwchkfs");
+    const reserve = ["zwchkaddr", "zwchkhint", "zwchkbright"].reduce((h, id) => h + $(id).offsetHeight, 0) + 48;
+    const avail = fullQrAvail(fs.clientWidth || window.innerWidth, fs.clientHeight || window.innerHeight, reserve);
+    drawQr($<HTMLCanvasElement>("zwchkcanvas"), qrcodegen as never, chkText, 0, avail, window.devicePixelRatio || 1, QR_FULL_QUIET, "Byte");
+  }
+
+  function openCheckQr(address: string | null | undefined): void {
+    const text = address?.trim();
+    if (!text) return;
+    chkText = text;
+    const fs = $("zwchkfs");
+    say("zwchkaddr", text);
+    say("zwchkhint", qrHints?.addressCheckHint || ADDRESS_CHECK_HINT);
+    renderBright();
+    fs.hidden = false;
+    fs.focus?.({ preventScroll: true });
+    drawCheckQr();
+    void screenBoost.set(true, brightLevel());
+    void ensureQrHints().then(() => {
+      if (chkText !== text) return;
+      say("zwchkhint", qrHints?.addressCheckHint || ADDRESS_CHECK_HINT);
+      renderBright();
+      drawCheckQr();
+      void screenBoost.set(true, brightLevel());
+    });
+  }
+
+  function closeCheckQr(): void {
+    if (chkText === null) return;
+    chkText = null;
+    $("zwchkfs").hidden = true;
+    void screenBoost.set(false);
   }
 
   /* ------------------------------------------------------------- send */
@@ -799,10 +845,49 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   let qrScan: QrScan | null = null;
   /* Ticks the stopwatch line between frames and camera reads. */
   let qrTick: ReturnType<typeof setInterval> | null = null;
-  /* While the code is up: full brightness and the screen kept on (Android,
-   * src-tauri/src/screen.rs), and the SDK's display tips under the code. */
+  /* While a code for the board is up (Sign with QR, Check address): the
+   * screen kept on at the brightness the user picked, the system's by
+   * default and never forced to 100 % (Android, src-tauri/src/screen.rs),
+   * and the SDK's display tips under the code. */
   const screenBoost = new ScreenBoost(invoke);
   let qrHints: DisplayHints | null = null;
+  /* The brightness button's step, read from storage once the SDK's steps are known. */
+  let qrLevel: number | null = null;
+  let qrLevelRead = false;
+  const BRIGHT_IDS = ["zwqrbright", "zwqrfsbright", "zwchkbright"] as const;
+
+  function brightLevels(): readonly (number | null)[] {
+    return qrHints?.brightnessLevels?.length ? qrHints.brightnessLevels : BRIGHTNESS_LEVELS;
+  }
+
+  function brightLevel(): number | null {
+    if (!qrLevelRead && qrHints) {
+      qrLevel = loadBrightness(brightLevels(), qrHints.defaultBrightness ?? null);
+      qrLevelRead = true;
+    }
+    return qrLevel;
+  }
+
+  /** The brightness button: a phone only (the desktop leaves its screen alone). */
+  function renderBright(): void {
+    const phone = !!qrHints?.phone;
+    for (const id of BRIGHT_IDS) {
+      $(id).hidden = !phone;
+      say(id, brightnessLabel(brightLevel()));
+    }
+  }
+
+  function cycleBright(e: Event): void {
+    e.stopPropagation();
+    qrLevel = nextBrightness(brightLevels(), brightLevel());
+    saveBrightness(qrLevel);
+    renderBright();
+    if (screenBoost.on) void screenBoost.set(true, qrLevel);
+  }
+
+  async function ensureQrHints(): Promise<void> {
+    if (!qrHints) qrHints = await loadDisplayHints(invoke);
+  }
 
   /** The SDK's tip (leek-ur display rules) under the code and in full screen. */
   function sayQrTip(): void {
@@ -810,6 +895,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     say("zwqrtip", tip);
     $("zwqrtip").hidden = !tip;
     if (tip) say("zwqrfstip", `${tip} Tilt the screen a little if the board's lights reflect in it.`);
+    renderBright();
   }
 
   function stopQrCamera(): void {
@@ -869,7 +955,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const q = qrSign;
     if (!q) return;
     const showing = q.phase === "showing";
-    void screenBoost.set(showing);
+    void screenBoost.set(showing, brightLevel());
     $("zwqrshow").hidden = !showing;
     for (const [id, ok] of [["zwqrbigger", q.canBigger()], ["zwqrdenser", q.canDenser()], ["zwqrslower", q.canSlower()], ["zwqrfaster", q.canFaster()]] as const) {
       $<HTMLButtonElement>(id).disabled = !ok;
@@ -945,7 +1031,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     say("zwqrstatus", "");
     say("zwsendstatus", "Signing with QR (experimental)…");
     sayQrTip();
-    if (!qrHints) void loadDisplayHints(invoke).then((h) => { qrHints = h; if (qrSign === q) sayQrTip(); });
+    if (!qrHints) void ensureQrHints().then(() => { if (qrSign === q) { sayQrTip(); renderQrSign(); } });
     $("zwqrsign").scrollIntoView?.({ block: "nearest" });
     await q.show(prop.view);
   }
@@ -1294,6 +1380,10 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   });
   $("zwuaqr").addEventListener("click", () => toggleQr("zwuaqr", recv.shielded().ua));
   $("zwtqr").addEventListener("click", () => toggleQr("zwtqr", recv.transparent().address));
+  $("zwuachk").addEventListener("click", () => openCheckQr(recv.shielded().ua));
+  $("zwtchk").addEventListener("click", () => openCheckQr(recv.transparent().address));
+  $("zwchkfs").addEventListener("click", () => closeCheckQr());
+  for (const id of BRIGHT_IDS) $(id).addEventListener("click", cycleBright);
   $("zwuacopy").addEventListener("click", () => void deps.copy(recv.shielded().ua ?? "").then(() => say("zwrecvstatus", "Copied the shielded address.")));
   $("zwtcopy").addEventListener("click", () => void deps.copy(recv.transparent().address ?? "").then(() => say("zwrecvstatus", "Copied the transparent address.")));
 
@@ -1370,6 +1460,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   });
   document.addEventListener("keydown", (e) => {
     if (qrFull && e.key === "Escape") { e.preventDefault(); exitQrFull(); }
+    if (chkText !== null && e.key === "Escape") { e.preventDefault(); closeCheckQr(); }
   });
   /* Manual mode: Space steps the parts while the code is up, unless typing. */
   document.addEventListener("keydown", (e) => {
@@ -1386,7 +1477,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   $("zwqrscan").addEventListener("click", () => void scanQrReply());
   $("zwqragain").addEventListener("click", () => { stopQrCamera(); void qrSign?.showAgain(); });
   $("zwqrcancel").addEventListener("click", () => { stopQrSign(); say("zwsendstatus", "QR signing cancelled. The review is still there: sign it another way, or Cancel."); });
-  window.addEventListener("resize", () => { if (qrSign?.phase === "showing") renderQrSign(); });
+  window.addEventListener("resize", () => { if (qrSign?.phase === "showing") renderQrSign(); drawCheckQr(); });
 
   $("zwhistrefresh").addEventListener("click", () => void loadHistory("zwhist").catch((e) => say("zwstatus", zErrorText(e))));
   $("ztab-activity").addEventListener("click", () => void loadHistory("zwhist").catch(() => undefined));
@@ -1462,6 +1553,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     scheduler.stop();
     cancelProposal();
     stopScan();
+    closeCheckQr();
     recv.reset();
     rotateAfterSync = false;
     autoFailed = null;
