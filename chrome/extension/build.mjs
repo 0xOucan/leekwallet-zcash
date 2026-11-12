@@ -4,9 +4,11 @@
 // workers import their own module by relative URL.
 //
 //   node build.mjs            needs ../engine/pkg (../engine/build.sh)
+//                             and ../ur/pkg (../ur/build.sh)
 //
 // dist/ mirrors this directory, plus:
 //   engine/      ../engine/pkg (the WASM engine and its JS glue)
+//   ur/          ../ur/pkg (host/leek-ur for the pages: Sign with QR)
 //   tokens.css   app/src/tokens.css (LeekWallet's design tokens)
 //   icons/       icons/ (LeekWallet's icons)
 //   src/vendor/  @noble/ciphers from node_modules (vendor.mjs)
@@ -19,6 +21,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..', '..');
 const dist = join(here, 'dist');
 const pkg = process.env.ENGINE_PKG ?? join(here, '..', 'engine', 'pkg');
+const urPkg = process.env.UR_PKG ?? join(here, '..', 'ur', 'pkg');
 
 const exists = (p) => stat(p).then(() => true, () => false);
 
@@ -27,7 +30,12 @@ if (!(await exists(join(pkg, 'leek_chrome_engine_bg.wasm')))) {
   process.exit(1);
 }
 
-// @noble/ciphers (ChaCha20-Poly1305 for the board's session) into src/vendor/.
+if (!(await exists(join(urPkg, 'leek_chrome_ur_bg.wasm')))) {
+  console.error(`no UR module in ${urPkg}: run chrome/ur/build.sh first`);
+  process.exit(1);
+}
+
+// @noble/ciphers, qrcode-generator and zxing-wasm into src/vendor/.
 await vendor();
 
 await rm(dist, { recursive: true, force: true });
@@ -41,6 +49,7 @@ await cp(pkg, join(dist, 'engine'), {
   // wasm-bindgen's package.json and .d.ts files are not needed at runtime.
   filter: (p) => !/\.d\.ts$|package\.json$|\.gitignore$/.test(p),
 });
+await cp(urPkg, join(dist, 'ur'), { recursive: true, filter: (p) => !/\.d\.ts$|package\.json$|\.gitignore$/.test(p) });
 await cp(join(repo, 'app/src/tokens.css'), join(dist, 'tokens.css'));
 await cp(join(here, 'icons'), join(dist, 'icons'), { recursive: true });
 
@@ -55,6 +64,12 @@ const required = [
   'src/engine-worker.js',
   'src/board/host.js',
   'src/vendor/noble-ciphers/chacha.js',
+  'src/vendor/qrcode-generator/qrcode.mjs',
+  'src/vendor/zxing-wasm/es/reader/index.js',
+  'src/vendor/zxing-wasm/reader/zxing_reader.wasm',
+  'src/qr/view.js',
+  'ur/leek_chrome_ur.js',
+  'ur/leek_chrome_ur_bg.wasm',
   'engine/leek_chrome_engine.js',
   'engine/leek_chrome_engine_bg.wasm',
   ...Object.values(manifest.icons),
@@ -68,6 +83,15 @@ if (missing.length) {
 if (manifest.cross_origin_embedder_policy?.value !== 'require-corp' || manifest.cross_origin_opener_policy?.value !== 'same-origin') {
   console.error('the manifest lost COOP/COEP: without cross-origin isolation the engine has no threads and cannot sync');
   process.exit(1);
+}
+// Nothing is fetched from a CDN at runtime (zxing-wasm's default is one).
+const { readdir } = await import('node:fs/promises');
+for (const f of await readdir(join(dist, 'src'), { recursive: true })) {
+  if (!/\.m?js$/.test(f)) continue;
+  if (/jsdelivr|unpkg\.com|cdnjs/.test(await readFile(join(dist, 'src', f), 'utf8'))) {
+    console.error(`${f} names a CDN: the extension must load only its own files`);
+    process.exit(1);
+  }
 }
 const wasm = await stat(join(dist, 'engine/leek_chrome_engine_bg.wasm'));
 console.log(`LeekWallet Zcash ${manifest.version} in ${dist} (engine ${(wasm.size / 1e6).toFixed(1)} MB). Load it unpacked from chrome://extensions.`);
