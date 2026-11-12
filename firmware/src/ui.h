@@ -102,6 +102,9 @@ typedef enum {
      * UFVK, index) as an animated ur:leek-zcash-accounts, for a companion
      * that never connects by USB or Bluetooth (one-way: no pairing). */
     SCREEN_VIEW_KEY,
+    /* Main menu -> Check address, after Scan read a receive QR: is it this
+     * device's, which account and index (zcash-addrcheck.h). */
+    SCREEN_CHECK_ADDRESS,
     SCREEN_COUNT
 } screen_id_t;
 

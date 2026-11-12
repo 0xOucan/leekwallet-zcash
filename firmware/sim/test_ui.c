@@ -71,6 +71,7 @@ void        ui__service_qr_out_for_test(void);
 void        ui__scan_feed_for_test(const char *ur);
 const char *ui__scan_status_for_test(void);
 void        ui__service_scan_for_test(void);
+void        ui__service_check_address_for_test(void);
 const char *ui__master_xfp_for_test(void);
 const char *ui__master_zfp_for_test(void);
 int ui__receive_page_for_test(void);
@@ -4016,10 +4017,142 @@ static void test_scan_follows_a_sender_that_switched(void)
     press(BUTTON_CANCEL);
 }
 
+
+/* ============================================================================
+ * Main menu > Check address: Scan reads a receive QR, the board answers from
+ * its own accounts (zcash-addrcheck.h; the real checks against real keys are
+ * test_zcash_addrcheck's, fake_zcash.c answers here).
+ * ============================================================================ */
+
+static void check_address_run(void)
+{
+    for (int i = 0; i < 40 && fake_oled_contains("Checking..."); i++) {
+        ui__service_check_address_for_test();
+        ui_render();
+    }
+}
+
+static void test_check_address_by_qr(void)
+{
+    printf("== Check address: a scanned receive address, this wallet's or not\n");
+    boot_unlocked_with_seed();
+    go(SCREEN_SETTINGS);
+    CHECK(select_menu_item("Net Mainnet"), "Network is not in Settings");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_zcash_network() == 1, "not on testnet");
+    const zv_key_vector *v = NULL, *v1 = NULL, *pp1 = NULL, *main0 = NULL;
+    for (size_t i = 0; i < ZV_KEYS_COUNT; i++) {
+        const char *n = ZV_KEYS[i].name;
+        if (!strcmp(n, "test/abandon-art/pp0/acct0")) v = &ZV_KEYS[i];
+        if (!strcmp(n, "test/abandon-art/pp0/acct1")) v1 = &ZV_KEYS[i];
+        if (!strcmp(n, "test/abandon-art/pp1/acct0")) pp1 = &ZV_KEYS[i];
+        if (!strcmp(n, "main/abandon-art/pp0/acct0")) main0 = &ZV_KEYS[i];
+    }
+    CHECK(v && v1 && pp1 && main0, "vectors missing");
+    if (!v || !v1 || !pp1 || !main0) return;
+
+    go(SCREEN_MAIN_MENU);
+    CHECK(select_menu_item("Check address"), "Check address is not on the main menu");
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SCAN && fake_oled_contains("Check address"),
+          "the menu did not open Scan for an address");
+
+    /* Anything else stays on Scan, with a fixed word. */
+    ui__scan_feed_for_test("WIFI:S:home;T:WPA;P:secret;;");
+    CHECK(ui_get_screen() == SCREEN_SCAN &&
+          strcmp(ui__scan_status_for_test(), "Not a Zcash address") == 0,
+          "a Wi-Fi code read as \"%s\"", ui__scan_status_for_test());
+    CHECK(!fake_oled_contains("secret"), "a scanned payload reached the panel");
+
+    /* The device's own default address. */
+    ui__scan_feed_for_test(v->ua);
+    CHECK(ui_get_screen() == SCREEN_CHECK_ADDRESS, "a UA did not open the result");
+    ui_render();
+    CHECK(fake_oled_contains("Checking..."), "no progress while checking");
+    check_address_run();
+    CHECK(fake_oled_contains("YOURS") && fake_oled_contains("Account 0") &&
+          fake_oled_contains("Address #0"), "the device's own UA was not called its own");
+    press(BUTTON_DOWN);
+    char group[8];
+    snprintf(group, sizeof group, "%.4s %.2s", v->ua, v->ua + 4);
+    CHECK(fake_oled_contains("Address 1/") && fake_oled_contains(group),
+          "the address is not shown in groups (\"%s\")", group);
+    press(BUTTON_UP);
+    CHECK(fake_oled_contains("YOURS"), "UP did not go back to the verdict");
+
+    /* OK: scan another. Account 1's, found by trying the others. */
+    press(BUTTON_ACCEPT);
+    CHECK(ui_get_screen() == SCREEN_SCAN && fake_oled_contains("Check address"), "OK did not rescan");
+    ui__scan_feed_for_test(v1->ua);
+    ui_render();
+    check_address_run();
+    CHECK(fake_oled_contains("YOURS") && fake_oled_contains("Account 1"), "account 1's UA");
+
+    /* A wallet's full receive UA, Orchard + Sapling (librustzcash's for
+     * account 0), upper case as an alphanumeric QR carries it: the Orchard
+     * half is checked, and the screen says the Sapling half was not. */
+    press(BUTTON_ACCEPT);
+    char up[300];
+    snprintf(up, sizeof up, "%s",
+             "utest1dumh7z6x5xf4ay3wnkvc60uru4hu54y55u0t3xm78v2cqs5nk0zhsqspa4dqcpcj82hmtt049f30kx5z58yzxg3d7y3lpy69pg9vsdy7hdh2qfw8jj2u6vd46ztw7tzf88lydf8p3w7nre6zenfqeayq4e4njagajwvrmelywq76akhk");
+    for (char *q = up; *q; q++) if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 32);
+    ui__scan_feed_for_test(up);
+    ui_render();
+    check_address_run();
+    CHECK(fake_oled_contains("YOURS") && fake_oled_contains("Sapling NOT checked") &&
+          fake_oled_contains("Checked: Orchard"), "Orchard + Sapling UA");
+
+    /* Wrong network, from a zcash: URI. */
+    press(BUTTON_ACCEPT);
+    char uri[400];
+    snprintf(uri, sizeof uri, "zcash:%s?amount=1", main0->ua);
+    ui__scan_feed_for_test(uri);
+    ui_render();
+    CHECK(fake_oled_contains("Wrong network") && fake_oled_contains("board is on testnet"),
+          "a mainnet address on a testnet board");
+
+    /* Another wallet's (the passphrase wallet's) UA: every account is tried;
+     * here the fake has no account 2, and a failed derivation is said as
+     * such, never taken for "not yours". */
+    press(BUTTON_ACCEPT);
+    ui__scan_feed_for_test(pp1->ua);
+    ui_render();
+    check_address_run();
+    CHECK(fake_oled_contains("Could not derive") && !fake_oled_contains("YOURS"),
+          "a derivation failure was not reported");
+
+    /* The transparent address, index 0. */
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not leave");
+    select_menu_item("Check address");
+    press(BUTTON_ACCEPT);
+    ui__scan_feed_for_test(v->transparent_address);
+    ui_render();
+    check_address_run();
+    CHECK(fake_oled_contains("YOURS") && fake_oled_contains("Checked: transparent"), "the t-address");
+
+    /* Cancel mid-search leaves at once. */
+    press(BUTTON_ACCEPT);
+    ui__scan_feed_for_test(v1->ua);
+    ui_render();
+    CHECK(fake_oled_contains("Checking..."), "not searching");
+    press(BUTTON_CANCEL);
+    CHECK(ui_get_screen() == SCREEN_MAIN_MENU, "Cancel did not stop the search");
+
+    /* And Scan itself is back to URs. */
+    go(SCREEN_SCAN);
+    CHECK(fake_oled_contains("Scan request"), "Scan kept the address mode");
+    ui__scan_feed_for_test("HELLO");
+    CHECK(strcmp(ui__scan_status_for_test(), "Not a UR part") == 0, "\"%s\"",
+          ui__scan_status_for_test());
+    press(BUTTON_CANCEL);
+}
+
 int main(void)
 {
     test_the_seed_fingerprint_is_shown();
     test_receive_shows_the_whole_address();
+    test_check_address_by_qr();
     test_sd_card_save_and_load();
     test_address_check();
     test_share_view_key();

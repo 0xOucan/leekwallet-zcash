@@ -144,6 +144,58 @@ imported with the board's birthday (block 4,506,700) and synced to the tip,
 with the board unplugged. The SDK's `QrScanner` does the same for other
 wallets ([leek-zcash-ffi](../../host/leek-zcash-ffi/README.md)).
 
+## Check address: is the phone's address the board's? (experimental)
+
+Over USB or Bluetooth the app asks the board to show an address
+(`zShowAddress`). With QR only, nothing asks, so the board reads the
+address itself. On the board: Main menu → Check address. The Scan screen
+opens as for a request (same zoom push and exposure knob), titled *Check
+address*. Point it at the phone's Receive QR.
+
+It reads what wallets' Receive screens show: a unified address (`u1…`,
+`utest1…`), a Sapling address (`zs1…`, `ztestsapling1…`), a transparent
+one (`t1`, `t3`, `tm`, `t2`), a TEX address (`tex1…`, `textest1…`), or a
+`zcash:` URI (ZIP 321) with one payment: `zcash:<address>?…` or
+`zcash:?address=<address>&…`. A URI with numbered payments (`address.1`) is
+refused, as the SDK's `address_check_qr()` refuses it. Bech32 is read in
+upper or lower case. Anything else stays on Scan with *Not a Zcash
+address*.
+
+The answer comes from the board's own keys, never from the phone:
+
+- **Unified address.** The board decrypts the Orchard receiver's
+  diversifier with the account's key to get its index, then derives the
+  receiver at that index and compares. A transparent receiver in the same
+  address has to be the account's key at the same index. It tries every
+  account the board can select (0–9), the selected one first, about 0.75 s
+  each.
+- **The Sapling receiver is not checked.** A wallet's Receive address
+  usually carries one next to Orchard. The board has no Sapling keys (its
+  signers have no Jubjub or Sapling key derivation), so it checks every
+  other receiver and the result says **Sapling NOT checked** on its own
+  line. A wallet that pays this address over Sapling pays a receiver the
+  board did not verify.
+- **Transparent or TEX address.** The board searches the selected account's
+  receive keys #0–199, from its public key. The host suite does 200 in
+  0.14 s; on the board we estimate 4–8 s when the address is not there
+  (the serial log says how long it took). Cancel stops the search.
+- **A Sapling address, or a unified address with no Orchard receiver:**
+  *Cannot check*. **P2SH, or a unified address with a P2SH or unknown
+  receiver:** *NOT from this wallet* (the board makes none).
+
+The result screen says **YOURS**, *Account N*, *Address #index* and which
+receivers were checked (*Checked: Orchard*, *Checked: transparent*), or
+**NOT from this wallet**, *Cannot check*, or *Wrong network* (the
+address's own network against Settings > Network). Turn the knob to see
+the address in groups of four, to compare with the phone. OK scans another,
+Cancel goes back to the menu.
+
+Serial log (115200 baud): `check address: unified test address, 106 chars:
+checking`, then `check address: OURS, account 0, 1 accounts in 780 ms` or
+`check address: NOT OURS, account 0, 200 transparent indices in N ms`; a
+UA with Sapling adds `, Sapling receiver NOT checked`. The
+log never contains the scanned text, only its length.
+
 ## How to measure
 
 1. Build a testnet send: the app's review, or `zecz send ... --out tx.pczt`.

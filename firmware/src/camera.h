@@ -95,6 +95,13 @@ uint16_t camera_frame_width(void);
 bool camera_next_qr(char *out, size_t out_size, size_t *out_len);
 
 /**
+ * Check address: hand up every decoded QR, not only "ur:" ones (the default,
+ * so a wallet pointed at the world does not complain about Wi-Fi codes).
+ * The Scan screen sets it for address mode and clears it on the way out.
+ */
+void camera_set_accept_any(bool on);
+
+/**
  * The newest viewfinder bitmap, if one has been rendered since the last call.
  *
  * VIEWFINDER_BYTES of SSD1306 page layout, ready to blit; NULL when nothing is

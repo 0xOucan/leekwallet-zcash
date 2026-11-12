@@ -29,6 +29,15 @@
    auto-levelled view. Not secret, kept by ui.c in NVS. */
 static bool preview_true;
 
+/* Check address (ui.c): any decoded QR goes up, not only ur: ones. Set by
+   the UI task, read by the decode task; one byte. */
+static volatile bool accept_any;
+
+void camera_set_accept_any(bool on)
+{
+    accept_any = on;
+}
+
 void camera_set_preview_true_exposure(bool on) { preview_true = on; }
 bool camera_preview_true_exposure(void) { return preview_true; }
 
@@ -1165,11 +1174,17 @@ static bool process_frame(char *out, size_t out_size, size_t *out_len)
              * them upward would fill the status line with complaints about
              * whatever happened to be in frame. The decoder above is
              * case-insensitive about the scheme, so both spellings pass.
+             * Check address asks for everything (camera_set_accept_any):
+             * a receive QR is a bare address or a zcash: URI.
              */
-            if (len < 3 || len + 1 > out_size ||
-                (scan_data.payload[0] != 'u' && scan_data.payload[0] != 'U') ||
-                (scan_data.payload[1] != 'r' && scan_data.payload[1] != 'R') ||
-                scan_data.payload[2] != ':') {
+            if (len + 1 > out_size) {
+                continue;
+            }
+            if (!accept_any &&
+                (len < 3 ||
+                 (scan_data.payload[0] != 'u' && scan_data.payload[0] != 'U') ||
+                 (scan_data.payload[1] != 'r' && scan_data.payload[1] != 'R') ||
+                 scan_data.payload[2] != ':')) {
                 continue;
             }
 

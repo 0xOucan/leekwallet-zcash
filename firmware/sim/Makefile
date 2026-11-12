@@ -167,6 +167,20 @@ $(BUILD)/test_zcash_account: test_zcash_account.c ../src/zcash-account.c ../src/
 	    -DLEEK_HOST_TEST -o $@ \
 	    $(filter %.c,$^) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
 
+# Check address (zcash-addrcheck.h): scanned addresses against the real
+# derivation through the real vault, librustzcash's diversified addresses.
+TESTS += test_zcash_addrcheck
+all: $(BUILD)/test_zcash_addrcheck
+$(BUILD)/test_zcash_addrcheck: CFLAGS += -DAES_VAR
+$(BUILD)/test_zcash_addrcheck: test_zcash_addrcheck.c ../src/zcash-addrcheck.c ../src/zcash-addrcheck.h \
+                               ../src/zcash-account.c ../src/zcash-worker.c ../../vectors/keys_vectors.h \
+                               esp_stubs.c host_stubs.c $(ZSIGN)/platform/zsign_platform_host.c \
+                               $(ZSIGN)/target/release/libzsign_rust.a $(BUILD)/libzsign_c.a \
+                               $(VAULT_SRC) $(VAULT_CRYPTO) | $(BUILD)
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGN)/include -I$(ZSIGNC)/include -I$(ZSIGNC) \
+	    -DLEEK_HOST_TEST -o $@ \
+	    $(filter %.c,$^) $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a -lpthread -ldl -lm
+
 # SD card storage mode (roadmap 1.4): the three storage modes agree, through
 # the real vault and the real derivation, with a directory as the card.
 $(BUILD)/test_sd_seed: CFLAGS += -DAES_VAR
@@ -498,12 +512,15 @@ $(BUILD)/test_ui: CFLAGS += -DAES_VAR
 $(BUILD)/test_ui: CFLAGS += -DUI_HAS_KNOB_SETTING=1
 # Likewise Settings > Preview, which only the colour kit has.
 $(BUILD)/test_ui: CFLAGS += -DUI_HAS_PREVIEW_SETTING=1
+# And Main menu > Check address, which needs a camera the host board lacks.
+$(BUILD)/test_ui: CFLAGS += -DUI_HAS_ADDR_CHECK=1
 # Everything the UI links against except the panel, shared by test_ui (the
 # text-grid fake panel) and render_screens (the real core and colour panel).
 UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
                   fake_input.c fake_protocol.c ../src/transport.c ../src/ble.c \
                   ../src/ble-name.c ../src/ble-chunk.c \
                   ../src/ui.c ../src/splash.c ../src/font5x7.c ../src/zcash-review.c ../src/zcash-receive.c ../src/zcash-fp.c \
+                  ../src/zcash-addrcheck.c \
                   ../src/zcash-meta.c fake_zcash.c \
                   ../src/pin.c ../src/mnemonic-entry.c $(CRYPTO)/blake2b.c \
                   ../src/sd-seed.c ../src/sdcard.c ../src/zkv.c ../src/sd-sign.c \
@@ -529,7 +546,7 @@ UI_SRC := esp_stubs.c host_stubs.c fake_wallet.c \
 UI_LIBS := $(BUILD)/libzsign_c.a $(ZSIGN)/target/release/libzsign_rust.a
 
 $(BUILD)/test_ui: test_ui.c fake_oled.c $(UI_SRC) $(UI_LIBS) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -DLEEK_HOST_TEST -o $@ \
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -I$(ZSIGNC) -DLEEK_HOST_TEST -o $@ \
 	    $(filter %.c,$^) $(UI_LIBS) -lpthread -ldl -lm
 
 # Screens of the real ui.c on the S3 CAM colour kit, through the real oled-core
@@ -542,7 +559,7 @@ $(BUILD)/test_ui: test_ui.c fake_oled.c $(UI_SRC) $(UI_LIBS) | $(BUILD)
 $(BUILD)/render_screens: CFLAGS += -DAES_VAR -DLEEK_BOARD_S3CAM -DLEEK_DISPLAY=LEEK_DISPLAY_ST7789
 $(BUILD)/render_screens: render_screens.c ../src/oled-core.c ../src/panel-color.c ../src/panel128.c \
                          ../src/qrcode.c $(UI_SRC) $(UI_LIBS) $(HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -DLEEK_HOST_TEST -o $@ \
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -I$(ZSIGNC) -DLEEK_HOST_TEST -o $@ \
 	    $(filter %.c,$^) $(UI_LIBS) -lpthread -ldl -lm
 # The same for the development image with the OPTIGA backup screen
 # (esp32s3cam-color-se): Settings > Secure element over the fake chip.
@@ -554,7 +571,7 @@ $(BUILD)/render_screens_se: render_screens.c ../src/oled-core.c ../src/panel-col
                             $(SE_OPTIGA)/optiga-proto.c $(SE_OPTIGA)/optiga-link.c $(SE_OPTIGA)/optiga-cmd.c \
                             $(SE_OPTIGA)/optiga-container.c \
                             $(UI_SRC) $(UI_LIBS) $(HEADERS) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -I$(SE_OPTIGA)/include -DLEEK_HOST_TEST -o $@ \
+	$(CC) $(CFLAGS) -I$(CRYPTO)/ed25519-donna -I$(ZSIGNC)/include -I$(ZSIGNC) -I$(SE_OPTIGA)/include -DLEEK_HOST_TEST -o $@ \
 	    $(filter %.c,$^) $(UI_LIBS) -lpthread -ldl -lm
 screens: $(BUILD)/render_screens $(BUILD)/render_screens_se
 	mkdir -p $(BUILD)/screens && ./$(BUILD)/render_screens $(BUILD)/screens

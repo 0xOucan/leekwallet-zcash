@@ -247,6 +247,7 @@ int zc_ua_parse(const char *ua, size_t len, uint8_t net, zc_ua_items *out)
                 if (tc == 0xE1 && ln != 8) return 0;   /* expiry time */
                 if (tc > 0xE1) return 0;
                 out->other = 1;                    /* expiring: not checked here */
+                out->other_not_sapling = 1;
             }
         } else {                                   /* data item */
             if ((tc == 0 || tc == 1) && ln != 20) return 0;
@@ -263,6 +264,8 @@ int zc_ua_parse(const char *ua, size_t len, uint8_t net, zc_ua_items *out)
                 memcpy(out->p2pkh, buf + i, 20);
             } else {
                 out->other = 1;                    /* P2SH, Sapling, unknown */
+                if (tc == 2) out->has_sapling = 1;
+                else out->other_not_sapling = 1;
             }
         }
         prev = (int64_t)tc;

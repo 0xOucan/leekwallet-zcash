@@ -34,6 +34,11 @@ WalletError zcash_account_derive(uint32_t account, uint8_t network, ZcashAccount
             strcpy(out->keys.ua, v->ua);
             strcpy(out->ua_orchard, v->ua_orchard_only);
             strcpy(out->t_address, v->transparent_address);
+            /* The viewing keys too: Check address runs the real zsign-c
+             * check on them (zcash-addrcheck.c). */
+            memcpy(out->keys.orchard_fvk, v->orchard_fvk, 96);
+            memcpy(out->t_account, v->transparent_account_pubkey, 65);
+            memcpy(out->t_receiver, v->transparent_receiver, 20);
             return WALLET_OK;
         }
     }
@@ -60,4 +65,21 @@ ZcashUaCheck zcash_ua_check(const ZcashAccount *a, const char *ua, uint8_t index
         if (strcmp(ua, v->ua_orchard_only) == 0) return mine ? ZCASH_UA_OURS : ZCASH_UA_NOT_OURS;
     }
     return ZCASH_UA_MALFORMED;
+}
+
+/* The transparent search (Check address): the account's vector key hash is
+ * its index 0, and nothing else is ever found. */
+bool zcash_t_find(const ZcashAccount *a, const uint8_t hash160[20], uint32_t from,
+                  uint32_t count, uint32_t *index_out)
+{
+    if (from > 0 || count == 0) return false;
+    for (size_t i = 0; i < ZV_KEYS_COUNT; i++) {
+        const zv_key_vector *v = &ZV_KEYS[i];
+        if (v->account == a->account && v->network == a->network && !v->passphrase[0] &&
+            memcmp(v->transparent_receiver, hash160, 20) == 0) {
+            *index_out = 0;
+            return true;
+        }
+    }
+    return false;
 }

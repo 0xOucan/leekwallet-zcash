@@ -105,6 +105,8 @@
 #define HINT_REVIEW_SIGN      "X:REJECT      OK:SIGN"
 /* Receive pages (zcash-receive.c): press flips address and QR. */
 #define HINT_RECEIVE          "X:BACK   TURN   OK:QR"
+/* Check address's result: pages of the address, OK scans the next one. */
+#define HINT_CHECK_ADDR       "X:BACK  TURN  OK:SCAN"
 /* Prose rows, not footers. */
 #define HINT_PRESS_ANY        "Push the knob"
 #define HINT_KEEP_HOLDING     "Keep holding X"
@@ -159,6 +161,12 @@
 
 #endif
 
+/* Check address needs the camera, and only the knob kit has one; a build
+ * that compiles the screen anyway (the host suite) shows the plain BACK. */
+#ifndef HINT_CHECK_ADDR
+#define HINT_CHECK_ADDR       HINT_BACK
+#endif
+
 /* Show Seed, before it locks the device to re-ask the PIN: the same two
  * choices as the lock confirmation, so the same words on every board. */
 #define HINT_SHOW_SEED        HINT_LOCK_CONFIRM
@@ -175,7 +183,7 @@
     X(HINT_WIPE) X(HINT_DONE) X(HINT_SESSION) X(HINT_RETRY) X(HINT_RETRY_OK) \
     X(HINT_NO) X(HINT_NO_YES) X(HINT_ADDR_PAGE) X(HINT_ADDR_ASK) \
     X(HINT_TEMP_FIRST) X(HINT_TEMP_LAST) X(HINT_REVIEW_NEXT) X(HINT_REVIEW_SIGN) \
-    X(HINT_RECEIVE) X(HINT_PRESS_ANY) X(HINT_KEEP_HOLDING)
+    X(HINT_RECEIVE) X(HINT_CHECK_ADDR) X(HINT_PRESS_ANY) X(HINT_KEEP_HOLDING)
 
 /* 21 = OLED_CHARS_PER_LINE (128 / 6), spelled out so this header needs no
  * panel driver. The entropy item is drawn after a two-column marker. */

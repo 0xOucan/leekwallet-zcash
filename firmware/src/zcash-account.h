@@ -64,4 +64,14 @@ typedef enum {
 ZcashUaCheck zcash_ua_check(const ZcashAccount *a, const char *ua, uint8_t index_le[11],
                             char t_address_out[ZCASH_TADDR_MAX]);
 
+/**
+ * Search the account's external transparent keys m/44'/coin'/account'/0/i,
+ * i in [from, from + count) and below 2^31, for the P2PKH key hash `hash160`.
+ * Public derivation from the account key `a` holds (t_account), so no seed
+ * and no private key: on the Zcash worker for its stack. True with the index
+ * in *index_out when found. Check address (zcash-addrcheck.h) uses it.
+ */
+bool zcash_t_find(const ZcashAccount *a, const uint8_t hash160[20], uint32_t from,
+                  uint32_t count, uint32_t *index_out);
+
 #endif /* LEEK_ZCASH_ACCOUNT_H */
