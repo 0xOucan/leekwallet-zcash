@@ -79,20 +79,35 @@ It works, but the phone needs other settings than a laptop screen:
 
 **Automatic exposure** (built and host-tested, not yet tried on a board).
 When the board finds the code at least 5 times in 2 s and reads fewer than
-10 % of them, it tries five settings on top of yours, in this order: shutter
-cap ×2 (192 lines), ×2 with exposure +1, ×4 (384 lines) with +1, ×4 with +2,
-and ×4 with +1 at the other mains frequency (50 Hz). A longer shutter
-averages out more of the flashing. Each setting gets 0.7 s to settle and is
-then judged over 2 s. The board keeps the first one that reads 40 % or more,
-or else the best one, if it read at least 2 codes and beat your setting by 5
-points. If nothing beats it, the board goes back to your setting and waits
-10 s. It runs at most two searches a scan, and each search takes 14 s at
-most. Row 7 says `Auto exposure +2` while it tries and `Auto exposure +2
-kept` when it keeps one; the serial log has an `auto-exposure:` line for
-each step. Turning the knob stops the search for that scan and goes back to
-your setting. The next scan starts at your setting again. Build with
-`-DCAMERA_AUTO_EXPOSURE=0` to turn it off; it is always off in the bench
-image.
+10 % of them, it tries other settings on top of yours. Which ones depends
+on how the code looks. Each frame that finds a code, the board measures the
+code's box: its mean brightness (luma, 0–255) and the share of pixels that
+are clipped white (250 or more).
+
+- **Bright or clipped** (15 % or more of the box clipped, or a mean of 180
+  or more): a phone at full brightness, washed out. The board tries darker
+  settings: exposure −1, −2 and −3 under yours (down to −8, below the
+  knob's −5), then −2 with half the shutter cap (48 lines).
+- **Otherwise** (a dim or flickering screen): brighter settings, in this
+  order: shutter cap ×2 (192 lines), ×2 with exposure +1, ×4 (384 lines)
+  with +1, ×4 with +2, and ×4 with +1 at the other mains frequency (50 Hz).
+  A longer shutter averages out more of the flashing.
+
+Each setting gets 0.7 s to settle and is then judged over 2 s. The board
+keeps the first one that reads 40 % or more, or else the best one, if it
+read at least 2 codes and beat your setting by 5 points. If nothing beats
+it, the board goes back to your setting and waits 10 s. It runs at most two
+searches a scan; a search takes 11 s (darker) or 14 s (brighter) at most.
+Row 7 says `Auto exposure -1` or `Auto exposure +2` while it tries and
+`Auto exposure -1 kept` when it keeps one. The serial log has an
+`auto-exposure:` line for each step (`try -1: bias -5, shutter 96 lines …,
+darker list (code bright)`), and the once-a-second `scan` line ends with
+`| luma 187 sat 34% code`: the last located code's brightness, or the whole
+frame's (`frame`) when no code was found that second. A luma near 200 or a
+sat over 15 % means the screen is overexposed. Turning the knob stops the
+search for that scan and goes back to your setting. The next scan starts at
+your setting again. Build with `-DCAMERA_AUTO_EXPOSURE=0` to turn it off;
+it is always off in the bench image.
 
 These rules are in the SDK as `qr_display_hints()` (`host/leek-ur`
 `display`), with the tips wallets show (FORMATS.md, "Showing `ur:leek-pczt`
