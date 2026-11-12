@@ -68,7 +68,7 @@ pub use storage::{
     get_storage_key, get_storage_key_with, validate_app_id, StorageKey, LABEL_DB, LABEL_UFVK, SEALED_HEADER_LEN,
     STORAGE_ZIP_NUMBER,
 };
-pub use ua::to_checkable_ua;
+pub use ua::{address_check_payload, to_checkable_ua};
 
 /// The crates this API is expressed in, re-exported so a wallet uses the
 /// same versions.

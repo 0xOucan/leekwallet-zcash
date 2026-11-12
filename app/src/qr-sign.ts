@@ -531,8 +531,14 @@ export interface DisplayHints {
   largeScreenFragmentLen: number;
   largeScreenFrameMs: number;
   quietZoneModules: number;
+  /** The QR page's brightness steps, 0–1; null is the system's (no override). */
+  brightnessLevels: (number | null)[];
+  /** Where the QR page starts the first time: null, the system's. */
+  defaultBrightness: number | null;
   phoneTips: string[];
   largeScreenTips: string[];
+  /** By the address QR for the board's Check address (experimental). */
+  addressCheckHint: string;
 }
 
 /** The hints, or null where the backend has none (a browser tab). */
@@ -551,24 +557,66 @@ export function displayTip(h: DisplayHints | null): string {
   return (h.phone ? h.phoneTips : h.largeScreenTips).join(" ");
 }
 
+/** The SDK's steps (leek-ur display rules), for when the backend has none. */
+export const BRIGHTNESS_LEVELS: readonly (number | null)[] = [null, 0.6, 0.8, 1.0];
+export const QR_BRIGHTNESS_KEY = "leek.qr.brightness";
+/** The same line as the SDK's address_check_hint(). */
+export const ADDRESS_CHECK_HINT = "On the board: Main menu → Check address (experimental), then scan this code.";
+
+const sameLevel = (a: number | null, b: number | null) => (a === null || b === null ? a === b : Math.abs(a - b) < 1e-3);
+
+/** The brightness the user picked last, if it is still one of `levels`; else `def`. */
+export function loadBrightness(levels: readonly (number | null)[], def: number | null = null, s?: Store): number | null {
+  try {
+    const raw = store(s)?.getItem(QR_BRIGHTNESS_KEY);
+    if (raw === null || raw === undefined) return def;
+    const v = JSON.parse(raw) as unknown;
+    const hit = levels.find((l) => (typeof v === "number" || v === null) && sameLevel(l, v as number | null));
+    return hit === undefined ? def : hit;
+  } catch {
+    return def;
+  }
+}
+
+export function saveBrightness(level: number | null, s?: Store): void {
+  try { store(s)?.setItem(QR_BRIGHTNESS_KEY, JSON.stringify(level)); } catch { /* this session only */ }
+}
+
+/** The step after `level`, round to the system's again. */
+export function nextBrightness(levels: readonly (number | null)[], level: number | null): number | null {
+  if (!levels.length) return null;
+  const i = levels.findIndex((l) => sameLevel(l, level));
+  return levels[(i + 1) % levels.length] ?? null;
+}
+
+/** The button's words: "Brightness: system", "Brightness: 60 %". */
+export function brightnessLabel(level: number | null): string {
+  return `Brightness: ${level === null ? "system" : `${Math.round(level * 100)} %`}`;
+}
+
 /**
- * The screen while the code is up (src-tauri/src/screen.rs): on Android
- * full window brightness and kept on, both restored when the code goes; the
- * desktop backend changes nothing. Asks only when the wish changes, in
- * order, and never fails the signing over it.
+ * The screen while a code for the board is up (src-tauri/src/screen.rs): on
+ * Android kept on, at the brightness the user picked (null: the system's;
+ * never forced to 100 %, which washed the code out on an OLED phone), both
+ * restored when the code goes; the desktop backend changes nothing. Asks
+ * only when the wish changes, in order, and never fails the signing over it.
  */
 export class ScreenBoost {
   private want = false;
+  private wantLevel: number | null = null;
   private queue: Promise<void> = Promise.resolve();
   private readonly invoke: Invoke;
   constructor(invoke: Invoke) { this.invoke = invoke; }
 
   get on(): boolean { return this.want; }
+  get level(): number | null { return this.wantLevel; }
 
-  set(on: boolean): Promise<void> {
-    if (on === this.want) return this.queue;
+  set(on: boolean, level: number | null = null): Promise<void> {
+    const lv = on ? level : null;
+    if (on === this.want && sameLevel(lv, this.wantLevel)) return this.queue;
     this.want = on;
-    this.queue = this.queue.then(() => this.invoke<boolean>("qr_screen", { on })).then(() => undefined, () => undefined);
+    this.wantLevel = lv;
+    this.queue = this.queue.then(() => this.invoke<boolean>("qr_screen", { on, level: lv })).then(() => undefined, () => undefined);
     return this.queue;
   }
 }
@@ -606,19 +654,20 @@ export function scanCaption(p: { received: number; total: number }, note: string
 }
 
 type QrGen = (type: number, ec: "L" | "M" | "Q" | "H") => {
-  addData(d: string, mode?: "Alphanumeric"): void; make(): void; getModuleCount(): number; isDark(r: number, c: number): boolean;
+  addData(d: string, mode?: "Alphanumeric" | "Byte"): void; make(): void; getModuleCount(): number; isDark(r: number, c: number): boolean;
 };
 
 /**
- * Draw `text` as a QR code on `canvas`: version `version`, error correction
- * L, alphanumeric mode, a `quiet`-module white quiet zone (4 by default; the
+ * Draw `text` as a QR code on `canvas`: version `version` (0: the smallest
+ * that holds it), error correction L, alphanumeric mode (`mode` "Byte" for a
+ * plain address, which is lowercase or Base58), a `quiet`-module white quiet zone (4 by default; the
  * full-screen view uses 2 on a black page, so the code gets the room), black
  * on white, a whole number of pixels per module in `avail` CSS px (times the
  * device pixel ratio, so a module is whole device pixels too).
  */
-export function drawQr(canvas: HTMLCanvasElement, gen: QrGen, text: string, version: number, avail: number, dpr = 1, quiet = 4): void {
+export function drawQr(canvas: HTMLCanvasElement, gen: QrGen, text: string, version: number, avail: number, dpr = 1, quiet = 4, mode: "Alphanumeric" | "Byte" = "Alphanumeric"): void {
   const qr = gen(version, "L");
-  qr.addData(text, "Alphanumeric");
+  qr.addData(text, mode);
   qr.make();
   const n = qr.getModuleCount();
   const { px, side } = moduleScale(n + quiet * 2, Math.floor(avail * dpr));

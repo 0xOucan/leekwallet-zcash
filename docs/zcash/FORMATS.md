@@ -192,8 +192,12 @@ the SDK's `qr_display_hints()`; measured 2026-11-11 in
   uppercase), one QR version for the whole loop (the longest frame), black
   modules on white, a whole number of device pixels per module.
 - **The page.** Full screen on black, with a 2-module white quiet zone.
-- **The screen.** Brightness at full and the screen kept on while the code
-  shows; both restored after.
+- **The screen.** Kept on while the code shows. Brightness is the user's:
+  the system's by default, with steps on the QR page (`brightness_levels`:
+  system, 60 %, 80 %, 100 %), remembered; both restored after. Do not force
+  100 %: on an OLED phone it washed the code out for the board (2026-11-11).
+  If the board finds the code but does not read it, lower first if it looks
+  washed out, higher if dark.
 - **From a phone.** 25 B fragments (QR v4) at 350 ms (300–350 ms read). The
   board at 3x, the phone about 30 cm away. On an OLED phone, the system's
   anti-flicker / DC dimming setting on: PWM dimming shows as bands to the
@@ -203,6 +207,17 @@ the SDK's `qr_display_hints()`; measured 2026-11-11 in
 
 With board firmware older than 2026-11-11, `qr_defaults()` (50 B, 500 ms)
 is the safe choice.
+
+### Check address (experimental): a plain address QR
+
+The board's Main menu → Check address scans a plain Zcash address (unified,
+Sapling or transparent) or a `zcash:` URI (ZIP 321) with one address, and
+says whether it belongs to the board, with the account and diversifier
+index. It is not a UR: a wallet's usual Receive QR works. The SDK's
+`address_check_qr(address)` gives the text to encode (the plain address,
+never uppercased: Base58 keeps its case; QR byte mode), and
+`address_check_hint()` the line to show by it. Over USB or Bluetooth,
+`show_address` does the same check. QR is never used for pairing.
 
 ### Account record
 

@@ -744,6 +744,17 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_account_record_type(RustCallStatus *_No
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_ADDRESS_CHECK_HINT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_ADDRESS_CHECK_HINT
+RustBuffer uniffi_leek_zcash_ffi_fn_func_address_check_hint(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_ADDRESS_CHECK_QR
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_ADDRESS_CHECK_QR
+RustBuffer uniffi_leek_zcash_ffi_fn_func_address_check_qr(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_APPLY_ZSIG
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_APPLY_ZSIG
 RustBuffer uniffi_leek_zcash_ffi_fn_func_apply_zsig(RustBuffer pczt, RustBuffer sent, RustBuffer zsig, RustCallStatus *_Nonnull out_status
@@ -1142,6 +1153,18 @@ void ffi_leek_zcash_ffi_rust_future_complete_void(uint64_t handle, RustCallStatu
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ACCOUNT_RECORD_TYPE
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ACCOUNT_RECORD_TYPE
 uint16_t uniffi_leek_zcash_ffi_checksum_func_account_record_type(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ADDRESS_CHECK_HINT
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ADDRESS_CHECK_HINT
+uint16_t uniffi_leek_zcash_ffi_checksum_func_address_check_hint(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ADDRESS_CHECK_QR
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_ADDRESS_CHECK_QR
+uint16_t uniffi_leek_zcash_ffi_checksum_func_address_check_qr(void
     
 );
 #endif

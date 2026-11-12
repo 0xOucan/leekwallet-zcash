@@ -470,6 +470,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterFloat: FfiConverterPrimitive {
+    typealias FfiType = Float
+    typealias SwiftType = Float
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Float {
+        return try lift(readFloat(&buf))
+    }
+
+    public static func write(_ value: Float, into buf: inout [UInt8]) {
+        writeFloat(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -3576,7 +3592,8 @@ public func FfiConverterTypeQrDefaults_lower(_ value: QrDefaults) -> RustBuffer 
 
 /**
  * How to show the animated `ur:leek-pczt` so the board's camera reads it
- * (experimental). From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
+ * (experimental). Brightness is the user's (system by default, adjustable
+ * on the QR page); the screen is kept on. From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
  * "Signing with a phone"), with the board firmware of that day; older
  * firmware reads [`qr_defaults`] better. The same values and words as the
  * companion app (`leek_ur::display`).
@@ -3611,11 +3628,24 @@ public struct QrDisplayHints {
      */
     public var largeScreenBoardZoom: UInt32
     /**
-     * Set the window's brightness to full while the code shows, and
-     * restore it after (Android `WindowManager.LayoutParams.screenBrightness`
-     * 1.0, iOS `UIScreen.brightness`).
+     * Deprecated, always false: do not force full brightness. On an OLED
+     * phone 100 % washed the code out for the board's camera (2026-11-11).
+     * Offer [`QrDisplayHints::brightness_levels`] instead.
      */
     public var maxBrightness: Bool
+    /**
+     * The brightness steps to offer on the QR page, as a window brightness
+     * 0.0–1.0; `None` is the system's own (no override): [system, 0.6, 0.8,
+     * 1.0]. A single button cycling them is enough. Android
+     * `WindowManager.LayoutParams.screenBrightness` (`None` =
+     * `BRIGHTNESS_OVERRIDE_NONE`), iOS `UIScreen.brightness` (`None` = leave
+     * it). Remember the user's choice; restore the system's when the code goes.
+     */
+    public var brightnessLevels: [Float?]
+    /**
+     * The step the QR page opens at the first time: `None`, the system's.
+     */
+    public var defaultBrightness: Float?
     /**
      * Keep the screen on while the code shows (Android
      * `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
@@ -3676,10 +3706,21 @@ public struct QrDisplayHints {
          * The board's zoom for a laptop or tablet: 2x.
          */largeScreenBoardZoom: UInt32, 
         /**
-         * Set the window's brightness to full while the code shows, and
-         * restore it after (Android `WindowManager.LayoutParams.screenBrightness`
-         * 1.0, iOS `UIScreen.brightness`).
+         * Deprecated, always false: do not force full brightness. On an OLED
+         * phone 100 % washed the code out for the board's camera (2026-11-11).
+         * Offer [`QrDisplayHints::brightness_levels`] instead.
          */maxBrightness: Bool, 
+        /**
+         * The brightness steps to offer on the QR page, as a window brightness
+         * 0.0–1.0; `None` is the system's own (no override): [system, 0.6, 0.8,
+         * 1.0]. A single button cycling them is enough. Android
+         * `WindowManager.LayoutParams.screenBrightness` (`None` =
+         * `BRIGHTNESS_OVERRIDE_NONE`), iOS `UIScreen.brightness` (`None` = leave
+         * it). Remember the user's choice; restore the system's when the code goes.
+         */brightnessLevels: [Float?], 
+        /**
+         * The step the QR page opens at the first time: `None`, the system's.
+         */defaultBrightness: Float?, 
         /**
          * Keep the screen on while the code shows (Android
          * `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
@@ -3714,6 +3755,8 @@ public struct QrDisplayHints {
         self.largeScreenFrameMs = largeScreenFrameMs
         self.largeScreenBoardZoom = largeScreenBoardZoom
         self.maxBrightness = maxBrightness
+        self.brightnessLevels = brightnessLevels
+        self.defaultBrightness = defaultBrightness
         self.keepScreenOn = keepScreenOn
         self.pageBackground = pageBackground
         self.quietZoneModules = quietZoneModules
@@ -3756,6 +3799,12 @@ extension QrDisplayHints: Equatable, Hashable {
         if lhs.maxBrightness != rhs.maxBrightness {
             return false
         }
+        if lhs.brightnessLevels != rhs.brightnessLevels {
+            return false
+        }
+        if lhs.defaultBrightness != rhs.defaultBrightness {
+            return false
+        }
         if lhs.keepScreenOn != rhs.keepScreenOn {
             return false
         }
@@ -3792,6 +3841,8 @@ extension QrDisplayHints: Equatable, Hashable {
         hasher.combine(largeScreenFrameMs)
         hasher.combine(largeScreenBoardZoom)
         hasher.combine(maxBrightness)
+        hasher.combine(brightnessLevels)
+        hasher.combine(defaultBrightness)
         hasher.combine(keepScreenOn)
         hasher.combine(pageBackground)
         hasher.combine(quietZoneModules)
@@ -3820,6 +3871,8 @@ public struct FfiConverterTypeQrDisplayHints: FfiConverterRustBuffer {
                 largeScreenFrameMs: FfiConverterUInt32.read(from: &buf), 
                 largeScreenBoardZoom: FfiConverterUInt32.read(from: &buf), 
                 maxBrightness: FfiConverterBool.read(from: &buf), 
+                brightnessLevels: FfiConverterSequenceOptionFloat.read(from: &buf), 
+                defaultBrightness: FfiConverterOptionFloat.read(from: &buf), 
                 keepScreenOn: FfiConverterBool.read(from: &buf), 
                 pageBackground: FfiConverterString.read(from: &buf), 
                 quietZoneModules: FfiConverterUInt32.read(from: &buf), 
@@ -3840,6 +3893,8 @@ public struct FfiConverterTypeQrDisplayHints: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.largeScreenFrameMs, into: &buf)
         FfiConverterUInt32.write(value.largeScreenBoardZoom, into: &buf)
         FfiConverterBool.write(value.maxBrightness, into: &buf)
+        FfiConverterSequenceOptionFloat.write(value.brightnessLevels, into: &buf)
+        FfiConverterOptionFloat.write(value.defaultBrightness, into: &buf)
         FfiConverterBool.write(value.keepScreenOn, into: &buf)
         FfiConverterString.write(value.pageBackground, into: &buf)
         FfiConverterUInt32.write(value.quietZoneModules, into: &buf)
@@ -5548,6 +5603,30 @@ fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionFloat: FfiConverterRustBuffer {
+    typealias SwiftType = Float?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterFloat.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterFloat.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -5763,12 +5842,64 @@ fileprivate struct FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer 
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceOptionFloat: FfiConverterRustBuffer {
+    typealias SwiftType = [Float?]
+
+    public static func write(_ value: [Float?], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterOptionFloat.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Float?] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Float?]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterOptionFloat.read(from: &buf))
+        }
+        return seq
+    }
+}
 /**
  * The type name of the account record: "leek-zcash-accounts".
  */
 public func accountRecordType() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_leek_zcash_ffi_fn_func_account_record_type($0
+    )
+})
+}
+/**
+ * **Experimental.** The line to show by that QR: "On the board: Main menu →
+ * Check address (experimental), then scan this code."
+ */
+public func addressCheckHint() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_func_address_check_hint($0
+    )
+})
+}
+/**
+ * **Experimental.** The text of the QR to show for the board's Check
+ * address (Main menu → Check address): the board scans it and says whether
+ * the address is its own, with the account and diversifier index. `address`
+ * is a unified, Sapling or transparent address or a `zcash:` URI with one
+ * address; the result is the plain address (never uppercased: Base58 keeps
+ * its case). A wallet's usual Receive QR of the plain address works too.
+ * Not an address: `Parse` (512), as `to_checkable_ua`. Over USB or Bluetooth use
+ * `LeekDevice.show_address` instead.
+ */
+public func addressCheckQr(address: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLeekError_lift) {
+    uniffi_leek_zcash_ffi_fn_func_address_check_qr(
+        FfiConverterString.lower(address),$0
     )
 })
 }
@@ -6017,6 +6148,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_account_record_type() != 975) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_func_address_check_hint() != 13970) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_func_address_check_qr() != 21180) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337) {

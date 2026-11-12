@@ -40,8 +40,8 @@ mod zwallet;
 // ur:leek-pczt, the board's ur:leek-zsig read back from the camera. The UR
 // is host/leek-ur, the one zecz uses.
 mod airgap;
-// The phone's screen while that code is up: full brightness, kept on
-// (Android; the desktop is left alone).
+// The phone's screen while that code is up: kept on, at the brightness the
+// user picked (system by default; Android, the desktop is left alone).
 mod screen;
 // The board's viewing key off its "View key" QR (EXPERIMENTAL), for a wallet
 // set up without USB or Bluetooth: a one-way account import, never pairing.

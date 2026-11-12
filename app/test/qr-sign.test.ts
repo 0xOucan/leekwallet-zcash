@@ -13,7 +13,10 @@ import {
   QrSigner, QR_BATCH, QR_BENCH_CONFIGS, QR_FRAGMENTS, QR_PRESETS, QR_INTERVALS, QR_SETTINGS_KEY, type Clock, type ScanProgress,
 } from "../src/qr-sign.ts";
 import type { Invoke } from "../src/tauri-transport.ts";
-import { displayTip, fullQrAvail, loadDisplayHints, ScreenBoost, type DisplayHints } from "../src/qr-sign.ts";
+import {
+  brightnessLabel, displayTip, fullQrAvail, loadBrightness, loadDisplayHints, nextBrightness, saveBrightness, ScreenBoost,
+  ADDRESS_CHECK_HINT, BRIGHTNESS_LEVELS, QR_BRIGHTNESS_KEY, type DisplayHints,
+} from "../src/qr-sign.ts";
 import { accountsCaption, recordRows, resolveBirthday, QrAccountImport, type AccountsProgress, type QrAccountRecord } from "../src/qr-accounts.ts";
 import { BIRTHDAY_MARGIN } from "../src/zcash-auto.ts";
 
@@ -410,8 +413,10 @@ group("display hints: the SDK's words, and the phone's screen while the code sho
 {
   const hints: DisplayHints = {
     phone: true, phoneFragmentLen: 25, phoneFrameMs: 350, largeScreenFragmentLen: 50, largeScreenFrameMs: 300, quietZoneModules: 2,
+    brightnessLevels: [null, 0.6, 0.8, 1.0], defaultBrightness: null,
     phoneTips: ["OLED phone: turn on anti-flicker (DC dimming) in the display settings.", "Board at 3x, the phone about 30 cm from its camera."],
     largeScreenTips: ["Board at 2x (the Scan screen opens at 2x)."],
+    addressCheckHint: ADDRESS_CHECK_HINT,
   };
   const backend: Invoke = async <T,>(cmd: string): Promise<T> => {
     if (cmd === "qr_display_hints") return hints as T;
@@ -425,10 +430,12 @@ group("display hints: the SDK's words, and the phone's screen while the code sho
   check(QR_FRAGMENTS.includes(hints.phoneFragmentLen as never) && QR_INTERVALS.includes(hints.phoneFrameMs as never), "the phone's settings are offered");
 
   const calls: boolean[] = [];
+  const levels: (number | null)[] = [];
   let fail = false;
   const boost = new ScreenBoost(async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
     check(cmd === "qr_screen", "the boost calls qr_screen");
     calls.push(args!.on as boolean);
+    levels.push(args!.level as number | null);
     if (fail) throw new Error("no window");
     return true as T;
   });
@@ -442,12 +449,66 @@ group("display hints: the SDK's words, and the phone's screen while the code sho
   fail = false;
   void boost.set(true); await boost.set(false);
   check(calls.join() === "true,false,true,false", "in order, and restored last");
+  check(levels.every((l) => l === null), "the system's brightness unless the user picks one: never forced");
+  calls.length = 0; levels.length = 0;
+  await boost.set(true, 0.6); await boost.set(true, 0.6); await boost.set(true, 0.8); await boost.set(false, 0.8);
+  check(calls.join() === "true,true,false" && levels.join() === "0.6,0.8,", "a new step is sent once; off is always the system's");
+  check(boost.level === null && !boost.on, "nothing held after the code goes");
+
+  /* The brightness button: system → 60 % → 80 % → 100 % → system, remembered. */
+  check(BRIGHTNESS_LEVELS.join() === hints.brightnessLevels.join() && hints.defaultBrightness === null, "the SDK's steps, system first and by default");
+  check(nextBrightness(BRIGHTNESS_LEVELS, null) === 0.6 && nextBrightness(BRIGHTNESS_LEVELS, 0.6) === 0.8
+    && nextBrightness(BRIGHTNESS_LEVELS, 0.8) === 1 && nextBrightness(BRIGHTNESS_LEVELS, 1) === null, "the button cycles the steps");
+  check(nextBrightness([], 0.6) === null && nextBrightness(BRIGHTNESS_LEVELS, 0.33) === null, "an unknown step starts at the system's");
+  check(brightnessLabel(null) === "Brightness: system" && brightnessLabel(0.6) === "Brightness: 60 %" && brightnessLabel(1) === "Brightness: 100 %", "the button's words");
+  const mem = new Map<string, string>();
+  const st = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+  check(loadBrightness(BRIGHTNESS_LEVELS, null, st) === null, "first time: the system's");
+  saveBrightness(0.8, st);
+  check(loadBrightness(BRIGHTNESS_LEVELS, null, st) === 0.8, "the pick is remembered");
+  saveBrightness(null, st);
+  check(loadBrightness(BRIGHTNESS_LEVELS, 0.6, st) === null, "system is remembered too");
+  mem.set(QR_BRIGHTNESS_KEY, "0.42");
+  check(loadBrightness(BRIGHTNESS_LEVELS, null, st) === null, "a step the SDK no longer offers falls back");
+  mem.set(QR_BRIGHTNESS_KEY, "{oops");
+  check(loadBrightness(BRIGHTNESS_LEVELS, null, st) === null, "a broken value falls back");
+  const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+  saveBrightness(0.6, broken);
+  check(loadBrightness(BRIGHTNESS_LEVELS, null, broken) === null, "no storage: this session only, no error");
 
   const { readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const view = readFileSync(join(import.meta.dirname, "..", "src/zcash-wallet.ts"), "utf8");
-  check(/screenBoost\.set\(showing\)/.test(view) && /stopQrSign\(\): void \{\n\s+exitQrFull\(\);\n\s+void screenBoost\.set\(false\)/.test(view),
-    "the wallet boosts while showing and restores when QR signing stops");
+  check(/screenBoost\.set\(showing, brightLevel\(\)\)/.test(view) && /stopQrSign\(\): void \{\n\s+exitQrFull\(\);\n\s+void screenBoost\.set\(false\)/.test(view),
+    "the wallet keeps the screen on at the user's brightness while showing and restores when QR signing stops");
+  check(/\$\(id\)\.hidden = !phone/.test(view) && /qrHints\?\.phone/.test(view), "the brightness button is a phone's only");
+  check(/closeCheckQr\(\): void \{[^}]*\n\s+void screenBoost\.set\(false\)/.test(view), "Check address restores the screen when it closes");
+  const html = readFileSync(join(import.meta.dirname, "..", "index.html"), "utf8");
+  for (const id of ["zwqrbright", "zwqrfsbright", "zwchkbright"]) check(new RegExp(`id="${id}"[^>]*hidden`).test(html), `${id} starts hidden (desktop)`);
+  check(!/brightness up/i.test(html), "no page tells the user to turn the brightness up");
+}
+
+group("Check address over QR (experimental): the plain address for the board");
+{
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const root = join(import.meta.dirname, "..");
+  check(ADDRESS_CHECK_HINT === "On the board: Main menu → Check address (experimental), then scan this code.", "the SDK's hint, word for word");
+  const html = readFileSync(join(root, "index.html"), "utf8");
+  check(html.includes('id="zwuachk"') && html.includes('id="zwtchk"') && html.includes("Check on board (QR)"), "both Receive addresses have Check on board (QR)");
+  const box = html.slice(html.indexOf('id="zwchkfs"'), html.indexOf('id="zwchkbright"'));
+  check(/Main menu → Check address \(experimental\)/.test(box), "the overlay says where on the board, and experimental");
+  const view = readFileSync(join(root, "src/zcash-wallet.ts"), "utf8");
+  check(/drawQr\([^;]*chkText, 0, [^;]*"Byte"\)/.test(view), "the address is drawn as is (byte mode), never uppercased");
+  check(/openCheckQr\(recv\.shielded\(\)\.ua\)/.test(view) && /openCheckQr\(recv\.transparent\(\)\.address\)/.test(view), "the address shown is the one checked");
+
+  /* drawQr's byte mode reaches the generator, and version 0 is its own pick. */
+  const { drawQr } = await import("../src/qr-sign.ts");
+  let seen: [number, string | undefined] | null = null;
+  const gen = (v: number) => ({ addData: (_d: string, m?: string) => { seen = [v, m]; }, make() {}, getModuleCount: () => 21, isDark: () => false });
+  const canvas = { width: 0, height: 0, style: {} as Record<string, string>, getContext: () => null } as unknown as HTMLCanvasElement;
+  drawQr(canvas, gen as never, "utest1abc", 0, 300, 1, 2, "Byte");
+  check(seen![0] === 0 && seen![1] === "Byte", "byte mode, the generator's version");
 }
 
 group("the policy text: experimental, and never for pairing");

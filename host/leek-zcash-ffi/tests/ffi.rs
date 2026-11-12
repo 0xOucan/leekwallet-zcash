@@ -630,14 +630,38 @@ fn the_signing_request_qr_matches_the_companion() {
 }
 
 #[test]
+fn the_check_address_qr_is_the_plain_address() {
+    for net in ["main", "test"] {
+        let k = json("keys.json", &format!("{net}/abandon-art/pp0/acct0"));
+        let ua = k["ua"].as_str().unwrap().to_string();
+        let t = k["transparent_address"].as_str().unwrap().to_string();
+        assert_eq!(address_check_qr(ua.clone()).unwrap(), ua);
+        assert_eq!(address_check_qr(format!("zcash:{ua}?amount=0.1")).unwrap(), ua);
+        assert_eq!(address_check_qr(ua.to_uppercase()).unwrap(), ua, "never uppercase");
+        assert_eq!(address_check_qr(format!(" zcash:{t} ")).unwrap(), t, "Base58 keeps its case");
+        // Not a URI the wallet shows, so the scanner leaves it alone.
+        assert_eq!(qr_part_type(address_check_qr(ua).unwrap()), None);
+    }
+    let e = address_check_qr("ur:leek-pczt/abc".into()).unwrap_err();
+    assert_eq!(e.code(), 512);
+    let h = address_check_hint();
+    assert!(h.contains("Main menu → Check address") && h.contains("experimental") && h.contains("scan this code"));
+}
+
+#[test]
 fn the_display_hints_are_the_phone_bench() {
     let h = qr_display_hints();
     assert_eq!((h.phone_fragment_len, h.phone_frame_ms, h.phone_board_zoom, h.phone_distance_cm), (25, 350, 3, 30));
     assert_eq!((h.large_screen_fragment_len, h.large_screen_frame_ms, h.large_screen_board_zoom), (50, 300, 2));
-    assert!(h.max_brightness && h.keep_screen_on && h.uppercase_alphanumeric && h.whole_pixel_modules);
+    // Brightness is the user's: never forced; system by default, steps to offer.
+    assert!(!h.max_brightness && h.keep_screen_on && h.uppercase_alphanumeric && h.whole_pixel_modules);
+    assert_eq!(h.brightness_levels, vec![None, Some(0.6), Some(0.8), Some(1.0)]);
+    assert_eq!(h.default_brightness, None);
+    assert!(h.brightness_levels.contains(&h.default_brightness));
     assert_eq!((h.page_background.as_str(), h.quiet_zone_modules, h.error_correction.as_str()), ("#000000", 2, "L"));
     assert!(h.phone_tips[0].contains("anti-flicker") && h.phone_tips[0].contains("DC dimming"));
-    assert!(h.phone_tips.iter().any(|t| t.contains("100 %")));
+    assert!(!h.phone_tips.iter().any(|t| t.contains("100 %")));
+    assert!(h.phone_tips.iter().any(|t| t.contains("lower first") && t.contains("washed out") && t.contains("higher")));
     assert!(h.phone_tips.iter().any(|t| t.contains("3x") && t.contains("30 cm")));
     assert!(h.large_screen_tips.iter().any(|t| t.contains("2x")));
     // A settings screen offers both, and the phone's is the 25 B code (QR v4).

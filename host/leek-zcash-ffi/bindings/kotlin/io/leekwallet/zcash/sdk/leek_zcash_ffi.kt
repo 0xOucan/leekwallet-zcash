@@ -994,6 +994,10 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -1010,6 +1014,10 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 internal interface IntegrityCheckingUniffiLib : Library {
     // Integrity check functions only
     fun uniffi_leek_zcash_ffi_checksum_func_account_record_type(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_address_check_hint(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_address_check_qr(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_apply_zsig(
 ): Short
@@ -1382,6 +1390,10 @@ fun uniffi_leek_zcash_ffi_fn_method_storagekey_subkey(`ptr`: Pointer,`label`: Ru
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_account_record_type(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_address_check_hint(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_address_check_qr(`address`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_apply_zsig(`pczt`: RustBuffer.ByValue,`sent`: RustBuffer.ByValue,`zsig`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_board_update_text(uniffi_out_err: UniffiRustCallStatus, 
@@ -1553,6 +1565,12 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_func_account_record_type() != 975.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_address_check_hint() != 13970.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_address_check_qr() != 21180.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337.toShort()) {
@@ -2055,6 +2073,29 @@ public object FfiConverterULong: FfiConverter<ULong, Long> {
 
     override fun write(value: ULong, buf: ByteBuffer) {
         buf.putLong(value.toLong())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterFloat: FfiConverter<Float, Float> {
+    override fun lift(value: Float): Float {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Float {
+        return buf.getFloat()
+    }
+
+    override fun lower(value: Float): Float {
+        return value
+    }
+
+    override fun allocationSize(value: Float) = 4UL
+
+    override fun write(value: Float, buf: ByteBuffer) {
+        buf.putFloat(value)
     }
 }
 
@@ -5906,7 +5947,8 @@ public object FfiConverterTypeQrDefaults: FfiConverterRustBuffer<QrDefaults> {
 
 /**
  * How to show the animated `ur:leek-pczt` so the board's camera reads it
- * (experimental). From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
+ * (experimental). Brightness is the user's (system by default, adjustable
+ * on the QR page); the screen is kept on. From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
  * "Signing with a phone"), with the board firmware of that day; older
  * firmware reads [`qr_defaults`] better. The same values and words as the
  * companion app (`leek_ur::display`).
@@ -5941,11 +5983,24 @@ data class QrDisplayHints (
      */
     var `largeScreenBoardZoom`: kotlin.UInt, 
     /**
-     * Set the window's brightness to full while the code shows, and
-     * restore it after (Android `WindowManager.LayoutParams.screenBrightness`
-     * 1.0, iOS `UIScreen.brightness`).
+     * Deprecated, always false: do not force full brightness. On an OLED
+     * phone 100 % washed the code out for the board's camera (2026-11-11).
+     * Offer [`QrDisplayHints::brightness_levels`] instead.
      */
     var `maxBrightness`: kotlin.Boolean, 
+    /**
+     * The brightness steps to offer on the QR page, as a window brightness
+     * 0.0–1.0; `None` is the system's own (no override): [system, 0.6, 0.8,
+     * 1.0]. A single button cycling them is enough. Android
+     * `WindowManager.LayoutParams.screenBrightness` (`None` =
+     * `BRIGHTNESS_OVERRIDE_NONE`), iOS `UIScreen.brightness` (`None` = leave
+     * it). Remember the user's choice; restore the system's when the code goes.
+     */
+    var `brightnessLevels`: List<kotlin.Float?>, 
+    /**
+     * The step the QR page opens at the first time: `None`, the system's.
+     */
+    var `defaultBrightness`: kotlin.Float?, 
     /**
      * Keep the screen on while the code shows (Android
      * `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
@@ -5999,6 +6054,8 @@ public object FfiConverterTypeQrDisplayHints: FfiConverterRustBuffer<QrDisplayHi
             FfiConverterUInt.read(buf),
             FfiConverterUInt.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterSequenceOptionalFloat.read(buf),
+            FfiConverterOptionalFloat.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
             FfiConverterUInt.read(buf),
@@ -6019,6 +6076,8 @@ public object FfiConverterTypeQrDisplayHints: FfiConverterRustBuffer<QrDisplayHi
             FfiConverterUInt.allocationSize(value.`largeScreenFrameMs`) +
             FfiConverterUInt.allocationSize(value.`largeScreenBoardZoom`) +
             FfiConverterBoolean.allocationSize(value.`maxBrightness`) +
+            FfiConverterSequenceOptionalFloat.allocationSize(value.`brightnessLevels`) +
+            FfiConverterOptionalFloat.allocationSize(value.`defaultBrightness`) +
             FfiConverterBoolean.allocationSize(value.`keepScreenOn`) +
             FfiConverterString.allocationSize(value.`pageBackground`) +
             FfiConverterUInt.allocationSize(value.`quietZoneModules`) +
@@ -6038,6 +6097,8 @@ public object FfiConverterTypeQrDisplayHints: FfiConverterRustBuffer<QrDisplayHi
             FfiConverterUInt.write(value.`largeScreenFrameMs`, buf)
             FfiConverterUInt.write(value.`largeScreenBoardZoom`, buf)
             FfiConverterBoolean.write(value.`maxBrightness`, buf)
+            FfiConverterSequenceOptionalFloat.write(value.`brightnessLevels`, buf)
+            FfiConverterOptionalFloat.write(value.`defaultBrightness`, buf)
             FfiConverterBoolean.write(value.`keepScreenOn`, buf)
             FfiConverterString.write(value.`pageBackground`, buf)
             FfiConverterUInt.write(value.`quietZoneModules`, buf)
@@ -7304,6 +7365,38 @@ public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalFloat: FfiConverterRustBuffer<kotlin.Float?> {
+    override fun read(buf: ByteBuffer): kotlin.Float? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterFloat.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Float?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterFloat.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Float?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterFloat.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
     override fun read(buf: ByteBuffer): kotlin.String? {
         if (buf.get().toInt() == 0) {
@@ -7573,6 +7666,34 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
         }
     }
 }
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceOptionalFloat: FfiConverterRustBuffer<List<kotlin.Float?>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Float?> {
+        val len = buf.getInt()
+        return List<kotlin.Float?>(len) {
+            FfiConverterOptionalFloat.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Float?>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterOptionalFloat.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.Float?>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterOptionalFloat.write(it, buf)
+        }
+    }
+}
         /**
          * The type name of the account record: "leek-zcash-accounts".
          */ fun `accountRecordType`(): kotlin.String {
@@ -7580,6 +7701,39 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_account_record_type(
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * **Experimental.** The line to show by that QR: "On the board: Main menu →
+         * Check address (experimental), then scan this code."
+         */ fun `addressCheckHint`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_address_check_hint(
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * **Experimental.** The text of the QR to show for the board's Check
+         * address (Main menu → Check address): the board scans it and says whether
+         * the address is its own, with the account and diversifier index. `address`
+         * is a unified, Sapling or transparent address or a `zcash:` URI with one
+         * address; the result is the plain address (never uppercased: Base58 keeps
+         * its case). A wallet's usual Receive QR of the plain address works too.
+         * Not an address: `Parse` (512), as `to_checkable_ua`. Over USB or Bluetooth use
+         * `LeekDevice.show_address` instead.
+         */
+    @Throws(LeekException::class) fun `addressCheckQr`(`address`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(LeekException) { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_address_check_qr(
+        FfiConverterString.lower(`address`),_status)
 }
     )
     }

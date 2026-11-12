@@ -115,7 +115,13 @@ fun main(args: Array<String>) {
     // How to show the signing QR: the phone's rules and tips.
     val hints = qrDisplayHints()
     check(hints.phoneFragmentLen == 25u && hints.phoneFrameMs == 350u && hints.quietZoneModules == 2u, "display hints")
-    check(hints.maxBrightness && hints.keepScreenOn && hints.errorCorrection == "L", "display rules")
+    check(!hints.maxBrightness && hints.keepScreenOn && hints.errorCorrection == "L", "display rules")
+    check(hints.brightnessLevels == listOf(null, 0.6f, 0.8f, 1.0f) && hints.defaultBrightness == null, "brightness steps")
+
+    // Check address over QR: the plain address, and where to go on the board.
+    val ua = field("ua")
+    check(addressCheckQr("zcash:$ua?amount=1") == ua, "address check qr")
+    check(addressCheckHint().contains("Check address"), "address check hint")
     check(hints.phoneTips.first().contains("anti-flicker") && qrDefaults().fragmentChoices.contains(25u), "display tips")
 
     // Stored app data: the draft's vector 1 key, sealed and opened.

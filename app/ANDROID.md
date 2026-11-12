@@ -763,16 +763,30 @@ activity in the APK, and the decoder this app already used on both (README,
 
 ## The screen while the QR code shows
 
-Sign with QR (experimental): while the `ur:leek-pczt` code is up, inline or
-full screen, `src-tauri/src/screen.rs` sets the window's `screenBrightness`
-to 1.0 and adds `FLAG_KEEP_SCREEN_ON`; when the code goes (the reply scan,
-Cancel, a failure) it clears the flag and sets `BRIGHTNESS_OVERRIDE_NONE`
-again. It runs through the webview's JNI handle (`with_webview`, as
+Sign with QR and Check on board (QR) (both experimental): while the code
+is up, inline or full screen, `src-tauri/src/screen.rs` adds
+`FLAG_KEEP_SCREEN_ON` and sets the window's `screenBrightness` to the level
+the user picked with the **Brightness** button on the QR page: system (no
+override, `BRIGHTNESS_OVERRIDE_NONE`, the default) → 60 % → 80 % → 100 %,
+remembered in `localStorage` (`leek.qr.brightness`). `qr_screen(on,
+level)` takes `level: Option<f32>`, `None` for the system's. When the code
+goes (the reply scan, Cancel, a failure, closing the overlay) it clears the
+flag and sets `BRIGHTNESS_OVERRIDE_NONE` again. The app no longer forces
+100 %: on an OLED phone that washed the code out for the board
+(2026-11-11). If the board finds the code but does not read it, try lower
+first when it looks washed out on the board, higher when it looks dark. It runs through the webview's JNI handle (`with_webview`, as
 `allow_camera` does on Linux) on the UI thread: no plugin, no edit under
 `gen/`, no permission (a window's own brightness is the app's). The desktop
-command changes nothing. Under the code the app shows the SDK's phone tips
+command changes nothing and the Brightness button is hidden. Under the code the app shows the SDK's phone tips
 (`host/leek-ur/src/display.rs`), first among them anti-flicker / DC dimming
 on OLED phones, which no app can switch ([QR-BENCH.md](../docs/zcash/QR-BENCH.md#signing-with-a-phone)).
+
+Receive → **Check on board (QR)** (experimental) shows the address shown
+there, plain (QR byte mode, as a payer's QR), full screen on black, with
+"On the board: Main menu → Check address (experimental), then scan this
+code." The board says whether the address is its own, with the account and
+diversifier index. It is the air-gapped twin of **Verify on the board**
+(USB or Bluetooth); never pairing. Esc or a tap closes it.
 
 ## In the background
 
