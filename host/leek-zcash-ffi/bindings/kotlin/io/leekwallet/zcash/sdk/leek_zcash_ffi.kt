@@ -992,6 +992,8 @@ internal open class UniffiVTableCallbackInterfaceSignListener(
 
 
 
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is 
 // rather `InterfaceTooLargeException`, caused by too many methods 
@@ -1036,6 +1038,8 @@ fun uniffi_leek_zcash_ffi_checksum_func_prepare_for_signer(
 fun uniffi_leek_zcash_ffi_checksum_func_prepare_sd_sign(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_qr_defaults(
+): Short
+fun uniffi_leek_zcash_ffi_checksum_func_qr_display_hints(
 ): Short
 fun uniffi_leek_zcash_ffi_checksum_func_qr_part_type(
 ): Short
@@ -1406,6 +1410,8 @@ fun uniffi_leek_zcash_ffi_fn_func_prepare_sd_sign(`pczt`: RustBuffer.ByValue,`ac
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_qr_defaults(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+fun uniffi_leek_zcash_ffi_fn_func_qr_display_hints(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_qr_part_type(`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 fun uniffi_leek_zcash_ffi_fn_func_sign_result_from_bytes(`record`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1589,6 +1595,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_qr_defaults() != 13012.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_qr_display_hints() != 54202.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_qr_part_type() != 55273.toShort()) {
@@ -5896,6 +5905,153 @@ public object FfiConverterTypeQrDefaults: FfiConverterRustBuffer<QrDefaults> {
 
 
 /**
+ * How to show the animated `ur:leek-pczt` so the board's camera reads it
+ * (experimental). From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
+ * "Signing with a phone"), with the board firmware of that day; older
+ * firmware reads [`qr_defaults`] better. The same values and words as the
+ * companion app (`leek_ur::display`).
+ */
+data class QrDisplayHints (
+    /**
+     * Bytes per fragment from a phone screen: 25 (QR v4, the biggest modules).
+     */
+    var `phoneFragmentLen`: kotlin.UInt, 
+    /**
+     * Milliseconds per frame from a phone: 350 (300–350 read).
+     */
+    var `phoneFrameMs`: kotlin.UInt, 
+    /**
+     * The board's zoom for a phone: 3x.
+     */
+    var `phoneBoardZoom`: kotlin.UInt, 
+    /**
+     * The phone's distance from the board's fixed-focus camera, cm: 30.
+     */
+    var `phoneDistanceCm`: kotlin.UInt, 
+    /**
+     * Bytes per fragment from a laptop or tablet screen: 50 (39–88 read).
+     */
+    var `largeScreenFragmentLen`: kotlin.UInt, 
+    /**
+     * Milliseconds per frame from a laptop or tablet: 300 (250–350 read).
+     */
+    var `largeScreenFrameMs`: kotlin.UInt, 
+    /**
+     * The board's zoom for a laptop or tablet: 2x.
+     */
+    var `largeScreenBoardZoom`: kotlin.UInt, 
+    /**
+     * Set the window's brightness to full while the code shows, and
+     * restore it after (Android `WindowManager.LayoutParams.screenBrightness`
+     * 1.0, iOS `UIScreen.brightness`).
+     */
+    var `maxBrightness`: kotlin.Boolean, 
+    /**
+     * Keep the screen on while the code shows (Android
+     * `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
+     */
+    var `keepScreenOn`: kotlin.Boolean, 
+    /**
+     * The page behind the code, full screen: "#000000".
+     */
+    var `pageBackground`: kotlin.String, 
+    /**
+     * White modules round the code on that page: 2.
+     */
+    var `quietZoneModules`: kotlin.UInt, 
+    /**
+     * QR error correction: "L".
+     */
+    var `errorCorrection`: kotlin.String, 
+    /**
+     * Every frame is uppercase: encode it in QR alphanumeric mode.
+     */
+    var `uppercaseAlphanumeric`: kotlin.Boolean, 
+    /**
+     * Whole device pixels per module, no smoothing.
+     */
+    var `wholePixelModules`: kotlin.Boolean, 
+    /**
+     * Short lines to show by the code on a phone (plain English). The
+     * first, anti-flicker on OLED phones, is one no app can switch itself.
+     */
+    var `phoneTips`: List<kotlin.String>, 
+    /**
+     * Short lines to show by the code on a laptop or tablet.
+     */
+    var `largeScreenTips`: List<kotlin.String>
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeQrDisplayHints: FfiConverterRustBuffer<QrDisplayHints> {
+    override fun read(buf: ByteBuffer): QrDisplayHints {
+        return QrDisplayHints(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: QrDisplayHints) = (
+            FfiConverterUInt.allocationSize(value.`phoneFragmentLen`) +
+            FfiConverterUInt.allocationSize(value.`phoneFrameMs`) +
+            FfiConverterUInt.allocationSize(value.`phoneBoardZoom`) +
+            FfiConverterUInt.allocationSize(value.`phoneDistanceCm`) +
+            FfiConverterUInt.allocationSize(value.`largeScreenFragmentLen`) +
+            FfiConverterUInt.allocationSize(value.`largeScreenFrameMs`) +
+            FfiConverterUInt.allocationSize(value.`largeScreenBoardZoom`) +
+            FfiConverterBoolean.allocationSize(value.`maxBrightness`) +
+            FfiConverterBoolean.allocationSize(value.`keepScreenOn`) +
+            FfiConverterString.allocationSize(value.`pageBackground`) +
+            FfiConverterUInt.allocationSize(value.`quietZoneModules`) +
+            FfiConverterString.allocationSize(value.`errorCorrection`) +
+            FfiConverterBoolean.allocationSize(value.`uppercaseAlphanumeric`) +
+            FfiConverterBoolean.allocationSize(value.`wholePixelModules`) +
+            FfiConverterSequenceString.allocationSize(value.`phoneTips`) +
+            FfiConverterSequenceString.allocationSize(value.`largeScreenTips`)
+    )
+
+    override fun write(value: QrDisplayHints, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`phoneFragmentLen`, buf)
+            FfiConverterUInt.write(value.`phoneFrameMs`, buf)
+            FfiConverterUInt.write(value.`phoneBoardZoom`, buf)
+            FfiConverterUInt.write(value.`phoneDistanceCm`, buf)
+            FfiConverterUInt.write(value.`largeScreenFragmentLen`, buf)
+            FfiConverterUInt.write(value.`largeScreenFrameMs`, buf)
+            FfiConverterUInt.write(value.`largeScreenBoardZoom`, buf)
+            FfiConverterBoolean.write(value.`maxBrightness`, buf)
+            FfiConverterBoolean.write(value.`keepScreenOn`, buf)
+            FfiConverterString.write(value.`pageBackground`, buf)
+            FfiConverterUInt.write(value.`quietZoneModules`, buf)
+            FfiConverterString.write(value.`errorCorrection`, buf)
+            FfiConverterBoolean.write(value.`uppercaseAlphanumeric`, buf)
+            FfiConverterBoolean.write(value.`wholePixelModules`, buf)
+            FfiConverterSequenceString.write(value.`phoneTips`, buf)
+            FfiConverterSequenceString.write(value.`largeScreenTips`, buf)
+    }
+}
+
+
+
+/**
  * The scanner's state after a text, for a progress bar.
  */
 data class QrProgress (
@@ -7601,6 +7757,15 @@ public object FfiConverterSequenceTypeAccountEntry: FfiConverterRustBuffer<List<
             return FfiConverterTypeQrDefaults.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_qr_defaults(
+        _status)
+}
+    )
+    }
+    
+ fun `qrDisplayHints`(): QrDisplayHints {
+            return FfiConverterTypeQrDisplayHints.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_leek_zcash_ffi_fn_func_qr_display_hints(
         _status)
 }
     )

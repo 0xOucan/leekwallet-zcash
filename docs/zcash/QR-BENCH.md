@@ -61,12 +61,24 @@ It works, but the phone needs other settings than a laptop screen:
   phone about 30 cm away and push the knob to **3x**.
 - **Bigger codes.** In the app, *Big codes* (25 B, QR v4), full screen. The
   full-screen page is black, with a 2-module white border round the code.
-- **Brightness high.** At half brightness the board ran at its longest
-  exposure with 4x gain and the picture was noisy.
+- **Brightness 100 %, screen kept on.** At half brightness the board ran at
+  its longest exposure with 4x gain and the picture was noisy. The Android
+  companion sets the window to full brightness and keeps the screen on while
+  the code shows, and restores both after.
+- **Anti-flicker on (OLED phones).** OLED phones dim by flashing the panel
+  (PWM). The board's camera has a rolling shutter, so it sees dark bands
+  across the code. With the system's anti-flicker / DC dimming setting on
+  (the name depends on the maker), reads got a lot better. No app can switch
+  it, so the wallets say so under the code. LCD screens (laptops, tablets)
+  do not do this.
 - **The board's LEDs.** The power LEDs on the board and the OPTIGA module
   are wired to the supply, so firmware cannot turn them off. Their light
   reflects in a phone's glossy screen straight back into the camera. Cover
   them with black tape, or use an opaque case.
+
+These rules are in the SDK as `qr_display_hints()` (`host/leek-ur`
+`display`), with the tips wallets show (FORMATS.md, "Showing `ur:leek-pczt`
+to the board").
 
 Tested on 2026-11-11 (Motorola edge 50 neo, the companion's debug APK): 25 B
 at 300–350 ms, 3x, about 30 cm. The board read the request in 38.7 s (91 s

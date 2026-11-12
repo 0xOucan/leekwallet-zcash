@@ -817,6 +817,12 @@ RustBuffer uniffi_leek_zcash_ffi_fn_func_qr_defaults(RustCallStatus *_Nonnull ou
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_DISPLAY_HINTS
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_DISPLAY_HINTS
+RustBuffer uniffi_leek_zcash_ffi_fn_func_qr_display_hints(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_PART_TYPE
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_FN_FUNC_QR_PART_TYPE
 RustBuffer uniffi_leek_zcash_ffi_fn_func_qr_part_type(RustBuffer text, RustCallStatus *_Nonnull out_status
@@ -1220,6 +1226,12 @@ uint16_t uniffi_leek_zcash_ffi_checksum_func_prepare_sd_sign(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_DEFAULTS
 #define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_DEFAULTS
 uint16_t uniffi_leek_zcash_ffi_checksum_func_qr_defaults(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_DISPLAY_HINTS
+#define UNIFFI_FFIDEF_UNIFFI_LEEK_ZCASH_FFI_CHECKSUM_FUNC_QR_DISPLAY_HINTS
+uint16_t uniffi_leek_zcash_ffi_checksum_func_qr_display_hints(void
     
 );
 #endif

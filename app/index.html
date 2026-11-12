@@ -406,6 +406,7 @@
                 <div class="qrsign__show" id="zwqrshow">
                   <canvas id="zwqrcanvas" class="qrsign__code" role="img" aria-label="Animated QR code of the transaction for the board"></canvas>
                   <p class="qrsign__count" id="zwqrcount" aria-live="off"></p>
+                  <p class="muted qrsign__tip" id="zwqrtip" hidden></p>
                   <label class="field qrsign__speed"><span>Speed</span>
                     <select id="zwqrspeed">
                       <option value="safe">Safe (50 B, 500 ms)</option>
@@ -449,7 +450,7 @@
                   <canvas id="zwqrfscanvas" class="qrsign__code" role="img" aria-label="Animated QR code of the transaction for the board"></canvas>
                   <p class="qrfull__cap" id="zwqrfscount" aria-live="off"></p>
                   <p class="qrfull__cap" id="zwqrfstimer" aria-live="off"></p>
-                  <p class="qrfull__cap" id="zwqrfshint">Screen brightness up; tilt the screen a little if the board's lights reflect in it. Esc or tap to exit<span id="zwqrfsmanual" hidden> · Space: next part</span></p>
+                  <p class="qrfull__cap" id="zwqrfshint"><span id="zwqrfstip">Screen brightness up; tilt the screen a little if the board's lights reflect in it.</span> Esc or tap to exit<span id="zwqrfsmanual" hidden> · Space: next part</span></p>
                 </div>
                 <p class="muted" id="zwqrstatus" role="status" aria-live="polite"></p>
                 <div class="row">

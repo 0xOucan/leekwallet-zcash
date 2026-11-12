@@ -3279,6 +3279,7 @@ dependencies = [
  "anyhow",
  "espflash",
  "hex",
+ "jni 0.21.1",
  "leek-near-intents",
  "leek-transport-ble",
  "leek-transport-serial",

@@ -181,6 +181,29 @@ starts over on the new one, because the sender switched (a new fragment
 size, a new request). A host ignores its own type when it sees it, for
 example in a mirror.
 
+### Showing `ur:leek-pczt` to the board
+
+The board's camera is fixed-focus (sharp from about 30 cm) and has a
+rolling shutter. A host shows the loop this way (`host/leek-ur/src/display.rs`;
+the SDK's `qr_display_hints()`; measured 2026-11-11 in
+[QR-BENCH.md](QR-BENCH.md#signing-with-a-phone)):
+
+- **The code.** Error correction L, alphanumeric mode (every frame is
+  uppercase), one QR version for the whole loop (the longest frame), black
+  modules on white, a whole number of device pixels per module.
+- **The page.** Full screen on black, with a 2-module white quiet zone.
+- **The screen.** Brightness at full and the screen kept on while the code
+  shows; both restored after.
+- **From a phone.** 25 B fragments (QR v4) at 350 ms (300–350 ms read). The
+  board at 3x, the phone about 30 cm away. On an OLED phone, the system's
+  anti-flicker / DC dimming setting on: PWM dimming shows as bands to the
+  rolling shutter. No app can switch it, so the wallet tells the user.
+- **From a laptop or tablet (LCD).** 50 B at 300 ms (39–88 B at 250–350 ms
+  read). The board at 2x.
+
+With board firmware older than 2026-11-11, `qr_defaults()` (50 B, 500 ms)
+is the safe choice.
+
 ### Account record
 
 `leek-zcash-accounts` (`host/leek-zcash/src/record.rs`). It has the shape

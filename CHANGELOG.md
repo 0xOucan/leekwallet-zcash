@@ -19,6 +19,20 @@ are released in
   zoom the knob chose until power-off. First phone signature by QR both ways: 25 B at
   350 ms, 3x, about 30 cm (the lens is fixed-focus). The `-qstages` and
   `-qfast` images log quirc's stage times and why codes fail.
+- **SDK: `qr_display_hints()`, how to show the signing QR (experimental).**
+  Next to `qr_defaults()` in `leek-zcash-ffi` (Kotlin, Swift), from
+  `host/leek-ur`'s `display` rules: 25 B at 350 ms from a phone and 50 B at
+  300 ms from a laptop or tablet, full brightness and the screen kept on,
+  a black page with a 2-module quiet zone, error correction L, uppercase
+  alphanumeric, and short tips: anti-flicker / DC dimming on OLED phones
+  (PWM dimming shows as bands to the board's rolling shutter, and it
+  improved reads a lot), brightness 100 %, the board at 3x about 30 cm for
+  a phone, 2x for a laptop or tablet. `qr_defaults().fragment_choices` now
+  offers 25 B. `build-android.sh` takes `--out <dir>` or
+  `LEEK_ANDROID_OUT`, so integrators need not write into `host/target`.
+- **Companion on Android: full brightness and the screen kept on while the
+  Sign-with-QR code shows** (and in full screen), restored after; the SDK's
+  tip under the code. The desktop is unchanged.
 - **Companion: big codes and a black full screen for phones.** A *Big codes*
   preset (25 B, QR v4), *Bigger* down to 25 B, and a black full-screen page
   with a 2-module white border and a brightness and glare hint.

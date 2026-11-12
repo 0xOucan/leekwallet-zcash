@@ -7,8 +7,11 @@
 #   <out>/kotlin/io/leekwallet/zcash/sdk/leek_zcash_ffi.kt
 #   <out>/consumer-rules.pro
 #
-# <out> is the first argument, default host/target/android (ignored by git;
-# the Gradle module in android/ reads it from there).
+# <out> is `--out <dir>` (or `--out=<dir>`), else $LEEK_ANDROID_OUT, else a
+# first argument that is not an option (the older form), else
+# host/target/android (ignored by git; the Gradle module in android/ reads it
+# from there). An integrator points it at their own module, for example
+# `--out ../my-app/leek-sdk`, so nothing is written into host/target/android.
 #
 # Release profile, symbols stripped with llvm-strip after the bindings check
 # (the exported uniffi_* functions stay in .dynsym; UniFFI reads its metadata
@@ -23,13 +26,24 @@
 #
 # Env: ANDROID_NDK_HOME (default ~/Android/Sdk/ndk/27.2.12479018),
 # ANDROID_API (default 27, the app's minSdk), ABIS (default "arm64-v8a x86_64").
-# Extra arguments go to cargo build (for example --offline). --locked is always
+# Other arguments go to cargo build (for example --offline). --locked is always
 # passed.
 set -euo pipefail
 crate="$(cd "$(dirname "$0")/.." && pwd)"
 host="$(cd "$crate/.." && pwd)"
-out="${1:-$host/target/android}"
-[[ $# -gt 0 ]] && shift
+out="${LEEK_ANDROID_OUT:-}"
+if [[ $# -gt 0 && "$1" != -* ]]; then out="$1"; shift; fi
+cargo_args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --out) [[ $# -ge 2 && -n "$2" ]] || { echo "--out needs a directory" >&2; exit 2; }
+               out="$2"; shift 2 ;;
+        --out=*) out="${1#--out=}"; [[ -n "$out" ]] || { echo "--out needs a directory" >&2; exit 2; }
+                 shift ;;
+        *) cargo_args+=("$1"); shift ;;
+    esac
+done
+out="${out:-$host/target/android}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 
@@ -63,7 +77,7 @@ for abi in $abis; do
     export "CXX_$u=$bin/$t$api-clang++"
     export "AR_$u=$bin/llvm-ar"
     export "RANLIB_$u=$bin/llvm-ranlib"
-    cargo build --release --locked -p leek-zcash-ffi --lib --target "$t" "$@"
+    cargo build --release --locked -p leek-zcash-ffi --lib --target "$t" ${cargo_args[@]+"${cargo_args[@]}"}
 done
 rm -rf "$out/jniLibs" "$out/kotlin"
 

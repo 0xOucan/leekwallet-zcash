@@ -121,6 +121,10 @@ webkit2gtk = "2.0"
 [target.'cfg(target_os = "android")'.dependencies]
 leek-transport-ble = { path = "../transport-ble", default-features = false, features = ["blec"] }
 tauri-plugin-blec = "0.12"
+# The window's brightness and FLAG_KEEP_SCREEN_ON while the Sign-with-QR
+# code is up (src/screen.rs), through the webview's JNI handle. The version
+# wry already uses (Cargo.lock), so it is one binding to one library.
+jni = "0.21"
 tokio = { version = "1", features = ["sync", "rt", "time"] }
 
 # The same trick again for USB. `tauri-plugin-serialplugin` is a Tauri mobile

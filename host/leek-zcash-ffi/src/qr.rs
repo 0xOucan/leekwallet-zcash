@@ -27,7 +27,7 @@ pub const QR_FRAGMENT_LEN: u32 = 50;
 /// capture interval.
 pub const QR_FRAME_MS: u32 = 500;
 /// The sizes a settings screen may offer, bytes per fragment.
-pub const QR_FRAGMENT_CHOICES: [u32; 8] = [30, 40, 50, 90, 120, 150, 200, 250];
+pub const QR_FRAGMENT_CHOICES: [u32; 9] = [25, 30, 40, 50, 90, 120, 150, 200, 250];
 /// The frame intervals a settings screen may offer, ms.
 pub const QR_FRAME_MS_CHOICES: [u32; 7] = [800, 500, 400, 350, 300, 250, 200];
 /// Parts of another message in a row after which the scanner follows the
@@ -57,6 +57,75 @@ pub fn qr_defaults() -> QrDefaults {
         fragment_choices: QR_FRAGMENT_CHOICES.to_vec(),
         frame_ms_choices: QR_FRAME_MS_CHOICES.to_vec(),
         board_zoom: 2,
+    }
+}
+
+/// How to show the animated `ur:leek-pczt` so the board's camera reads it
+/// (experimental). From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
+/// "Signing with a phone"), with the board firmware of that day; older
+/// firmware reads [`qr_defaults`] better. The same values and words as the
+/// companion app (`leek_ur::display`).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct QrDisplayHints {
+    /// Bytes per fragment from a phone screen: 25 (QR v4, the biggest modules).
+    pub phone_fragment_len: u32,
+    /// Milliseconds per frame from a phone: 350 (300–350 read).
+    pub phone_frame_ms: u32,
+    /// The board's zoom for a phone: 3x.
+    pub phone_board_zoom: u32,
+    /// The phone's distance from the board's fixed-focus camera, cm: 30.
+    pub phone_distance_cm: u32,
+    /// Bytes per fragment from a laptop or tablet screen: 50 (39–88 read).
+    pub large_screen_fragment_len: u32,
+    /// Milliseconds per frame from a laptop or tablet: 300 (250–350 read).
+    pub large_screen_frame_ms: u32,
+    /// The board's zoom for a laptop or tablet: 2x.
+    pub large_screen_board_zoom: u32,
+    /// Set the window's brightness to full while the code shows, and
+    /// restore it after (Android `WindowManager.LayoutParams.screenBrightness`
+    /// 1.0, iOS `UIScreen.brightness`).
+    pub max_brightness: bool,
+    /// Keep the screen on while the code shows (Android
+    /// `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
+    pub keep_screen_on: bool,
+    /// The page behind the code, full screen: "#000000".
+    pub page_background: String,
+    /// White modules round the code on that page: 2.
+    pub quiet_zone_modules: u32,
+    /// QR error correction: "L".
+    pub error_correction: String,
+    /// Every frame is uppercase: encode it in QR alphanumeric mode.
+    pub uppercase_alphanumeric: bool,
+    /// Whole device pixels per module, no smoothing.
+    pub whole_pixel_modules: bool,
+    /// Short lines to show by the code on a phone (plain English). The
+    /// first, anti-flicker on OLED phones, is one no app can switch itself.
+    pub phone_tips: Vec<String>,
+    /// Short lines to show by the code on a laptop or tablet.
+    pub large_screen_tips: Vec<String>,
+}
+
+#[uniffi::export]
+pub fn qr_display_hints() -> QrDisplayHints {
+    let h = leek_ur::display_hints();
+    let strings = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
+    QrDisplayHints {
+        phone_fragment_len: h.phone_fragment_len as u32,
+        phone_frame_ms: h.phone_frame_ms,
+        phone_board_zoom: h.phone_board_zoom,
+        phone_distance_cm: h.phone_distance_cm,
+        large_screen_fragment_len: h.large_screen_fragment_len as u32,
+        large_screen_frame_ms: h.large_screen_frame_ms,
+        large_screen_board_zoom: h.large_screen_board_zoom,
+        max_brightness: h.max_brightness,
+        keep_screen_on: h.keep_screen_on,
+        page_background: h.page_background.into(),
+        quiet_zone_modules: h.quiet_zone_modules,
+        error_correction: h.error_correction.into(),
+        uppercase_alphanumeric: h.uppercase_alphanumeric,
+        whole_pixel_modules: h.whole_pixel_modules,
+        phone_tips: strings(h.phone_tips),
+        large_screen_tips: strings(h.large_screen_tips),
     }
 }
 

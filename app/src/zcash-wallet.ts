@@ -47,7 +47,7 @@ import { SyncScheduler } from "./sync-scheduler.ts";
 import { ReceiveModel, type NewAddress } from "./receive-model.ts";
 import { qrScanningAvailable, scanQr, type QrScan } from "./qr-scan.ts";
 import qrcodegen from "qrcode-generator";
-import { benchTable, bigQrAvail, drawQr, frameCaption, fullQrAvail, scanCaption, timingCaption, QR_BENCH_CONFIGS, QR_FULL_QUIET, QrSigner } from "./qr-sign.ts";
+import { benchTable, bigQrAvail, displayTip, drawQr, frameCaption, fullQrAvail, loadDisplayHints, scanCaption, timingCaption, QR_BENCH_CONFIGS, QR_FULL_QUIET, QrSigner, ScreenBoost, type DisplayHints } from "./qr-sign.ts";
 import { txHead } from "./tx-labels.ts";
 import { initSwapView, type Proposal } from "./swap-view.ts";
 
@@ -799,6 +799,18 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
   let qrScan: QrScan | null = null;
   /* Ticks the stopwatch line between frames and camera reads. */
   let qrTick: ReturnType<typeof setInterval> | null = null;
+  /* While the code is up: full brightness and the screen kept on (Android,
+   * src-tauri/src/screen.rs), and the SDK's display tips under the code. */
+  const screenBoost = new ScreenBoost(invoke);
+  let qrHints: DisplayHints | null = null;
+
+  /** The SDK's tip (leek-ur display rules) under the code and in full screen. */
+  function sayQrTip(): void {
+    const tip = displayTip(qrHints);
+    say("zwqrtip", tip);
+    $("zwqrtip").hidden = !tip;
+    if (tip) say("zwqrfstip", `${tip} Tilt the screen a little if the board's lights reflect in it.`);
+  }
 
   function stopQrCamera(): void {
     qrScan?.stop();
@@ -842,6 +854,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
 
   function stopQrSign(): void {
     exitQrFull();
+    void screenBoost.set(false);
     if (qrTick) clearInterval(qrTick);
     qrTick = null;
     stopQrCamera();
@@ -856,6 +869,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     const q = qrSign;
     if (!q) return;
     const showing = q.phase === "showing";
+    void screenBoost.set(showing);
     $("zwqrshow").hidden = !showing;
     for (const [id, ok] of [["zwqrbigger", q.canBigger()], ["zwqrdenser", q.canDenser()], ["zwqrslower", q.canSlower()], ["zwqrfaster", q.canFaster()]] as const) {
       $<HTMLButtonElement>(id).disabled = !ok;
@@ -927,9 +941,11 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     $<HTMLButtonElement>("zwsignsend").disabled = true;
     $<HTMLButtonElement>("zwsignqr").disabled = true;
     say("zwqrsignhelp", "EXPERIMENTAL. On the board: choose Scan and point its camera at this code. It shows the same review; ACCEPT on its last page signs, and the board then shows its signature as a QR code. "
-      + "The board opens at 2x zoom. From a phone: Big codes, full screen, brightness up, the phone about 30 cm away and the board at 3x (one push). If it does not pick it up: Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
+      + "The board opens at 2x zoom; the tips under the code say how to show it from this screen. From a phone: Big codes and full screen, the board at 3x (one push). If it does not pick it up: Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
     say("zwqrstatus", "");
     say("zwsendstatus", "Signing with QR (experimental)…");
+    sayQrTip();
+    if (!qrHints) void loadDisplayHints(invoke).then((h) => { qrHints = h; if (qrSign === q) sayQrTip(); });
     $("zwqrsign").scrollIntoView?.({ block: "nearest" });
     await q.show(prop.view);
   }

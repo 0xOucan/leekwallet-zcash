@@ -709,6 +709,7 @@ html[data-shell="open"] #devicepanel { padding-top: var(--space-3); padding-bott
 .qrsign__show { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
 .qrsign__code { image-rendering: pixelated; background: #fff; max-width: 100%; }
 .qrsign__count { margin: 0; font-variant-numeric: tabular-nums; text-align: center; }
+.qrsign__tip { margin: 0; text-align: center; font-size: 12px; }
 /* Full screen: black, so the page lights less and reflects less; the code's
  * own white quiet zone is its outline. Small captions under it. */
 .qrsign__show .qrsign__code { cursor: zoom-in; }

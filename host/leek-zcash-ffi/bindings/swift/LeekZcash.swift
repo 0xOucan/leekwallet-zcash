@@ -3575,6 +3575,299 @@ public func FfiConverterTypeQrDefaults_lower(_ value: QrDefaults) -> RustBuffer 
 
 
 /**
+ * How to show the animated `ur:leek-pczt` so the board's camera reads it
+ * (experimental). From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
+ * "Signing with a phone"), with the board firmware of that day; older
+ * firmware reads [`qr_defaults`] better. The same values and words as the
+ * companion app (`leek_ur::display`).
+ */
+public struct QrDisplayHints {
+    /**
+     * Bytes per fragment from a phone screen: 25 (QR v4, the biggest modules).
+     */
+    public var phoneFragmentLen: UInt32
+    /**
+     * Milliseconds per frame from a phone: 350 (300–350 read).
+     */
+    public var phoneFrameMs: UInt32
+    /**
+     * The board's zoom for a phone: 3x.
+     */
+    public var phoneBoardZoom: UInt32
+    /**
+     * The phone's distance from the board's fixed-focus camera, cm: 30.
+     */
+    public var phoneDistanceCm: UInt32
+    /**
+     * Bytes per fragment from a laptop or tablet screen: 50 (39–88 read).
+     */
+    public var largeScreenFragmentLen: UInt32
+    /**
+     * Milliseconds per frame from a laptop or tablet: 300 (250–350 read).
+     */
+    public var largeScreenFrameMs: UInt32
+    /**
+     * The board's zoom for a laptop or tablet: 2x.
+     */
+    public var largeScreenBoardZoom: UInt32
+    /**
+     * Set the window's brightness to full while the code shows, and
+     * restore it after (Android `WindowManager.LayoutParams.screenBrightness`
+     * 1.0, iOS `UIScreen.brightness`).
+     */
+    public var maxBrightness: Bool
+    /**
+     * Keep the screen on while the code shows (Android
+     * `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
+     */
+    public var keepScreenOn: Bool
+    /**
+     * The page behind the code, full screen: "#000000".
+     */
+    public var pageBackground: String
+    /**
+     * White modules round the code on that page: 2.
+     */
+    public var quietZoneModules: UInt32
+    /**
+     * QR error correction: "L".
+     */
+    public var errorCorrection: String
+    /**
+     * Every frame is uppercase: encode it in QR alphanumeric mode.
+     */
+    public var uppercaseAlphanumeric: Bool
+    /**
+     * Whole device pixels per module, no smoothing.
+     */
+    public var wholePixelModules: Bool
+    /**
+     * Short lines to show by the code on a phone (plain English). The
+     * first, anti-flicker on OLED phones, is one no app can switch itself.
+     */
+    public var phoneTips: [String]
+    /**
+     * Short lines to show by the code on a laptop or tablet.
+     */
+    public var largeScreenTips: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Bytes per fragment from a phone screen: 25 (QR v4, the biggest modules).
+         */phoneFragmentLen: UInt32, 
+        /**
+         * Milliseconds per frame from a phone: 350 (300–350 read).
+         */phoneFrameMs: UInt32, 
+        /**
+         * The board's zoom for a phone: 3x.
+         */phoneBoardZoom: UInt32, 
+        /**
+         * The phone's distance from the board's fixed-focus camera, cm: 30.
+         */phoneDistanceCm: UInt32, 
+        /**
+         * Bytes per fragment from a laptop or tablet screen: 50 (39–88 read).
+         */largeScreenFragmentLen: UInt32, 
+        /**
+         * Milliseconds per frame from a laptop or tablet: 300 (250–350 read).
+         */largeScreenFrameMs: UInt32, 
+        /**
+         * The board's zoom for a laptop or tablet: 2x.
+         */largeScreenBoardZoom: UInt32, 
+        /**
+         * Set the window's brightness to full while the code shows, and
+         * restore it after (Android `WindowManager.LayoutParams.screenBrightness`
+         * 1.0, iOS `UIScreen.brightness`).
+         */maxBrightness: Bool, 
+        /**
+         * Keep the screen on while the code shows (Android
+         * `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
+         */keepScreenOn: Bool, 
+        /**
+         * The page behind the code, full screen: "#000000".
+         */pageBackground: String, 
+        /**
+         * White modules round the code on that page: 2.
+         */quietZoneModules: UInt32, 
+        /**
+         * QR error correction: "L".
+         */errorCorrection: String, 
+        /**
+         * Every frame is uppercase: encode it in QR alphanumeric mode.
+         */uppercaseAlphanumeric: Bool, 
+        /**
+         * Whole device pixels per module, no smoothing.
+         */wholePixelModules: Bool, 
+        /**
+         * Short lines to show by the code on a phone (plain English). The
+         * first, anti-flicker on OLED phones, is one no app can switch itself.
+         */phoneTips: [String], 
+        /**
+         * Short lines to show by the code on a laptop or tablet.
+         */largeScreenTips: [String]) {
+        self.phoneFragmentLen = phoneFragmentLen
+        self.phoneFrameMs = phoneFrameMs
+        self.phoneBoardZoom = phoneBoardZoom
+        self.phoneDistanceCm = phoneDistanceCm
+        self.largeScreenFragmentLen = largeScreenFragmentLen
+        self.largeScreenFrameMs = largeScreenFrameMs
+        self.largeScreenBoardZoom = largeScreenBoardZoom
+        self.maxBrightness = maxBrightness
+        self.keepScreenOn = keepScreenOn
+        self.pageBackground = pageBackground
+        self.quietZoneModules = quietZoneModules
+        self.errorCorrection = errorCorrection
+        self.uppercaseAlphanumeric = uppercaseAlphanumeric
+        self.wholePixelModules = wholePixelModules
+        self.phoneTips = phoneTips
+        self.largeScreenTips = largeScreenTips
+    }
+}
+
+#if compiler(>=6)
+extension QrDisplayHints: Sendable {}
+#endif
+
+
+extension QrDisplayHints: Equatable, Hashable {
+    public static func ==(lhs: QrDisplayHints, rhs: QrDisplayHints) -> Bool {
+        if lhs.phoneFragmentLen != rhs.phoneFragmentLen {
+            return false
+        }
+        if lhs.phoneFrameMs != rhs.phoneFrameMs {
+            return false
+        }
+        if lhs.phoneBoardZoom != rhs.phoneBoardZoom {
+            return false
+        }
+        if lhs.phoneDistanceCm != rhs.phoneDistanceCm {
+            return false
+        }
+        if lhs.largeScreenFragmentLen != rhs.largeScreenFragmentLen {
+            return false
+        }
+        if lhs.largeScreenFrameMs != rhs.largeScreenFrameMs {
+            return false
+        }
+        if lhs.largeScreenBoardZoom != rhs.largeScreenBoardZoom {
+            return false
+        }
+        if lhs.maxBrightness != rhs.maxBrightness {
+            return false
+        }
+        if lhs.keepScreenOn != rhs.keepScreenOn {
+            return false
+        }
+        if lhs.pageBackground != rhs.pageBackground {
+            return false
+        }
+        if lhs.quietZoneModules != rhs.quietZoneModules {
+            return false
+        }
+        if lhs.errorCorrection != rhs.errorCorrection {
+            return false
+        }
+        if lhs.uppercaseAlphanumeric != rhs.uppercaseAlphanumeric {
+            return false
+        }
+        if lhs.wholePixelModules != rhs.wholePixelModules {
+            return false
+        }
+        if lhs.phoneTips != rhs.phoneTips {
+            return false
+        }
+        if lhs.largeScreenTips != rhs.largeScreenTips {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(phoneFragmentLen)
+        hasher.combine(phoneFrameMs)
+        hasher.combine(phoneBoardZoom)
+        hasher.combine(phoneDistanceCm)
+        hasher.combine(largeScreenFragmentLen)
+        hasher.combine(largeScreenFrameMs)
+        hasher.combine(largeScreenBoardZoom)
+        hasher.combine(maxBrightness)
+        hasher.combine(keepScreenOn)
+        hasher.combine(pageBackground)
+        hasher.combine(quietZoneModules)
+        hasher.combine(errorCorrection)
+        hasher.combine(uppercaseAlphanumeric)
+        hasher.combine(wholePixelModules)
+        hasher.combine(phoneTips)
+        hasher.combine(largeScreenTips)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQrDisplayHints: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QrDisplayHints {
+        return
+            try QrDisplayHints(
+                phoneFragmentLen: FfiConverterUInt32.read(from: &buf), 
+                phoneFrameMs: FfiConverterUInt32.read(from: &buf), 
+                phoneBoardZoom: FfiConverterUInt32.read(from: &buf), 
+                phoneDistanceCm: FfiConverterUInt32.read(from: &buf), 
+                largeScreenFragmentLen: FfiConverterUInt32.read(from: &buf), 
+                largeScreenFrameMs: FfiConverterUInt32.read(from: &buf), 
+                largeScreenBoardZoom: FfiConverterUInt32.read(from: &buf), 
+                maxBrightness: FfiConverterBool.read(from: &buf), 
+                keepScreenOn: FfiConverterBool.read(from: &buf), 
+                pageBackground: FfiConverterString.read(from: &buf), 
+                quietZoneModules: FfiConverterUInt32.read(from: &buf), 
+                errorCorrection: FfiConverterString.read(from: &buf), 
+                uppercaseAlphanumeric: FfiConverterBool.read(from: &buf), 
+                wholePixelModules: FfiConverterBool.read(from: &buf), 
+                phoneTips: FfiConverterSequenceString.read(from: &buf), 
+                largeScreenTips: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: QrDisplayHints, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.phoneFragmentLen, into: &buf)
+        FfiConverterUInt32.write(value.phoneFrameMs, into: &buf)
+        FfiConverterUInt32.write(value.phoneBoardZoom, into: &buf)
+        FfiConverterUInt32.write(value.phoneDistanceCm, into: &buf)
+        FfiConverterUInt32.write(value.largeScreenFragmentLen, into: &buf)
+        FfiConverterUInt32.write(value.largeScreenFrameMs, into: &buf)
+        FfiConverterUInt32.write(value.largeScreenBoardZoom, into: &buf)
+        FfiConverterBool.write(value.maxBrightness, into: &buf)
+        FfiConverterBool.write(value.keepScreenOn, into: &buf)
+        FfiConverterString.write(value.pageBackground, into: &buf)
+        FfiConverterUInt32.write(value.quietZoneModules, into: &buf)
+        FfiConverterString.write(value.errorCorrection, into: &buf)
+        FfiConverterBool.write(value.uppercaseAlphanumeric, into: &buf)
+        FfiConverterBool.write(value.wholePixelModules, into: &buf)
+        FfiConverterSequenceString.write(value.phoneTips, into: &buf)
+        FfiConverterSequenceString.write(value.largeScreenTips, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrDisplayHints_lift(_ buf: RustBuffer) throws -> QrDisplayHints {
+    return try FfiConverterTypeQrDisplayHints.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQrDisplayHints_lower(_ value: QrDisplayHints) -> RustBuffer {
+    return FfiConverterTypeQrDisplayHints.lower(value)
+}
+
+
+/**
  * The scanner's state after a text, for a progress bar.
  */
 public struct QrProgress {
@@ -5630,6 +5923,12 @@ public func qrDefaults() -> QrDefaults  {
     )
 })
 }
+public func qrDisplayHints() -> QrDisplayHints  {
+    return try!  FfiConverterTypeQrDisplayHints_lift(try! rustCall() {
+    uniffi_leek_zcash_ffi_fn_func_qr_display_hints($0
+    )
+})
+}
 /**
  * The UR type a scanned string names (lowercase), or None for a text that
  * is not a UR (a `zcash:` URI, an address).
@@ -5760,6 +6059,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_qr_defaults() != 13012) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_leek_zcash_ffi_checksum_func_qr_display_hints() != 54202) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_leek_zcash_ffi_checksum_func_qr_part_type() != 55273) {
