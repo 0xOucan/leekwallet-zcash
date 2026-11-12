@@ -1090,6 +1090,52 @@ int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t 
     return rc;
 }
 
+int32_t zc_ua_receivers(const char *ua, uint8_t net, int *has_orchard, int *has_p2pkh,
+                        int *has_sapling, int *other)
+{
+    zc_ua_items it;
+    if (!ua || !has_orchard || !has_p2pkh || !has_sapling || !other) return ZS_ERR_ARG;
+    *has_orchard = *has_p2pkh = *has_sapling = *other = 0;
+    if (net != ZS_NET_MAIN && net != ZS_NET_TEST) return ZS_ERR_ARG;
+    if (!zc_ua_parse(ua, strlen(ua), net, &it)) return ZS_E_PARSE;
+    *has_orchard = it.has_orchard;
+    *has_p2pkh = it.has_p2pkh;
+    *has_sapling = it.has_sapling;
+    *other = it.other_not_sapling;
+    memzero(&it, sizeof it);
+    return ZS_OK;
+}
+
+int32_t zc_ua_owned_but_sapling(const char *ua, uint8_t net, const uint8_t fvk[96],
+                                uint8_t index_out[11], uint8_t p2pkh_out[20], int *has_p2pkh,
+                                int *has_sapling)
+{
+    static zc_fvk f;
+    zc_ua_items it;
+    int32_t rc;
+    if (!ua || !fvk || !index_out || !p2pkh_out || !has_p2pkh || !has_sapling) return ZS_ERR_ARG;
+    if (net != ZS_NET_MAIN && net != ZS_NET_TEST) return ZS_ERR_ARG;
+    *has_p2pkh = 0;
+    *has_sapling = 0;
+    if (zc_crypto_init() != 0) return ZS_E_INTERNAL;
+    if (!zc_ua_parse(ua, strlen(ua), net, &it) || !it.has_orchard) return ZS_E_PARSE;
+    if (it.other_not_sapling) return ZS_E_UNSUPPORTED_BUNDLE;
+    *has_sapling = it.has_sapling;
+    if (zc_fvk_from_bytes(&f, fvk) != 0) return ZS_ERR_ARG;
+    if (zc_fvk_external_index(&f, it.orchard, index_out)) {
+        rc = ZS_OK;
+        if (it.has_p2pkh) {
+            memcpy(p2pkh_out, it.p2pkh, 20);
+            *has_p2pkh = 1;
+        }
+    } else {
+        rc = ZS_E_USER_ADDRESS;
+    }
+    memzero(&f, sizeof f);
+    memzero(&it, sizeof it);
+    return rc;
+}
+
 /* ---- App Storage Keys ---------------------------------------------------
  *
  * docs/zcash/zip-draft-app-storage-keys.md: ZIP 32 Registered key derivation

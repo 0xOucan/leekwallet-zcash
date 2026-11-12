@@ -14,41 +14,138 @@
  * well under the 984-line frame, so no frame stretches); last the other
  * banding step, which changes how a long exposure lines up with the PWM.
  */
+/*
+ * The darker list, for a code that is bright or clipped: the bias down one,
+ * two and three steps (the AEC then aims lower and the white modules come
+ * off the clip, the black ones back down), then two steps down with half the
+ * shutter cap, for the case where the AEC sat at the cap in a dark room and
+ * the bias alone would only have taken gain off.
+ */
 static const AutoExpSetting SETTINGS[AUTOEXP_SETTINGS] = {
-    { 0, 1, false },   /* 0: the user's own */
-    { 0, 2, false },   /* 1: shutter cap x2 */
-    { 1, 2, false },   /* 2: x2, bias +1 */
-    { 1, 4, false },   /* 3: x4, bias +1 */
-    { 2, 4, false },   /* 4: x4, bias +2 */
-    { 1, 4, true  },   /* 5: x4, bias +1, the other banding frequency */
+    {  0, 1, 1, false },   /* 0: the user's own */
+    {  0, 2, 1, false },   /* 1 (+1): shutter cap x2 */
+    {  1, 2, 1, false },   /* 2 (+2): x2, bias +1 */
+    {  1, 4, 1, false },   /* 3 (+3): x4, bias +1 */
+    {  2, 4, 1, false },   /* 4 (+4): x4, bias +2 */
+    {  1, 4, 1, true  },   /* 5 (+5): x4, bias +1, the other banding frequency */
+    { -1, 1, 1, false },   /* 6 (-1): bias -1 */
+    { -2, 1, 1, false },   /* 7 (-2): bias -2 */
+    { -3, 1, 1, false },   /* 8 (-3): bias -3 */
+    { -2, 1, 2, false },   /* 9 (-4): bias -2, half the shutter cap */
 };
 
-/* The search order: every trial setting, then the user's own (which only a
-   second search, started from a kept setting, can reach). */
-static const uint8_t ORDER[AUTOEXP_SETTINGS] = { 1, 2, 3, 4, 5, 0 };
+/* The search orders: every trial setting of the list, then the user's own
+   (which only a second search, started from a kept setting, can reach). */
+static const uint8_t ORDER_BRIGHTER[] = { 1, 2, 3, 4, 5, 0 };
+static const uint8_t ORDER_DARKER[]   = { 6, 7, 8, 9, 0 };
 
 const AutoExpSetting *autoexp_setting(uint8_t index)
 {
     return &SETTINGS[index < AUTOEXP_SETTINGS ? index : 0];
 }
 
+int autoexp_step(uint8_t index)
+{
+    if (index == 0 || index >= AUTOEXP_SETTINGS) {
+        return 0;
+    }
+    return index <= AUTOEXP_BRIGHTER ? (int)index : -(int)(index - AUTOEXP_BRIGHTER);
+}
+
 int8_t autoexp_bias_for(uint8_t index, int8_t user_bias)
 {
     int b = (int)user_bias + autoexp_setting(index)->bias_add;
-    return (int8_t)(b < -5 ? -5 : (b > 0 ? 0 : b));
+    return (int8_t)(b < AUTOEXP_BIAS_MIN ? AUTOEXP_BIAS_MIN : (b > 0 ? 0 : b));
 }
 
 static bool same_effect(uint8_t i, uint8_t j, int8_t user_bias)
 {
     const AutoExpSetting *a = autoexp_setting(i), *b = autoexp_setting(j);
     return autoexp_bias_for(i, user_bias) == autoexp_bias_for(j, user_bias) &&
-           a->shutter_mul == b->shutter_mul && a->mains_swap == b->mains_swap;
+           a->shutter_mul == b->shutter_mul && a->shutter_div == b->shutter_div &&
+           a->mains_swap == b->mains_swap;
 }
+
+void autoexp_measure(const uint8_t *gray, uint16_t w, uint16_t h, int x0, int y0, int x1,
+                     int y1, AutoExpLight *out)
+{
+    memset(out, 0, sizeof *out);
+    if (gray == NULL || w == 0 || h == 0) {
+        return;
+    }
+    if (x1 < x0) { const int t = x0; x0 = x1; x1 = t; }
+    if (y1 < y0) { const int t = y0; y0 = y1; y1 = t; }
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int)w) x1 = (int)w;
+    if (y1 > (int)h) y1 = (int)h;
+    if (x0 >= x1 || y0 >= y1) {
+        return;
+    }
+    uint32_t sum = 0, n = 0, sat = 0;
+    for (int y = y0; y < y1; y += 2) {
+        const uint8_t *row = gray + (size_t)y * w;
+        for (int x = x0; x < x1; x += 2) {
+            const uint8_t v = row[x];
+            sum += v;
+            sat += v >= AUTOEXP_SAT_LEVEL;
+            n++;
+        }
+    }
+    out->mean = (uint8_t)(sum / n);
+    out->sat_permille = (uint16_t)(sat * 1000u / n);
+    out->valid = true;
+}
+
+bool autoexp_light_bright(const AutoExpLight *l)
+{
+    return l != NULL && l->valid &&
+           (l->sat_permille >= AUTOEXP_BRIGHT_SAT_PERMILLE || l->mean >= AUTOEXP_BRIGHT_MEAN);
+}
+
+static void light_clear(AutoExp *a)
+{
+    a->light_mean_x16 = 0;
+    a->light_sat_x16 = 0;
+    a->light_n = 0;
+}
+
+void autoexp_light(AutoExp *a, const AutoExpLight *l)
+{
+    if (l == NULL || !l->valid) {
+        return;
+    }
+    const uint16_t m = (uint16_t)(l->mean * 16u);
+    const uint16_t sp = (uint16_t)((l->sat_permille > 1000 ? 1000 : l->sat_permille) * 16u / 4u);
+    if (a->light_n == 0) {
+        a->light_mean_x16 = m;
+        a->light_sat_x16 = sp;
+    } else {
+        /* An eighth of each new frame: a second or two of codes. */
+        a->light_mean_x16 = (uint16_t)(((uint32_t)a->light_mean_x16 * 7u + m) / 8u);
+        a->light_sat_x16 = (uint16_t)(((uint32_t)a->light_sat_x16 * 7u + sp) / 8u);
+    }
+    if (a->light_n < 0xFFFF) {
+        a->light_n++;
+    }
+}
+
+void autoexp_light_now(const AutoExp *a, AutoExpLight *out)
+{
+    out->valid = a->light_n > 0;
+    out->mean = (uint8_t)(a->light_mean_x16 / 16u);
+    out->sat_permille = (uint16_t)(a->light_sat_x16 * 4u / 16u);
+}
+
+/* Called wherever the setting (or the picture) changes, so the light
+   average restarts with it. */
+static void light_clear(AutoExp *a);
 
 static void ring_clear(AutoExp *a)
 {
     a->ring_n = 0;
     a->ring_head = 0;
+    light_clear(a);
 }
 
 static void ring_push(AutoExp *a, uint32_t now, uint32_t located, uint32_t decoded)
@@ -121,8 +218,10 @@ static autoexp_event_t finish_search(AutoExp *a, uint32_t now)
 
 static autoexp_event_t next_trial(AutoExp *a, uint32_t now)
 {
-    while (a->next_pos < AUTOEXP_SETTINGS) {
-        const uint8_t c = ORDER[a->next_pos++];
+    const uint8_t *order = a->darker ? ORDER_DARKER : ORDER_BRIGHTER;
+    const uint8_t len = a->darker ? (uint8_t)sizeof ORDER_DARKER : (uint8_t)sizeof ORDER_BRIGHTER;
+    while (a->next_pos < len) {
+        const uint8_t c = order[a->next_pos++];
         bool dup = false;
         for (uint8_t t = 0; t < AUTOEXP_SETTINGS && !dup; t++) {
             dup = (a->tried_mask & (1u << t)) && same_effect(c, t, a->user_bias);
@@ -130,7 +229,7 @@ static autoexp_event_t next_trial(AutoExp *a, uint32_t now)
         if (dup) {
             continue;
         }
-        a->tried_mask |= (uint8_t)(1u << c);
+        a->tried_mask |= (uint16_t)(1u << c);
         a->current = c;
         ring_clear(a);
         enter(a, AUTOEXP_SETTLING, now);
@@ -167,8 +266,12 @@ autoexp_event_t autoexp_tick(AutoExp *a, uint32_t now, uint32_t located, uint32_
         a->best = 0xFF;
         a->best_score = 0;
         a->best_decoded = 0;
-        a->tried_mask = (uint8_t)(1u << a->origin);
+        a->tried_mask = (uint16_t)(1u << a->origin);
         a->next_pos = 0;
+        /* Which way: the code's light at the setting that triggered. */
+        AutoExpLight l;
+        autoexp_light_now(a, &l);
+        a->darker = autoexp_light_bright(&l);
         return next_trial(a, now);
     }
     case AUTOEXP_SETTLING:
@@ -251,6 +354,7 @@ void autoexp_current(const AutoExp *a, AutoExpApply *out)
     out->index = a->current;
     out->bias = autoexp_bias_for(a->current, a->user_bias);
     out->shutter_mul = s->shutter_mul;
+    out->shutter_div = s->shutter_div;
     out->mains_swap = s->mains_swap;
 }
 
@@ -261,14 +365,14 @@ void autoexp_event_text(autoexp_event_t ev, uint8_t index, char *out, size_t out
     }
     switch (ev) {
     case AUTOEXP_EV_TRY:
-        snprintf(out, out_size, "Auto exposure +%u", (unsigned)index);
+        snprintf(out, out_size, "Auto exposure %+d", autoexp_step(index));
         break;
     case AUTOEXP_EV_KEEP:
     case AUTOEXP_EV_REVERT:
         if (index == 0) {
             snprintf(out, out_size, "Auto exposure off");
         } else {
-            snprintf(out, out_size, "Auto exposure +%u kept", (unsigned)index);
+            snprintf(out, out_size, "Auto exposure %+d kept", autoexp_step(index));
         }
         break;
     default:

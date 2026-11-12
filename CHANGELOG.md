@@ -26,6 +26,20 @@ are released in
   index. The companion's Receive view has *Check on board (QR)* for both
   addresses. `leek-zcash-ffi`'s README has "Verifying a receive address"
   (USB/Bluetooth `show_address`, or QR).
+- **Board: Check address (experimental, QR).** Main menu → Check address
+  scans a wallet's Receive QR (a unified, Sapling, transparent or TEX
+  address, or a one-payment `zcash:` URI) and says from the board's own
+  keys whether it is this wallet's: *YOURS, account N, address #index* with
+  the receivers checked, *NOT from this wallet*, *Cannot check*, or *Wrong
+  network*, then the address in groups of four to compare. A unified
+  address's index comes from decrypting its Orchard diversifier, and its
+  transparent receiver has to match at that index, on any of accounts 0–9;
+  a transparent address is searched in the selected account's #0–199. The
+  board has no Sapling keys: a Sapling receiver is not checked and the
+  screen says *Sapling NOT checked*; a Sapling-only address is *Cannot
+  check*. The QR-only
+  counterpart of the USB/Bluetooth address check
+  ([QR-BENCH.md](docs/zcash/QR-BENCH.md#check-address-is-the-phones-address-the-boards-experimental)).
 - **QR scanning on the board: 2–3x faster, and phones work (tested on the
   colour kit, [QR-BENCH.md](docs/zcash/QR-BENCH.md#signing-with-a-phone)).**
   The scan decoder keeps 64 mixed parts instead of 8 and skips one it already

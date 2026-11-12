@@ -86,20 +86,35 @@ It works, but the phone needs other settings than a laptop screen:
 
 **Automatic exposure** (built and host-tested, not yet tried on a board).
 When the board finds the code at least 5 times in 2 s and reads fewer than
-10 % of them, it tries five settings on top of yours, in this order: shutter
-cap ×2 (192 lines), ×2 with exposure +1, ×4 (384 lines) with +1, ×4 with +2,
-and ×4 with +1 at the other mains frequency (50 Hz). A longer shutter
-averages out more of the flashing. Each setting gets 0.7 s to settle and is
-then judged over 2 s. The board keeps the first one that reads 40 % or more,
-or else the best one, if it read at least 2 codes and beat your setting by 5
-points. If nothing beats it, the board goes back to your setting and waits
-10 s. It runs at most two searches a scan, and each search takes 14 s at
-most. Row 7 says `Auto exposure +2` while it tries and `Auto exposure +2
-kept` when it keeps one; the serial log has an `auto-exposure:` line for
-each step. Turning the knob stops the search for that scan and goes back to
-your setting. The next scan starts at your setting again. Build with
-`-DCAMERA_AUTO_EXPOSURE=0` to turn it off; it is always off in the bench
-image.
+10 % of them, it tries other settings on top of yours. Which ones depends
+on how the code looks. Each frame that finds a code, the board measures the
+code's box: its mean brightness (luma, 0–255) and the share of pixels that
+are clipped white (250 or more).
+
+- **Bright or clipped** (15 % or more of the box clipped, or a mean of 180
+  or more): a phone at full brightness, washed out. The board tries darker
+  settings: exposure −1, −2 and −3 under yours (down to −8, below the
+  knob's −5), then −2 with half the shutter cap (48 lines).
+- **Otherwise** (a dim or flickering screen): brighter settings, in this
+  order: shutter cap ×2 (192 lines), ×2 with exposure +1, ×4 (384 lines)
+  with +1, ×4 with +2, and ×4 with +1 at the other mains frequency (50 Hz).
+  A longer shutter averages out more of the flashing.
+
+Each setting gets 0.7 s to settle and is then judged over 2 s. The board
+keeps the first one that reads 40 % or more, or else the best one, if it
+read at least 2 codes and beat your setting by 5 points. If nothing beats
+it, the board goes back to your setting and waits 10 s. It runs at most two
+searches a scan; a search takes 11 s (darker) or 14 s (brighter) at most.
+Row 7 says `Auto exposure -1` or `Auto exposure +2` while it tries and
+`Auto exposure -1 kept` when it keeps one. The serial log has an
+`auto-exposure:` line for each step (`try -1: bias -5, shutter 96 lines …,
+darker list (code bright)`), and the once-a-second `scan` line ends with
+`| luma 187 sat 34% code`: the last located code's brightness, or the whole
+frame's (`frame`) when no code was found that second. A luma near 200 or a
+sat over 15 % means the screen is overexposed. Turning the knob stops the
+search for that scan and goes back to your setting. The next scan starts at
+your setting again. Build with `-DCAMERA_AUTO_EXPOSURE=0` to turn it off;
+it is always off in the bench image.
 
 These rules are in the SDK as `qr_display_hints()` (`host/leek-ur`
 `display`; `brightness_levels` and `default_brightness`, `max_brightness`
@@ -151,6 +166,58 @@ Tested on 2026-11-11: the colour kit's testnet account 0 (ZFP 551A1FD4) was
 imported with the board's birthday (block 4,506,700) and synced to the tip,
 with the board unplugged. The SDK's `QrScanner` does the same for other
 wallets ([leek-zcash-ffi](../../host/leek-zcash-ffi/README.md)).
+
+## Check address: is the phone's address the board's? (experimental)
+
+Over USB or Bluetooth the app asks the board to show an address
+(`zShowAddress`). With QR only, nothing asks, so the board reads the
+address itself. On the board: Main menu → Check address. The Scan screen
+opens as for a request (same zoom push and exposure knob), titled *Check
+address*. Point it at the phone's Receive QR.
+
+It reads what wallets' Receive screens show: a unified address (`u1…`,
+`utest1…`), a Sapling address (`zs1…`, `ztestsapling1…`), a transparent
+one (`t1`, `t3`, `tm`, `t2`), a TEX address (`tex1…`, `textest1…`), or a
+`zcash:` URI (ZIP 321) with one payment: `zcash:<address>?…` or
+`zcash:?address=<address>&…`. A URI with numbered payments (`address.1`) is
+refused, as the SDK's `address_check_qr()` refuses it. Bech32 is read in
+upper or lower case. Anything else stays on Scan with *Not a Zcash
+address*.
+
+The answer comes from the board's own keys, never from the phone:
+
+- **Unified address.** The board decrypts the Orchard receiver's
+  diversifier with the account's key to get its index, then derives the
+  receiver at that index and compares. A transparent receiver in the same
+  address has to be the account's key at the same index. It tries every
+  account the board can select (0–9), the selected one first, about 0.75 s
+  each.
+- **The Sapling receiver is not checked.** A wallet's Receive address
+  usually carries one next to Orchard. The board has no Sapling keys (its
+  signers have no Jubjub or Sapling key derivation), so it checks every
+  other receiver and the result says **Sapling NOT checked** on its own
+  line. A wallet that pays this address over Sapling pays a receiver the
+  board did not verify.
+- **Transparent or TEX address.** The board searches the selected account's
+  receive keys #0–199, from its public key. The host suite does 200 in
+  0.14 s; on the board we estimate 4–8 s when the address is not there
+  (the serial log says how long it took). Cancel stops the search.
+- **A Sapling address, or a unified address with no Orchard receiver:**
+  *Cannot check*. **P2SH, or a unified address with a P2SH or unknown
+  receiver:** *NOT from this wallet* (the board makes none).
+
+The result screen says **YOURS**, *Account N*, *Address #index* and which
+receivers were checked (*Checked: Orchard*, *Checked: transparent*), or
+**NOT from this wallet**, *Cannot check*, or *Wrong network* (the
+address's own network against Settings > Network). Turn the knob to see
+the address in groups of four, to compare with the phone. OK scans another,
+Cancel goes back to the menu.
+
+Serial log (115200 baud): `check address: unified test address, 106 chars:
+checking`, then `check address: OURS, account 0, 1 accounts in 780 ms` or
+`check address: NOT OURS, account 0, 200 transparent indices in N ms`; a
+UA with Sapling adds `, Sapling receiver NOT checked`. The
+log never contains the scanned text, only its length.
 
 ## How to measure
 

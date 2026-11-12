@@ -49,6 +49,15 @@
 #include "zcash-review.h"
 #include "zcash-storage.h"
 #endif
+/* Main menu -> Check address: a scanned receive QR against the device's own
+ * accounts (zcash-addrcheck.h). Needs the camera; the host suite turns it on
+ * to drive the screens. */
+#ifndef UI_HAS_ADDR_CHECK
+#define UI_HAS_ADDR_CHECK (LEEK_HAS_CAMERA && LEEK_HAS_ZCASH)
+#endif
+#if UI_HAS_ADDR_CHECK
+#include "zcash-addrcheck.h"
+#endif
 #if LEEK_HAS_SDCARD && LEEK_HAS_ZCASH
 #include "sd-seed.h"
 #include "sd-sign.h"
@@ -585,6 +594,9 @@ typedef enum {
     /* The account for an air-gapped companion (SCREEN_VIEW_KEY). */
     MENU_VIEW_KEY,
     MENU_SCAN,
+    /* Scan a wallet's receive QR and say whether it is this device's
+     * (SCREEN_CHECK_ADDRESS). Next to Scan: the same camera. */
+    MENU_CHECK_ADDRESS,
     /* SD storage mode (roadmap 1.4): load a .zkv seed for the session, or
      * save the open one. On every board with a card slot, seed or no seed:
      * loading one is how a device with nothing stored gets a wallet. */
@@ -596,6 +608,9 @@ typedef enum {
 #define MENU_MAX_ITEMS MENU_ACTION_COUNT
 
 static MenuAction menu_actions[MENU_MAX_ITEMS];
+/* Scan reads receive addresses rather than URs: set by Check address (and
+ * its OK: scan another) just before SCREEN_SCAN, cleared when Scan exits. */
+static bool scan_for_address;
 static int menu_item_count = 0;
 static int menu_selection = 0;
 
@@ -611,6 +626,7 @@ static const char *menu_action_label(MenuAction a)
         case MENU_SHOW_ADDRESS:  return "Receive";
         case MENU_VIEW_KEY:      return "View key";
         case MENU_SCAN:          return "Scan";
+        case MENU_CHECK_ADDRESS: return "Check address";
         case MENU_SD_SEED:       return "SD Card";
         case MENU_SETTINGS:      return "Settings";
         default:                 return "?";
@@ -640,6 +656,9 @@ static void menu_rebuild(void)
 #endif
 #if LEEK_HAS_CAMERA
         menu_actions[menu_item_count++] = MENU_SCAN;
+#endif
+#if UI_HAS_ADDR_CHECK
+        menu_actions[menu_item_count++] = MENU_CHECK_ADDRESS;
 #endif
     }
 
@@ -2377,6 +2396,11 @@ static void screen_main_menu_on_button(button_id_t btn)
                     ui_set_screen(SCREEN_VIEW_KEY);
                     break;
                 case MENU_SCAN:
+                    scan_for_address = false;
+                    ui_set_screen(SCREEN_SCAN);
+                    break;
+                case MENU_CHECK_ADDRESS:
+                    scan_for_address = true;
                     ui_set_screen(SCREEN_SCAN);
                     break;
                 case MENU_SETTINGS:
@@ -5218,6 +5242,277 @@ static void scan_color_reset(void)
 }
 #endif
 
+/* ============================================================================
+ * Check Address (zcash-addrcheck.h)
+ *
+ * Main menu -> Check address -> Scan (in address mode) -> here. The phone
+ * shows its receive QR; the board says whether its own keys make that
+ * address, and for which account and index, or that they do not. The QR-only
+ * counterpart of zShowAddress (SCREEN_ADDRESS_CHECK), which needs a cable.
+ *
+ * The work runs a step per turn of the UI loop (service_check_address): one
+ * account derived and checked (Sinsemilla, ~0.75 s on the S3), or one
+ * ZAC_T_CHUNK of transparent indices, so the progress line moves and Cancel
+ * is read between steps. A UA is tried against every account the device's
+ * screens can select, the selected one first; a transparent address against
+ * the selected account's 0..ZAC_T_SEARCH-1.
+ *
+ * The account lives in recv_account, the Receive screen's buffer (internal
+ * RAM, viewing keys and addresses only): the two screens never coexist, and
+ * both wipe it on the way out. Nothing secret is held here; the seed is only
+ * ever inside zcash_account_derive().
+ *
+ * Everything drawn comes from zcash-addrcheck.c's pages: fixed strings,
+ * numbers, and the scanned address once it has decoded as a Zcash address.
+ * ============================================================================ */
+
+#if UI_HAS_ADDR_CHECK
+static ZacCheck addrchk;
+static int      addrchk_page;
+static bool     addrchk_searching;
+static bool     addrchk_error;      /* derivation failed: no verdict */
+static bool     addrchk_derived;    /* transparent: recv_account holds the account */
+static uint8_t  addrchk_step;       /* UA: accounts tried */
+static int64_t  addrchk_t0_ms;
+
+/* The k-th account to try: the selected one, then the rest in order. */
+static uint32_t addrchk_account_at(uint8_t k)
+{
+    if (k == 0) return hd_account;
+    const uint32_t a = (uint32_t)(k - 1);
+    return a < hd_account ? a : a + 1;
+}
+
+static const char *addrchk_verdict_name(ZacVerdict v)
+{
+    switch (v) {
+        case ZAC_PENDING:   return "checking";
+        case ZAC_OURS:      return "OURS";
+        case ZAC_NOT_OURS:  return "NOT OURS";
+        case ZAC_WRONG_NET: return "wrong network";
+        case ZAC_CANNOT_CHECK: return "cannot check (Sapling)";
+        default:            return "not an address";
+    }
+}
+
+static const char *addrchk_kind_name(ZacKind k)
+{
+    switch (k) {
+        case ZAC_KIND_UA:      return "unified";
+        case ZAC_KIND_SAPLING: return "Sapling";
+        case ZAC_KIND_P2PKH:   return "P2PKH";
+        case ZAC_KIND_P2SH:    return "P2SH";
+        default:               return "TEX";
+    }
+}
+
+static void addrchk_finish(void)
+{
+    addrchk_searching = false;
+    memzero(&recv_account, sizeof recv_account);
+    const unsigned ms = (unsigned)(ui_now_ms() - addrchk_t0_ms);
+    if (addrchk_error) {
+        ESP_LOGW(TAG, "check address: derivation failed after %u ms", ms);
+        return;
+    }
+    if (zac_is_transparent(&addrchk)) {
+        const unsigned found = (unsigned)addrchk.index_le[0] | (unsigned)addrchk.index_le[1] << 8;
+        ESP_LOGI(TAG, "check address: %s, account %u, %u transparent indices in %u ms",
+                 addrchk_verdict_name(addrchk.verdict), (unsigned)addrchk.account,
+                 addrchk.verdict == ZAC_OURS ? found + 1u : (unsigned)addrchk.t_next, ms);
+    } else {
+        ESP_LOGI(TAG, "check address: %s, account %u, %u accounts in %u ms%s",
+                 addrchk_verdict_name(addrchk.verdict), (unsigned)addrchk.account,
+                 (unsigned)addrchk_step, ms,
+                 (addrchk.receivers & ZAC_R_SAPLING) ? ", Sapling receiver NOT checked" : "");
+    }
+}
+
+static void screen_check_address_enter(void)
+{
+    addrchk_page = 0;
+    addrchk_step = 0;
+    addrchk_error = false;
+    addrchk_derived = false;
+    addrchk_searching = addrchk.verdict == ZAC_PENDING;
+    addrchk_t0_ms = ui_now_ms();
+    ESP_LOGI(TAG, "check address: %s %s address, %u chars: %s",
+             addrchk_kind_name(addrchk.kind), addrchk.net == ZCASH_NET_MAIN ? "main" : "test",
+             (unsigned)strlen(addrchk.addr), addrchk_verdict_name(addrchk.verdict));
+}
+
+static void screen_check_address_exit(screen_id_t next)
+{
+    (void)next;
+    memzero(&addrchk, sizeof addrchk);
+    memzero(&recv_account, sizeof recv_account);
+    addrchk_searching = false;
+    addrchk_derived = false;
+}
+
+/* One step of the search; see the section comment. */
+static void service_check_address(void)
+{
+    if (ui_get_screen() != SCREEN_CHECK_ADDRESS || !addrchk_searching) {
+        return;
+    }
+    if (zac_is_transparent(&addrchk)) {
+        if (!addrchk_derived) {
+            if (!ensure_wallet_unlocked() ||
+                zcash_account_derive(hd_account, addrchk.net, &recv_account) != WALLET_OK) {
+                addrchk_error = true;
+                addrchk_finish();
+            } else {
+                addrchk_derived = true;
+            }
+        } else if (zac_t_step(&addrchk, &recv_account)) {
+            addrchk_finish();
+        }
+    } else if (addrchk_step >= HD_ACCOUNT_COUNT) {
+        addrchk.verdict = ZAC_NOT_OURS;
+        addrchk.why = ZAC_WHY_FOREIGN;
+        addrchk_finish();
+    } else {
+        const uint32_t acct = addrchk_account_at(addrchk_step++);
+        if (!ensure_wallet_unlocked() ||
+            zcash_account_derive(acct, addrchk.net, &recv_account) != WALLET_OK) {
+            addrchk_error = true;
+            addrchk_finish();
+        } else {
+            zac_check_ua(&addrchk, &recv_account);
+            memzero(&recv_account, sizeof recv_account);
+            if (addrchk.verdict != ZAC_PENDING) {
+                addrchk_finish();
+            }
+        }
+    }
+    /* A turn of the knob queued during the last step must not page through
+       a result nobody has seen yet. Only then: between steps a queued Cancel
+       is what stops the search. */
+    if (!addrchk_searching) {
+        button_drain();
+    }
+    ui_invalidate();
+}
+
+static oled_role_t addrchk_role(ZacRowRole r)
+{
+    switch (r) {
+        case ZAC_ROW_GOOD:   return OLED_ROLE_GOOD;
+        case ZAC_ROW_DANGER: return OLED_ROLE_DANGER;
+        case ZAC_ROW_WARN:   return OLED_ROLE_WARN;
+        case ZAC_ROW_DIM:    return OLED_ROLE_DIM;
+        default:             return OLED_ROLE_TEXT;
+    }
+}
+
+static void screen_check_address_render(void)
+{
+    oled_clear();
+    if (addrchk_error) {
+        oled_draw_string_centered(0, "Check address");
+        oled_set_role(OLED_ROLE_DANGER);
+        oled_draw_string_centered(3, "Could not derive");
+        oled_draw_string_centered(4, "the account");
+        oled_set_role(OLED_ROLE_AUTO);
+        oled_draw_string(7, 0, HINT_BACK);
+        return;
+    }
+    if (addrchk_searching) {
+        char line[22];
+        oled_draw_string_centered(0, "Check address");
+        oled_draw_string_centered(3, "Checking...");
+        if (zac_is_transparent(&addrchk)) {
+            snprintf(line, sizeof line, "acct %u, t #%u", (unsigned)hd_account,
+                     (unsigned)addrchk.t_next);
+        } else {
+            snprintf(line, sizeof line, "account %u (%u/%u)",
+                     (unsigned)addrchk_account_at(addrchk_step < HD_ACCOUNT_COUNT
+                                                      ? addrchk_step : 0),
+                     (unsigned)addrchk_step + 1u, (unsigned)HD_ACCOUNT_COUNT);
+        }
+        oled_set_role(OLED_ROLE_DIM);
+        oled_draw_string_centered(4, line);
+        oled_set_role(OLED_ROLE_AUTO);
+        oled_draw_string(7, 0, HINT_BACK);
+        return;
+    }
+    ZacPage p;
+    if (!zac_render(&addrchk, addrchk_page, HINT_CHECK_ADDR, &p)) {
+        return;
+    }
+    for (int r = 0; r < ZAC_ROWS; r++) {
+        if (!p.row[r][0]) continue;
+        oled_set_role(addrchk_role(p.role[r]));
+        /* The verdict and the title centred, so they read at a glance. */
+        if (addrchk_page == 0 && r < 3) {
+            oled_draw_string_centered((uint8_t)r, p.row[r]);
+        } else {
+            oled_draw_string((uint8_t)r, 0, p.row[r]);
+        }
+    }
+    oled_set_role(OLED_ROLE_AUTO);
+}
+
+static void screen_check_address_on_button(button_id_t btn)
+{
+    if (btn == BUTTON_CANCEL) {
+        ui_set_screen(SCREEN_MAIN_MENU);
+        return;
+    }
+    if (addrchk_searching || addrchk_error) {
+        return;
+    }
+    const int last = zac_page_count(&addrchk) - 1;
+    switch (btn) {
+        case BUTTON_UP:
+            if (addrchk_page > 0) addrchk_page--;
+            break;
+        case BUTTON_DOWN:
+            if (addrchk_page < last) addrchk_page++;
+            break;
+        case BUTTON_ACCEPT:
+            /* Scan another. */
+            scan_for_address = true;
+            ui_set_screen(SCREEN_SCAN);
+            return;
+        default:
+            return;
+    }
+    ui_invalidate();
+}
+
+static const screen_t screen_check_address = {
+    .enter = screen_check_address_enter,
+    .render = screen_check_address_render,
+    .on_button = screen_check_address_on_button,
+    .exit = screen_check_address_exit,
+};
+
+/* A decoded QR on Scan in address mode. Anything that is not an address
+ * stays on Scan with a fixed word, as a wrong UR type does. */
+static void scan_address_handle(const char *text, size_t len)
+{
+    if (zac_parse(text, len, zcash_network, &addrchk) == ZAC_MALFORMED) {
+        static int64_t last_log_ms = -100000;
+        if (ui_now_ms() - last_log_ms >= 1000) {
+            /* The length only: a stranger's QR is not logged. */
+            ESP_LOGI(TAG, "check address: not a Zcash address (%u chars)", (unsigned)len);
+            last_log_ms = ui_now_ms();
+        }
+        snprintf(scan_status, sizeof scan_status, "Not a Zcash address");
+#if UI_COLOR_CODE
+        scan_event_until_ms = ui_now_ms() + SCAN_EVENT_MS;
+#endif
+        ui_invalidate();
+        return;
+    }
+    ui_set_screen(SCREEN_CHECK_ADDRESS);
+}
+#else
+static void service_check_address(void) { }
+#endif
+
 /* Time to a complete animated UR (scan-timing.h), logged over USB serial
  * once per message: the number the camera tuning is meant to move. */
 static ScanUrClock scan_ur_clock;
@@ -5263,6 +5558,12 @@ static void scan_log_refused(const char *ur, size_t len, AirgapScan res)
 
 static void scan_handle(const char *ur, size_t len)
 {
+#if UI_HAS_ADDR_CHECK
+    if (scan_for_address) {
+        scan_address_handle(ur, len);
+        return;
+    }
+#endif
     const AirgapScan res = airgap_scan_feed(ur, len);
     if (res == AIRGAP_SCAN_UNREADABLE || res == AIRGAP_SCAN_WRONG_TYPE) {
         scan_log_refused(ur, len, res);
@@ -5370,8 +5671,11 @@ static void screen_scan_enter(void)
     /* A camera that refuses to start is a screen that says so, not a hang and
        not a reboot. The rest of this screen works either way: BACK still
        leaves, and the host-driven test path still feeds it strings. */
-    snprintf(scan_status, sizeof scan_status,
-             camera_start() ? "Point at the QR" : "No camera");
+    const bool up = camera_start();
+    /* Address mode reads any QR, not only ur: ones (camera.c drops the rest). */
+    camera_set_accept_any(scan_for_address);
+    snprintf(scan_status, sizeof scan_status, "%s",
+             !up ? "No camera" : (scan_for_address ? "Point at the address" : "Point at the QR"));
 }
 
 #if UI_COLOR_CODE
@@ -5457,7 +5761,7 @@ static void screen_scan_render(void)
         return;
     }
 
-    oled_draw_string_centered(0, "Scan request");
+    oled_draw_string_centered(0, scan_for_address ? "Check address" : "Scan request");
     oled_draw_string_centered(3, scan_status);
     oled_draw_string(7, 0, HINT_BACK);
 }
@@ -5500,7 +5804,9 @@ static void screen_scan_on_button(button_id_t btn)
 static void screen_scan_exit(screen_id_t next)
 {
     (void)next;
+    camera_set_accept_any(false);
     camera_stop();
+    scan_for_address = false;
     airgap_scan_reset();
     scan_preview_live = false;
 #if !BOARD_HAS_SPI_PANEL
@@ -7532,6 +7838,9 @@ void ui_init(void)
     screens[SCREEN_STORAGE_KEY] = &screen_storage_key;
 #endif
     screens[SCREEN_SCAN] = &screen_scan;
+#if UI_HAS_ADDR_CHECK
+    screens[SCREEN_CHECK_ADDRESS] = &screen_check_address;
+#endif
     screens[SCREEN_STORAGE_FAULT] = &screen_storage_fault;
 
     current_screen = SCREEN_BOOT;
@@ -7824,6 +8133,7 @@ void ui_task(void *pvParameters)
         service_idle_screens();
         service_qr_out();
         service_scan();
+        service_check_address();
 
         /* A companion that died without saying so. Tears down the channel
          * only: the wallet stays unlocked and a temporary seed survives, so
@@ -7924,6 +8234,8 @@ void ui__scan_feed_for_test(const char *ur) { scan_handle(ur, strlen(ur)); }
 const char *ui__scan_status_for_test(void) { return scan_status; }
 /* One turn of the camera half of ui_task's loop. */
 void ui__service_scan_for_test(void) { service_scan(); }
+/* One step of Check address's search. */
+void ui__service_check_address_for_test(void) { service_check_address(); }
 
 /* The cached fingerprint, which is not on any screen while the device is
  * locked and so cannot be asserted through the framebuffer - the stale-XFP

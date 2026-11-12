@@ -70,6 +70,24 @@ int32_t zc_pczt_verify_sig(zc_ctx *ctx, const zs_sig *sig);
 int32_t zc_ua_owned(const char *ua, uint8_t net, const uint8_t fvk[96], uint8_t index_out[11],
                     uint8_t p2pkh_out[20], int *has_p2pkh);
 
+/* Check address: the receivers of `ua` (NUL-terminated), no key needed.
+ * ZS_OK if it is a well-formed UA on `net` (zc_ua_parse: checksum,
+ * F4Jumble, ordering, item sizes), with 1/0 in *has_orchard, *has_p2pkh,
+ * *has_sapling and *other (P2SH, unknown, expiry metadata); ZS_E_PARSE
+ * otherwise. */
+int32_t zc_ua_receivers(const char *ua, uint8_t net, int *has_orchard, int *has_p2pkh,
+                        int *has_sapling, int *other);
+
+/* Check address: zc_ua_owned for a wallet's full receive UA, which usually
+ * carries a Sapling receiver too. The device has no Sapling keys, so a
+ * Sapling receiver is not checked and is reported in *has_sapling; the
+ * Orchard receiver must still be ours, and the caller checks the P2PKH one
+ * at the same index. Any other receiver: ZS_E_UNSUPPORTED_BUNDLE. Otherwise
+ * as zc_ua_owned. */
+int32_t zc_ua_owned_but_sapling(const char *ua, uint8_t net, const uint8_t fvk[96],
+                                uint8_t index_out[11], uint8_t p2pkh_out[20], int *has_p2pkh,
+                                int *has_sapling);
+
 /* App Storage Keys (docs/zcash/zip-draft-app-storage-keys.md). */
 
 /* The ZIP number the draft has not been given yet: a placeholder, and an

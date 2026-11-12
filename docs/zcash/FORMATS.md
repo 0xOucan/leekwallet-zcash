@@ -181,6 +181,15 @@ starts over on the new one, because the sender switched (a new fragment
 size, a new request). A host ignores its own type when it sees it, for
 example in a mirror.
 
+The board's *Check address* screen (Main menu) reads one more kind of
+code, outside bc-ur: a plain Zcash address or a ZIP 321 `zcash:` URI, as a
+wallet's Receive screen shows it, in byte or alphanumeric mode, or a URI
+of one payment (`zcash:<address>?…` or `zcash:?address=…`), the forms
+`address_check_qr()` makes; numbered payments are refused. A UA's Sapling
+receiver is not checked (the board has no Sapling keys) and the screen
+says so. See
+[QR-BENCH.md](QR-BENCH.md#check-address-is-the-phones-address-the-boards-experimental).
+
 ### Showing `ur:leek-pczt` to the board
 
 The board's camera is fixed-focus (sharp from about 30 cm) and has a

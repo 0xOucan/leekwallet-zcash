@@ -19,6 +19,9 @@ size_t zc_encode_ua(char *out, size_t cap, uint8_t net, const uint8_t orchard[43
  * check: P2SH, Sapling, an unknown typecode, or expiry metadata. */
 typedef struct {
     int     has_orchard, has_p2pkh, other;
+    /* Check address's split of `other`: a Sapling receiver, and anything
+     * else (P2SH, unknown, expiry metadata). */
+    int     has_sapling, other_not_sapling;
     uint8_t orchard[43];
     uint8_t p2pkh[20];
 } zc_ua_items;

@@ -200,3 +200,46 @@ ZcashUaCheck zcash_ua_check(const ZcashAccount *a, const char *ua, uint8_t index
     memcpy(t_address_out, addr, sizeof addr);
     return ZCASH_UA_OURS;
 }
+
+typedef struct {
+    const ZcashAccount *a;
+    const uint8_t      *hash160;
+    uint32_t            from, count, index;
+    bool                found;
+} TFindJob;
+
+static void t_find_job(void *p)
+{
+    TFindJob *job = p;
+    const ZcashAccount *a = job->a;
+    HDNode chain, node;
+    uint8_t h[20];
+    job->found = false;
+    /* The external chain once, then one public CKD per index. */
+    if (hdnode_from_xpub(3, 0x80000000u | a->account, a->t_account, a->t_account + 32,
+                         SECP256K1_NAME, &chain) == 1 &&
+        hdnode_public_ckd(&chain, 0) == 1) {
+        for (uint32_t i = job->from; i - job->from < job->count && i < 0x80000000u; i++) {
+            node = chain;
+            if (hdnode_public_ckd(&node, i) != 1) continue;   /* an invalid child: skipped */
+            ecdsa_get_pubkeyhash(node.public_key, HASHER_SHA2_RIPEMD, h);
+            if (memcmp(h, job->hash160, 20) == 0) {
+                job->index = i;
+                job->found = true;
+                break;
+            }
+        }
+    }
+    memzero(&chain, sizeof chain);
+    memzero(&node, sizeof node);
+}
+
+bool zcash_t_find(const ZcashAccount *a, const uint8_t hash160[20], uint32_t from,
+                  uint32_t count, uint32_t *index_out)
+{
+    if (!a || !hash160 || !index_out) return false;
+    TFindJob job = { a, hash160, from, count, 0, false };
+    if (!zcash_worker_run(t_find_job, &job)) return false;
+    if (job.found) *index_out = job.index;
+    return job.found;
+}

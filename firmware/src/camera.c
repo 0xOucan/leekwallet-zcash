@@ -29,6 +29,15 @@
    auto-levelled view. Not secret, kept by ui.c in NVS. */
 static bool preview_true;
 
+/* Check address (ui.c): any decoded QR goes up, not only ur: ones. Set by
+   the UI task, read by the decode task; one byte. */
+static volatile bool accept_any;
+
+void camera_set_accept_any(bool on)
+{
+    accept_any = on;
+}
+
 void camera_set_preview_true_exposure(bool on) { preview_true = on; }
 bool camera_preview_true_exposure(void) { return preview_true; }
 
@@ -458,9 +467,13 @@ static int8_t exposure_bias = -4;
 
 /*
  * Automatic exposure search (scan-autoexp.h): when codes keep being LOCATED
- * and not READ - the PWM-dimmed OLED phone, or a bias set too dark - try a
- * longer shutter cap, a brighter bias and the other banding step, keep what
- * reads best, and give the knob back the moment it turns. The decode task
+ * and not READ, try other settings, keep what reads best, and give the knob
+ * back the moment it turns. Which way depends on the located code's box,
+ * measured here each frame that finds one (mean luma, share of clipped
+ * pixels): bright or clipped - a phone at full brightness, washed out - gets
+ * the bias one to three steps darker and a halved shutter cap; otherwise -
+ * the PWM-dimmed OLED phone, or a bias set too dark - a longer shutter cap, a
+ * brighter bias and the other banding step. The decode task
  * feeds it the counters once a frame and applies its decisions; the user's
  * exposure_bias is never changed, and camera_start() writes the user's
  * setting again on every scan.
@@ -469,9 +482,10 @@ static int8_t exposure_bias = -4;
  * bench image, whose numbers must come from one setting.
  *
  * Measure: with the phone's anti-flicker off at 50 % brightness and the bias
- * at -4, "auto-exposure: try" lines within ~2.5 s of the code being found,
- * then "kept" with r climbing in the per-second line; on a laptop LCD no
- * auto-exposure line at all.
+ * at -4, "auto-exposure: try +1" lines within ~2.5 s of the code being
+ * found, then "kept" with r climbing in the per-second line; at 100 %
+ * brightness, if the per-second line's "luma" is high or "sat" over 15 %,
+ * "try -1" instead; on a laptop LCD no auto-exposure line at all.
  */
 #ifndef CAMERA_AUTO_EXPOSURE
 #  if defined(LEEK_QR_BENCH) && LEEK_QR_BENCH
@@ -491,6 +505,10 @@ static volatile bool autoexp_knob, autoexp_zoomed;
 /* The status-line note for the UI, under timing_mux. */
 static char autoexp_note[24];
 static bool autoexp_note_fresh;
+/* The last located code's light, for the per-second line; `fresh` when a
+   code was located since that line was last written. Decode task only. */
+static AutoExpLight autoexp_seen;
+static bool autoexp_seen_fresh;
 
 static unsigned mains_for(bool swap)
 {
@@ -500,13 +518,13 @@ static unsigned mains_for(bool swap)
     return CAMERA_MAINS_HZ == 50 ? 60 : 50;
 }
 
-static unsigned autoexp_cap_lines(uint8_t mul)
+static unsigned autoexp_cap_lines(uint8_t mul, uint8_t div)
 {
     unsigned vts = CAMERA_DRIVER_VTS;
     if (FRAME_W == 320 && camera_tune_zoom(zoom_level)->ty < vts) {
         vts = camera_tune_zoom(zoom_level)->ty;
     }
-    return camera_tune_shutter_cap(CAMERA_SHUTTER_CAP_LINES * mul, vts);
+    return camera_tune_shutter_cap(CAMERA_SHUTTER_CAP_LINES * mul / (div ? div : 1u), vts);
 }
 
 /* The same registers camera_start() writes, at the setting's values. */
@@ -523,7 +541,7 @@ static void autoexp_apply(const AutoExpApply *ap)
         return;
     }
     if (CAMERA_SHUTTER_CAP_LINES > 0) {
-        const uint16_t cap = (uint16_t)autoexp_cap_lines(ap->shutter_mul);
+        const uint16_t cap = (uint16_t)autoexp_cap_lines(ap->shutter_mul, ap->shutter_div);
         sensor->set_reg(sensor, 0x3A02, 0xFFFF, cap);
         sensor->set_reg(sensor, 0x3A14, 0x0FFF, cap);
     }
@@ -554,8 +572,8 @@ static void autoexp_frame(void)
         autoexp_knob = false;
         const uint8_t was = autoexp.current;
         if (autoexp_user_override(&autoexp, exposure_bias) == AUTOEXP_EV_STOP) {
-            ESP_LOGI(TAG, "auto-exposure: knob turned, off for this scan (was +%u)",
-                     (unsigned)was);
+            ESP_LOGI(TAG, "auto-exposure: knob turned, off for this scan (was %+d)",
+                     autoexp_step(was));
             if (was != 0) {
                 autoexp_current(&autoexp, &ap);
                 autoexp_apply(&ap);
@@ -573,33 +591,78 @@ static void autoexp_frame(void)
     }
     autoexp_current(&autoexp, &ap);
     autoexp_apply(&ap);
-    ESP_LOGI(TAG, "auto-exposure: %s +%u: bias %d, shutter %u lines, banding %u Hz"
-                  " | before: s:%u r:%u (%u.%u%%)",
+    ESP_LOGI(TAG, "auto-exposure: %s %+d: bias %d, shutter %u lines, banding %u Hz"
+                  " | before: s:%u r:%u (%u.%u%%)%s",
              ev == AUTOEXP_EV_TRY ? "try" : (ev == AUTOEXP_EV_KEEP ? "kept" : "back to"),
-             (unsigned)ap.index, (int)ap.bias,
-             CAMERA_SHUTTER_CAP_LINES > 0 ? autoexp_cap_lines(ap.shutter_mul) : 0u,
+             autoexp_step(ap.index), (int)ap.bias,
+             CAMERA_SHUTTER_CAP_LINES > 0 ? autoexp_cap_lines(ap.shutter_mul, ap.shutter_div) : 0u,
              mains_for(ap.mains_swap),
              (unsigned)autoexp.last_located, (unsigned)autoexp.last_decoded,
-             (unsigned)(autoexp.last_score / 10), (unsigned)(autoexp.last_score % 10));
+             (unsigned)(autoexp.last_score / 10), (unsigned)(autoexp.last_score % 10),
+             ev != AUTOEXP_EV_TRY ? ""
+                 : (autoexp_search_darker(&autoexp) ? ", darker list (code bright)"
+                                                    : ", brighter list"));
     autoexp_note_set(ev, ap.index);
 }
 
-/* " | ae +2 judging" on the per-second line, while a setting other than the
-   user's is on or a search runs. */
-static void autoexp_log_suffix(char *out, size_t n)
+/* " | luma 187 sat 34% code | ae -1 judging" on the per-second line: the
+   located code's light (or the whole frame's when no code was located that
+   second), so a bench can see an overexposed phone screen; then the
+   setting, while one other than the user's is on or a search runs. */
+static void autoexp_log_suffix(const uint8_t *frame, char *out, size_t n)
 {
     static const char *const PHASE[] = { "", " settling", " judging", " cooling",
                                          " done", " off" };
+    AutoExpLight l = autoexp_seen;
+    const bool code = autoexp_seen_fresh;
+    if (!code) {
+        autoexp_measure(frame, FRAME_W, FRAME_H, 0, 0, FRAME_W, FRAME_H, &l);
+    }
+    autoexp_seen_fresh = false;
+    int k = 0;
+    out[0] = '\0';
+    if (l.valid) {
+        k = snprintf(out, n, " | luma %u sat %u%% %s", (unsigned)l.mean,
+                     (unsigned)((l.sat_permille + 5u) / 10u), code ? "code" : "frame");
+        if (k < 0 || (size_t)k >= n) {
+            return;
+        }
+    }
     const autoexp_phase_t ph = autoexp_phase(&autoexp);
     if (autoexp.current == 0 && (ph == AUTOEXP_IDLE || ph == AUTOEXP_STOPPED)) {
-        out[0] = '\0';
         return;
     }
-    snprintf(out, n, " | ae +%u%s", (unsigned)autoexp.current,
+    snprintf(out + k, n - (size_t)k, " | ae %+d%s", autoexp_step(autoexp.current),
              (unsigned)ph < sizeof PHASE / sizeof PHASE[0] ? PHASE[ph] : "");
 }
+
+/* The located code's box, from quirc's four corners, measured on the raw
+   frame (quirc thresholds its own copy). Fed to the search and kept for the
+   per-second line. */
+static void autoexp_code_light(const uint8_t *frame, const struct quirc_code *code)
+{
+    int x0 = code->corners[0].x, x1 = x0, y0 = code->corners[0].y, y1 = y0;
+    for (int c = 1; c < 4; c++) {
+        if (code->corners[c].x < x0) x0 = code->corners[c].x;
+        if (code->corners[c].x > x1) x1 = code->corners[c].x;
+        if (code->corners[c].y < y0) y0 = code->corners[c].y;
+        if (code->corners[c].y > y1) y1 = code->corners[c].y;
+    }
+    AutoExpLight l;
+    autoexp_measure(frame, FRAME_W, FRAME_H, x0, y0, x1 + 1, y1 + 1, &l);
+    if (l.valid) {
+        autoexp_light(&autoexp, &l);
+        autoexp_seen = l;
+        autoexp_seen_fresh = true;
+    }
+}
 #else
-static void autoexp_log_suffix(char *out, size_t n) { (void)n; out[0] = '\0'; }
+static void autoexp_log_suffix(const uint8_t *frame, char *out, size_t n)
+{
+    (void)frame;
+    (void)n;
+    out[0] = '\0';
+}
 #endif
 
 /* Live preview to the PC viewer, off until OK on the scan screen asks. */
@@ -691,7 +754,7 @@ static void sensor_exposure(unsigned *lines, unsigned *gain_x10)
  * located without `r` (decodes) means it is seen and its modules are not
  * resolved. Nothing here is derived from a decoded payload.
  */
-static void timing_log_maybe(void)
+static void timing_log_maybe(const uint8_t *frame)
 {
     const int64_t now_us = esp_timer_get_time();
     if (timing_window_us == 0) {
@@ -715,8 +778,8 @@ static void timing_log_maybe(void)
                                         10000000u / (uint64_t)dt);
     unsigned lines = 0, gain_x10 = 0;
     sensor_exposure(&lines, &gain_x10);
-    char ae[24];
-    autoexp_log_suffix(ae, sizeof ae);
+    char ae[64];
+    autoexp_log_suffix(frame, ae, sizeof ae);
     ESP_LOGI(TAG, "scan %s %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux | cpu %u%s",
              FRAME_W == 320 ? camera_tune_zoom(zoom_level)->label
                             : (FRAME_W == 640 ? "VGA" : "SVGA"),
@@ -982,6 +1045,7 @@ bool camera_start(void)
     stat_located = 0;
 #if CAMERA_AUTO_EXPOSURE
     autoexp_reset(&autoexp, (uint32_t)(esp_timer_get_time() / 1000), exposure_bias);
+    autoexp_seen_fresh = false;
     autoexp_knob = autoexp_zoomed = false;
     autoexp_note_fresh = false;
 #endif
@@ -1004,8 +1068,8 @@ void camera_stop(void)
     streaming = false;
 #if CAMERA_AUTO_EXPOSURE
     if (autoexp.current != 0) {
-        ESP_LOGI(TAG, "auto-exposure: scan ended at +%u; the next starts at the user's",
-                 (unsigned)autoexp.current);
+        ESP_LOGI(TAG, "auto-exposure: scan ended at %+d; the next starts at the user's",
+                 autoexp_step(autoexp.current));
     }
 #endif
     /*
@@ -1063,7 +1127,10 @@ static bool process_frame(char *out, size_t out_size, size_t *out_len)
     }
 #endif
 
-    timing_log_maybe();
+    timing_log_maybe(fb->format == PIXFORMAT_GRAYSCALE && fb->width == FRAME_W &&
+                             fb->height == FRAME_H
+                         ? fb->buf
+                         : NULL);
 
     bool got = false;
 
@@ -1143,6 +1210,11 @@ static bool process_frame(char *out, size_t out_size, size_t *out_len)
         const int64_t t_dec = esp_timer_get_time();
         for (int i = 0; i < n && !got; i++) {
             quirc_extract(quirc_ctx, i, &scan_code);
+#if CAMERA_AUTO_EXPOSURE
+            if (i == 0) {
+                autoexp_code_light(fb->buf, &scan_code);
+            }
+#endif
 #ifdef QUIRC_STAGE_TIMING
             const quirc_decode_error_t qerr = quirc_decode(&scan_code, &scan_data);
             if (qerr != QUIRC_SUCCESS) {
@@ -1165,11 +1237,17 @@ static bool process_frame(char *out, size_t out_size, size_t *out_len)
              * them upward would fill the status line with complaints about
              * whatever happened to be in frame. The decoder above is
              * case-insensitive about the scheme, so both spellings pass.
+             * Check address asks for everything (camera_set_accept_any):
+             * a receive QR is a bare address or a zcash: URI.
              */
-            if (len < 3 || len + 1 > out_size ||
-                (scan_data.payload[0] != 'u' && scan_data.payload[0] != 'U') ||
-                (scan_data.payload[1] != 'r' && scan_data.payload[1] != 'R') ||
-                scan_data.payload[2] != ':') {
+            if (len + 1 > out_size) {
+                continue;
+            }
+            if (!accept_any &&
+                (len < 3 ||
+                 (scan_data.payload[0] != 'u' && scan_data.payload[0] != 'U') ||
+                 (scan_data.payload[1] != 'r' && scan_data.payload[1] != 'R') ||
+                 scan_data.payload[2] != ':')) {
                 continue;
             }
 

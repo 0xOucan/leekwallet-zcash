@@ -16,8 +16,15 @@
  * decoded, both cumulative since camera_start() - and when, over the last
  * AUTOEXP_WINDOW_MS, at least AUTOEXP_TRIGGER_MIN codes were located and
  * fewer than AUTOEXP_TRIGGER_PERMILLE of them read, it tries a short ordered
- * list of settings (autoexp_setting()): a longer shutter cap, a brighter
- * bias, the other banding frequency. Each is given AUTOEXP_SETTLE_MS for the
+ * list of settings (autoexp_setting()). Which list depends on how the code
+ * looks: camera.c measures the located code's box (autoexp_measure(): mean
+ * luma and the share of clipped pixels) and feeds it here (autoexp_light()).
+ * A bright or clipped code - a phone at full brightness, washed out - gets
+ * the darker list first: the bias 1, 2 and 3 steps under the user's, then a
+ * halved shutter cap. Anything else gets the brighter list, as before: a
+ * longer shutter cap, a brighter bias, the other banding frequency. (The
+ * first phone test, 2026-11-11, looked overexposed at 100 % brightness, where
+ * the brighter list could only make it worse.) Each is given AUTOEXP_SETTLE_MS for the
  * AEC to converge (not counted) and then judged over AUTOEXP_HOLD_MS by
  * decoded / located. The first to reach AUTOEXP_GOOD_PERMILLE ends the search
  * early; otherwise the best one is kept if it beat the setting that triggered
@@ -75,16 +82,59 @@
 #define AUTOEXP_SAMPLE_MS         250
 #define AUTOEXP_RING              16
 
+/* Brightness of the located code, per frame that located one ... */
+/* A pixel at or above this is clipped. */
+#define AUTOEXP_SAT_LEVEL            250
+/* ... and the code counts as overexposed when its box has this many clipped
+   pixels in 1000 (15 %: a code exposed about right clips a few whites, a
+   washed-out one most of them) ... */
+#define AUTOEXP_BRIGHT_SAT_PERMILLE  150
+/* ... or this mean luma (half the box is dark modules; 180 means they are
+   lifted well off black). */
+#define AUTOEXP_BRIGHT_MEAN          180
+
+/* The effective bias floor. The knob stops at -5; with centre-weighted
+   metering camera.c's sensor level is the bias + 3, which the OV5640 takes
+   down to -5, so the darker settings may go to -8 (camera_tune_ae_level()
+   clamps it anyway). */
+#define AUTOEXP_BIAS_MIN  (-8)
+
 /* One setting, relative to the user's. Index 0 is the user's own. */
 typedef struct {
-    int8_t  bias_add;      /* added to the user's bias, then clamped -5..0 */
-    uint8_t shutter_mul;   /* x the build's shutter cap (CAMERA_SHUTTER_CAP_LINES) */
+    int8_t  bias_add;      /* added to the user's bias, then clamped AUTOEXP_BIAS_MIN..0 */
+    uint8_t shutter_mul;   /* x the build's shutter cap (CAMERA_SHUTTER_CAP_LINES) ... */
+    uint8_t shutter_div;   /* ... / this (1, or 2 for half the cap) */
     bool    mains_swap;    /* banding at the other mains frequency (60 <-> 50) */
 } AutoExpSetting;
 
-#define AUTOEXP_SETTINGS  6
+/* Settings 1..AUTOEXP_BRIGHTER are the brighter list ("+1".."+5" on the
+   screen); AUTOEXP_BRIGHTER+1.. the darker one ("-1".."-4"). */
+#define AUTOEXP_BRIGHTER  5
+#define AUTOEXP_SETTINGS  10
 /** Setting 0..AUTOEXP_SETTINGS-1; out of range is setting 0. */
 const AutoExpSetting *autoexp_setting(uint8_t index);
+
+/** The step a setting is called on screen and in the log: 0 for the user's,
+ *  +1..+5 for the brighter list, -1..-4 for the darker. */
+int autoexp_step(uint8_t index);
+
+/** How a located code looks: mean luma 0-255 and clipped pixels in 1000. */
+typedef struct {
+    uint8_t  mean;
+    uint16_t sat_permille;
+    bool     valid;          /* false: nothing measured */
+} AutoExpLight;
+
+/**
+ * Measure the box (x0,y0)-(x1,y1) of a w x h grayscale image (corners in
+ * any order, clamped to the frame, x1/y1 exclusive), every other pixel of
+ * every other row. Not valid for an empty box or no image.
+ */
+void autoexp_measure(const uint8_t *gray, uint16_t w, uint16_t h, int x0, int y0, int x1,
+                     int y1, AutoExpLight *out);
+
+/** Overexposed by the two thresholds above. */
+bool autoexp_light_bright(const AutoExpLight *l);
 
 typedef enum {
     AUTOEXP_IDLE = 0,    /* watching at the current setting */
@@ -121,7 +171,12 @@ typedef struct {
     uint32_t best_decoded;     /* decodes in the best trial's hold */
     uint8_t  searches;
     uint8_t  extended;         /* the judging hold was extended once */
-    uint8_t  tried_mask;       /* settings tried this search (bit per index) */
+    uint16_t tried_mask;       /* settings tried this search (bit per index) */
+    bool     darker;           /* this search runs the darker list */
+    /* The code's light at the current setting: a running average over the
+       located frames since the setting last changed (light_n of them). */
+    uint16_t light_mean_x16, light_sat_x16;
+    uint16_t light_n;
     uint32_t phase_ms;         /* when the phase started */
     uint32_t mark_located, mark_decoded;   /* counters at the judging start */
     /* The last judgement or trigger window, for the log. */
@@ -134,8 +189,9 @@ typedef struct {
 /** What to apply: the effective bias and the setting's other fields. */
 typedef struct {
     uint8_t index;          /* 0 = the user's own setting */
-    int8_t  bias;           /* effective, -5..0 */
+    int8_t  bias;           /* effective, AUTOEXP_BIAS_MIN..0 */
     uint8_t shutter_mul;
+    uint8_t shutter_div;
     bool    mains_swap;
 } AutoExpApply;
 
@@ -149,6 +205,18 @@ void autoexp_reset(AutoExp *a, uint32_t now_ms, int8_t user_bias);
  */
 autoexp_event_t autoexp_tick(AutoExp *a, uint32_t now_ms, uint32_t located,
                              uint32_t decoded);
+
+/**
+ * The light of a located code (camera.c, once a frame that located one).
+ * Read when a search starts: bright or clipped picks the darker list.
+ */
+void autoexp_light(AutoExp *a, const AutoExpLight *l);
+
+/** The code's light as averaged so far (not valid before a located frame). */
+void autoexp_light_now(const AutoExp *a, AutoExpLight *out);
+
+/** True while (or after) a search that chose the darker list. */
+static inline bool autoexp_search_darker(const AutoExp *a) { return a->darker; }
 
 /**
  * The user turned the knob: the search stops for this scan and the user's new
@@ -166,14 +234,15 @@ void autoexp_disturbed(AutoExp *a, uint32_t now_ms);
 void autoexp_current(const AutoExp *a, AutoExpApply *out);
 static inline autoexp_phase_t autoexp_phase(const AutoExp *a) { return a->phase; }
 
-/** The effective bias of setting `index` over `user_bias`, clamped -5..0. */
+/** The effective bias of setting `index` over `user_bias`, clamped
+ *  AUTOEXP_BIAS_MIN..0. */
 int8_t autoexp_bias_for(uint8_t index, int8_t user_bias);
 
 /**
  * The Scan screen's status line for an event, at most 21 characters:
- * "Auto exposure +2" (TRY), "Auto exposure +2 kept" (KEEP, or REVERT to a
- * setting an earlier search kept), "Auto exposure off" (KEEP or REVERT at
- * setting 0). Empty for NONE and STOP (the user can see what they just did).
+ * "Auto exposure +2" or "-1" (TRY, autoexp_step()), "Auto exposure +2 kept"
+ * (KEEP, or REVERT to a setting an earlier search kept), "Auto exposure off"
+ * (KEEP or REVERT at setting 0). Empty for NONE and STOP (the user can see what they just did).
  */
 void autoexp_event_text(autoexp_event_t ev, uint8_t index, char *out, size_t out_size);
 

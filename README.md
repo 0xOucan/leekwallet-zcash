@@ -157,8 +157,9 @@ signed by QR in both directions, block 4,606,736).
   board at 3x and the phone about 30 cm away (the camera's lens is
   fixed-focus). Cover the board's power LEDs, which reflect in a glossy
   screen. Use it when that isolation matters more than speed. The board's **View key** screen shows the account as a QR, so a
-  wallet can be set up without ever connecting the board. QR is never used
-  for pairing. Settings and results:
+  wallet can be set up without ever connecting the board, and its **Check
+  address** screen scans a wallet's receive QR and says whether the address
+  is the board's (experimental). QR is never used for pairing. Settings and results:
   [QR-BENCH.md](docs/zcash/QR-BENCH.md).
 - **SD card**: also fully offline, for the PC companion.
 
