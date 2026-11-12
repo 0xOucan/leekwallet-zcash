@@ -1,5 +1,5 @@
 /**
- * Sign with QR (EXPERIMENTAL, opt-in): the air-gapped path of the Send and
+ * Sign with QR (opt-in): the air-gapped path of the Send and
  * Shield review. USB and Bluetooth stay the everyday links; this is for a
  * board kept off every link.
  *
@@ -537,7 +537,7 @@ export interface DisplayHints {
   defaultBrightness: number | null;
   phoneTips: string[];
   largeScreenTips: string[];
-  /** By the address QR for the board's Check address (experimental). */
+  /** By the address QR for the board's Check address. */
   addressCheckHint: string;
 }
 
@@ -561,7 +561,7 @@ export function displayTip(h: DisplayHints | null): string {
 export const BRIGHTNESS_LEVELS: readonly (number | null)[] = [null, 0.6, 0.8, 1.0];
 export const QR_BRIGHTNESS_KEY = "leek.qr.brightness";
 /** The same line as the SDK's address_check_hint(). */
-export const ADDRESS_CHECK_HINT = "On the board: Main menu → Check address (experimental), then scan this code.";
+export const ADDRESS_CHECK_HINT = "On the board: Main menu → Check address, then scan this code.";
 
 const sameLevel = (a: number | null, b: number | null) => (a === null || b === null ? a === b : Math.abs(a - b) < 1e-3);
 

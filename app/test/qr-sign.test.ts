@@ -1,5 +1,5 @@
 /**
- * Sign with QR (experimental), the state machine in src/qr-sign.ts, over a
+ * Sign with QR, the state machine in src/qr-sign.ts, over a
  * scripted backend and a hand-moved clock: the defaults and the controls,
  * the frame loop and its batches, the scan and its progress, and the
  * hand-off of the .zsig. The UR itself is host/leek-ur's, tested in Rust
@@ -488,16 +488,16 @@ group("display hints: the SDK's words, and the phone's screen while the code sho
   check(!/brightness up/i.test(html), "no page tells the user to turn the brightness up");
 }
 
-group("Check address over QR (experimental): the plain address for the board");
+group("Check address over QR: the plain address for the board");
 {
   const { readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const root = join(import.meta.dirname, "..");
-  check(ADDRESS_CHECK_HINT === "On the board: Main menu → Check address (experimental), then scan this code.", "the SDK's hint, word for word");
+  check(ADDRESS_CHECK_HINT === "On the board: Main menu → Check address, then scan this code.", "the SDK's hint, word for word");
   const html = readFileSync(join(root, "index.html"), "utf8");
   check(html.includes('id="zwuachk"') && html.includes('id="zwtchk"') && html.includes("Check on board (QR)"), "both Receive addresses have Check on board (QR)");
   const box = html.slice(html.indexOf('id="zwchkfs"'), html.indexOf('id="zwchkbright"'));
-  check(/Main menu → Check address \(experimental\)/.test(box), "the overlay says where on the board, and experimental");
+  check(/Main menu → Check address, then scan this code/.test(box), "the overlay says where on the board");
   const view = readFileSync(join(root, "src/zcash-wallet.ts"), "utf8");
   check(/drawQr\([^;]*chkText, 0, [^;]*"Byte"\)/.test(view), "the address is drawn as is (byte mode), never uppercased");
   check(/openCheckQr\(recv\.shielded\(\)\.ua\)/.test(view) && /openCheckQr\(recv\.transparent\(\)\.address\)/.test(view), "the address shown is the one checked");
@@ -511,21 +511,21 @@ group("Check address over QR (experimental): the plain address for the board");
   check(seen![0] === 0 && seen![1] === "Byte", "byte mode, the generator's version");
 }
 
-group("the policy text: experimental, and never for pairing");
+group("the policy text: QR signing is not experimental, and never for pairing");
 {
   const { readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const root = join(import.meta.dirname, "..");
   const scan = readFileSync(join(root, "src/qr-scan.ts"), "utf8");
-  check(/experimental/i.test(scan) && /pairing/i.test(scan), "qr-scan.ts says QR signing is experimental and not for pairing");
+  check(!/experimental/i.test(scan) && /Never for pairing/.test(scan), "qr-scan.ts says QR is not for pairing, and no longer experimental");
   const html = readFileSync(join(root, "index.html"), "utf8");
-  check(html.includes("Sign with QR (experimental)"), "the button says experimental");
-  check(html.includes("Import from the board's QR (experimental)"), "the import button says experimental");
+  check(html.includes(">Sign with QR</button>") && html.includes(">Import from the board's QR</button>"), "the buttons are named plainly");
+  check(!/experimental/i.test(html), "no QR feature is labelled experimental");
   const imp = html.slice(html.indexOf("Import from the board's QR"), html.indexOf("Import a viewing key (watch-only)")).replace(/\s+/g, " ");
   check(/Main menu → View key/.test(imp) && /never spend/.test(imp) && /does not pair/.test(imp) && /6-digit pairing code/.test(imp),
     "the import says where on the board, that it never spends, and that it is not pairing");
   const acc = readFileSync(join(root, "src/qr-accounts.ts"), "utf8");
-  check(/EXPERIMENTAL/.test(acc) && /never pairing/i.test(acc) && /6-digit pairing code/.test(acc), "qr-accounts.ts says one-way, never pairing");
+  check(!/EXPERIMENTAL/i.test(acc) && /never pairing/i.test(acc) && /6-digit pairing code/.test(acc), "qr-accounts.ts says one-way, never pairing");
 }
 
 console.log(failures ? `\nFAILED (${failures})` : "\nPASSED (0 failures)");

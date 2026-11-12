@@ -36,7 +36,7 @@ pub fn to_checkable_ua(ua: &str) -> Result<String, LeekError> {
 }
 
 /// The text of the QR a wallet shows for the board's **Check address**
-/// (Main menu → Check address, experimental): the plain address, as a
+/// (Main menu → Check address): the plain address, as a
 /// wallet's Receive QR carries it. `text` is an address (unified, Sapling or
 /// transparent) or a `zcash:` URI (ZIP 321) with one address; the result is
 /// the address alone in its canonical encoding (Bech32 lowercase; Base58 as

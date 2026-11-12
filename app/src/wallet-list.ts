@@ -9,7 +9,7 @@
  * the first start) under the account it holds. Opening one hands its key
  * to the wallet screens (src/zcash-wallet.ts, openWithoutBoard).
  *
- * And the board's account read off its own screen (EXPERIMENTAL, Main menu
+ * And the board's account read off its own screen (Main menu
  * → View key; src/qr-accounts.ts): a normal board wallet for a board kept
  * off USB and Bluetooth, a one-way import that never pairs.
  */

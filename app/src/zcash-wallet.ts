@@ -29,7 +29,7 @@
  * anything that needs the board (send, shield, a swap from ZEC, verifying
  * an address) asks for it, and a board that connects takes over.
  *
- * Sign with QR (src/qr-sign.ts) is an EXPERIMENTAL, opt-in second button
+ * Sign with QR (src/qr-sign.ts) is an opt-in second button
  * under the Send and Shield review, for a board kept off every link: the
  * same signer view as an animated ur:leek-pczt, the board's ur:leek-zsig
  * read back with the camera, then the same zw_finish.
@@ -641,7 +641,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     $(button).textContent = "Hide QR code";
   }
 
-  /* Check on board (QR), EXPERIMENTAL: the plain address full screen for
+  /* Check on board (QR): the plain address full screen for
    * the board's Main menu → Check address, which says whether it is its
    * own (account and diversifier index). The air-gapped twin of Verify on
    * the board; the same text as a payer's QR (the SDK's address_check_qr). */
@@ -839,7 +839,7 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     }
   }
 
-  /* ------------------------------------------- Sign with QR (experimental) */
+  /* ------------------------------------------------------- Sign with QR */
 
   let qrSign: QrSigner | null = null;
   let qrScan: QrScan | null = null;
@@ -1026,10 +1026,10 @@ export async function initZcashWallet(deps: WalletDeps, view: ZcashView): Promis
     $("zwqrsign").hidden = false;
     $<HTMLButtonElement>("zwsignsend").disabled = true;
     $<HTMLButtonElement>("zwsignqr").disabled = true;
-    say("zwqrsignhelp", "EXPERIMENTAL. On the board: choose Scan and point its camera at this code. It shows the same review; ACCEPT on its last page signs, and the board then shows its signature as a QR code. "
+    say("zwqrsignhelp", "On the board: choose Scan and point its camera at this code. It shows the same review; ACCEPT on its last page signs, and the board then shows its signature as a QR code. "
       + "The board opens at 2x zoom; the tips under the code say how to show it from this screen. From a phone: Big codes and full screen, the board at 3x (one push). If it does not pick it up: Bigger (larger modules) or Slower. USB and Bluetooth are the everyday links; this one is for a board kept off both.");
     say("zwqrstatus", "");
-    say("zwsendstatus", "Signing with QR (experimental)…");
+    say("zwsendstatus", "Signing with QR…");
     sayQrTip();
     if (!qrHints) void ensureQrHints().then(() => { if (qrSign === q) { sayQrTip(); renderQrSign(); } });
     $("zwqrsign").scrollIntoView?.({ block: "nearest" });

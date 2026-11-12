@@ -18,7 +18,7 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 hex = "0.4"
-# The QR air gap (experimental, src/qr.rs): the UR the app uses, and the QR
+# The QR air gap (src/qr.rs): the UR the app uses, and the QR
 # codes drawn in the terminal or an HTML page. qrcode without its `image`
 # feature is pure Rust with no dependencies (MIT OR Apache-2.0).
 leek-ur = { path = "../leek-ur" }

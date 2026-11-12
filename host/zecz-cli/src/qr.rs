@@ -1,4 +1,4 @@
-//! The QR air gap for `zecz` (EXPERIMENTAL): the signer view out as an
+//! The QR air gap for `zecz`: the signer view out as an
 //! animated `ur:leek-pczt`, the board's `.zsig` back as `ur:leek-zsig`.
 //!
 //! The UR encoding is `leek-ur` (host/leek-ur), the one the Zcash LeekWallet
@@ -118,7 +118,7 @@ pub fn terminal_frame(f: &Frames, index: usize, interval_ms: u64) -> String {
     let seq = text.split('/').nth(1).filter(|x| x.contains('-')).unwrap_or("1-1");
     let _ = writeln!(
         s,
-        "EXPERIMENTAL QR signing. Part {seq} ({} fragment(s)), QR version {}, {interval_ms} ms a frame.",
+        "QR signing. Part {seq} ({} fragment(s)), QR version {}, {interval_ms} ms a frame.",
         f.seq_len, f.version
     );
     let _ = writeln!(s, "On the board: Scan, point its camera here, review and ACCEPT. Press Enter (or Ctrl-C) to stop.");
@@ -244,7 +244,7 @@ const HTML: &str = r##"<!DOCTYPE html>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LeekWallet: sign with QR (experimental)</title>
+<title>LeekWallet: sign with QR</title>
 <style>
   html, body { margin: 0; height: 100%; background: #fff; color: #000; font: 16px system-ui, sans-serif; }
   main { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100%; gap: 8px; }
@@ -256,7 +256,7 @@ const HTML: &str = r##"<!DOCTYPE html>
 </head>
 <body>
 <main>
-  <p><strong>EXPERIMENTAL</strong>: QR signing. On the board: Scan, point its camera here, review and ACCEPT.
+  <p><strong>Sign with QR.</strong> On the board: Scan, point its camera here, review and ACCEPT.
      Then <code>zecz qr-scan --out signed.zsig</code>.</p>
   <canvas id="qr"></canvas>
   <div class="bar">
@@ -300,7 +300,7 @@ tick();
 
 pub fn write_html(e: &Encoder, interval_ms: u64, path: &Path) -> Result<()> {
     std::fs::write(path, html(e, interval_ms)?).with_context(|| format!("writing {}", path.display()))?;
-    println!("QR page (experimental) -> {} : open it in a browser, full screen.", path.display());
+    println!("QR page -> {} : open it in a browser, full screen.", path.display());
     Ok(())
 }
 
@@ -493,7 +493,7 @@ mod tests {
         assert!(f.frames.iter().all(|(_, q)| q.version() == Version::Normal(f.version)));
         assert!(f.version <= 6, "50-byte fragments should stay at version 6 or less, got v{}", f.version);
         let t = terminal_frame(&f, 0, 500);
-        assert!(t.contains("Part 1-28") && t.contains("EXPERIMENTAL"));
+        assert!(t.contains("Part 1-28") && t.contains("QR signing") && !t.contains("EXPERIMENTAL"));
     }
 
     #[test]
@@ -503,7 +503,7 @@ mod tests {
         assert!(!h.contains('@'), "a placeholder was left");
         assert!(!h.contains("http://") && !h.contains("https://"));
         assert!(h.contains("default-src 'none'"));
-        assert!(h.contains("EXPERIMENTAL"));
+        assert!(h.contains("Sign with QR.") && !h.contains("EXPERIMENTAL"));
         assert_eq!(h.matches("[\"").count(), 255);
     }
 

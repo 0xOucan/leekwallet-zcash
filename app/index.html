@@ -98,7 +98,7 @@
           <!-- Air-gapped set-up (src/qr-accounts.ts): the board's account off
                its own screen, a one-way import. Never pairing: USB and
                Bluetooth keep their 6-digit pairing code. -->
-          <h3>Import from the board's QR <span class="badge">experimental</span></h3>
+          <h3>Import from the board's QR</h3>
           <p class="muted">For a board kept off USB and Bluetooth. On the
             board: Main menu → View key, confirm there, and hold its screen
             up to this camera. The viewing key lets this computer see all of
@@ -112,7 +112,7 @@
               <option value="main">Mainnet (real ZEC)</option>
             </select></label>
           <div class="row">
-            <button type="button" class="secondary" id="wqrscan">Import from the board's QR (experimental)</button>
+            <button type="button" class="secondary" id="wqrscan">Import from the board's QR</button>
           </div>
           <div class="zscan" id="wqrscanbox" hidden>
             <video id="wqrvideo" playsinline muted></video>
@@ -329,7 +329,7 @@
                 <button type="button" id="zwuanew" class="secondary">New address</button>
                 <button type="button" id="zwuaqr" class="secondary" aria-expanded="false" aria-controls="zwqr">Show QR code</button>
                 <button type="button" id="zwuacopy" class="secondary">Copy</button>
-                <button type="button" id="zwuachk" class="secondary" title="Air-gapped: the board's Main menu → Check address scans it (experimental)">Check on board (QR)</button>
+                <button type="button" id="zwuachk" class="secondary" title="Air-gapped: the board's Main menu → Check address scans it">Check on board (QR)</button>
               </div>
               <p class="addr-path-label muted" id="zwttitle">Transparent address</p>
               <div class="addr" id="zwtaddr"></div>
@@ -339,10 +339,10 @@
                 <button type="button" id="zwtnew" class="secondary">New transparent address</button>
                 <button type="button" id="zwtqr" class="secondary" aria-expanded="false" aria-controls="zwqr">Show QR code</button>
                 <button type="button" id="zwtcopy" class="secondary">Copy</button>
-                <button type="button" id="zwtchk" class="secondary" title="Air-gapped: the board's Main menu → Check address scans it (experimental)">Check on board (QR)</button>
+                <button type="button" id="zwtchk" class="secondary" title="Air-gapped: the board's Main menu → Check address scans it">Check on board (QR)</button>
               </div>
               <div class="addr-qr" id="zwqr" hidden></div>
-              <!-- Check address over QR (EXPERIMENTAL): the plain address, full
+              <!-- Check address over QR: the plain address, full
                    screen on black, for the board's Main menu → Check address,
                    which says whether it is its own (account, diversifier
                    index). The air-gapped twin of Verify on the board; never
@@ -350,7 +350,7 @@
               <div class="qrfull" id="zwchkfs" hidden tabindex="-1" role="dialog" aria-label="Address QR code for the board's Check address">
                 <canvas id="zwchkcanvas" class="qrsign__code" role="img" aria-label="QR code of the address for the board"></canvas>
                 <p class="qrfull__cap" id="zwchkaddr"></p>
-                <p class="qrfull__cap" id="zwchkhint">On the board: Main menu → Check address (experimental), then scan this code.</p>
+                <p class="qrfull__cap" id="zwchkhint">On the board: Main menu → Check address, then scan this code.</p>
                 <p class="qrfull__cap">Esc or tap to exit</p>
                 <button type="button" id="zwchkbright" class="qrfull__btn" hidden>Brightness: system</button>
               </div>
@@ -404,17 +404,17 @@
                     the recipient and amount on the board's screen.</span></label>
                 <div class="row">
                   <button type="button" id="zwsignsend" class="primary">Sign on the board and send</button>
-                  <button type="button" id="zwsignqr" class="secondary" title="Experimental: for a board kept off USB and Bluetooth">Sign with QR (experimental)</button>
+                  <button type="button" id="zwsignqr" class="secondary" title="Air-gapped: for a board kept off USB and Bluetooth">Sign with QR</button>
                   <button type="button" id="zwcancel" class="secondary">Cancel</button>
                 </div>
               </section>
-              <!-- Sign with QR, EXPERIMENTAL and opt-in (src/qr-sign.ts): the
+              <!-- Sign with QR, opt-in (src/qr-sign.ts): the
                    signer view as an animated ur:leek-pczt for the board's
                    camera, then the board's ur:leek-zsig read with this
                    camera. Never for pairing; USB and Bluetooth stay the
                    everyday links. -->
               <section class="preview qrsign" id="zwqrsign" hidden aria-labelledby="zwqrsignhead">
-                <h4 id="zwqrsignhead">Sign with QR <span class="badge">experimental</span></h4>
+                <h4 id="zwqrsignhead">Sign with QR</h4>
                 <p class="muted" id="zwqrsignhelp"></p>
                 <p class="qrsign__count" id="zwqrtimer" aria-live="off"></p>
                 <div class="qrsign__show" id="zwqrshow">

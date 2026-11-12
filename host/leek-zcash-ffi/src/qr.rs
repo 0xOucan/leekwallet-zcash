@@ -1,4 +1,4 @@
-//! **Experimental.** Animated QR codes (Uniform Resources) for the air gap:
+//! Animated QR codes (Uniform Resources) for the air gap:
 //! the board's View key screen (`ur:leek-zcash-accounts`), the signing
 //! request a wallet shows the board (`ur:leek-pczt`) and the board's
 //! signatures (`ur:leek-zsig`).
@@ -60,8 +60,8 @@ pub fn qr_defaults() -> QrDefaults {
     }
 }
 
-/// How to show the animated `ur:leek-pczt` so the board's camera reads it
-/// (experimental). Brightness is the user's (system by default, adjustable
+/// How to show the animated `ur:leek-pczt` so the board's camera reads it.
+/// Brightness is the user's (system by default, adjustable
 /// on the QR page); the screen is kept on. From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
 /// "Signing with a phone"), with the board firmware of that day; older
 /// firmware reads [`qr_defaults`] better. The same values and words as the
@@ -141,7 +141,7 @@ pub fn qr_display_hints() -> QrDisplayHints {
     }
 }
 
-/// **Experimental.** The text of the QR to show for the board's Check
+/// The text of the QR to show for the board's Check
 /// address (Main menu → Check address): the board scans it and says whether
 /// the address is its own, with the account and diversifier index. `address`
 /// is a unified, Sapling or transparent address or a `zcash:` URI with one
@@ -154,8 +154,8 @@ pub fn address_check_qr(address: String) -> Result<String> {
     Ok(lz::address_check_payload(&address)?)
 }
 
-/// **Experimental.** The line to show by that QR: "On the board: Main menu →
-/// Check address (experimental), then scan this code."
+/// The line to show by that QR: "On the board: Main menu → Check address,
+/// then scan this code."
 #[uniffi::export]
 pub fn address_check_hint() -> String {
     leek_ur::display::ADDRESS_CHECK_HINT.into()

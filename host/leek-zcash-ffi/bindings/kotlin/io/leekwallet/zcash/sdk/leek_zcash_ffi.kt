@@ -1567,10 +1567,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_leek_zcash_ffi_checksum_func_account_record_type() != 975.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_leek_zcash_ffi_checksum_func_address_check_hint() != 13970.toShort()) {
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_address_check_hint() != 19475.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_leek_zcash_ffi_checksum_func_address_check_qr() != 21180.toShort()) {
+    if (lib.uniffi_leek_zcash_ffi_checksum_func_address_check_qr() != 56397.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_leek_zcash_ffi_checksum_func_apply_zsig() != 58337.toShort()) {
@@ -5946,8 +5946,8 @@ public object FfiConverterTypeQrDefaults: FfiConverterRustBuffer<QrDefaults> {
 
 
 /**
- * How to show the animated `ur:leek-pczt` so the board's camera reads it
- * (experimental). Brightness is the user's (system by default, adjustable
+ * How to show the animated `ur:leek-pczt` so the board's camera reads it.
+ * Brightness is the user's (system by default, adjustable
  * on the QR page); the screen is kept on. From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
  * "Signing with a phone"), with the board firmware of that day; older
  * firmware reads [`qr_defaults`] better. The same values and words as the
@@ -7707,8 +7707,8 @@ public object FfiConverterSequenceOptionalFloat: FfiConverterRustBuffer<List<kot
     
 
         /**
-         * **Experimental.** The line to show by that QR: "On the board: Main menu →
-         * Check address (experimental), then scan this code."
+         * The line to show by that QR: "On the board: Main menu → Check address,
+         * then scan this code."
          */ fun `addressCheckHint`(): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
@@ -7720,7 +7720,7 @@ public object FfiConverterSequenceOptionalFloat: FfiConverterRustBuffer<List<kot
     
 
         /**
-         * **Experimental.** The text of the QR to show for the board's Check
+         * The text of the QR to show for the board's Check
          * address (Main menu → Check address): the board scans it and says whether
          * the address is its own, with the account and diversifier index. `address`
          * is a unified, Sapling or transparent address or a `zcash:` URI with one

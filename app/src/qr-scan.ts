@@ -4,11 +4,11 @@
  * - a Zcash address or a ZIP 321 `zcash:` payment request (parsed by
  *   packages/core/src/zip321.ts);
  * - the board's signature, `ur:leek-zsig`, in "Sign with QR", the
- *   EXPERIMENTAL opt-in air-gapped signing flow (src/qr-sign.ts): the app
+ *   opt-in air-gapped signing flow (src/qr-sign.ts): the app
  *   shows the transaction as an animated `ur:leek-pczt`, and reads the
  *   board's reply here, every code going to the backend's UR decoder;
  * - the board's account, `ur:leek-zcash-accounts` (Main menu → View key),
- *   in "Import from the board's QR", the EXPERIMENTAL one-way account
+ *   in "Import from the board's QR", the one-way account
  *   import (src/qr-accounts.ts): a viewing key comes in, nothing goes out.
  *
  * Never for pairing: the board pairs and is reached over USB and Bluetooth,

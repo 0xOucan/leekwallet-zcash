@@ -645,7 +645,7 @@ fn the_check_address_qr_is_the_plain_address() {
     let e = address_check_qr("ur:leek-pczt/abc".into()).unwrap_err();
     assert_eq!(e.code(), 512);
     let h = address_check_hint();
-    assert!(h.contains("Main menu → Check address") && h.contains("experimental") && h.contains("scan this code"));
+    assert!(h.contains("Main menu → Check address") && !h.contains("experimental") && h.contains("scan this code"));
 }
 
 #[test]

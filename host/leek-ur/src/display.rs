@@ -1,5 +1,5 @@
 //! How to show an animated `ur:leek-pczt` so the board's camera reads it
-//! (QR signing is experimental). One set of numbers and words for every
+//! (QR signing). One set of numbers and words for every
 //! wallet: the companion app, `leek-zcash-ffi`'s `qr_display_hints()` (Zodl,
 //! Zingo) and the docs (`docs/zcash/FORMATS.md`, "Animated QR").
 //!
@@ -69,11 +69,10 @@ pub const LARGE_SCREEN_TIPS: [&str; 2] = [
     "Board at 2x (the Scan screen opens at 2x).",
 ];
 
-/// What to show by an address QR for the board's Check address
-/// (experimental): the board reads a plain address or `zcash:` URI and says
+/// What to show by an address QR for the board's Check address: the board reads a plain address or `zcash:` URI and says
 /// whether it is its own, with the account and diversifier index.
 pub const ADDRESS_CHECK_HINT: &str =
-    "On the board: Main menu → Check address (experimental), then scan this code.";
+    "On the board: Main menu → Check address, then scan this code.";
 
 /// The display rules as one value.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,7 +148,7 @@ mod tests {
         assert!(h.phone_tips.iter().any(|t| t.contains("screen stays on")));
         assert!(h.phone_tips.iter().any(|t| t.contains("3x") && t.contains("30 cm")));
         assert!(h.large_screen_tips.iter().any(|t| t.contains("2x")));
-        assert!(ADDRESS_CHECK_HINT.contains("Main menu → Check address") && ADDRESS_CHECK_HINT.contains("experimental"));
+        assert!(ADDRESS_CHECK_HINT.contains("Main menu → Check address, then scan") && !ADDRESS_CHECK_HINT.contains("experimental"));
         for f in [h.phone_fragment_len, h.large_screen_fragment_len] {
             assert!((MIN_FRAGMENT_LEN..=MAX_FRAGMENT_LEN).contains(&f));
         }
