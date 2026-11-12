@@ -103,7 +103,7 @@ pairing: USB and Bluetooth pair with the 6-digit code.
 | **Zcash LeekWallet**, Android (`app/`) | yes | yes | yes | the same app; QR tested from a phone |
 | **Chrome extension** (`chrome/`) | yes (Web Serial) | yes (Web Bluetooth) | no | no QR through the webcam |
 | **LeekWallet Zcash for Android**, our Zodl fork ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`, MIT) | yes | yes | yes | on the LeekWallet SDK; View key import over QR; voting refused for a LeekWallet account |
-| **Zingo**, our fork ([zingo-mobile `leekwallet-qr`](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr), [zingolib `leekwallet-signer`](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)) | yes | built, in testing | yes | on the LeekWallet SDK |
+| **Zingo**, our fork ([zingo-mobile `leekwallet-qr`](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr), [zingolib `leekwallet-signer`](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)) | yes | yes | yes | on the LeekWallet SDK |
 | **`zingo-cli`**, from the same zingolib fork | yes (`--leek-port`) | no | no | |
 | **`zecz`** (`host/zecz-cli`) | yes | no | yes | also the SD card |
 

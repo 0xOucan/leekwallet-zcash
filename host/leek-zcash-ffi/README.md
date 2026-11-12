@@ -9,7 +9,7 @@ Used by our Zodl fork
 branch `leekwallet`: USB, Bluetooth, QR signing and the View key import
 over QR) and our Zingo fork
 ([zingo-mobile `leekwallet-qr`](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr):
-USB and QR tested, Bluetooth built and in testing). Both are forks, not
+USB, Bluetooth and QR tested). Both are forks, not
 official releases of those wallets; the Zingo one is built on Zingo Labs'
 own PCZT signing work ([zingolib PR #3147](https://github.com/zingolabs/zingolib/pull/3147)).
 

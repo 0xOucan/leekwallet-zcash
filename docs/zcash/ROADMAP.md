@@ -220,7 +220,7 @@ connecting the board. QR is never used for pairing.
 | Zcash LeekWallet, desktop and Android (`app/`) | done | done | done |
 | Chrome extension (`chrome/`) | done | done | not planned |
 | Zodl fork ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`): on the LeekWallet SDK, View key import over QR, voting refused for LeekWallet accounts | done | done | done |
-| Zingo fork ([zingo-mobile](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr), [zingolib](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)), on Zingo Labs' PCZT work ([zingolib PR #3147](https://github.com/zingolabs/zingolib/pull/3147), by Dorian) | done | built, in testing | done |
+| Zingo fork ([zingo-mobile](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr), [zingolib](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)), on Zingo Labs' PCZT work ([zingolib PR #3147](https://github.com/zingolabs/zingolib/pull/3147), by Dorian) | done | done | done |
 | `zingo-cli` (same zingolib fork, `--leek-port`) | done (first: `43e42f8cc2e68f332ad36183d6c0f0b412f37b2f35bc7ff7b21a533f59cb9378`) | - | - |
 | `zecz` | done | - | done |
 
@@ -228,7 +228,7 @@ The Zingo fork is not an official Zingo release; it is offered to the Zingo
 team.
 
 **Next:**
-1. Zingo over Bluetooth: finish the tests.
+1. Zingo (tested over USB, Bluetooth and QR): the Zingo team reviews the fork.
 2. The board's Check address (Main menu): new, not yet tested on the board.
 3. A first mainnet send by QR.
 4. The QR screen's filled layout on a camera, and QR on the OLED kit.
