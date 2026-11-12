@@ -40,7 +40,7 @@ Swift use camelCase.
 | `encode_account_record(AccountRecord)`, `decode_account_record(bytes)`, `account_record_type()` | the `leek-zcash-accounts` record |
 | `QrEncoder.pczt(view, fragment_len)`, `.account_record(..)`, `.zsig(..)` | **experimental** animated QR: `frame(i)`, `frames(start, count)`, `seq_len()`, `longest_frame()` |
 | `QrScanner(QrScanKind, network?)` | **experimental**: `feed(text) -> QrProgress`, `account_record()`, `zsig()`, `reset()` |
-| `qr_defaults()`, `qr_part_type(text)` | bench-measured settings; the UR type a scanned text names |
+| `qr_defaults()`, `qr_display_hints()`, `qr_part_type(text)` | bench-measured settings; how to show the code (phone or laptop, brightness, tips); the UR type a scanned text names |
 | `LeekDevice(FrameTransport, LinkKind)` | a board over the app's link |
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
 | `.seed_fingerprint(network?)` | which seed the board holds (32 bytes), with no question on the board: call it on every connect, `get_account` only when the UFVK is needed. A stable identifier of the seed that every paired host can read |
@@ -209,6 +209,52 @@ and Bluetooth keep the 6-digit code. The parts are byte-identical to bc-ur's
   direction the board picks the density on its knob, and phones read its
   denser modes.
 
+### Showing QR codes (experimental)
+
+The board's camera is fixed-focus and rolling-shutter, so how a wallet
+shows the `ur:leek-pczt` loop matters as much as the fragment size.
+`qrDisplayHints()` returns the rules measured on 2026-11-11
+([QR-BENCH.md, Signing with a phone](../../docs/zcash/QR-BENCH.md#signing-with-a-phone),
+board firmware of that day; with older firmware keep `qrDefaults()`). The
+same values and words are in `leek_ur::display`, which the companion app
+uses, so every wallet tells the user the same thing.
+
+| Field | Value | What to do |
+|---|---|---|
+| `phoneFragmentLen`, `phoneFrameMs` | 25 B, 350 ms | on a phone: pass to `QrEncoder.pczt`, show each frame that long (QR v4) |
+| `largeScreenFragmentLen`, `largeScreenFrameMs` | 50 B, 300 ms | on a laptop or tablet |
+| `phoneBoardZoom`, `phoneDistanceCm`, `largeScreenBoardZoom` | 3, 30, 2 | the board's zoom (a knob push) and distance, for your tips |
+| `maxBrightness`, `keepScreenOn` | true, true | while the code shows; restore both when it goes |
+| `pageBackground`, `quietZoneModules` | `#000000`, 2 | full screen on a black page, 2 white modules round the code |
+| `errorCorrection`, `uppercaseAlphanumeric`, `wholePixelModules` | `L`, true, true | encode in alphanumeric mode at L, whole device pixels per module, no smoothing |
+| `phoneTips`, `largeScreenTips` | short English lines | show them by the code |
+
+On Android, while the code is up:
+
+```kotlin
+val h = qrDisplayHints()
+val enc = QrEncoder.pczt(signerViewBytes(prepared, view), h.phoneFragmentLen)
+window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)          // keepScreenOn
+window.attributes = window.attributes.apply { screenBrightness = 1f }      // maxBrightness
+// ... draw enc.frame(i) every h.phoneFrameMs ms, h.phoneTips under it ...
+window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)        // when the code goes
+window.attributes = window.attributes.apply {
+    screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+}
+```
+
+In Compose, the same from a `DisposableEffect` keyed on the code being
+shown, restoring in `onDispose`. On iOS: `UIScreen.main.brightness = 1` (save
+and restore the old value) and `UIApplication.shared.isIdleTimerDisabled`.
+
+The first phone tip matters most and is the one no app can do: **on an
+OLED phone, turn on the system's anti-flicker / DC dimming setting** (the
+name depends on the maker). Without it the screen dims by flashing (PWM),
+and the board's rolling-shutter camera sees dark bands across the code. In
+the 2026-11-11 test it improved reads a lot. LCD screens (laptops, tablets)
+do not flicker this way and read at 2x with 39–88 B fragments at
+250–350 ms. QR is never used for pairing.
+
 ## Host-side protection
 
 The bindings hand the app the UFVK (`get_account`) and the account record;
@@ -253,8 +299,15 @@ targets; plain cargo with the NDK's clang as the linker, no cargo-ndk.
 
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
-leek-zcash-ffi/scripts/build-android.sh [out]    # from host/; out defaults to host/target/android
+leek-zcash-ffi/scripts/build-android.sh --out <dir>    # from host/; default host/target/android
 ```
+
+The output directory is `--out <dir>` (or `--out=<dir>`), else
+`LEEK_ANDROID_OUT`, else a first argument that is not an option (the older
+form), else `host/target/android`. Point it at your own module, for example
+`--out ../../my-wallet/leek-sdk`, and nothing is written into the
+LeekWallet tree's `target/android`. Other arguments go to `cargo build`
+(`--offline`).
 
 It builds `cargo build --release --locked -p leek-zcash-ffi --lib` for
 `aarch64-linux-android` and `x86_64-linux-android` (API 27, the app's
@@ -368,6 +421,7 @@ leek-zcash-ffi/scripts/kotlin-smoke.sh    # Kotlin bindings on the JVM
   and `finish_sd_sign`, the persisted record read back, a host-side refusal
   through the device, cancel mid-upload and from another thread, transport
   failures keeping their kind, typed byte-API errors, the account record,
+  the animated QR pieces and `qr_display_hints()`,
   sealed app data (the draft's vector key and `db` subkey, round trips,
   damage, another key, another app, `forget`), quick unlock through a Rust
   `KeyWrapper` as a foreign one (round trip, another account, a cancelled
@@ -375,7 +429,8 @@ leek-zcash-ffi/scripts/kotlin-smoke.sh    # Kotlin bindings on the JVM
   forgotten key).
 - `scripts/kotlin-smoke.sh`: compiles the committed Kotlin bindings with
   `tests/kotlin/Smoke.kt` and runs it against the freshly built library:
-  the byte API, the SD request, errors by category and code, the account
+  the byte API, the SD request, errors by category and code, the display
+  hints, the account
   record, sealed app data, quick unlock through a Kotlin `KeyWrapper` (round
   trip, a software key refused, a cancelled prompt, disabled), a Kotlin
   transport's failures and a cancel from another thread.

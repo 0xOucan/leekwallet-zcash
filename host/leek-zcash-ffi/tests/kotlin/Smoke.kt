@@ -112,6 +112,12 @@ fun main(args: Array<String>) {
         }
     }
 
+    // How to show the signing QR: the phone's rules and tips.
+    val hints = qrDisplayHints()
+    check(hints.phoneFragmentLen == 25u && hints.phoneFrameMs == 350u && hints.quietZoneModules == 2u, "display hints")
+    check(hints.maxBrightness && hints.keepScreenOn && hints.errorCorrection == "L", "display rules")
+    check(hints.phoneTips.first().contains("anti-flicker") && qrDefaults().fragmentChoices.contains(25u), "display tips")
+
     // Stored app data: the draft's vector 1 key, sealed and opened.
     val sk = StorageKey.fromBytes(
         hex("f43c678ee392cc4552daa3bde21c3cb15b416811dfdacf64e7aceca6114bd0d0"),

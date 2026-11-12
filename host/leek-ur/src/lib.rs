@@ -23,6 +23,9 @@
 
 use std::fmt;
 
+pub mod display;
+pub use display::{display_hints, DisplayHints};
+
 use sha2::{Digest, Sha256};
 
 /// The signer view going to the board.

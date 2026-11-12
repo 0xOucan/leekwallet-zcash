@@ -628,3 +628,23 @@ fn the_signing_request_qr_matches_the_companion() {
     assert_eq!((d.fragment_len, d.frame_ms, d.board_zoom), (50, 500, 2));
     assert!(d.fragment_choices.contains(&40) && d.frame_ms_choices.contains(&500));
 }
+
+#[test]
+fn the_display_hints_are_the_phone_bench() {
+    let h = qr_display_hints();
+    assert_eq!((h.phone_fragment_len, h.phone_frame_ms, h.phone_board_zoom, h.phone_distance_cm), (25, 350, 3, 30));
+    assert_eq!((h.large_screen_fragment_len, h.large_screen_frame_ms, h.large_screen_board_zoom), (50, 300, 2));
+    assert!(h.max_brightness && h.keep_screen_on && h.uppercase_alphanumeric && h.whole_pixel_modules);
+    assert_eq!((h.page_background.as_str(), h.quiet_zone_modules, h.error_correction.as_str()), ("#000000", 2, "L"));
+    assert!(h.phone_tips[0].contains("anti-flicker") && h.phone_tips[0].contains("DC dimming"));
+    assert!(h.phone_tips.iter().any(|t| t.contains("100 %")));
+    assert!(h.phone_tips.iter().any(|t| t.contains("3x") && t.contains("30 cm")));
+    assert!(h.large_screen_tips.iter().any(|t| t.contains("2x")));
+    // A settings screen offers both, and the phone's is the 25 B code (QR v4).
+    let d = qr_defaults();
+    assert!(d.fragment_choices.contains(&h.phone_fragment_len) && d.fragment_choices.contains(&h.large_screen_fragment_len));
+    assert!(d.frame_ms_choices.contains(&h.phone_frame_ms) && d.frame_ms_choices.contains(&h.large_screen_frame_ms));
+    let e = QrEncoder::pczt(v("iw_send_nu7_compact"), h.phone_fragment_len).unwrap();
+    assert_eq!(e.fragment_len(), 25);
+    assert!(e.longest_frame() <= 114, "QR v4 at L holds 114 alphanumeric characters");
+}
