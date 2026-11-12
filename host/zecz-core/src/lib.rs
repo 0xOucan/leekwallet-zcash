@@ -17,5 +17,7 @@ pub mod zkv;
 // The device client and .zsig format live in leek-device, shared with the
 // Android app; re-exported so `zecz::device` and `zecz::zsig` stay put.
 pub use leek_device::{device, zsig};
+#[cfg(feature = "ble")]
+pub use leek_device::ble;
 
 pub use wallet::{Network, Profile, Wallet};

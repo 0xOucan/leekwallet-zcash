@@ -33,4 +33,10 @@ rqrr = { version = "=0.11.0", default-features = false, optional = true }
 linuxvideo = { version = "=0.3.5", optional = true }
 
 [features]
+# Bluetooth LE to the board (`--ble`), on by default: btleplug builds on
+# Linux (with libdbus-1-dev), macOS and Windows, and a computer with no
+# adapter just gets an error when `--ble` is used. `--no-default-features`
+# builds a USB/QR/SD-only zecz.
+default = ["ble"]
+ble = ["zecz-core/ble"]
 qr-camera = ["dep:linuxvideo", "dep:rqrr"]

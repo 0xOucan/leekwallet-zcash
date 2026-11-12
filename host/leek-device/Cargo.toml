@@ -17,8 +17,15 @@ getrandom = "0.3"
 # Wipes the Storage Key the board sends (z_get_storage_key).
 zeroize = "1"
 leek-transport-serial = { path = "../../app/transport-serial", default-features = false }
+# Bluetooth LE on the desktop (src/ble.rs): LeekWallet's own btleplug
+# transport, the one the Zcash LeekWallet app uses, behind `ble`.
+leek-transport-ble = { path = "../../app/transport-ble", default-features = false, optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"], optional = true }
 
 [features]
 default = ["serial"]
 # The desktop serial port. Off for Android, where Kotlin owns the USB device.
 serial = ["leek-transport-serial/serialport"]
+# Bluetooth LE through btleplug (BlueZ over D-Bus on Linux: needs libdbus-1
+# to build). Off for Android, where the radio is Kotlin's.
+ble = ["dep:leek-transport-ble", "leek-transport-ble/ble", "dep:tokio"]
