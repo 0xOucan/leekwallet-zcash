@@ -40,7 +40,8 @@ Swift use camelCase.
 | `encode_account_record(AccountRecord)`, `decode_account_record(bytes)`, `account_record_type()` | the `leek-zcash-accounts` record |
 | `QrEncoder.pczt(view, fragment_len)`, `.account_record(..)`, `.zsig(..)` | **experimental** animated QR: `frame(i)`, `frames(start, count)`, `seq_len()`, `longest_frame()` |
 | `QrScanner(QrScanKind, network?)` | **experimental**: `feed(text) -> QrProgress`, `account_record()`, `zsig()`, `reset()` |
-| `qr_defaults()`, `qr_display_hints()`, `qr_part_type(text)` | bench-measured settings; how to show the code (phone or laptop, brightness, tips); the UR type a scanned text names |
+| `qr_defaults()`, `qr_display_hints()`, `qr_part_type(text)` | bench-measured settings; how to show the code (phone or laptop, brightness steps, tips); the UR type a scanned text names |
+| `address_check_qr(address) -> String`, `address_check_hint()` | **experimental**: the plain address QR for the board's Check address, and the line to show by it ([Verifying a receive address](#verifying-a-receive-address)) |
 | `LeekDevice(FrameTransport, LinkKind)` | a board over the app's link |
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
 | `.seed_fingerprint(network?)` | which seed the board holds (32 bytes), with no question on the board: call it on every connect, `get_account` only when the UFVK is needed. A stable identifier of the seed that every paired host can read |
@@ -224,28 +225,42 @@ uses, so every wallet tells the user the same thing.
 | `phoneFragmentLen`, `phoneFrameMs` | 25 B, 350 ms | on a phone: pass to `QrEncoder.pczt`, show each frame that long (QR v4) |
 | `largeScreenFragmentLen`, `largeScreenFrameMs` | 50 B, 300 ms | on a laptop or tablet |
 | `phoneBoardZoom`, `phoneDistanceCm`, `largeScreenBoardZoom` | 3, 30, 2 | the board's zoom (a knob push) and distance, for your tips |
-| `maxBrightness`, `keepScreenOn` | true, true | while the code shows; restore both when it goes |
+| `brightnessLevels`, `defaultBrightness` | [null, 0.6, 0.8, 1.0], null | a brightness button on the QR page cycling these (null: the system's, no override), starting at the system's; remember the choice |
+| `keepScreenOn` | true | while the code shows; restore it, and the system brightness, when it goes |
+| `maxBrightness` | false | deprecated, always false: do not force full brightness |
 | `pageBackground`, `quietZoneModules` | `#000000`, 2 | full screen on a black page, 2 white modules round the code |
 | `errorCorrection`, `uppercaseAlphanumeric`, `wholePixelModules` | `L`, true, true | encode in alphanumeric mode at L, whole device pixels per module, no smoothing |
 | `phoneTips`, `largeScreenTips` | short English lines | show them by the code |
+
+**Do not force full brightness.** On an OLED phone, 100 % was the blocker
+in the 2026-11-11 user test: the board found the code but read it washed
+out. Open the QR page at the system's brightness and give it one button
+that steps through `brightnessLevels` ("Brightness: system → 60 % → 80 % →
+100 %"), remembered. The tip says when to use it: if the board finds the
+code but does not read it, lower first when the code looks washed out on
+the board, higher when it looks dark. The board firmware also adjusts its
+exposure both ways.
 
 On Android, while the code is up:
 
 ```kotlin
 val h = qrDisplayHints()
 val enc = QrEncoder.pczt(signerViewBytes(prepared, view), h.phoneFragmentLen)
+var level: Float? = saved ?: h.defaultBrightness                          // null: the system's
+fun apply() { window.attributes = window.attributes.apply {
+    screenBrightness = level ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE } }
 window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)          // keepScreenOn
-window.attributes = window.attributes.apply { screenBrightness = 1f }      // maxBrightness
+apply()
+// The "Brightness" button: the next of h.brightnessLevels, then apply() and save it.
 // ... draw enc.frame(i) every h.phoneFrameMs ms, h.phoneTips under it ...
 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)        // when the code goes
-window.attributes = window.attributes.apply {
-    screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-}
+level = null; apply()
 ```
 
 In Compose, the same from a `DisposableEffect` keyed on the code being
-shown, restoring in `onDispose`. On iOS: `UIScreen.main.brightness = 1` (save
-and restore the old value) and `UIApplication.shared.isIdleTimerDisabled`.
+shown, restoring in `onDispose`. On iOS: `UIScreen.main.brightness` only when
+the user picked a level (save the old value and restore it) and
+`UIApplication.shared.isIdleTimerDisabled`.
 
 The first phone tip matters most and is the one no app can do: **on an
 OLED phone, turn on the system's anti-flicker / DC dimming setting** (the
@@ -254,6 +269,36 @@ and the board's rolling-shutter camera sees dark bands across the code. In
 the 2026-11-11 test it improved reads a lot. LCD screens (laptops, tablets)
 do not flicker this way and read at 2x with 39–88 B fragments at
 250–350 ms. QR is never used for pairing.
+
+### Verifying a receive address
+
+Before handing out an address, let the user check it on the board, whose
+screen is the one to trust. Two ways:
+
+- **USB or Bluetooth.** `LeekDevice.show_address(index, network, ua)` (Kotlin
+  `showAddress`): the board derives the address for that account and shows
+  it; the user compares and answers on the board. `AddressCheck.VERIFIED`
+  means the board's own and confirmed; `NOT_OURS`, `REJECTED` and
+  `UNSUPPORTED` mean do not use it. Pass `to_checkable_ua(ua)` for an
+  address with a Sapling receiver (the board has no Sapling key).
+- **QR, air-gapped (experimental).** On the board: Main menu → Check
+  address. It scans a plain address QR (unified, Sapling or transparent, or
+  a `zcash:` URI with one address) and says whether the address belongs to
+  the board, with the account and diversifier index. A wallet's usual
+  Receive QR of the plain address works; `address_check_qr(address)` gives
+  the exact text (the plain address, never uppercased, so encode it in byte
+  mode; Base58 keeps its case), and `address_check_hint()` the line to show
+  by it: "On the board: Main menu → Check address (experimental), then scan
+  this code." Show it full screen on black like the signing QR (same
+  brightness steps and keep-screen-on). Nothing goes back to the wallet:
+  the answer is on the board's screen.
+
+```kotlin
+val text = addressCheckQr(ua)          // throws LeekException (512) if not an address
+showFullScreenQr(text, byteMode = true, caption = addressCheckHint())
+```
+
+QR is never used for pairing.
 
 ## Host-side protection
 

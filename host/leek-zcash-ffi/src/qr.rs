@@ -61,11 +61,12 @@ pub fn qr_defaults() -> QrDefaults {
 }
 
 /// How to show the animated `ur:leek-pczt` so the board's camera reads it
-/// (experimental). From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
+/// (experimental). Brightness is the user's (system by default, adjustable
+/// on the QR page); the screen is kept on. From the bench of 2026-11-11 (docs/zcash/QR-BENCH.md,
 /// "Signing with a phone"), with the board firmware of that day; older
 /// firmware reads [`qr_defaults`] better. The same values and words as the
 /// companion app (`leek_ur::display`).
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct QrDisplayHints {
     /// Bytes per fragment from a phone screen: 25 (QR v4, the biggest modules).
     pub phone_fragment_len: u32,
@@ -81,10 +82,19 @@ pub struct QrDisplayHints {
     pub large_screen_frame_ms: u32,
     /// The board's zoom for a laptop or tablet: 2x.
     pub large_screen_board_zoom: u32,
-    /// Set the window's brightness to full while the code shows, and
-    /// restore it after (Android `WindowManager.LayoutParams.screenBrightness`
-    /// 1.0, iOS `UIScreen.brightness`).
+    /// Deprecated, always false: do not force full brightness. On an OLED
+    /// phone 100 % washed the code out for the board's camera (2026-11-11).
+    /// Offer [`QrDisplayHints::brightness_levels`] instead.
     pub max_brightness: bool,
+    /// The brightness steps to offer on the QR page, as a window brightness
+    /// 0.0–1.0; `None` is the system's own (no override): [system, 0.6, 0.8,
+    /// 1.0]. A single button cycling them is enough. Android
+    /// `WindowManager.LayoutParams.screenBrightness` (`None` =
+    /// `BRIGHTNESS_OVERRIDE_NONE`), iOS `UIScreen.brightness` (`None` = leave
+    /// it). Remember the user's choice; restore the system's when the code goes.
+    pub brightness_levels: Vec<Option<f32>>,
+    /// The step the QR page opens at the first time: `None`, the system's.
+    pub default_brightness: Option<f32>,
     /// Keep the screen on while the code shows (Android
     /// `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`), and restore it after.
     pub keep_screen_on: bool,
@@ -118,6 +128,8 @@ pub fn qr_display_hints() -> QrDisplayHints {
         large_screen_frame_ms: h.large_screen_frame_ms,
         large_screen_board_zoom: h.large_screen_board_zoom,
         max_brightness: h.max_brightness,
+        brightness_levels: h.brightness_levels.to_vec(),
+        default_brightness: h.default_brightness,
         keep_screen_on: h.keep_screen_on,
         page_background: h.page_background.into(),
         quiet_zone_modules: h.quiet_zone_modules,
@@ -127,6 +139,26 @@ pub fn qr_display_hints() -> QrDisplayHints {
         phone_tips: strings(h.phone_tips),
         large_screen_tips: strings(h.large_screen_tips),
     }
+}
+
+/// **Experimental.** The text of the QR to show for the board's Check
+/// address (Main menu → Check address): the board scans it and says whether
+/// the address is its own, with the account and diversifier index. `address`
+/// is a unified, Sapling or transparent address or a `zcash:` URI with one
+/// address; the result is the plain address (never uppercased: Base58 keeps
+/// its case). A wallet's usual Receive QR of the plain address works too.
+/// Not an address: `Parse` (512), as `to_checkable_ua`. Over USB or Bluetooth use
+/// `LeekDevice.show_address` instead.
+#[uniffi::export]
+pub fn address_check_qr(address: String) -> Result<String> {
+    Ok(lz::address_check_payload(&address)?)
+}
+
+/// **Experimental.** The line to show by that QR: "On the board: Main menu →
+/// Check address (experimental), then scan this code."
+#[uniffi::export]
+pub fn address_check_hint() -> String {
+    leek_ur::display::ADDRESS_CHECK_HINT.into()
 }
 
 /// The UR type a scanned string names (lowercase), or None for a text that

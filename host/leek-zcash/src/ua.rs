@@ -35,6 +35,44 @@ pub fn to_checkable_ua(ua: &str) -> Result<String, LeekError> {
     Ok(out.encode(&net))
 }
 
+/// The text of the QR a wallet shows for the board's **Check address**
+/// (Main menu → Check address, experimental): the plain address, as a
+/// wallet's Receive QR carries it. `text` is an address (unified, Sapling or
+/// transparent) or a `zcash:` URI (ZIP 321) with one address; the result is
+/// the address alone in its canonical encoding (Bech32 lowercase; Base58 as
+/// it is), never uppercased, so a transparent address keeps its case.
+/// Anything else, or a URI with several payments, is [`LeekError::Parse`].
+pub fn address_check_payload(text: &str) -> Result<String, LeekError> {
+    let t = text.trim();
+    let addr = match t.get(..6) {
+        Some(p) if p.eq_ignore_ascii_case("zcash:") => {
+            let rest = &t[6..];
+            let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+            if !path.is_empty() {
+                path
+            } else {
+                // `zcash:?address=...`: exactly one payment, unnumbered.
+                let mut found = None;
+                for kv in query.split('&') {
+                    let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                    if k == "address" && found.is_none() {
+                        found = Some(v);
+                    } else if k.starts_with("address.") || k == "address" {
+                        return Err(LeekError::Parse);
+                    }
+                }
+                found.ok_or(LeekError::Parse)?
+            }
+        }
+        _ => t,
+    };
+    let parse = |a: &str| zcash_address::ZcashAddress::try_from_encoded(a).ok().map(|a| a.encode());
+    // An all-uppercase Bech32 address (from an alphanumeric QR) is the same
+    // address; a Base58 one never parses lowercased, so this is safe.
+    let upper = !addr.bytes().any(|b| b.is_ascii_lowercase());
+    parse(addr).or_else(|| upper.then(|| parse(&addr.to_ascii_lowercase())).flatten()).ok_or(LeekError::Parse)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +97,24 @@ mod tests {
         assert_eq!(receivers(&checkable), vec![Receiver::Orchard([1; 43]), Receiver::P2pkh([3; 20])]);
         // Already checkable: returned unchanged.
         assert_eq!(to_checkable_ua(&checkable).unwrap(), checkable);
+    }
+
+    #[test]
+    fn the_check_address_payload_is_the_plain_address() {
+        let full = ua(vec![Receiver::Orchard([1; 43]), Receiver::Sapling([2; 43]), Receiver::P2pkh([3; 20])]);
+        assert_eq!(address_check_payload(&full).unwrap(), full);
+        assert_eq!(address_check_payload(&format!("  {full}\n")).unwrap(), full);
+        assert_eq!(address_check_payload(&full.to_uppercase()).unwrap(), full);
+        assert_eq!(address_check_payload(&format!("zcash:{full}?amount=1.5&memo=AA")).unwrap(), full);
+        assert_eq!(address_check_payload(&format!("ZCASH:{full}")).unwrap(), full);
+        assert_eq!(address_check_payload(&format!("zcash:?address={full}&amount=1")).unwrap(), full);
+        // Transparent (Base58): case is kept.
+        let t = "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd";
+        assert_eq!(address_check_payload(t).unwrap(), t);
+        assert_eq!(address_check_payload(&format!("zcash:{t}")).unwrap(), t);
+        for bad in ["", "zcash:", "not an address", "zcash:?amount=1", &format!("zcash:?address={full}&address.1={full}")] {
+            assert_eq!(address_check_payload(bad), Err(LeekError::Parse), "{bad}");
+        }
     }
 
     #[test]
