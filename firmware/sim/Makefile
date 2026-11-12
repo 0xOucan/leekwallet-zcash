@@ -40,7 +40,7 @@ VAULT_CRYPTO :=                 $(CRYPTO)/bip39.c $(CRYPTO)/bip39_english.c \
                 $(CRYPTO)/aes/aestab.c $(CRYPTO)/aes/aes_modes.c \
                 $(CRYPTO)/aes/aesgcm.c $(CRYPTO)/aes/gf128mul.c
 
-TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_ur_fixtures test_qr_out test_oled_qr test_viewfinder test_scan_timing test_camera_tune test_zcash_keys test_zcash_pczt test_zcash_account
+TESTS := test_mnemonic_entry test_pin test_passphrase test_entropy test_vault_kdf test_cbor test_session test_text_entry test_vault_crypt test_device_wipe test_ui test_button test_pin_change test_protocol test_ble_chunk test_xfp test_slip39 test_temp_seed test_ur test_ur_fountain test_ur_decoder test_qrcode test_ur_encoder test_ur_fixtures test_qr_out test_oled_qr test_viewfinder test_scan_timing test_scan_autoexp test_camera_tune test_zcash_keys test_zcash_pczt test_zcash_account
 
 all: $(addprefix $(BUILD)/,$(TESTS))
 
@@ -465,6 +465,11 @@ $(BUILD)/test_scan_timing: test_scan_timing.c ../src/scan-timing.c | $(BUILD)
 # The OV5640 register values of the scan profile (gain ceiling, banding,
 # shutter cap, AEC weights, zoom windows): pure, no driver.
 $(BUILD)/test_camera_tune: test_camera_tune.c ../src/camera-tune.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# The Scan screen's automatic exposure search, driven by scripted
+# located/decoded counters: pure, no sensor.
+$(BUILD)/test_scan_autoexp: test_scan_autoexp.c ../src/scan-autoexp.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Against the real vault, not a stub. src/pin.c no longer stores a verifier of
