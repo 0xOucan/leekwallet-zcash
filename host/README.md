@@ -16,14 +16,15 @@ official Zcash Rust libraries; they are not official Zcash tools.
 | `zecz-core` (lib `zecz`) | The wallet engine: profiles per network (a server of the other chain is refused), watch-only board accounts, lightwalletd sync with transparent spend detection, balances, rotating addresses, history, `propose_send` / `propose_shield` (full or compact signer view), applying a `.zsig`, proving, broadcast; `.zkv` seed cards; a DEV-only soft signer | `zecz-cli`, the desktop app, the Zcash LeekWallet app, tests | [zecz-core](zecz-core/README.md) |
 | `zecz-cli` (bin `zecz`) | The command line over `zecz-core`: pair, import, sync, send, sign on the board, finish; `.zkv` cards | you, scripts | [zecz-cli](zecz-cli/README.md) |
 | `leek-device` | The board's client: v2 pairing with a six-digit passkey, encrypted session, the `z*` calls over any `FramePort` (USB serial, Bluetooth), the 0x0528 network refusal worded for the user, one retry on 0x0300 right after connecting, and the `.zsig` format | `zecz-core`, `leek-android`, the desktop app | [leek-device](leek-device/README.md) |
-| `leek-zcash` | The LeekWallet SDK's Zcash kit: host-side preflight, filling missing derivations, the signer view, `sign_pczt` and `apply_zsig` (every signature verified, a signed PCZT out for the wallet's Keystone path), the SD-card calls (experimental), the account record, persisting a signed result with its txid, typed `LeekError` with stable codes. No transport of its own | wallet integrations | [leek-zcash](leek-zcash/README.md) |
-| `leek-zcash-ffi` | UniFFI bindings of `leek-zcash` for Kotlin and Swift: byte API, errors by category with stable codes, a foreign `FrameTransport` so the app owns USB / BLE, progress and cancel. Generated bindings committed (WASM next) | Android and iOS wallets | [leek-zcash-ffi](leek-zcash-ffi/README.md) |
-| `leek-ur` | BC-UR for the QR air gap (experimental): Bytewords, CRC-32, the fountain code, a multi-part encoder and a bounded decoder for `ur:leek-pczt` / `ur:leek-zsig`. The host twin of `firmware/src/ur*.c`, tested against the firmware's bc-ur vectors and the shared fixtures in `vectors/ur/`. `sha2` only | `zecz-cli`, the Zcash LeekWallet app | this table |
+| `leek-zcash` | The LeekWallet SDK's Zcash kit: host-side preflight, filling missing derivations, the signer view, `sign_pczt` and `apply_zsig` (every signature verified, a signed PCZT out for the wallet's Keystone path), the SD-card calls (experimental), the account record, persisting a signed result with its txid, typed `LeekError` with stable codes. No transport of its own | wallet integrations: `zingo-cli` in our zingolib fork, and through `leek-zcash-ffi` | [leek-zcash](leek-zcash/README.md) |
+| `leek-zcash-ffi` | UniFFI bindings of `leek-zcash` for Kotlin and Swift: byte API, errors by category with stable codes, a foreign `FrameTransport` so the app owns USB / BLE, progress and cancel. Generated bindings committed (WASM next) | our Zodl fork and our Zingo fork (Android); iOS wallets | [leek-zcash-ffi](leek-zcash-ffi/README.md) |
+| `leek-ur` | BC-UR for the QR air gap: Bytewords, CRC-32, the fountain code, a multi-part encoder and a bounded decoder for `ur:leek-pczt` / `ur:leek-zsig`. The host twin of `firmware/src/ur*.c`, tested against the firmware's bc-ur vectors and the shared fixtures in `vectors/ur/`. `sha2` only | `zecz-cli`, the Zcash LeekWallet app | this table |
 | `leek-android` | JNI library for the Android app: the board's client over a Kotlin-owned USB or Bluetooth link, the compact signer view, applying a `.zsig` to the full PCZT | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android) | [leek-android](leek-android/README.md) |
 
 The Chrome extension cannot use `zecz-core` directly (tonic, files, tokio);
 its engine in [`../chrome/engine`](../chrome/engine) reuses `zsig.rs` and the
-pure modules and follows the same flow.
+pure modules and follows the same flow. Every wallet that reaches the board,
+and over which links: [Wallets and links](../README.md#wallets-and-links).
 
 ## Build and test
 
@@ -49,10 +50,10 @@ $Z sign-device --port /dev/ttyACM0 --in tx.pczt --out tx.zsig     # review and A
 $Z finish --pczt tx.pczt --sigs tx.zsig       # apply, prove, broadcast
 ```
 
-### Testnet over QR (experimental)
+### Testnet over QR
 
-The same send with no cable, for a board kept off USB and Bluetooth. Slow,
-and experimental; never used for pairing (the import above is over USB).
+The same send with no cable, for a board kept off USB and Bluetooth. Slower
+than a cable; never used for pairing (the import above is over USB).
 
 ```sh
 cargo build --release -p zecz-cli --features qr-camera    # the webcam reader (Linux)
@@ -68,7 +69,7 @@ the code in a browser. Defaults 50-byte fragments, 500 ms a frame (what the boar
 (`--qr-fragment`, `--qr-interval`); `zecz qr-show --in tx.pczt --sweep`
 steps through the speed presets for the camera bench
 ([QR-BENCH.md](../docs/zcash/QR-BENCH.md)); details in
-[zecz-cli/README.md](zecz-cli/README.md#qr-instead-of-a-cable-experimental).
+[zecz-cli/README.md](zecz-cli/README.md#qr-instead-of-a-cable).
 
 `zecz history` lists the account's transactions (a send to your own
 address reads "Sent to yourself" with its fee as the amount);

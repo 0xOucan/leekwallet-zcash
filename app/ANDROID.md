@@ -763,7 +763,7 @@ activity in the APK, and the decoder this app already used on both (README,
 
 ## The screen while the QR code shows
 
-Sign with QR and Check on board (QR) (both experimental): while the code
+Sign with QR and Check on board (QR): while the code
 is up, inline or full screen, `src-tauri/src/screen.rs` adds
 `FLAG_KEEP_SCREEN_ON` and sets the window's `screenBrightness` to the level
 the user picked with the **Brightness** button on the QR page: system (no
@@ -781,12 +781,12 @@ command changes nothing and the Brightness button is hidden. Under the code the 
 (`host/leek-ur/src/display.rs`), first among them anti-flicker / DC dimming
 on OLED phones, which no app can switch ([QR-BENCH.md](../docs/zcash/QR-BENCH.md#signing-with-a-phone)).
 
-Receive → **Check on board (QR)** (experimental) shows the address shown
+Receive → **Check on board (QR)** shows the address shown
 there, plain (QR byte mode, as a payer's QR), full screen on black, with
-"On the board: Main menu → Check address (experimental), then scan this
-code." The board says whether the address is its own, with the account and
+"On the board: Main menu → Check address, then scan this code." The board says whether the address is its own, with the account and
 diversifier index. It is the air-gapped twin of **Verify on the board**
-(USB or Bluetooth); never pairing. Esc or a tap closes it.
+(USB or Bluetooth); never pairing. Esc or a tap closes it. The board's
+Check address is new and not yet tested on the board.
 
 ## In the background
 

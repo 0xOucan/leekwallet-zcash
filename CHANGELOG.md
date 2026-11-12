@@ -8,7 +8,16 @@ are released in
 
 ## Unreleased
 
-- **Brightness is the user's on the QR page (experimental QR signing).** A
+- **QR signing is no longer experimental.** It signed testnet sends in
+  both directions from `zecz`, the desktop app and the Android app on a
+  phone, and from our Zodl and Zingo forks. The "experimental" label is
+  gone from the app's buttons, `zecz`'s help and pages, the SDK's
+  `address_check_hint()` (now "On the board: Main menu → Check address,
+  then scan this code.") and the docs; that covers *Sign with QR*, the
+  View key import and Check address. Check address is new and not yet
+  tested on the board. QR is still never used for pairing. The SD card,
+  the QR screen's filled layout and the OPTIGA work keep their labels.
+- **Brightness is the user's on the QR page (QR signing).** A
   user test on an OLED phone (2026-11-11) found forcing 100 % was the
   blocker: the board found the code but read it washed out. The SDK's
   `qr_display_hints()` now has `brightness_levels` ([system, 0.6, 0.8,
@@ -19,14 +28,14 @@ are released in
   *Brightness* button inline and in full screen (system → 60 % → 80 % →
   100 %, remembered, hidden on the desktop), and `qr_screen(on, level)`
   keeps the screen on at that level instead of 100 %.
-- **Check address over QR (experimental).** SDK: `address_check_qr(address)`
+- **Check address over QR.** SDK: `address_check_qr(address)`
   (the plain address to show, from an address or a `zcash:` URI) and
   `address_check_hint()`, for the board's Main menu → Check address, which
   says whether the address is its own, with the account and diversifier
   index. The companion's Receive view has *Check on board (QR)* for both
   addresses. `leek-zcash-ffi`'s README has "Verifying a receive address"
   (USB/Bluetooth `show_address`, or QR).
-- **Board: Check address (experimental, QR).** Main menu → Check address
+- **Board: Check address (QR; new, not yet tested on the board).** Main menu → Check address
   scans a wallet's Receive QR (a unified, Sapling, transparent or TEX
   address, or a one-payment `zcash:` URI) and says from the board's own
   keys whether it is this wallet's: *YOURS, account N, address #index* with
@@ -39,7 +48,7 @@ are released in
   screen says *Sapling NOT checked*; a Sapling-only address is *Cannot
   check*. The QR-only
   counterpart of the USB/Bluetooth address check
-  ([QR-BENCH.md](docs/zcash/QR-BENCH.md#check-address-is-the-phones-address-the-boards-experimental)).
+  ([QR-BENCH.md](docs/zcash/QR-BENCH.md#check-address-is-the-phones-address-the-boards)).
 - **QR scanning on the board: 2–3x faster, and phones work (tested on the
   colour kit, [QR-BENCH.md](docs/zcash/QR-BENCH.md#signing-with-a-phone)).**
   The scan decoder keeps 64 mixed parts instead of 8 and skips one it already
@@ -51,7 +60,7 @@ are released in
   zoom the knob chose until power-off. First phone signature by QR both ways: 25 B at
   350 ms, 3x, about 30 cm (the lens is fixed-focus). The `-qstages` and
   `-qfast` images log quirc's stage times and why codes fail.
-- **SDK: `qr_display_hints()`, how to show the signing QR (experimental).**
+- **SDK: `qr_display_hints()`, how to show the signing QR.**
   Next to `qr_defaults()` in `leek-zcash-ffi` (Kotlin, Swift), from
   `host/leek-ur`'s `display` rules: 25 B at 350 ms from a phone and 50 B at
   300 ms from a laptop or tablet, the screen kept on,
@@ -98,7 +107,7 @@ are released in
   a backup location, not extra security; the vault stays the master
   (`firmware/docs/BACKUP.md`). Every other image is unchanged. Host-tested
   (`sim/test_se_backup.c`); not yet run on a chip.
-- **The QR air gap works on the board (experimental).** A board kept off
+- **The QR air gap works on the board.** A board kept off
   USB and Bluetooth signs by animated QR in both directions: the request as
   `ur:leek-pczt`, the reply as `ur:leek-zsig`. Three testnet sends were
   signed this way on the colour kit; the first, by `zecz`, was mined in
@@ -117,7 +126,7 @@ are released in
     of parts.
   - Both use one new crate, `host/leek-ur`, which produces the firmware's
     parts byte for byte.
-- **View key: set up a wallet without connecting the board (experimental).**
+- **View key: set up a wallet without connecting the board.**
   On the board, Main menu → View key: a warning ("Whoever scans it sees
   balance and history. It cannot spend."), then the account as an animated
   `ur:leek-zcash-accounts`. It carries the seed fingerprint, the UFVK and,

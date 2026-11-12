@@ -28,6 +28,7 @@ board's firmware and every tool that talks to it, below in
 | Flash a real board | the web flasher on the same site (Chrome or Edge), after its verify step |
 | Release | [v0.1.0 "Sacbeh"](https://github.com/0xOucan/leekwallet-zcash/releases/tag/v0.1.0): firmware (reproducible build), desktop apps, Android app, Chrome extension; `SHA256SUMS` signed with SSH |
 | Zodl fork | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), its own repository (MIT): mainnet and testnet apps with LeekWallet as a hardware signer |
+| Zingo fork | [zingo-mobile](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr) and [zingolib](https://github.com/0xOucan/zingolib/tree/leekwallet-signer): the board in Zingo, built on Zingo Labs' own PCZT signing work; not an official Zingo release ([below](#wallets-and-links)) |
 | Components | board firmware, Zcash LeekWallet app (desktop, Android), Zodl fork, Chrome extension, `zecz` CLI, Rust libraries, board simulator |
 | Known issues | [below](#known-issues) |
 
@@ -72,7 +73,8 @@ board's firmware and every tool that talks to it, below in
 ## Ecosystem
 
 Every product here is Zcash only: no Ethereum or other EVM code in the
-firmware or in any app. All of it is our work. The firmware and the Zcash
+firmware or in any app. All of it is our work, except the Zingo code our
+Zingo fork is built on (see [Wallets and links](#wallets-and-links)). The firmware and the Zcash
 LeekWallet app started as forks of [LeekWallet](firmware/README.md); the
 Android app is a fork of [Zodl](https://github.com/zodl-inc/zodl-android)
 and lives in its own repository, under Zodl's MIT license. Everything in
@@ -81,14 +83,35 @@ this repository is Apache-2.0.
 | Product | What it is | Platforms | Networks | Status | README |
 |---|---|---|---|---|---|
 | **Board firmware** (`firmware/`) | The signer. It holds the seed, checks each PCZT against its own keys, shows it, and signs. Forked from LeekWallet (an ESP32 Ethereum wallet) with its history, now Zcash only | ESP32-S3 board | Mainnet or Testnet, a setting on the board; it refuses requests for the other one | Done, tested on the board: shielded and transparent spends over USB, Bluetooth, QR and SD; compact PCZT; address check; first mainnet send and shield | [firmware](firmware/README.md) (upstream's README, with a Zcash note on top) |
-| **Zcash LeekWallet** (`app/`) | Our app, id `io.leekwallet.zcash.companion`, built from LeekWallet's Companion with its EVM side removed, and since 2026-10-21 the one app: the desktop app merged into it. A full wallet: connects and sets up by itself, syncs, receives, sends and shields signed on the board; watch-only wallets from a viewing key; swaps from and into ZEC through NEAR Intents (1Click) | Linux, Windows, macOS, Android (Tauri 2) | Mainnet and Testnet in one app, their data apart; swaps on mainnet only | On the real board and an Android tablet over USB and Bluetooth: connects and sets up by itself, transparent and shielded sends, shield, rotating addresses verified on the board, passphrase wallet, QR scan for paying. With the colour kit (experimental): sends signed by QR in both directions on the desktop and on an Android phone, and a board wallet imported from the board's View key QR with the board unplugged. The desktop app it absorbed did the first mainnet swap (ZEC → USDC on Base, the deposit signed on the board); swaps from the tablet next | [app](app/README.md) |
+| **Zcash LeekWallet** (`app/`) | Our app, id `io.leekwallet.zcash.companion`, built from LeekWallet's Companion with its EVM side removed, and since 2026-10-21 the one app: the desktop app merged into it. A full wallet: connects and sets up by itself, syncs, receives, sends and shields signed on the board; watch-only wallets from a viewing key; swaps from and into ZEC through NEAR Intents (1Click) | Linux, Windows, macOS, Android (Tauri 2) | Mainnet and Testnet in one app, their data apart; swaps on mainnet only | On the real board and an Android tablet over USB and Bluetooth: connects and sets up by itself, transparent and shielded sends, shield, rotating addresses verified on the board, passphrase wallet, QR scan for paying. With the colour kit: sends signed by QR in both directions on the desktop and on an Android phone, and a board wallet imported from the board's View key QR with the board unplugged. The desktop app it absorbed did the first mainnet swap (ZEC → USDC on Base, the deposit signed on the board); swaps from the tablet next | [app](app/README.md) |
 | **Chrome extension** (`chrome/`) | A Zcash wallet in the browser: librustzcash in WebAssembly, the wallet on OPFS, gRPC-web sync; the board over Web Serial and Web Bluetooth | Chromium browsers (tested in Brave) | Mainnet and Testnet | On the board: sends signed over USB on testnet and mainnet, Bluetooth pairing and address check. Software wallets next | [chrome](chrome/README.md) |
-| **LeekWallet Zcash for Android** ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`) | Our fork of Zodl (MIT). Two apps that install side by side: **LeekWallet Zcash** (mainnet) and **LeekWallet Zcash (testnet)**. Everything Zodl does, plus an account whose keys stay on the board, signed over USB, Bluetooth or QR | Android | One app per network | Tested on testnet: import, send, shield, "Verify on device". Mainnet: connects, shows the balance and verifies addresses on the board; it refuses a board set to the other network | [in its repo](https://github.com/0xOucan/leekwallet-zcash-android#readme) |
+| **LeekWallet Zcash for Android** ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`) | Our fork of Zodl (MIT). Two apps that install side by side: **LeekWallet Zcash** (mainnet) and **LeekWallet Zcash (testnet)**. Everything Zodl does, plus an account whose keys stay on the board, signed over USB, Bluetooth or QR. Now on the LeekWallet SDK (`leek-zcash-ffi`), with the account importable from the board's View key QR; voting is refused for a LeekWallet account | Android | One app per network | Tested on testnet: import, send, shield, "Verify on device". Mainnet: connects, shows the balance and verifies addresses on the board; it refuses a board set to the other network | [in its repo](https://github.com/0xOucan/leekwallet-zcash-android#readme) |
 | **`zecz` CLI** (`host/zecz-cli`) | Our command-line wallet: pair, import, sync, build a PCZT, sign on the board, prove, broadcast; `.zkv` SD seed cards | A computer with Rust (used on Linux) | Testnet (default) and Mainnet, one data directory per network | Full flow on testnet; mainnet sends and a shield signed on the board | [host/zecz-cli](host/zecz-cli/README.md) |
 | **Libraries** (`host/`) | `zecz-core`, the wallet engine behind `zecz` and the Zcash LeekWallet app; `leek-device`, the board's client and the `.zsig` format; `leek-android`, the JNI library the Android fork loads; `leek-ur`, the animated-QR encoding | Rust | Both | In use by every companion above | [zecz-core](host/zecz-core/README.md), [leek-device](host/leek-device/README.md), [leek-android](host/leek-android/README.md) |
-| **SDK** (`host/leek-zcash`, `host/leek-zcash-ffi`) | For other Zcash wallets that want to add the board: pairing, the account, the PCZT checks and signing over the wallet's own USB or Bluetooth link, stored-data keys, and the animated QR (a `QrScanner` for the View key and the signature reply, a `QrEncoder` for the request, with the bench's defaults) | Rust, Kotlin and Swift (UniFFI) | Both | Tested in Rust and smoke-tested from Kotlin on the JVM; no wallet ships it yet | [leek-zcash](host/leek-zcash/README.md), [leek-zcash-ffi](host/leek-zcash-ffi/README.md) |
+| **SDK** (`host/leek-zcash`, `host/leek-zcash-ffi`) | For other Zcash wallets that want to add the board: pairing, the account, the PCZT checks and signing over the wallet's own USB or Bluetooth link, stored-data keys, and the animated QR (a `QrScanner` for the View key and the signature reply, a `QrEncoder` for the request, with the bench's defaults) | Rust, Kotlin and Swift (UniFFI) | Both | Tested in Rust and smoke-tested from Kotlin on the JVM. Used by our Zodl fork and our Zingo fork | [leek-zcash](host/leek-zcash/README.md), [leek-zcash-ffi](host/leek-zcash-ffi/README.md) |
 | **zdev** (`firmware/sim`) | A simulated board: the firmware's own protocol, signers and review code on a PTY, so companions can be tested without hardware. Development only | Linux | Both (`--network`) | Used by the host, app and Chrome tests | [firmware/sim](firmware/sim/README.md) |
 | **Test vectors** (`vectors/`) | Keys, PCZTs (valid and refused), a `.zsig` and a `.zkv`, generated from librustzcash and shared by every implementation | | Both | | [vectors](vectors/README.md) |
+
+### Wallets and links
+
+Which wallet reaches the board over which link. QR is never used for
+pairing: USB and Bluetooth pair with the 6-digit code.
+
+| Wallet | USB | Bluetooth | QR | Notes |
+|---|---|---|---|---|
+| **Zcash LeekWallet**, desktop (`app/`) | yes | yes | yes | *Sign with QR*, the account from the board's View key QR, *Check on board (QR)* |
+| **Zcash LeekWallet**, Android (`app/`) | yes | yes | yes | the same app; QR tested from a phone |
+| **Chrome extension** (`chrome/`) | yes (Web Serial) | yes (Web Bluetooth) | no | no QR through the webcam |
+| **LeekWallet Zcash for Android**, our Zodl fork ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`, MIT) | yes | yes | yes | on the LeekWallet SDK; View key import over QR; voting refused for a LeekWallet account |
+| **Zingo**, our fork ([zingo-mobile `leekwallet-qr`](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr), [zingolib `leekwallet-signer`](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)) | yes | built, in testing | yes | on the LeekWallet SDK |
+| **`zingo-cli`**, from the same zingolib fork | yes (`--leek-port`) | no | no | |
+| **`zecz`** (`host/zecz-cli`) | yes | no | yes | also the SD card |
+
+**The Zingo fork is not an official Zingo release.** It is built on Zingo
+Labs' own PCZT hardware-signing work in zingolib
+([PR #3147](https://github.com/zingolabs/zingolib/pull/3147), by Dorian);
+that code is theirs. Our part is the LeekWallet signer on top, and we
+have offered it to the Zingo team.
 
 **One app.** The Zcash LeekWallet app absorbed the desktop app (with its
 NEAR swaps) on 2026-10-21 and moved to `app/`: a single app for desktop and
@@ -143,14 +166,17 @@ over USB) and `30cdefb47286f2e3397dd13eaaba88fa772910ca41578a99baaf271adab993a4`
 `f7f6ad4b01be8650c9dc5f78e7d844133e5f53c4daf6b3cc1131a802bae2f2cb` (the first
 compact PCZT, 1,430 B instead of ~2.8 KB), and
 `8f3b9264fddce48f6989396336741512e3fdafe66870826c0ceeb63725e73c7d` (the first
-signed by QR in both directions, block 4,606,736).
+signed by QR in both directions, block 4,606,736), and
+`cf3632647a8bb78a00e28150e2f49c7e69ac4b5cea1ea1f02f6790bba428ce21` (the first
+by QR from a phone). The first signed from Zingo (`zingo-cli`, over USB):
+`43e42f8cc2e68f332ad36183d6c0f0b412f37b2f35bc7ff7b21a533f59cb9378`.
 
 ### Which link to use
 
 - **USB or Bluetooth**, in a place you trust: fast (a few seconds) and
   reliable. The session is encrypted and the board shows every output before
   it signs, so the link carries nothing it could change unseen.
-- **QR** (experimental) keeps the board off every cable and radio. From a
+- **QR** keeps the board off every cable and radio. From a
   laptop screen the colour kit reads a compact send in 13–20 s at 2x zoom
   (39–88 B fragments at 250–350 ms), and a laptop webcam reads its reply in
   under 10 s. From a phone it takes 40–90 s: *Big codes*, full screen, the
@@ -159,7 +185,7 @@ signed by QR in both directions, block 4,606,736).
   screen. Use it when that isolation matters more than speed. The board's **View key** screen shows the account as a QR, so a
   wallet can be set up without ever connecting the board, and its **Check
   address** screen scans a wallet's receive QR and says whether the address
-  is the board's (experimental). QR is never used for pairing. Settings and results:
+  is the board's (new, not yet tested on the board). QR is never used for pairing. Settings and results:
   [QR-BENCH.md](docs/zcash/QR-BENCH.md).
 - **SD card**: also fully offline, for the PC companion.
 

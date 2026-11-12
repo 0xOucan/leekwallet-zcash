@@ -5,11 +5,14 @@ Website: [zcash.leekwallet.xyz](https://zcash.leekwallet.xyz) · Demo: [2-minute
 The app of the LeekWallet Zcash board, **Zcash only**: application id
 `io.leekwallet.zcash.companion`, shown as **Zcash LeekWallet**. One
 [Tauri v2](https://tauri.app) codebase for Linux, macOS, Windows and Android,
-talking to the board over USB or Bluetooth on every platform. It pairs with
+talking to the board over USB or Bluetooth on every platform, and by
+animated QR (*Sign with QR*) for a board kept off both. It pairs with
 the board, unlocks it, applies a passphrase, and is a full Zcash wallet (sync,
 receive, send and shield signed on the board, history, contacts, watch-only
 wallets) with swaps from and into ZEC through NEAR Intents, for mainnet and
-testnet in one app, each network's data kept apart.
+testnet in one app, each network's data kept apart. The other wallets that
+reach the board, and over which links, are in the root README's
+[Wallets and links](../README.md#wallets-and-links).
 
 It began as LeekWallet's EVM companion ("the Companion"). Everything EVM
 (chains and RPC, balances and tokens, EVM send and signing, mini apps,
@@ -375,9 +378,9 @@ code is used):
 - *Contacts* (add, edit, remove, pay), *Settings* (server per network,
   checked before it is saved; wallet info; forget this network's wallet).
 
-**Sign with QR (experimental).** An opt-in second button under the Send and
-Shield review, for a board kept off USB and Bluetooth; never for pairing,
-and USB and Bluetooth stay the everyday links. The same compact signer view
+**Sign with QR.** An opt-in second button under the Send and
+Shield review, for a board kept off USB and Bluetooth; never for pairing.
+Tested on testnet from the desktop and from an Android phone. The same compact signer view
 `zw_propose_*` built is shown as an animated `ur:leek-pczt` (fountain parts,
 uppercase for the QR alphanumeric mode) from `src-tauri/src/airgap.rs` over
 `host/leek-ur`, the UR implementation `zecz` uses, tested against the
@@ -490,7 +493,7 @@ board's own account. *Import a viewing key* takes a unified full viewing
 key (`uview1…`, `uviewtest1…`) and its birthday (*Use today's tip* for a new
 account): the old desktop app's watch-only import (roadmap 8.1).
 
-*Import from the board's QR* (experimental) sets up a board wallet without
+*Import from the board's QR* sets up a board wallet without
 connecting the board. On the board: Main menu → *View key*, then OK on its
 warning. The app scans the animated `ur:leek-zcash-accounts` with the
 camera. The Rust side, `qr_accounts_reset` and `qr_accounts_feed` in
@@ -724,6 +727,11 @@ Poly1305), the mock device (session, PIN, wallets, passphrase; its replies
 compared with the firmware's own by `mock-conformance.test.ts`, regenerated
 by `make -C firmware/sim conformance`), the z* calls against zdev, USB and
 BLE on desktop and Android, the Zcash wallet, watch-only wallets and NEAR Intents swaps.
+On the board: *Sign with QR* both ways from the desktop and from an Android
+phone (the first: `cf3632647a8bb78a00e28150e2f49c7e69ac4b5cea1ea1f02f6790bba428ce21`;
+more in [QR-BENCH.md](../docs/zcash/QR-BENCH.md#transactions-signed-by-qr)),
+and *Import from the board's QR* with the board unplugged. *Check on board
+(QR)* is new: the board's Check address is not yet tested on the board.
 
 Tests: `pnpm typecheck`; `pnpm test` (packages/core, the flasher, the
 companion flow and the swap screen); `pnpm test:zdev` (against zdev);

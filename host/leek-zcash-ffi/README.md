@@ -4,6 +4,15 @@
 (`=0.29.5`, proc-macros, no UDL), for Android (Kotlin) and iOS / macOS
 (Swift). A `cdylib` and a `staticlib`.
 
+Used by our Zodl fork
+([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android),
+branch `leekwallet`: USB, Bluetooth, QR signing and the View key import
+over QR) and our Zingo fork
+([zingo-mobile `leekwallet-qr`](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr):
+USB and QR tested, Bluetooth built and in testing). Both are forks, not
+official releases of those wallets; the Zingo one is built on Zingo Labs'
+own PCZT signing work ([zingolib PR #3147](https://github.com/zingolabs/zingolib/pull/3147)).
+
 ```
 src/lib.rs                      the exported API
 src/bin/uniffi-bindgen.rs       the generator, same uniffi as the scaffolding
@@ -38,10 +47,10 @@ Swift use camelCase.
 | `check_broadcast(tx, network, tip)` | before each broadcast: `WrongBranch` (518) or `Expired` (519) means build and sign again |
 | `check_mined(signed_tx, mined_tx) -> MinedCheck`, `tx_txid(tx)` | after mining |
 | `encode_account_record(AccountRecord)`, `decode_account_record(bytes)`, `account_record_type()` | the `leek-zcash-accounts` record |
-| `QrEncoder.pczt(view, fragment_len)`, `.account_record(..)`, `.zsig(..)` | **experimental** animated QR: `frame(i)`, `frames(start, count)`, `seq_len()`, `longest_frame()` |
-| `QrScanner(QrScanKind, network?)` | **experimental**: `feed(text) -> QrProgress`, `account_record()`, `zsig()`, `reset()` |
+| `QrEncoder.pczt(view, fragment_len)`, `.account_record(..)`, `.zsig(..)` | animated QR: `frame(i)`, `frames(start, count)`, `seq_len()`, `longest_frame()` |
+| `QrScanner(QrScanKind, network?)` | `feed(text) -> QrProgress`, `account_record()`, `zsig()`, `reset()` |
 | `qr_defaults()`, `qr_display_hints()`, `qr_part_type(text)` | bench-measured settings; how to show the code (phone or laptop, brightness steps, tips); the UR type a scanned text names |
-| `address_check_qr(address) -> String`, `address_check_hint()` | **experimental**: the plain address QR for the board's Check address, and the line to show by it ([Verifying a receive address](#verifying-a-receive-address)) |
+| `address_check_qr(address) -> String`, `address_check_hint()` | the plain address QR for the board's Check address, and the line to show by it ([Verifying a receive address](#verifying-a-receive-address)) |
 | `LeekDevice(FrameTransport, LinkKind)` | a board over the app's link |
 | `.pair(PairingListener)`, `.ensure_unlocked()` | the six-digit code goes to the listener |
 | `.seed_fingerprint(network?)` | which seed the board holds (32 bytes), with no question on the board: call it on every connect, `get_account` only when the UFVK is needed. A stable identifier of the seed that every paired host can read |
@@ -176,7 +185,7 @@ slow, memory-hard function. Without a suitable
 platform key, do not offer quick unlock
 ([leek-zcash: Stored app data](../leek-zcash/README.md#stored-app-data-three-tiers)).
 
-### Animated QR (experimental)
+### Animated QR
 
 For a board kept off USB and Bluetooth. QR is never used for pairing: USB
 and Bluetooth keep the 6-digit code. The parts are byte-identical to bc-ur's
@@ -210,7 +219,7 @@ and Bluetooth keep the 6-digit code. The parts are byte-identical to bc-ur's
   direction the board picks the density on its knob, and phones read its
   denser modes.
 
-### Showing QR codes (experimental)
+### Showing QR codes
 
 The board's camera is fixed-focus and rolling-shutter, so how a wallet
 shows the `ur:leek-pczt` loop matters as much as the fragment size.
@@ -281,15 +290,15 @@ screen is the one to trust. Two ways:
   means the board's own and confirmed; `NOT_OURS`, `REJECTED` and
   `UNSUPPORTED` mean do not use it. Pass `to_checkable_ua(ua)` for an
   address with a Sapling receiver (the board has no Sapling key).
-- **QR, air-gapped (experimental).** On the board: Main menu → Check
+- **QR, air-gapped.** On the board: Main menu → Check
   address. It scans a plain address QR (unified, Sapling or transparent, or
   a `zcash:` URI with one address) and says whether the address belongs to
   the board, with the account and diversifier index. A wallet's usual
   Receive QR of the plain address works; `address_check_qr(address)` gives
   the exact text (the plain address, never uppercased, so encode it in byte
   mode; Base58 keeps its case), and `address_check_hint()` the line to show
-  by it: "On the board: Main menu → Check address (experimental), then scan
-  this code." Show it full screen on black like the signing QR (same
+  by it: "On the board: Main menu → Check address, then scan this
+  code." (Check address is new and not yet tested on the board.) Show it full screen on black like the signing QR (same
   brightness steps and keep-screen-on). Nothing goes back to the wallet:
   the answer is on the board's screen.
 
