@@ -8,6 +8,21 @@ are released in
 
 ## Unreleased
 
+- **`zecz` over Bluetooth (new, not yet tested on the board).** Every
+  command that talks to the board (`device-init`, `device-show-address`,
+  `sign-device`, and the new `device-features`) takes `--ble` (or
+  `--link ble`), `--ble-addr ADDR` and `--ble-scan SECS` next to `--port`;
+  `zecz device-scan` lists the boards advertising the LeekWallet service.
+  It connects to the only board found or to `--ble-addr`, refuses to guess
+  between two, and says what to do when it cannot (no adapter, Bluetooth
+  off, a permission, "On the board: Settings → Link → Bluetooth"). The
+  link is the Zcash LeekWallet app's own btleplug transport
+  (`app/transport-ble`), made a blocking `FramePort` in `leek-device`
+  (`ble::BlePort`, feature `ble`), so pairing with the six-digit code on
+  every connection, the encrypted session and the board's "Share view
+  key?" prompt are the same as over USB. In `zecz`'s default build (needs
+  `libdbus-1-dev` on Linux); `--no-default-features` leaves it out. `zecz`
+  now covers USB, Bluetooth, QR and the SD card.
 - **QR signing is no longer experimental.** It signed testnet sends in
   both directions from `zecz`, the desktop app and the Android app on a
   phone, and from our Zodl and Zingo forks. The "experimental" label is
