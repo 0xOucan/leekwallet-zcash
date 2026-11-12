@@ -1,0 +1,26 @@
+[package]
+name = "leek-chrome-ur"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "host/leek-ur (BC-UR for the QR air gap: ur:leek-pczt out, ur:leek-zsig and ur:leek-zcash-accounts back) for the Chrome extension's pages, through wasm-bindgen. Small and single-threaded, apart from the engine: a page encodes and decodes while a sync holds the engine."
+
+# Standalone, as chrome/engine is: wasm32 only, its own Cargo.lock.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The one UR implementation (zecz, the desktop app, Android, the SDK).
+leek-ur = { path = "../../host/leek-ur" }
+# The engine's version (chrome/engine/Cargo.lock), so build.sh's
+# wasm-bindgen-cli 0.2.129 serves both.
+wasm-bindgen = "=0.2.129"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
