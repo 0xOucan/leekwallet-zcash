@@ -28,7 +28,7 @@ board's firmware and every tool that talks to it, below in
 | Flash a real board | the web flasher on the same site (Chrome or Edge), after its verify step |
 | Release | [v0.1.0 "Sacbeh"](https://github.com/0xOucan/leekwallet-zcash/releases/tag/v0.1.0): firmware (reproducible build), desktop apps, Android app, Chrome extension; `SHA256SUMS` signed with SSH |
 | Zodl fork | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), its own repository (MIT): mainnet and testnet apps with LeekWallet as a hardware signer |
-| Zingo fork | [zingo-mobile](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr) and [zingolib](https://github.com/0xOucan/zingolib/tree/leekwallet-signer): the board in Zingo, built on Zingo Labs' own PCZT signing work; not an official Zingo release ([below](#wallets-and-links)) |
+| Zingo fork | [zingo-mobile](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr) and [zingolib](https://github.com/0xOucan/zingolib/tree/leekwallet-signer): the board in Zingo, built on Zingo Labs' own PCZT signing work; not an official Zingo release yet ([below](#wallets-and-links)) |
 | Components | board firmware, Zcash LeekWallet app (desktop, Android), Zodl fork, Chrome extension, `zecz` CLI, Rust libraries, board simulator |
 | Known issues | [below](#known-issues) |
 
@@ -104,10 +104,10 @@ pairing: USB and Bluetooth pair with the 6-digit code.
 | **Chrome extension** (`chrome/`) | yes (Web Serial) | yes (Web Bluetooth) | yes (new) | *Sign with QR* (the loop on the screen, the reply through the webcam), the account from the board's View key QR, *Check on the board by QR*; built, not yet tested on the board |
 | **LeekWallet Zcash for Android**, our Zodl fork ([leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android), branch `leekwallet`, MIT) | yes | yes | yes | on the LeekWallet SDK; View key import over QR; voting refused for a LeekWallet account |
 | **Zingo**, our fork ([zingo-mobile `leekwallet-qr`](https://github.com/0xOucan/zingo-mobile/tree/leekwallet-qr), [zingolib `leekwallet-signer`](https://github.com/0xOucan/zingolib/tree/leekwallet-signer)) | yes | yes | yes | on the LeekWallet SDK |
-| **`zingo-cli`**, from the same zingolib fork | yes (`--leek-port`) | no | no | |
+| **`zingo-cli`**, from the same zingolib fork | yes (`--leek-port`, `pczt sign_usb`) | yes, new (`--leek-ble`, `pczt sign_ble`) | yes, new (`pczt sign_qr`) | Bluetooth and QR built, not yet tested on the board; also the SD card |
 | **`zecz`** (`host/zecz-cli`) | yes | yes (new, not yet tested on the board) | yes | also the SD card |
 
-**The Zingo fork is not an official Zingo release.** It is built on Zingo
+**The Zingo fork is not an official Zingo release yet.** It is built on Zingo
 Labs' own PCZT hardware-signing work in zingolib
 ([PR #3147](https://github.com/zingolabs/zingolib/pull/3147), by Dorian);
 that code is theirs. Our part is the LeekWallet signer on top, and we
