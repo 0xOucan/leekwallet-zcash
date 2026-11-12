@@ -67,6 +67,72 @@ struct QrShow {
     qr_interval: u64,
 }
 
+/// How to reach the board: its USB serial port, or Bluetooth LE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum LinkKind {
+    Usb,
+    Ble,
+}
+
+/// The link options of every command that talks to the board.
+#[derive(clap::Args, Clone, Debug, Default)]
+struct LinkArgs {
+    /// The link to the board: usb (needs --port) or ble (Bluetooth LE).
+    /// Default: ble when --ble or --ble-addr is given, else usb.
+    #[arg(long, value_enum)]
+    link: Option<LinkKind>,
+    /// Use Bluetooth LE (the same as --link ble). The board must be on its
+    /// Bluetooth link: Settings → Link → Bluetooth.
+    #[arg(long)]
+    ble: bool,
+    /// USB: the board's serial port (e.g. /dev/ttyACM0), or a zdev PTY.
+    #[arg(long)]
+    port: Option<String>,
+    /// Bluetooth: the board's address, as `zecz device-scan` lists it.
+    /// Needed only when more than one board is advertising; implies --ble.
+    #[arg(long, value_name = "ADDR")]
+    ble_addr: Option<String>,
+    /// Bluetooth: how long to scan for boards, in seconds.
+    #[arg(long, value_name = "SECS", default_value_t = DEFAULT_BLE_SCAN_SECS)]
+    ble_scan: u64,
+}
+
+const DEFAULT_BLE_SCAN_SECS: u64 = 4;
+
+/// A resolved link.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Link {
+    Usb(String),
+    /// A board by address, or the only one advertising.
+    Ble { addr: Option<String>, scan: std::time::Duration },
+}
+
+impl LinkArgs {
+    fn resolve(&self) -> Result<Link> {
+        let wants_ble = self.ble || self.ble_addr.is_some();
+        if self.link == Some(LinkKind::Usb) && wants_ble {
+            bail!("--link usb cannot be combined with --ble or --ble-addr");
+        }
+        if !(1..=60).contains(&self.ble_scan) {
+            bail!("--ble-scan is 1 to 60 seconds");
+        }
+        if wants_ble || self.link == Some(LinkKind::Ble) {
+            if self.port.is_some() {
+                bail!("--port is the USB link; leave it out for Bluetooth (or drop --ble)");
+            }
+            let addr = self.ble_addr.as_deref().map(str::trim).filter(|a| !a.is_empty()).map(str::to_string);
+            if self.ble_addr.is_some() && addr.is_none() {
+                bail!("--ble-addr is empty; `zecz device-scan` lists the boards' addresses");
+            }
+            return Ok(Link::Ble { addr, scan: std::time::Duration::from_secs(self.ble_scan) });
+        }
+        match self.port.as_deref().map(str::trim) {
+            Some(p) if !p.is_empty() => Ok(Link::Usb(p.to_string())),
+            _ => bail!("choose the link to the board: --port /dev/ttyACM0 (USB) or --ble (Bluetooth)"),
+        }
+    }
+}
+
 impl QrShow {
     fn wanted(&self) -> bool {
         self.qr || self.qr_html.is_some()
@@ -223,11 +289,23 @@ enum Cmd {
         #[arg(long)]
         pczt: Option<PathBuf>,
     },
+    /// List the LeekWallet boards advertising over Bluetooth LE (address
+    /// and name), for --ble-addr. Does not connect.
+    DeviceScan {
+        /// How long to scan, in seconds.
+        #[arg(long, value_name = "SECS", default_value_t = DEFAULT_BLE_SCAN_SECS)]
+        ble_scan: u64,
+    },
+    /// Pair with the device (the six-digit code) and show its firmware and
+    /// what it can sign. A check of the link; shares no key.
+    DeviceFeatures {
+        #[command(flatten)]
+        link: LinkArgs,
+    },
     /// Pair with the device, export its account (UFVK) and run `init`.
     DeviceInit {
-        /// Serial port of the device (e.g. /dev/ttyACM0), or a zdev PTY.
-        #[arg(long)]
-        port: String,
+        #[command(flatten)]
+        link: LinkArgs,
         /// ZIP 32 account index on the device.
         #[arg(long, default_value_t = 0)]
         account: u32,
@@ -242,15 +320,15 @@ enum Cmd {
     /// Show this wallet's address on the device; the user confirms there
     /// that it is the same one.
     DeviceShowAddress {
-        #[arg(long)]
-        port: String,
+        #[command(flatten)]
+        link: LinkArgs,
         #[arg(long, default_value_t = 0)]
         account: u32,
     },
     /// Have the device check, show and sign a PCZT; write its .zsig.
     SignDevice {
-        #[arg(long)]
-        port: String,
+        #[command(flatten)]
+        link: LinkArgs,
         /// ZIP 32 account index on the device.
         #[arg(long, default_value_t = 0)]
         account: u32,
@@ -554,10 +632,79 @@ fn write_proposal(p: &zecz::wallet::SendProposal, out: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The device over the chosen link, not yet paired.
+fn open_link(link: &Link) -> Result<Device> {
+    match link {
+        Link::Usb(port) => Device::open(port),
+        Link::Ble { addr, scan } => open_ble(addr.as_deref(), *scan),
+    }
+}
+
+/// Bluetooth: the board at `addr`, or the only one advertising. The link is
+/// leek-transport-ble's (the app's), through leek-device's `BlePort`.
+#[cfg(feature = "ble")]
+fn open_ble(addr: Option<&str>, scan: std::time::Duration) -> Result<Device> {
+    let id = match addr {
+        Some(a) => a.to_string(),
+        None => {
+            println!("Scanning {} s for LeekWallet boards over Bluetooth ...", scan.as_secs());
+            let found = zecz::ble::scan(scan)?;
+            let board = zecz::ble::pick(&found, None)?;
+            println!("Found{}", zecz::ble::describe(board));
+            board.id.clone()
+        }
+    };
+    println!("Connecting to {id} over Bluetooth ...");
+    Device::open_ble(&id, scan)
+}
+
+#[cfg(not(feature = "ble"))]
+fn open_ble(_addr: Option<&str>, _scan: std::time::Duration) -> Result<Device> {
+    bail!("{NO_BLE}")
+}
+
+#[cfg(not(feature = "ble"))]
+const NO_BLE: &str = "this zecz was built without Bluetooth (--no-default-features). Rebuild with                       `cargo build --release -p zecz-cli`, or use --port for USB";
+
+#[cfg(feature = "ble")]
+fn cmd_device_scan(secs: u64) -> Result<()> {
+    let link = LinkArgs { ble: true, ble_scan: secs, ..Default::default() }.resolve()?;
+    let Link::Ble { scan, .. } = link else { unreachable!() };
+    println!("Scanning {} s for LeekWallet boards over Bluetooth ...", scan.as_secs());
+    let found = zecz::ble::scan(scan)?;
+    if found.is_empty() {
+        bail!("no LeekWallet board is advertising over Bluetooth. {}", zecz::ble::BOARD_LINK_HINT);
+    }
+    println!("{} board(s):", found.len());
+    println!("{}", zecz::ble::list(&found));
+    println!("Use one with --ble-addr <ADDR> (or just --ble when only one is listed).");
+    Ok(())
+}
+
+#[cfg(not(feature = "ble"))]
+fn cmd_device_scan(_secs: u64) -> Result<()> {
+    bail!("{NO_BLE}")
+}
+
+fn cmd_device_features(link: &Link) -> Result<()> {
+    let mut dev = connect_device(link)?;
+    let f = leek_zcash::get_features(&mut dev).map_err(|e| anyhow!("{e}"))?;
+    println!("Firmware {} ({}), protocol {}, fwCompat {}",
+             f.firmware.as_deref().unwrap_or("?"), f.model.as_deref().unwrap_or("board"), f.protocol,
+             f.fw_compat.map_or("none".to_string(), |c| c.to_string()));
+    if let Ok(Some(n)) = dev.network() {
+        println!("Network on the board: {}", if n == "main" { "Mainnet" } else { "Testnet" });
+    }
+    println!("Spends from: {}", f.spend_pools.join(", "));
+    println!("Largest PCZT {} B, up to {} transparent inputs, address check {}",
+             f.max_pczt_bytes, f.max_transparent_inputs, if f.show_address { "yes" } else { "no" });
+    Ok(())
+}
+
 /// Open the device, pair (the user compares the passkey) and make sure it is
 /// unlocked.
-fn connect_device(port: &str) -> Result<Device> {
-    let mut dev = Device::open(port)?;
+fn connect_device(link: &Link) -> Result<Device> {
+    let mut dev = open_link(link)?;
     dev.pair(|passkey| {
         println!("Pairing passkey: {passkey}");
         println!("Check that the device shows the same six digits, then press ALLOW on it.");
@@ -616,9 +763,9 @@ fn device_account(dev: &mut Device, account: u32, net: &str) -> Result<device::V
     })
 }
 
-async fn cmd_device_init(profile: Profile, port: &str, account: u32, birthday: Option<u32>, name: &str) -> Result<()> {
+async fn cmd_device_init(profile: Profile, link: &Link, account: u32, birthday: Option<u32>, name: &str) -> Result<()> {
     let net = profile.net_name();
-    let mut dev = connect_device(port)?;
+    let mut dev = connect_device(link)?;
     let a = device_account(&mut dev, account, net)?;
     if device::get_text(&a, "network")? != net {
         bail!("the device answered for a different network");
@@ -656,8 +803,8 @@ async fn cmd_device_init(profile: Profile, port: &str, account: u32, birthday: O
     Ok(())
 }
 
-fn cmd_device_show_address(profile: &Profile, port: &str, account: u32) -> Result<()> {
-    let mut dev = connect_device(port)?;
+fn cmd_device_show_address(profile: &Profile, link: &Link, account: u32) -> Result<()> {
+    let mut dev = connect_device(link)?;
     // The address this wallet would hand out, from the device's own UFVK.
     let a = device_account(&mut dev, account, profile.net_name())?;
     let ua = wallet::addresses_for_ufvk(profile.network, &device::get_text(&a, "ufvk")?).context("device UFVK")?.unified;
@@ -667,9 +814,9 @@ fn cmd_device_show_address(profile: &Profile, port: &str, account: u32) -> Resul
     Ok(())
 }
 
-fn cmd_sign_device(profile: &Profile, port: &str, account: u32, input: &Path, out: &Path) -> Result<()> {
+fn cmd_sign_device(profile: &Profile, link: &Link, account: u32, input: &Path, out: &Path) -> Result<()> {
     let bytes = fs::read(input).with_context(|| format!("reading {}", input.display()))?;
-    let mut dev = connect_device(port)?;
+    let mut dev = connect_device(link)?;
     println!("Uploading {} bytes (sha256 {}) ...", bytes.len(), hex::encode(zsig::sha256(&bytes)));
     println!("Review the transaction on the device; ACCEPT on its last page signs.");
     let (sighash, entries) = dev.z_sign(&bytes, account, profile.net_name(), |done, total| {
@@ -757,12 +904,110 @@ async fn main() -> Result<()> {
         Cmd::QrScan { out, from_file, camera, timeout, pczt } => {
             cmd_qr_scan(&out, from_file.as_deref(), &camera, timeout, pczt.as_deref())
         }
-        Cmd::DeviceInit { port, account, birthday, name } => cmd_device_init(profile, &port, account, birthday, &name).await,
-        Cmd::DeviceShowAddress { port, account } => cmd_device_show_address(&profile, &port, account),
-        Cmd::SignDevice { port, account, input, out } => cmd_sign_device(&profile, &port, account, &input, &out),
+        Cmd::DeviceScan { ble_scan } => cmd_device_scan(ble_scan),
+        Cmd::DeviceFeatures { link } => cmd_device_features(&link.resolve()?),
+        Cmd::DeviceInit { link, account, birthday, name } => {
+            cmd_device_init(profile, &link.resolve()?, account, birthday, &name).await
+        }
+        Cmd::DeviceShowAddress { link, account } => cmd_device_show_address(&profile, &link.resolve()?, account),
+        Cmd::SignDevice { link, account, input, out } => cmd_sign_device(&profile, &link.resolve()?, account, &input, &out),
         Cmd::SignSoft { mnemonic, passphrase, account, input, out } => {
             cmd_sign_soft(&profile, &mnemonic, &passphrase, account, &input, &out)
         }
         Cmd::Finish { pczt, sigs, no_broadcast } => cmd_finish(profile, &pczt, &sigs, no_broadcast).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("zecz").chain(args.iter().copied()))
+    }
+
+    /// The link of a `device-show-address` with these options.
+    fn link(args: &[&str]) -> Result<Link> {
+        let mut all = vec!["device-show-address"];
+        all.extend_from_slice(args);
+        match parse(&all).map_err(|e| anyhow!("{e}"))?.cmd {
+            Cmd::DeviceShowAddress { link, .. } => link.resolve(),
+            _ => unreachable!(),
+        }
+    }
+
+    const FOUR: Duration = Duration::from_secs(4);
+
+    #[test]
+    fn usb_by_port() {
+        assert_eq!(link(&["--port", "/dev/ttyACM0"]).unwrap(), Link::Usb("/dev/ttyACM0".into()));
+        assert_eq!(link(&["--link", "usb", "--port", "/dev/pts/7"]).unwrap(), Link::Usb("/dev/pts/7".into()));
+    }
+
+    #[test]
+    fn no_link_says_how_to_choose() {
+        let e = link(&[]).unwrap_err().to_string();
+        assert!(e.contains("--port") && e.contains("--ble"), "{e}");
+        assert!(link(&["--link", "usb"]).is_err());
+    }
+
+    #[test]
+    fn ble_three_ways() {
+        let any = Link::Ble { addr: None, scan: FOUR };
+        assert_eq!(link(&["--ble"]).unwrap(), any);
+        assert_eq!(link(&["--link", "ble"]).unwrap(), any);
+        let one = Link::Ble { addr: Some("28:84:85:9F:D2:0E".into()), scan: FOUR };
+        assert_eq!(link(&["--ble-addr", "28:84:85:9F:D2:0E"]).unwrap(), one);
+        assert_eq!(link(&["--ble", "--ble-addr", " 28:84:85:9F:D2:0E "]).unwrap(), one);
+        assert_eq!(link(&["--ble", "--ble-scan", "10"]).unwrap(), Link::Ble { addr: None, scan: Duration::from_secs(10) });
+    }
+
+    #[test]
+    fn mixed_links_are_refused() {
+        assert!(link(&["--ble", "--port", "/dev/ttyACM0"]).unwrap_err().to_string().contains("--port is the USB link"));
+        assert!(link(&["--link", "usb", "--ble"]).is_err());
+        assert!(link(&["--link", "usb", "--ble-addr", "AA:BB"]).is_err());
+        assert!(link(&["--ble-addr", " "]).is_err());
+        assert!(link(&["--ble", "--ble-scan", "0"]).is_err());
+        assert!(link(&["--ble", "--ble-scan", "61"]).is_err());
+        assert!(parse(&["device-show-address", "--link", "wifi"]).is_err());
+    }
+
+    #[test]
+    fn every_board_command_takes_the_link() {
+        for cmd in [
+            vec!["device-features"],
+            vec!["device-init"],
+            vec!["device-show-address"],
+            vec!["sign-device", "--in", "tx.pczt", "--out", "tx.zsig"],
+        ] {
+            let mut args = cmd.clone();
+            args.extend(["--ble", "--ble-addr", "AA:AA:AA:AA:AA:01"]);
+            let cli = parse(&args).unwrap_or_else(|e| panic!("{cmd:?}: {e}"));
+            let l = match cli.cmd {
+                Cmd::DeviceFeatures { link } | Cmd::DeviceInit { link, .. } | Cmd::DeviceShowAddress { link, .. } | Cmd::SignDevice { link, .. } => link,
+                _ => unreachable!(),
+            };
+            assert_eq!(l.resolve().unwrap(), Link::Ble { addr: Some("AA:AA:AA:AA:AA:01".into()), scan: FOUR });
+            let mut usb = cmd.clone();
+            usb.extend(["--port", "/dev/ttyACM0"]);
+            assert!(parse(&usb).is_ok(), "{cmd:?} over USB");
+        }
+    }
+
+    #[test]
+    fn device_scan_takes_a_window() {
+        match parse(&["device-scan", "--ble-scan", "8"]).unwrap().cmd {
+            Cmd::DeviceScan { ble_scan } => assert_eq!(ble_scan, 8),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn global_options_still_parse_after_the_command() {
+        let cli = parse(&["sign-device", "--ble", "--in", "a", "--out", "b", "--network", "main"]).unwrap();
+        assert!(matches!(cli.network, Net::Main));
     }
 }

@@ -15,6 +15,7 @@ firmware's `session.c` and `protocol.c`; the wire format is in
 ```
 src/device.rs   pairing, session, Device and its calls, error codes
 src/zsig.rs     the .zsig format
+src/ble.rs      Bluetooth LE on the desktop (feature `ble`)
 ```
 
 ## Transports
@@ -26,7 +27,7 @@ receive one frame with a timeout.
 |---|---|---|
 | USB serial (desktop) | `leek_transport_serial::SerialTransport`; `Device::open("/dev/ttyACM0")` | here, feature `serial` (default) |
 | zdev, the simulated board | the same, on zdev's PTY | here |
-| Bluetooth LE (desktop) | `BlePort` (btleplug) | the old desktop app's `link.rs` (git history; merged into `app/` on 2026-10-21) |
+| Bluetooth LE (desktop) | `ble::BlePort` over `leek-transport-ble` (btleplug); `ble::scan`, `ble::pick`, `Device::open_ble(addr, window)` | here, feature `ble` (used by `zecz --ble`) |
 | USB OTG and Bluetooth LE (Android) | `JniPort`, `JniBlePort`, over Kotlin objects | [`leek-android`](../leek-android/README.md) |
 
 Over USB every frame starts with the sync marker `LK`, then a big-endian

@@ -68,6 +68,9 @@ hmac = "0.12"
 # the Android USB backend instead: the two backends refuse to coexist.
 default = ["serial"]
 serial = ["leek-device/serial", "leek-transport-serial/serialport"]
+# Bluetooth LE on the desktop (`zecz::ble`, leek-device's `BlePort` over
+# app/transport-ble). Off by default: the desktop app has its own link.
+ble = ["leek-device/ble"]
 
 [dev-dependencies]
 serde_json = "1"

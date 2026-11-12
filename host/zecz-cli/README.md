@@ -19,6 +19,26 @@ board. `zecz` is a light wallet and needs no node of its own.
 All the wallet logic lives in `zecz-core`; this crate parses arguments and
 prints.
 
+The board reaches `zecz` four ways: **USB**, **Bluetooth LE**, **QR** and
+the **SD card**. Over USB and Bluetooth every connection pairs with the
+six-digit code (no remembered hosts) and runs the same encrypted session.
+
+### The LeekWallet SDK in `zecz`
+
+`zecz` uses the LeekWallet SDK's Rust kit,
+[`leek-zcash`](../leek-zcash/README.md), and the crates it is built on:
+
+| Part | Crate | Used for |
+|---|---|---|
+| SDK: features | `leek-zcash` (`get_features`, `Features`, `BOARD_UPDATE_TEXT`) | what the board's firmware supports (`device-features`) and the "Update your board" notice after pairing |
+| SDK: checks | `leek-zcash` (`preflight`, `check_broadcast`), in `zecz-core`'s tests | the NU7 checks on what `zecz` builds (`tests/nu7.rs`) |
+| Board client | `leek-device`, which `leek-zcash` drives and re-exports | pairing with the six-digit code, the encrypted session, `zGetAccount`, `zShowAddress`, `zSign`, the `.zsig` format |
+| QR | `leek-ur`, the encoder the SDK's `QrEncoder`/`QrScanner` wrap | `ur:leek-pczt` out, `ur:leek-zsig` back |
+| Links | `leek-transport-serial` (USB), `leek-transport-ble` (Bluetooth, the Zcash LeekWallet app's btleplug transport) | the frames to the board |
+
+The wallet itself (sync, PCZT building, proving, broadcast) is `zecz-core`
+on librustzcash, not the SDK.
+
 ## Build
 
 ```sh
@@ -28,8 +48,19 @@ target/release/zecz --help
 ```
 
 Rust as pinned in [docs/TOOLCHAIN.md](../../docs/TOOLCHAIN.md). The board is
-reached over its USB serial port (for example `/dev/ttyACM0` on Linux), or
-over the PTY of [zdev](../../firmware/sim/README.md), the simulated board.
+reached over its USB serial port (for example `/dev/ttyACM0` on Linux), over
+Bluetooth LE, or over the PTY of [zdev](../../firmware/sim/README.md), the
+simulated board.
+
+Bluetooth is in the default build (feature `ble`, btleplug). On Linux it
+talks to BlueZ over D-Bus and needs `libdbus-1-dev` (Debian, Ubuntu) or
+`dbus-devel` (Fedora) to build; a computer without an adapter builds and
+runs it, and only `--ble` reports the missing adapter. For a zecz without
+Bluetooth:
+
+```sh
+cargo build --release -p zecz-cli --no-default-features   # USB, QR and SD only
+```
 
 ## Networks and data directories
 
@@ -62,9 +93,55 @@ Every command that talks to the server first checks the chain it follows
 (GetLightdInfo). A mainnet wallet refuses a testnet server, and the other
 way round.
 
+## Links to the board
+
+Every command that talks to the board (`device-features`, `device-init`,
+`device-show-address`, `sign-device`) takes the same link options:
+
+| Option | What |
+|---|---|
+| `--port PATH` | USB: the board's serial port (`/dev/ttyACM0`), or a zdev PTY |
+| `--ble` | Bluetooth LE (the same as `--link ble`) |
+| `--ble-addr ADDR` | Bluetooth: this board, by the address `device-scan` lists; implies `--ble`. Needed only when more than one board is advertising |
+| `--ble-scan SECS` | Bluetooth: how long to scan (default 4, 1 to 60) |
+| `--link usb\|ble` | The link by name; the default is `ble` when `--ble` or `--ble-addr` is given, else `usb` |
+
+`--port` with `--ble`, or `--link usb` with `--ble-addr`, is refused.
+
+### Bluetooth
+
+The board advertises on one link at a time: on the board, **Settings →
+Link → Bluetooth**. Then:
+
+```sh
+$T device-scan                       # list boards: address and name
+$T device-features --ble             # pair with the code, show the firmware
+$T device-init --ble                 # pair, "Share view key?" on the board, import
+$T sign-device --ble --in tx.pczt --out tx.zsig
+$T device-show-address --ble --ble-addr 28:84:85:9F:D2:0E
+```
+
+`zecz` scans for the LeekWallet service UUID (`6c65656b-7761-6c6c-6574-000000000001`;
+never by name), connects to the only board found or to `--ble-addr`, and
+then does exactly what it does over USB: a fresh pairing with the six-digit
+code on both screens and ALLOW on the board, the same encrypted session, and
+the board's own prompts (PIN, "Share view key?", the review pages). Nothing
+about the board is remembered between runs. When the command ends `zecz`
+unsubscribes and disconnects, so the board is free for the next connection.
+
+When it cannot connect it says why: no adapter (`bluetoothctl show`),
+Bluetooth switched off, a Bluetooth permission (BlueZ over D-Bus on Linux;
+System Settings → Privacy & Security → Bluetooth on macOS), no board
+advertising ("On the board: Settings → Link → Bluetooth"; a button press
+makes it advertise again), or more than one board and no `--ble-addr`.
+
+Bluetooth in `zecz` is new and not yet tested on the board; the same
+transport is the one the Zcash LeekWallet app uses on the desktop.
+
 ## Commands
 
-The examples use `$T` from above. Amounts are in zatoshis, or in ZEC with
+The examples use `$T` from above; `--port /dev/ttyACM0` can be `--ble`
+everywhere. Amounts are in zatoshis, or in ZEC with
 `--zec`.
 
 ### Set up
@@ -85,6 +162,17 @@ on the board for the next companion (the board keeps one per network).
 `zecz` checks that the board's own address matches its viewing key before
 importing. Prints the address and the ZFP (short seed fingerprint) to
 compare with the board's screen.
+
+**`device-scan`**: list the boards advertising over Bluetooth (address and
+name), for `--ble-addr`. It does not connect.
+
+**`device-features`**: pair with the board (the six-digit code) and show its
+firmware, the network it is set to and what it can sign. A check of the
+link; it shares no key.
+
+```sh
+$T device-features --ble
+```
 
 **`init`**: import an account from a viewing key, without the board.
 
@@ -296,5 +384,9 @@ with public test phrases; never use them with real funds.
 
 ## Tests
 
-`zecz` has no tests of its own; its behaviour is tested in
-[`zecz-core`](../zecz-core/README.md) (`cargo test` in `host/`).
+`zecz`'s own tests cover its argument parsing and link selection (`cargo
+test -p zecz-cli`); the board pick and the Bluetooth error hints are tested
+in `leek-device` (`cargo test -p leek-device --features ble`), with no
+adapter. The wallet's behaviour is tested in
+[`zecz-core`](../zecz-core/README.md) (`cargo test` in `host/`), the
+device path against zdev over a PTY.
