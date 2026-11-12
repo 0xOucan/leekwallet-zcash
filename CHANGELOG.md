@@ -8,6 +8,27 @@ are released in
 
 ## Unreleased
 
+- **Chrome extension: QR (built, not yet tested on the board).** The
+  extension now reaches a board kept off every link, as the desktop app
+  does. *Sign with QR* in the Send and Shield review shows the compact
+  signer view as an animated `ur:leek-pczt` in a tab on a black page
+  (leek-ur's display rules; *Laptop screen* 50 B / 300 ms by default,
+  *Smaller codes* 40 B, *Safe* 50 B / 500 ms; full screen), then reads the
+  board's `ur:leek-zsig` through the webcam and hands it to the engine's
+  `finish`: every signature checked before it is applied, proved, stored,
+  then broadcast. *Import from the board's QR* reads the board's View key
+  (`ur:leek-zcash-accounts`) with no cable; such an account is shown
+  without its board and can be forgotten without it. *Check on the board
+  by QR* shows the receive address for the board's Check address.
+  `host/leek-ur` runs in the page as a new small WASM module
+  (`chrome/ur`), apart from the engine, which a sync holds for minutes.
+  New pinned dependencies, vendored at build time: `qrcode-generator`
+  2.0.4 and `zxing-wasm` 3.1.3 (the desktop app's versions; zxing's CDN
+  default replaced by the packaged `.wasm`). No new permission: the
+  webcam is asked for in the tab. Tested in Node (codes drawn and read
+  back) and in headless Chromium with a stand-in webcam
+  (`test/e2e.mjs` step 10). QR is never used for pairing.
+
 - **QR signing is no longer experimental.** It signed testnet sends in
   both directions from `zecz`, the desktop app and the Android app on a
   phone, and from our Zodl and Zingo forks. The "experimental" label is

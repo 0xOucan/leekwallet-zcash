@@ -222,6 +222,17 @@ checking`, then `check address: OURS, account 0, 1 accounts in 780 ms` or
 UA with Sapling adds `, Sapling receiver NOT checked`. The
 log never contains the scanned text, only its length.
 
+## Chrome extension
+
+The extension (`chrome/`) signs over QR too, since 2026-11-12: *Sign with
+QR* in the Send review shows the loop in a tab on a black page, from
+leek-ur's laptop hints (50 B at 300 ms, the default; 40 B at 300 ms;
+50 B at 500 ms for older board firmware), and reads the board's reply
+through the webcam with the desktop app's decoder (zxing-wasm). It also
+imports the board's View key by QR. Built and tested against a stand-in
+webcam only: **not yet tested on the board**, so no timings here yet. It
+has no bench sweep; the desktop app's is the one to measure with.
+
 ## How to measure
 
 1. Build a testnet send: the app's review, or `zecz send ... --out tx.pczt`.
