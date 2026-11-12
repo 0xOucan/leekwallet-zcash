@@ -11,6 +11,7 @@ numbers behind it: [docs/zcash/CHROME-ENGINE.md](../docs/zcash/CHROME-ENGINE.md)
 |---|---|
 | `engine/` | The wallet engine: a Rust crate built for `wasm32-unknown-unknown` with threads. zecz-core's flow over `zcash_client_sqlite` on OPFS and gRPC-web. |
 | `extension/` | The MV3 extension: service worker, offscreen document, engine worker, popup. Plain ES modules, no bundler. |
+| `ur/` | `host/leek-ur` (the QR air gap's UR encoder and decoder) for the pages: a small wasm-bindgen crate, no threads. |
 | `engine-spike/` | The 9.1 spike, kept for its benchmarks. |
 
 Status (9.3): watch-only and device accounts, sync, balances, addresses,
@@ -22,9 +23,15 @@ board in Brave 152 over USB and Bluetooth: pairing, import and sync on
 testnet and mainnet, an address confirmed on the board, and sends signed
 on the board, proven and broadcast from the extension. A board's wallet
 is shown only while that board is connected; a passphrase on the board
-opens its hidden wallet as a separate account. The board's links here are
-USB and Bluetooth only: no QR through the webcam. No software wallets yet
+opens its hidden wallet as a separate account. No software wallets yet
 (9.4).
+
+QR (new, 2026-11-12): *Sign with QR* (the transaction as an animated
+`ur:leek-pczt` on a black page, the board's `ur:leek-zsig` read back
+through the webcam), the board's account from its View key QR with no
+cable, and an address shown for the board's Check address. Built, and
+tested here against a stand-in webcam (below, "Test"); **not yet tested on
+the board**. QR is never used for pairing.
 
 ## How it fits together
 
@@ -34,7 +41,8 @@ popup.html ──port "engine"──> offscreen.html ──postMessage──> en
                                  │ BoardHost (USB)                 │ WASM engine (threads:
                                  └─ Web Serial ── board            │ wasm-bindgen-rayon pool)
 popup.html?tab (a tab)                                             ├─ OPFS: /<net>/wallet.sqlite, /<net>/leek.sqlite
- └─ BoardHost (Bluetooth) ── Web Bluetooth ── board                └─ fetch: gRPC-web proxy -> lightwalletd
+ ├─ BoardHost (Bluetooth) ── Web Bluetooth ── board                └─ fetch: gRPC-web proxy -> lightwalletd
+ └─ QR: ur/ (leek-ur) ── screen ─> board's camera; board's screen ─> webcam ── zxing-wasm
 service worker: only creates the offscreen document
 ```
 
@@ -220,6 +228,82 @@ and Brave alike) also `#enable-experimental-web-platform-features`, which
 Chromium requires there (Web Bluetooth CG implementation status). An
 error from the browser's chooser is shown as it is.
 
+## QR: no cable
+
+The board over its camera and screen, as the desktop app does it
+(`app/src/qr-sign.ts`, `qr-scan.ts`, `qr-accounts.ts`). QR is never used
+for pairing: USB and Bluetooth keep their six-digit code.
+
+| File | What |
+|---|---|
+| `src/qr/ur.js` | Loads `ur/` (`chrome/ur`, `host/leek-ur` through wasm-bindgen): `UrEncoder` (the loop's frames, uppercase), `UrScan` (assembles `ur:leek-zsig` or `ur:leek-zcash-accounts`), `displayHints()` |
+| `src/qr/qr-code.js` | Draws a frame by leek-ur's display rules: error correction L, alphanumeric, one QR version for the whole loop, whole device pixels per module, a 2-module white quiet zone on a black page (qrcode-generator 2.0.4, vendored) |
+| `src/qr/sign.js` | `QrSigner`: the loop, the presets, the scan of the reply |
+| `src/qr/scan.js` | The webcam: zxing-wasm 3.1.3's reader (vendored, its `.wasm` packaged; the CDN default replaced), the desktop app's decode passes and contrast |
+| `src/qr/accounts.js` | The View key's account record (`host/leek-zcash/src/record.rs`), its network check, `QrAccountImport` |
+| `src/qr/view.js` | The QR screens, drawn over the page |
+
+**Where leek-ur runs.** In the page, not in the engine. The engine's worker
+runs one call at a time and a sync holds it for minutes; the loop needs a
+frame every few hundred milliseconds and the webcam a decode per frame. So
+`chrome/ur` is its own small WASM module (89 KB, no threads, no C, built
+in seconds by `ur/build.sh`, its own `Cargo.lock` with the engine's
+`wasm-bindgen` 0.2.129). The signature it assembles still goes to the
+engine's `finish`, exactly as one from USB or Bluetooth.
+
+**Sign with QR.** In the Send or Shield review, next to "Sign on the
+board": *Sign with QR*. From the toolbar popup it opens the wallet in a
+tab (`popup.html?tab&qr=sign`; the popup closes on blur, and the webcam's
+prompt and the board in front of the screen take the focus); the review
+goes with it in `chrome.storage.session`. Then:
+
+1. The compact signer view (the same bytes the board signs over USB) is
+   shown as an animated `ur:leek-pczt` on a black page. On the board: Main
+   menu → Scan, and point its camera at the screen (it opens at 2x for a
+   laptop screen). *Full screen* gives the code the whole screen. Speeds:
+   *Laptop screen* (50 B at 300 ms, leek-ur's display hints, the
+   default), *Smaller codes* (40 B at 300 ms) and *Safe* (50 B at 500 ms,
+   `qr_defaults()`, for board firmware older than 2026-11-11); the choice
+   is remembered. No brightness steps: a page cannot set a desktop screen's.
+2. The board shows the same review; ACCEPT on its last page signs, and it
+   shows its signature as a QR code. Press *Scan the board's signature*:
+   the webcam reads it part by part ("Signature: 2 of 4 parts read…").
+   Codes that are not the reply are ignored (this page's own loop, say)
+   or named and skipped.
+3. The `.zsig` goes to the engine's `finish` with `broadcast: true`: the
+   transaction is checked to be still minable, every signature is checked
+   against the signer view and its key before it is applied, then it is
+   proved, extracted and stored (the txid is kept before the broadcast),
+   and broadcast. A mainnet send still needs its real-funds tick first.
+
+**Webcam permission.** `getUserMedia` in the extension's tab: Chrome (or
+Brave) asks "Use your camera" for the extension the first time, and
+remembers the answer. No manifest permission exists or is needed for it
+in MV3, and the CSP is unchanged: `wasm-unsafe-eval` was already there
+for the engine, and both new WASM modules (leek-ur, zxing) are the
+extension's own files. If it was refused: the camera icon in the address
+bar, or `chrome://settings/content/camera`, then *Scan* again. Nothing is
+recorded or sent; the camera is released when the scan ends or the QR
+screen closes.
+
+**Import from the board's QR.** With no board connected, the board
+section offers *Import from the board's QR*. On the board: Main menu →
+View key, confirmed there. The webcam reads its `ur:leek-zcash-accounts`;
+the page shows the network, account and ZFP (compare with the board's),
+a birthday field (empty: a new seed, the chain tip less 288 blocks, as the
+desktop app), and imports it as a device account. A viewing key of the
+other network is refused with the desktop app's words. The address comes
+from the engine, derived from the viewing key.
+
+**An account imported over QR is shown without its board.** The rule
+above ("a board's wallet is shown only with that board") would leave it
+on screen never: such a board has no link here. So its seed fingerprint
+goes in `prefs.airgap` (`chrome.storage.local`) and it is shown like a
+view-only account, with a "Board over QR" line and *Forget this wallet*
+(no board needed); USB and Bluetooth still sign for it once connected.
+*Check on the board by QR* (Receive) shows the address as a plain QR
+(byte mode, its case kept) for the board's Main menu → Check address.
+
 ## Build
 
 Prerequisites (once):
@@ -237,8 +321,9 @@ build uses `-Z build-std` on stable through `RUSTC_BOOTSTRAP=1`.
 
 ```sh
 chrome/engine/build.sh            # -> chrome/engine/pkg/ (JOBS=2 by default)
+chrome/ur/build.sh                # -> chrome/ur/pkg/ (leek-ur for the QR screens, seconds)
 cd chrome/extension
-npm install                       # @noble/ciphers (vendored into dist), playwright-core (tests)
+npm install                       # @noble/ciphers, qrcode-generator, zxing-wasm (vendored into dist), playwright-core (tests)
 node build.mjs                    # -> chrome/extension/dist/
 ```
 
@@ -264,10 +349,31 @@ sync. The popup can also be opened as a tab:
 cd chrome/extension
 node --test test/board.test.mjs    # the board protocol in Node against zdev (no browser, no board)
 node --test test/format.test.mjs   # the popup's amounts and history lines
+node --test test/qr.test.mjs       # QR: leek-ur in WASM, codes drawn and read back with zxing, the state machines
 node test/e2e.mjs                  # headless Chromium (Playwright's, ~/.cache/ms-playwright)
 BROADCAST=1 node test/e2e.mjs      # opt-in: also sends 1,000 zat to itself and broadcasts
 BROADCAST=board node test/e2e.mjs  # the same, signed by zdev through the board code
+BROADCAST=qr node test/e2e.mjs     # the same through Sign with QR (step 10)
+SKIP_TO=10 node test/e2e.mjs       # only the QR step
 ```
+
+`qr.test.mjs` loads `chrome/ur/pkg` in Node: the `ur:leek-pczt` loop
+against `vectors/ur/`, every frame drawn by qrcode-generator, read back
+by the vendored zxing-wasm reader and assembled whole at 50 and 40 B (one
+QR version for the loop), the board's `ur:leek-zsig` from the vectors in
+any order, foreign codes named and our own ignored; `QrSigner` on a fake
+clock (presets, pace, restart at part 1, scan, back to the loop, failure);
+the account record as `record.rs` writes it (tagged or not, malformed,
+another network) and the View key imported through the decoder; the
+webcam's passes and contrast. Step 10 of `e2e.mjs` gives the popup a
+stand-in webcam (`getUserMedia` answered with a canvas stream showing QR
+codes) and checks, with no board connected: the View key imported and the
+wallet shown in the tab and the toolbar popup; *Sign with QR* handed from
+the popup to a tab, the loop on a black page read off the screen whole; a
+`.zsig` for a transaction this wallet did not build refused before
+anything is applied or broadcast; the camera released on close; *Forget
+this wallet*. `cargo test` in `chrome/ur` checks its frames against
+`vectors/ur/`.
 
 `board.test.mjs` builds zdev (`make -C firmware/sim build/zdev`), starts
 it on a PTY with the abandon-art seed and talks to it as the extension
@@ -434,8 +540,10 @@ document `hostState`.
 
 ## Not yet
 
-- 9.3: account 0 only. No QR through the webcam, by decision: the
-  extension talks to the board over USB and Bluetooth only.
+- 9.3: account 0 only.
+- QR is built and tested against a stand-in webcam, not yet on the board:
+  the board reading the loop off a laptop screen, and a real webcam
+  reading the board's reply, are the coordinator's board test.
 - A passphrase replaced by another on the board, with no lock between,
   leaves `getStatus` unchanged (`passphrase: 1` both times), so the
   watch does not notice it; Disconnect and connect again (or lock the

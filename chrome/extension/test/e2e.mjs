@@ -41,10 +41,22 @@
 //      the offscreen document holds no USB session; Forget hides it at
 //      once while the sync runs, then deletes it.
 //      SKIP_TO=9 runs only this step (with the engine started).
+//  10. QR, with a stand-in webcam (getUserMedia answered with a canvas
+//      stream that plays QR codes, read by the popup's own scanner and
+//      zxing-wasm): the board's View key (ur:leek-zcash-accounts) imported
+//      with no board connected, shown without one; Sign with QR handed
+//      from the toolbar popup to a tab, its ur:leek-pczt loop read back off
+//      the screen whole; a reply for a transaction this wallet did not
+//      build refused before anything is applied or broadcast; Forget.
+//      With BROADCAST=qr and funds, a real send: the loop read off the
+//      screen, signed by the dev soft signer as the board would, its
+//      ur:leek-zsig shown to the webcam, proved and broadcast.
+//      SKIP_TO=10 runs only this step.
 // Opt-in, needs funds on the abandon-art testnet account (public keys, so
 // anyone may have spent them): BROADCAST=1 also proposes a send to self,
 // signs it with the dev soft signer, proves, extracts and broadcasts it;
-// BROADCAST=board does the same with zdev signing through the board code.
+// BROADCAST=board does the same with zdev signing through the board code;
+// BROADCAST=qr through Sign with QR (step 10).
 //
 // Env: BIRTHDAY, LWD (gRPC-web endpoint), HEADED=1, KEEP=1 (keep profile).
 import { chromium } from 'playwright-core';
@@ -55,6 +67,7 @@ import { fileURLToPath } from 'node:url';
 import { PtyLink, startZdev } from './zdev.mjs';
 import { BleReassembler, chunkForBle, encodeFrame } from '../src/board/framing.js';
 import { historyEntry } from '../src/format.js';
+import { loadUrNode, record } from './qr-fixtures.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = join(here, '..', 'dist');
@@ -292,6 +305,213 @@ async function boardViews(ctx, id, page) {
   await page.evaluate(() => chrome.storage.local.set({ prefs: { network: 'test', servers: {}, account: {} } }));
 }
 
+/**
+ * Opens the popup as a tab whose webcam is a stand-in: getUserMedia answers
+ * with a 640x480 canvas stream that shows `window.cameraFrames` in turn
+ * (every 200 ms, a code of about 260 px in the middle, as a board's screen
+ * held up to a webcam). The popup's scanner (src/qr/scan.js) reads it as
+ * it reads a real camera.
+ */
+async function popupWithCamera(ctx, id, query = '?tab') {
+  const tab = await ctx.newPage();
+  tab.on('pageerror', (e) => console.log(`  [qr tab error] ${e.message}`));
+  await tab.addInitScript(() => {
+    window.cameraFrames = [];
+    window.cameraOpens = 0;
+    const getUserMedia = async () => {
+      window.cameraOpens += 1;
+      const { default: qrcode } = await import('/src/vendor/qrcode-generator/qrcode.mjs');
+      const c = document.createElement('canvas');
+      c.width = 640;
+      c.height = 480;
+      const g = c.getContext('2d');
+      let i = 0;
+      const draw = () => {
+        g.fillStyle = '#7a7a7a';
+        g.fillRect(0, 0, 640, 480);
+        const f = window.cameraFrames.length ? window.cameraFrames[i++ % window.cameraFrames.length] : null;
+        if (!f) return;
+        const q = qrcode(0, 'L');
+        q.addData(f, /^UR:/.test(f) ? 'Alphanumeric' : 'Byte');
+        q.make();
+        const n = q.getModuleCount();
+        const px = Math.max(1, Math.floor(260 / (n + 4)));
+        const side = px * (n + 4);
+        const x0 = Math.floor((640 - side) / 2);
+        const y0 = Math.floor((480 - side) / 2);
+        g.fillStyle = '#ffffff';
+        g.fillRect(x0, y0, side, side);
+        g.fillStyle = '#000000';
+        for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (q.isDark(y, x)) g.fillRect(x0 + (x + 2) * px, y0 + (y + 2) * px, px, px);
+      };
+      draw();
+      setInterval(draw, 200);
+      return c.captureStream(15);
+    };
+    Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia, enumerateDevices: async () => [] }, configurable: true });
+  });
+  await tab.goto(`chrome-extension://${id}/popup.html${query}`);
+  return tab;
+}
+
+/** Reads the Sign with QR loop off the tab's canvas until `scan` (a leek-ur UrScan for leek-pczt) has it whole. */
+async function readLoopOffScreen(tab, scan, ms = 90e3) {
+  const t0 = Date.now();
+  let reads = 0;
+  while (Date.now() - t0 < ms) {
+    const texts = await tab.evaluate(async () => {
+      const c = document.getElementById('qr-canvas');
+      if (!c || !c.width) return [];
+      const { decodeImage } = await import('./src/qr/scan.js');
+      const img = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+      return decodeImage({ data: img.data, width: img.width, height: img.height });
+    });
+    for (const t of texts) {
+      reads += 1;
+      if (scan.feed(t) === 'complete') return { view: scan.takeMessage(), reads, ms: Date.now() - t0 };
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  return { view: null, reads, ms: Date.now() - t0 };
+}
+
+const bytesOf = (h) => Uint8Array.from(h.match(/../g), (b) => parseInt(b, 16));
+const hexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+/** 10. QR: the View key import, Sign with QR's loop and reply, Forget. */
+async function qrViews(ctx, id, page) {
+  const ur = await loadUrNode();
+  const tabs = [];
+  try {
+    await call(page, 'cancelSync');
+    await call(page, 'wipe', { network: 'test' });
+    await call(page, 'open', { network: 'test', server: LWD });
+    await page.evaluate(() => chrome.storage.local.set({ prefs: { network: 'test', servers: {}, account: {}, airgap: {} } }));
+    // A birthday near the tip keeps the popup's sync (which holds the
+    // engine, so every call waits behind it) short; a real send needs the
+    // funds found from BIRTHDAY.
+    const born = process.env.BROADCAST === 'qr' ? BIRTHDAY : (await call(page, 'tip', {})).height - 50;
+
+    // The board's View key: one account, no label, no birthday, as the board shows it.
+    const enc = new ur.UrEncoder('leek-zcash-accounts', record({ fp: bytesOf(vector.seed_fingerprint), ufvk: vector.ufvk }), 50);
+    const tab = await popupWithCamera(ctx, id);
+    tabs.push(tab);
+    await tab.evaluate((f) => (window.cameraFrames = f), Array.from({ length: enc.seqLen * 2 }, (_, i) => enc.frame(i)));
+    await tab.waitForSelector('#import-qr:not([disabled])', { timeout: 120e3 });
+    let t0 = Date.now();
+    await tab.click('#import-qr');
+    await tab.waitForSelector('#qr-record', { timeout: 60e3 }).catch(async (e) => {
+      console.log(`  qr tab shows: ${await text(tab)}`);
+      throw e;
+    });
+    const zfp = await tab.evaluate(() => document.getElementById('qr-zfp')?.textContent);
+    check("qr: the board's View key read with the webcam (no board connected)", zfp === `ZFP ${vector.seed_fingerprint.slice(0, 8).toUpperCase()}`, `${zfp}, ${enc.seqLen} parts, ${ms(t0)}`);
+    await tab.fill('#qr-birthday', String(born));
+    await tab.click('#qr-import');
+    await tab.waitForSelector('#ua', { timeout: 180e3 });
+    const shown = await tab.evaluate(() => ({
+      ua: document.getElementById('ua')?.textContent,
+      airgap: document.getElementById('airgap-line')?.textContent ?? null,
+      overlay: !!document.getElementById('qr-overlay'),
+      usb: !!document.getElementById('connect-usb'),
+      verifyQr: !!document.getElementById('verify-qr'),
+      cameraOpens: window.cameraOpens,
+    }));
+    const st = await call(page, 'status');
+    const acct = st.accounts.find((a) => a.origin?.seedFingerprint === vector.seed_fingerprint);
+    const prefs = (await page.evaluate(() => chrome.storage.local.get('prefs'))).prefs;
+    check(
+      'qr: imported as a device account, shown without its board, its address derived from the key',
+      !!acct && acct.kind === 'device' && acct.birthday === born && shown.ua === vector.ua && !!shown.airgap && !shown.overlay && shown.usb && shown.verifyQr && prefs.airgap?.test?.includes(vector.seed_fingerprint),
+      `${acct?.name}, ${shown.airgap}`,
+    );
+    // Another view shows it too: there is no board connection to wait for.
+    const pop = await ctx.newPage();
+    tabs.push(pop);
+    await pop.goto(`chrome-extension://${id}/popup.html`);
+    await pop.waitForSelector('#ua', { timeout: 120e3 });
+    check('qr: the toolbar popup shows it with no board', (await pop.evaluate(() => document.getElementById('ua')?.textContent)) === vector.ua);
+    await pop.close();
+
+    // Sign with QR, handed from the toolbar popup to a tab: a signer view
+    // this wallet did not build (the shared vector).
+    const view = new Uint8Array(readFileSync(join(repo, 'vectors/pczt/iw_send_shielded_compact.pczt')));
+    await tab.evaluate(
+      ([account, signerView]) =>
+        chrome.storage.session.set({ qrHandoff: { what: 'sign', network: 'test', account, at: Date.now(), confirmMainnet: false, proposal: { kind: 'send', signerView, payments: [], change: [], feeZat: 0 } } }),
+      [acct.uuid, hexOf(view)],
+    );
+    const qt = await popupWithCamera(ctx, id, '?tab&qr=sign');
+    tabs.push(qt);
+    await qt.waitForSelector('#qr-canvas', { timeout: 120e3 });
+    const bg = await qt.evaluate(() => getComputedStyle(document.getElementById('qr-overlay')).backgroundColor);
+    const loop = await readLoopOffScreen(qt, new ur.UrScan('leek-pczt'));
+    check('qr: the ur:leek-pczt loop on a black page, read off the screen whole', !!loop.view && hexOf(loop.view) === hexOf(view) && bg === 'rgb(0, 0, 0)', `${loop.reads} codes read in ${(loop.ms / 1000).toFixed(1)} s, ${await qt.evaluate(() => document.getElementById('qr-frame')?.textContent)}`);
+
+    // The reply: a .zsig, but for a transaction this wallet never built.
+    const zsig = new Uint8Array(readFileSync(join(repo, 'vectors/zsig/iw_send_shielded.zsig')));
+    const reply = ur.UrEncoder.leekZsig(zsig, 30);
+    await qt.evaluate((f) => (window.cameraFrames = f), Array.from({ length: reply.seqLen * 3 }, (_, i) => reply.frame(i)));
+    t0 = Date.now();
+    await qt.click('#qr-scan-reply');
+    const refused = await qt
+      .waitForSelector('#qr-status.bad', { timeout: 90e3 })
+      .then((e) => e.textContent())
+      .catch(async () => `not refused: ${await text(qt)}`);
+    const pend = await call(page, 'pending');
+    check(
+      'qr: the reply read with the webcam; a .zsig for a transaction this wallet did not build is refused before anything is applied or broadcast',
+      /no pending send|pending PCZT|does not match|sighash/.test(refused) && !(await has(qt, '#qr-txid')) && !pend.some((x) => x.txid),
+      `${refused.slice(0, 120)}, ${ms(t0)}`,
+    );
+    await qt.click('#qr-cancel');
+    check('qr: closing the QR screen stops the camera', (await qt.evaluate(() => document.getElementById('qr-video')?.srcObject ?? null)) === null);
+
+    if (process.env.BROADCAST === 'qr') {
+      t0 = Date.now();
+      await call(page, 'sync', {});
+      const bal = await call(page, 'balances', { account: acct.uuid });
+      if (!(bal.balances?.spendable > 20_000)) {
+        console.log(`skip the QR broadcast: ${bal.balances?.spendable ?? 0} zat spendable`);
+      } else {
+        await qt.reload();
+        await qt.waitForSelector('#send', { timeout: 120e3 });
+        await qt.fill('#send input[name=to]', vector.ua);
+        await qt.fill('#send input[name=amount]', '0.00001');
+        await qt.fill('#send textarea[name=memo]', 'leekwallet chrome: signed over QR');
+        await qt.click('#send button[type=submit]');
+        await qt.waitForSelector('#sign-qr:not([disabled])', { timeout: 120e3 });
+        await qt.click('#sign-qr');
+        await qt.waitForSelector('#qr-canvas', { timeout: 30e3 });
+        const real = await readLoopOffScreen(qt, new ur.UrScan('leek-pczt'));
+        const { zsig: z } = await call(page, 'signSoft', { signerView: hexOf(real.view), mnemonic: vector.mnemonic });
+        const board = ur.UrEncoder.leekZsig(bytesOf(z), 50);
+        await qt.evaluate((f) => (window.cameraFrames = f), Array.from({ length: board.seqLen * 3 }, (_, i) => board.frame(i)));
+        await qt.click('#qr-scan-reply');
+        const txid = await qt.waitForSelector('#qr-txid code', { timeout: 600e3 }).then((e) => e.textContent()).catch(() => null);
+        check('qr broadcast: the loop read off the screen, signed, the reply read by the webcam, proved and broadcast', /^[0-9a-f]{64}$/.test(txid ?? ''), `txid ${txid}, ${ms(t0)}`);
+        await qt.click('#qr-done').catch(() => {});
+      }
+    }
+
+    // Forget, with no board: the account goes, and so does its QR mark.
+    await tab.reload();
+    await tab.waitForSelector('#forget-qr', { timeout: 120e3 });
+    await tab.click('#forget-qr');
+    await tab.click('#forget-qr-yes');
+    await tab.waitForSelector('#import-qr', { timeout: 300e3 });
+    const after = await call(page, 'status');
+    const prefs2 = (await page.evaluate(() => chrome.storage.local.get('prefs'))).prefs;
+    check('qr: "Forget this wallet" deletes it with no board, and its QR mark', !after.accounts.some((a) => a.uuid === acct.uuid) && !prefs2.airgap?.test?.length);
+  } catch (e) {
+    check('qr: no exception', false, String(e?.stack ?? e));
+  } finally {
+    for (const t of tabs) await t.close().catch(() => {});
+  }
+  await call(page, 'cancelSync');
+  await page.evaluate(() => chrome.storage.local.set({ prefs: { network: 'test', servers: {}, account: {} } }));
+}
+
 const text = (popup) => popup.evaluate(() => document.body.innerText);
 const has = (popup, sel) => popup.evaluate((s) => !!document.querySelector(s), sel);
 
@@ -306,7 +526,7 @@ try {
   const isolated = await page.evaluate(() => self.crossOriginIsolated);
   check('extension pages are cross-origin isolated', isolated === true);
 
-  if (process.env.SKIP_TO !== '9') {
+  if (!['9', '10'].includes(process.env.SKIP_TO ?? '')) {
     await call(page, 'wipe', { network: 'test' });
     let st = await call(page, 'open', { network: 'test', server: LWD });
     check('opens an empty testnet wallet', st.open && st.network === 'test' && st.accounts.length === 0, `server ${st.server}`);
@@ -679,7 +899,9 @@ try {
   }
 
   // 9. The board's wallet in every view, while a sync runs.
-  await boardViews(ctx, id, page);
+  if (process.env.SKIP_TO !== '10') await boardViews(ctx, id, page);
+  // 10. QR: the View key, Sign with QR.
+  await qrViews(ctx, id, page);
 } catch (e) {
   check('no exception', false, String(e?.stack ?? e));
 } finally {

@@ -163,3 +163,43 @@ details[open] > summary { margin-bottom: var(--space-2); }
 
 /* The pairing digits, compared by eye with the board's screen. */
 #passkey { font-size: 2rem; letter-spacing: 0.2em; text-align: center; color: var(--text); }
+
+/* The QR screens (src/qr/view.js), over the page. Sign with QR and the
+ * address check draw on a black page, as leek-ur's display rules say
+ * (docs/zcash/FORMATS.md): black behind the code, its 2-module white quiet
+ * zone drawn with it, and a whole number of device pixels per module, so
+ * the canvas is never scaled or smoothed. */
+body.qr-open { overflow: hidden; }
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--text);
+  padding: var(--space-3);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.qr-overlay.qr-black {
+  background: #000000;
+  color: #e8e8e8;
+}
+.qr-overlay.qr-black .muted, .qr-overlay.qr-black button.link { color: #b0b0b0; }
+.qr-overlay.qr-black code { color: #ffffff; }
+.qr-head { display: flex; align-items: center; gap: var(--space-2); }
+.qr-head h2 { flex: 1 1 auto; margin: 0; }
+.qr-body { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.qr-stage { display: flex; justify-content: center; width: 100%; }
+.qr-stage canvas { image-rendering: pixelated; display: block; }
+.qr-caption { text-align: center; margin: 0; }
+.qr-line { text-align: center; margin: 0; min-height: 1.5em; }
+.qr-line.bad { color: var(--danger); }
+.qr-controls { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: center; }
+.qr-help { max-width: 560px; width: 100%; }
+.qr-video { width: min(560px, 100%); background: #111111; border-radius: var(--radius); transform: scaleX(-1); }
+.qr-wrap { word-break: break-all; }
+.qr-overlay:fullscreen { padding: var(--space-2); }
+.qr-overlay:fullscreen .qr-help { display: none; }

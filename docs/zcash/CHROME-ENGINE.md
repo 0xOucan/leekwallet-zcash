@@ -273,8 +273,10 @@ WASM, as in `chrome/engine-spike`, not from WebZjs:
     accounts.
   - Done when: a testnet send from a software wallet, broadcast from the
     extension.
-- **9.3 The board (M).** Web Serial and Web Bluetooth (no QR through the
-  webcam: the extension uses USB and Bluetooth only). The engine hands the PCZT to the device code and applies
+- **9.3 The board (M).** Web Serial and Web Bluetooth; since 2026-11-12
+  also QR (the `ur:leek-pczt` loop on the screen, the board's
+  `ur:leek-zsig` through the webcam, `host/leek-ur` in its own small WASM
+  module, `chrome/ur`; see chrome/README.md, "QR"). The engine hands the PCZT to the device code and applies
   the `.zsig` with the same `PcztSignatures` path the other companions use.
 - **9.4 Dapp interface (M)**, **9.5 NEAR Intents (M)**, **9.6 Store
   release (S):** unchanged. 9.6 adds the proxy disclosure to the privacy

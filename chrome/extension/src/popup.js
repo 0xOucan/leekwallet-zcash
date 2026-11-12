@@ -1,14 +1,17 @@
 // The popup: network switch, import a viewing key, sync progress,
 // balances per pool, receive address (with rotation), recent history,
 // and the board (9.3): connect over USB or Bluetooth, import its account,
-// check an address on its screen, send and shield signed on it.
+// check an address on its screen, send and shield signed on it; or, with
+// no link at all, over QR (src/qr/): its View key read with the webcam,
+// and Sign with QR (an animated ur:leek-pczt out, its ur:leek-zsig back).
 //
 // A device account (imported from a board) is shown only while the board
 // that holds its seed is connected: its seed fingerprint, read from the
 // board on connect, must match the account's. Otherwise the popup shows
 // the board section and nothing of the wallet; the synced data stays on
 // OPFS, so reconnecting shows it at once. View-only accounts are always
-// shown.
+// shown, and so are accounts imported from the board's QR (prefs.airgap):
+// a board kept off every link has no connection to show them with.
 //
 // It owns nothing: every answer comes from the engine through
 // EngineClient, and the few choices it remembers (network, endpoint,
@@ -20,6 +23,7 @@ import { formatZec, historyEntry } from './format.js';
 import { BLE_TAB_WHY, LocalBoard, RemoteBoard, USB_TAB_WHY, bluetoothHelp, grantUsb, inTab, usbPlan } from './board-client.js';
 import { BOARD_UPDATE_TEXT, firmwareOutdated } from './board/device.js';
 import { passphraseComplaint } from './board/host.js';
+import { openAddressQr, openQrImport, openQrSign } from './qr/view.js';
 
 const root = document.getElementById('root');
 const query = new URLSearchParams(location.search);
@@ -34,7 +38,7 @@ const DEFAULT_SERVERS = {
 /** UI state; the wallet state is the engine's. */
 const ui = {
   engine: null,
-  prefs: { network: 'test', servers: {}, account: {} },
+  prefs: { network: 'test', servers: {}, account: {}, airgap: {} },
   status: null, // the engine's `open`/`status` answer
   balances: null,
   addresses: null,
@@ -60,6 +64,8 @@ const ui = {
   forgotten: new Set(), // accounts "Forget this board" is deleting: hidden at once
   usbTabOnly: false, // the USB port is held by this tab (the offscreen document cannot see the grant)
   passHint: null, // the outcome of a passphrase sent from here (never the passphrase)
+  qrOpen: null, // 'sign' | 'import' | 'address' while a QR screen is up (src/qr/view.js)
+  confirmForgetQr: false,
 };
 
 // ------------------------------------------------------------- helpers
@@ -83,6 +89,7 @@ function h(tag, attrs = {}, ...children) {
 async function loadPrefs() {
   const got = await chrome.storage.local.get({ prefs: ui.prefs });
   ui.prefs = { ...ui.prefs, ...got.prefs };
+  ui.prefs.airgap ??= {};
 }
 
 async function savePrefs() {
@@ -93,8 +100,13 @@ const net = () => ui.prefs.network;
 const server = () => ui.prefs.servers[net()] || DEFAULT_SERVERS[net()];
 /** The fingerprint of the seed on the connected board, or null. */
 const boardFingerprint = () => (ui.boardState?.phase === 'ready' ? ui.boardState.seedFingerprint ?? null : null);
-/** A device account only while its board is connected; a view-only one always. */
-const visible = (a) => !ui.forgotten.has(a.uuid) && (a.kind !== 'device' || (!!boardFingerprint() && a.origin?.seedFingerprint === boardFingerprint()));
+/** Seed fingerprints whose account was imported from the board's QR, on this network. */
+const airgapped = () => ui.prefs.airgap?.[net()] ?? [];
+/** An account imported from the board's QR: shown without a board, as there is no link to show it with. */
+const isAirgapped = (a) => a?.kind === 'device' && airgapped().includes(a.origin?.seedFingerprint);
+/** A device account only while its board is connected (or imported over QR); a view-only one always. */
+const visible = (a) =>
+  !ui.forgotten.has(a.uuid) && (a.kind !== 'device' || isAirgapped(a) || (!!boardFingerprint() && a.origin?.seedFingerprint === boardFingerprint()));
 const visibleAccounts = () => (ui.status?.accounts ?? []).filter(visible);
 const hiddenAccounts = () => (ui.status?.accounts ?? []).filter((a) => !visible(a));
 const account = () => {
@@ -504,10 +516,14 @@ function passphraseSection() {
 }
 
 /** "Forget this board": its accounts on this network, and all synced for them. */
-async function forgetBoard() {
-  const fp = boardFingerprint();
+async function forgetBoard(fp = boardFingerprint()) {
   const mine = (ui.status?.accounts ?? []).filter((a) => a.kind === 'device' && fp && a.origin?.seedFingerprint === fp);
   ui.confirmForget = false;
+  ui.confirmForgetQr = false;
+  if (fp && airgapped().includes(fp)) {
+    ui.prefs.airgap[net()] = airgapped().filter((x) => x !== fp);
+    await savePrefs();
+  }
   // Hidden now: the deletion waits for the engine, which a sync holds
   // until it reaches the end of its batch.
   for (const a of mine) ui.forgotten.add(a.uuid);
@@ -616,6 +632,135 @@ async function signProposal() {
     }
   });
   await guarded(null, refresh);
+}
+
+/** What the QR tab takes over from the toolbar popup (chrome.storage.session). */
+const QR_HANDOFF = 'qrHandoff';
+
+/**
+ * Opens this wallet in a tab for a QR screen: the toolbar popup closes on
+ * blur, and the webcam's permission prompt and the board in front of the
+ * screen would both take the focus. The review goes with it, in
+ * chrome.storage.session (this browser session only, never on disk).
+ */
+async function openQrTab(what, extra = {}) {
+  await chrome.storage.session.set({ [QR_HANDOFF]: { what, network: net(), account: account(), at: Date.now(), ...extra } });
+  await chrome.tabs.create({ url: chrome.runtime.getURL(`popup.html?tab&qr=${what}`) });
+  window.close();
+}
+
+/** "Sign with QR": the review's proposal, signed on a board with no link. */
+async function signWithQr() {
+  const p = ui.proposal;
+  if (!p) return;
+  if (net() === 'main' && !ui.confirmMainnet) {
+    ui.error = 'This moves real ZEC on mainnet. Tick the confirmation above first.';
+    return render();
+  }
+  if (!inTab()) return openQrTab('sign', { proposal: p, confirmMainnet: ui.confirmMainnet });
+  ui.error = null;
+  ui.lastTx = null;
+  ui.qrOpen = 'sign';
+  render();
+  const acct = account();
+  try {
+    await openQrSign({
+      engine: ui.engine,
+      network: net(),
+      proposal: p,
+      confirmMainnet: net() === 'main' && ui.confirmMainnet,
+      onDone: (r) => {
+        if (account() === acct) {
+          ui.lastTx = r;
+          ui.proposal = null;
+        }
+        void guarded(null, refresh);
+      },
+      onClose: () => {
+        ui.qrOpen = null;
+        render();
+      },
+    });
+  } catch (e) {
+    ui.qrOpen = null;
+    ui.error = String(e?.message ?? e);
+    render();
+  }
+}
+
+/** "Import from the board's QR": its View key with the webcam, as a device account shown without a link. */
+async function importFromQr() {
+  if (!inTab()) return openQrTab('import');
+  ui.error = null;
+  ui.qrOpen = 'import';
+  render();
+  const network = net();
+  try {
+    await openQrImport({
+      engine: ui.engine,
+      network,
+      onDone: async (r) => {
+        if (net() !== network) return;
+        const list = ui.prefs.airgap[network] ?? [];
+        if (!list.includes(r.seedFingerprint)) ui.prefs.airgap[network] = [...list, r.seedFingerprint];
+        ui.prefs.account[network] = r.account.uuid;
+        await savePrefs();
+        ui.addresses = r.addresses;
+        await guarded(null, refresh);
+        void sync();
+      },
+      onClose: () => {
+        ui.qrOpen = null;
+        render();
+      },
+    });
+  } catch (e) {
+    ui.qrOpen = null;
+    ui.error = String(e?.message ?? e);
+    render();
+  }
+}
+
+async function showAddressQr(address) {
+  ui.qrOpen = 'address';
+  await openAddressQr({ address, onClose: () => ((ui.qrOpen = null), render()) });
+}
+
+/** The account imported over QR: how it is shown, and Forget without a board. */
+function airgapSection() {
+  const a = acctInfo();
+  if (!isAirgapped(a) || boardReady()) return null;
+  const busy = !!ui.busy || !!ui.signing;
+  return h(
+    'section',
+    { id: 'airgap' },
+    h('h2', {}, 'Board over QR'),
+    h('p', { class: 'muted', id: 'airgap-line' }, `Imported from the board’s QR (ZFP ${a.shortFingerprint}): shown without the board, signed with Sign with QR, or over USB or Bluetooth once connected.`),
+    ui.confirmForgetQr
+      ? [
+          h('p', { class: 'notice', id: 'forget-qr-confirm' }, `Forget this wallet? Its ${NETWORKS[net()]} account and everything synced for it are deleted from this browser. The board and its funds are not touched.`),
+          h(
+            'div',
+            { class: 'row' },
+            h('button', { class: 'primary', id: 'forget-qr-yes', onclick: () => void forgetBoard(a.origin.seedFingerprint), disabled: busy }, 'Forget'),
+            h('button', { onclick: () => ((ui.confirmForgetQr = false), render()) }, 'Keep'),
+          ),
+        ]
+      : h('div', { class: 'row' }, h('button', { class: 'link', id: 'forget-qr', onclick: () => ((ui.confirmForgetQr = true), render()), disabled: busy }, 'Forget this wallet')),
+  );
+}
+
+/** With no board connected: its account from its View key QR. Never pairing. */
+function qrImportSection() {
+  if (boardReady()) return null;
+  return h(
+    'section',
+    { id: 'qr-import-section' },
+    h('h2', {}, 'No cable: the board’s QR'),
+    h('p', { class: 'muted' }, `On the board: Main menu → View key. The webcam reads its ${NETWORKS[net()]} viewing key; the spending keys stay on the board, and nothing goes to it. Then send with Sign with QR.`),
+    h('button', { id: 'import-qr', onclick: () => void importFromQr(), disabled: !!ui.busy || !!ui.qrOpen }, 'Import from the board’s QR'),
+    inTab() ? null : h('p', { class: 'muted' }, 'It opens in a tab, for the webcam.'),
+  );
 }
 
 function boardSection() {
@@ -755,9 +900,11 @@ function reviewBlock() {
     h(
       'div',
       { class: 'row' },
-      h('button', { class: 'primary', id: 'sign', onclick: () => void signProposal(), disabled: !boardReady() || !!ui.busy || !!ui.signing }, boardReady() ? 'Sign on the board' : 'Connect the board to sign'),
+      h('button', { class: boardReady() ? 'primary' : null, id: 'sign', onclick: () => void signProposal(), disabled: !boardReady() || !!ui.busy || !!ui.signing }, boardReady() ? 'Sign on the board' : 'Connect the board to sign'),
+      h('button', { class: boardReady() ? null : 'primary', id: 'sign-qr', onclick: () => void signWithQr(), disabled: !!ui.busy || !!ui.signing || !!ui.qrOpen }, 'Sign with QR'),
       h('button', { onclick: () => ((ui.proposal = null), render()), disabled: !!ui.signing }, 'Cancel'),
     ),
+    h('p', { class: 'muted', id: 'sign-qr-why' }, inTab() ? 'Sign with QR: the board reads the transaction with its camera from this screen, and the webcam reads its signature back. No cable, no Bluetooth.' : 'Sign with QR opens this wallet in a tab (the webcam and the board’s camera need it to stay open).'),
   );
 }
 
@@ -794,7 +941,7 @@ function sendSection() {
       : null,
     ui.signing ? h('p', { class: 'notice', id: 'signing' }, ui.signing) : null,
     ui.lastTx
-      ? h('p', { class: 'notice', id: 'txid' }, `Sent${ui.lastTx.broadcast ? '' : ' (not broadcast)'}: `, h('code', {}, ui.lastTx.txid))
+      ? h('p', { class: 'notice', id: 'txid' }, `Sent${ui.lastTx.via === 'qr' ? ' (signed over QR)' : ''}${ui.lastTx.broadcast ? '' : ' (not broadcast)'}: `, h('code', {}, ui.lastTx.txid))
       : ui.boardState?.lastResult?.network === net() && ui.boardState.lastResult.seedFingerprint === boardFingerprint() && !ui.signing
         ? h('p', { class: 'muted' }, 'Last signed on the board: ', h('code', {}, ui.boardState.lastResult.txid))
         : null,
@@ -897,12 +1044,19 @@ function receiveSection() {
           'div',
           { class: 'row' },
           h('button', { id: 'verify', onclick: () => void verifyOnBoard(a.unified), disabled: !boardReady() || !!ui.busy }, 'Verify on the board'),
+          boardReady() ? null : h('button', { id: 'verify-qr', onclick: () => void showAddressQr(a.unified), disabled: !!ui.qrOpen }, 'Check on the board by QR'),
           ui.verified === a.unified ? h('span', { class: 'grow', id: 'verified' }, 'The board confirmed this address.') : null,
         )
       : null,
     ui.verified === a.unified
       ? null
-      : h('p', { class: 'notice' }, acctInfo()?.kind === 'device' ? 'Before receiving anything that matters, check this address on the board: connect it and press Verify.' : 'A view-only account: nothing here can check this address.'),
+      : h(
+          'p',
+          { class: 'notice' },
+          acctInfo()?.kind === 'device'
+            ? 'Before receiving anything that matters, check this address on the board: connect it and press Verify, or show it to the board’s Check address by QR.'
+            : 'A view-only account: nothing here can check this address.',
+        ),
   );
 }
 
@@ -1045,6 +1199,7 @@ function renderPage() {
           ),
           balanceSection(),
           boardSection(),
+          airgapSection(),
           sendSection(),
           syncSection(),
           receiveSection(),
@@ -1053,8 +1208,8 @@ function renderPage() {
       : engineOk && ui.status
         ? hiddenAccounts().length
           ? // A board's wallet is stored here: nothing but the board until it connects.
-            [boardSection(), boardImportSection()]
-          : [boardSection(), boardImportSection(), importSection()]
+            [boardSection(), boardImportSection(), qrImportSection()]
+          : [boardSection(), boardImportSection(), qrImportSection(), importSection()]
         : null,
     engineOk && ui.status ? settingsSection() : null,
   );
@@ -1110,8 +1265,31 @@ async function main() {
     else ui.needUsbGrant = true;
   }
   render();
+  // Opened from the toolbar popup for a QR screen.
+  const qr = query.get('qr');
+  if (qr === 'sign' || qr === 'import') await takeQrHandoff(qr);
   // Hidden accounts sync too; nothing of theirs is shown.
   if (ui.status?.accounts?.length && !ui.syncing) void sync();
+}
+
+/** The review (or the import) the toolbar popup handed to this tab. */
+async function takeQrHandoff(what) {
+  const got = (await chrome.storage.session.get(QR_HANDOFF))[QR_HANDOFF];
+  await chrome.storage.session.remove(QR_HANDOFF);
+  if (!got || got.what !== what || Date.now() - got.at > 10 * 60e3) return;
+  if (got.network !== net()) {
+    ui.error = 'The network changed since: build the transaction again.';
+    return render();
+  }
+  if (what === 'import') return importFromQr();
+  if (got.account !== account() || !got.proposal?.signerView) {
+    ui.error = 'The wallet shown changed since: build the transaction again.';
+    return render();
+  }
+  ui.proposal = got.proposal;
+  ui.confirmMainnet = got.confirmMainnet === true;
+  render();
+  await signWithQr();
 }
 
 // `?bare`: the page without the popup's own logic, for test/e2e.mjs,
