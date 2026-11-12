@@ -519,6 +519,60 @@ export class QrSigner {
   }
 }
 
+/**
+ * How to show the loop: host/leek-ur's display rules, the same numbers and
+ * words the LeekWallet SDK gives Zodl and Zingo (`qr_display_hints()`),
+ * from the backend (airgap.rs qr_display_hints). `phone`: an Android build.
+ */
+export interface DisplayHints {
+  phone: boolean;
+  phoneFragmentLen: number;
+  phoneFrameMs: number;
+  largeScreenFragmentLen: number;
+  largeScreenFrameMs: number;
+  quietZoneModules: number;
+  phoneTips: string[];
+  largeScreenTips: string[];
+}
+
+/** The hints, or null where the backend has none (a browser tab). */
+export async function loadDisplayHints(invoke: Invoke): Promise<DisplayHints | null> {
+  try {
+    const h = await invoke<DisplayHints>("qr_display_hints");
+    return h && Array.isArray(h.phoneTips) && Array.isArray(h.largeScreenTips) ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The tip under the code: the phone's lines on a phone, else the laptop's. */
+export function displayTip(h: DisplayHints | null): string {
+  if (!h) return "";
+  return (h.phone ? h.phoneTips : h.largeScreenTips).join(" ");
+}
+
+/**
+ * The screen while the code is up (src-tauri/src/screen.rs): on Android
+ * full window brightness and kept on, both restored when the code goes; the
+ * desktop backend changes nothing. Asks only when the wish changes, in
+ * order, and never fails the signing over it.
+ */
+export class ScreenBoost {
+  private want = false;
+  private queue: Promise<void> = Promise.resolve();
+  private readonly invoke: Invoke;
+  constructor(invoke: Invoke) { this.invoke = invoke; }
+
+  get on(): boolean { return this.want; }
+
+  set(on: boolean): Promise<void> {
+    if (on === this.want) return this.queue;
+    this.want = on;
+    this.queue = this.queue.then(() => this.invoke<boolean>("qr_screen", { on })).then(() => undefined, () => undefined);
+    return this.queue;
+  }
+}
+
 /** The status line under the code. */
 export function frameCaption(f: QrFrameView): string {
   return `Part ${f.part} · frame ${f.shown} · ${f.seqLen} fragment${f.seqLen === 1 ? "" : "s"} of ${f.fragmentLen} B · QR version ${f.version} · ${f.manual ? "manual: Next or Space" : `${f.interval} ms`}`;

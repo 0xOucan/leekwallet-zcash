@@ -761,6 +761,19 @@ plugin: one webview code path for the desktop and the phone, no native camera
 activity in the APK, and the decoder this app already used on both (README,
 "QR scanner").
 
+## The screen while the QR code shows
+
+Sign with QR (experimental): while the `ur:leek-pczt` code is up, inline or
+full screen, `src-tauri/src/screen.rs` sets the window's `screenBrightness`
+to 1.0 and adds `FLAG_KEEP_SCREEN_ON`; when the code goes (the reply scan,
+Cancel, a failure) it clears the flag and sets `BRIGHTNESS_OVERRIDE_NONE`
+again. It runs through the webview's JNI handle (`with_webview`, as
+`allow_camera` does on Linux) on the UI thread: no plugin, no edit under
+`gen/`, no permission (a window's own brightness is the app's). The desktop
+command changes nothing. Under the code the app shows the SDK's phone tips
+(`host/leek-ur/src/display.rs`), first among them anti-flicker / DC dimming
+on OLED phones, which no app can switch ([QR-BENCH.md](../docs/zcash/QR-BENCH.md#signing-with-a-phone)).
+
 ## In the background
 
 The wallet syncs every 25 s (one NU7 block) while the app is in front, and not at all in the

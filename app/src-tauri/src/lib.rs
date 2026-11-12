@@ -40,6 +40,9 @@ mod zwallet;
 // ur:leek-pczt, the board's ur:leek-zsig read back from the camera. The UR
 // is host/leek-ur, the one zecz uses.
 mod airgap;
+// The phone's screen while that code is up: full brightness, kept on
+// (Android; the desktop is left alone).
+mod screen;
 // The board's viewing key off its "View key" QR (EXPERIMENTAL), for a wallet
 // set up without USB or Bluetooth: a one-way account import, never pairing.
 #[cfg(feature = "zcash-wallet")]
@@ -216,6 +219,8 @@ pub fn run() {
             airgap::qr_pczt_frames,
             airgap::qr_scan_reset,
             airgap::qr_scan_feed,
+            airgap::qr_display_hints,
+            screen::qr_screen,
             #[cfg(feature = "zcash-wallet")]
             qr_accounts::qr_accounts_reset,
             #[cfg(feature = "zcash-wallet")]

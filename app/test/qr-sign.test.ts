@@ -13,7 +13,7 @@ import {
   QrSigner, QR_BATCH, QR_BENCH_CONFIGS, QR_FRAGMENTS, QR_PRESETS, QR_INTERVALS, QR_SETTINGS_KEY, type Clock, type ScanProgress,
 } from "../src/qr-sign.ts";
 import type { Invoke } from "../src/tauri-transport.ts";
-import { fullQrAvail } from "../src/qr-sign.ts";
+import { displayTip, fullQrAvail, loadDisplayHints, ScreenBoost, type DisplayHints } from "../src/qr-sign.ts";
 import { accountsCaption, recordRows, resolveBirthday, QrAccountImport, type AccountsProgress, type QrAccountRecord } from "../src/qr-accounts.ts";
 import { BIRTHDAY_MARGIN } from "../src/zcash-auto.ts";
 
@@ -404,6 +404,50 @@ group("import from the board's QR: the account record, then zw_import");
   const pending = q3.feed("a");
   q3.cancel();
   check(await pending === false && q3.phase === "idle", "a cancelled scan drops the answer in flight");
+}
+
+group("display hints: the SDK's words, and the phone's screen while the code shows");
+{
+  const hints: DisplayHints = {
+    phone: true, phoneFragmentLen: 25, phoneFrameMs: 350, largeScreenFragmentLen: 50, largeScreenFrameMs: 300, quietZoneModules: 2,
+    phoneTips: ["OLED phone: turn on anti-flicker (DC dimming) in the display settings.", "Board at 3x, the phone about 30 cm from its camera."],
+    largeScreenTips: ["Board at 2x (the Scan screen opens at 2x)."],
+  };
+  const backend: Invoke = async <T,>(cmd: string): Promise<T> => {
+    if (cmd === "qr_display_hints") return hints as T;
+    throw new Error(`unexpected ${cmd}`);
+  };
+  const h = await loadDisplayHints(backend);
+  check(h?.phoneFragmentLen === 25 && h.quietZoneModules === 2, "the hints come from the backend");
+  check(displayTip(h).startsWith("OLED phone: turn on anti-flicker") && displayTip(h).includes("30 cm"), "a phone shows the phone tips");
+  check(displayTip({ ...hints, phone: false }) === "Board at 2x (the Scan screen opens at 2x).", "a laptop shows the large-screen tips");
+  check(await loadDisplayHints(async () => { throw new Error("no backend"); }) === null && displayTip(null) === "", "a browser tab has no hints and shows none");
+  check(QR_FRAGMENTS.includes(hints.phoneFragmentLen as never) && QR_INTERVALS.includes(hints.phoneFrameMs as never), "the phone's settings are offered");
+
+  const calls: boolean[] = [];
+  let fail = false;
+  const boost = new ScreenBoost(async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    check(cmd === "qr_screen", "the boost calls qr_screen");
+    calls.push(args!.on as boolean);
+    if (fail) throw new Error("no window");
+    return true as T;
+  });
+  await boost.set(false);
+  check(calls.length === 0, "nothing to restore before the code showed");
+  void boost.set(true); void boost.set(true); await boost.set(true);
+  check(calls.join() === "true" && boost.on, "on once while the code shows, however often it redraws");
+  fail = true;
+  await boost.set(false);
+  check(calls.join() === "true,false" && !boost.on, "off when it goes; a failed call does not fail the signing");
+  fail = false;
+  void boost.set(true); await boost.set(false);
+  check(calls.join() === "true,false,true,false", "in order, and restored last");
+
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const view = readFileSync(join(import.meta.dirname, "..", "src/zcash-wallet.ts"), "utf8");
+  check(/screenBoost\.set\(showing\)/.test(view) && /stopQrSign\(\): void \{\n\s+exitQrFull\(\);\n\s+void screenBoost\.set\(false\)/.test(view),
+    "the wallet boosts while showing and restores when QR signing stops");
 }
 
 group("the policy text: experimental, and never for pairing");

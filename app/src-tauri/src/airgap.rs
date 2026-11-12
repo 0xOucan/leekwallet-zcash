@@ -73,6 +73,42 @@ pub fn qr_pczt_frames(view: Vec<u8>, max_fragment: usize, start: u64, count: u32
     pczt_frames(&view, max_fragment, start, count)
 }
 
+/// How to show the loop (`leek_ur::display`, the SDK's `qr_display_hints()`):
+/// the same numbers and the same words as Zodl and Zingo get.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayHints {
+    /// This build runs on a phone (Android): show `phone_tips`, and the
+    /// screen is held at full brightness while the code is up (screen.rs).
+    pub phone: bool,
+    pub phone_fragment_len: usize,
+    pub phone_frame_ms: u32,
+    pub large_screen_fragment_len: usize,
+    pub large_screen_frame_ms: u32,
+    pub quiet_zone_modules: u32,
+    pub phone_tips: Vec<&'static str>,
+    pub large_screen_tips: Vec<&'static str>,
+}
+
+pub fn display_hints(phone: bool) -> DisplayHints {
+    let h = leek_ur::display_hints();
+    DisplayHints {
+        phone,
+        phone_fragment_len: h.phone_fragment_len,
+        phone_frame_ms: h.phone_frame_ms,
+        large_screen_fragment_len: h.large_screen_fragment_len,
+        large_screen_frame_ms: h.large_screen_frame_ms,
+        quiet_zone_modules: h.quiet_zone_modules,
+        phone_tips: h.phone_tips.to_vec(),
+        large_screen_tips: h.large_screen_tips.to_vec(),
+    }
+}
+
+#[tauri::command]
+pub fn qr_display_hints() -> DisplayHints {
+    display_hints(cfg!(target_os = "android"))
+}
+
 /// The board's reply being assembled.
 #[derive(Default)]
 pub struct QrScanState(Mutex<Decoder>);
@@ -209,5 +245,19 @@ mod tests {
             assert!(r.seq_len as usize * r.fragment_len <= 16384);
         }
         assert!(INTERVALS.contains(&500) && FRAGMENTS.contains(&50) && FRAGMENTS[0] == 25);
+    }
+
+    #[test]
+    fn the_display_hints_are_the_sdks_and_offered_here() {
+        let h = display_hints(true);
+        assert!(h.phone);
+        assert_eq!((h.phone_fragment_len, h.phone_frame_ms, h.quiet_zone_modules), (25, 350, 2));
+        assert!(FRAGMENTS.contains(&h.phone_fragment_len) && INTERVALS.contains(&(h.phone_frame_ms as u64)));
+        assert!(FRAGMENTS.contains(&h.large_screen_fragment_len) && INTERVALS.contains(&(h.large_screen_frame_ms as u64)));
+        assert_eq!(h.phone_tips, leek_ur::display::PHONE_TIPS);
+        assert!(h.phone_tips[0].contains("anti-flicker"));
+        assert!(!display_hints(false).phone);
+        let j = serde_json::to_value(display_hints(false)).unwrap();
+        assert!(j["phoneTips"].is_array() && j["largeScreenTips"].is_array());
     }
 }
