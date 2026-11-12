@@ -5,6 +5,7 @@
 #include "board.h"
 #include "camera-tune.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /*
@@ -455,6 +456,152 @@ static int8_t exposure_bias = -4;
  * until capture timed out.
  */
 
+/*
+ * Automatic exposure search (scan-autoexp.h): when codes keep being LOCATED
+ * and not READ - the PWM-dimmed OLED phone, or a bias set too dark - try a
+ * longer shutter cap, a brighter bias and the other banding step, keep what
+ * reads best, and give the knob back the moment it turns. The decode task
+ * feeds it the counters once a frame and applies its decisions; the user's
+ * exposure_bias is never changed, and camera_start() writes the user's
+ * setting again on every scan.
+ *
+ * -DCAMERA_AUTO_EXPOSURE=0 restores the fixed settings exactly. Off in the
+ * bench image, whose numbers must come from one setting.
+ *
+ * Measure: with the phone's anti-flicker off at 50 % brightness and the bias
+ * at -4, "auto-exposure: try" lines within ~2.5 s of the code being found,
+ * then "kept" with r climbing in the per-second line; on a laptop LCD no
+ * auto-exposure line at all.
+ */
+#ifndef CAMERA_AUTO_EXPOSURE
+#  if defined(LEEK_QR_BENCH) && LEEK_QR_BENCH
+#    define CAMERA_AUTO_EXPOSURE  0
+#  else
+#    define CAMERA_AUTO_EXPOSURE  1
+#  endif
+#endif
+
+#if CAMERA_AUTO_EXPOSURE
+#include "scan-autoexp.h"
+
+/* The decode task's own, reset in camera_start() before it runs. */
+static AutoExp autoexp;
+/* Set by the UI task (knob turn, zoom push), taken by the decode task. */
+static volatile bool autoexp_knob, autoexp_zoomed;
+/* The status-line note for the UI, under timing_mux. */
+static char autoexp_note[24];
+static bool autoexp_note_fresh;
+
+static unsigned mains_for(bool swap)
+{
+    if (!swap) {
+        return CAMERA_MAINS_HZ;
+    }
+    return CAMERA_MAINS_HZ == 50 ? 60 : 50;
+}
+
+static unsigned autoexp_cap_lines(uint8_t mul)
+{
+    unsigned vts = CAMERA_DRIVER_VTS;
+    if (FRAME_W == 320 && camera_tune_zoom(zoom_level)->ty < vts) {
+        vts = camera_tune_zoom(zoom_level)->ty;
+    }
+    return camera_tune_shutter_cap(CAMERA_SHUTTER_CAP_LINES * mul, vts);
+}
+
+/* The same registers camera_start() writes, at the setting's values. */
+static void autoexp_apply(const AutoExpApply *ap)
+{
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor == NULL) {
+        return;
+    }
+    if (sensor->set_ae_level != NULL) {
+        sensor->set_ae_level(sensor, sensor_ae_level(ap->bias));
+    }
+    if (sensor->set_reg == NULL) {
+        return;
+    }
+    if (CAMERA_SHUTTER_CAP_LINES > 0) {
+        const uint16_t cap = (uint16_t)autoexp_cap_lines(ap->shutter_mul);
+        sensor->set_reg(sensor, 0x3A02, 0xFFFF, cap);
+        sensor->set_reg(sensor, 0x3A14, 0x0FFF, cap);
+    }
+    const unsigned hz = mains_for(ap->mains_swap);
+    sensor->set_reg(sensor, 0x3C01, CAMERA_TUNE_BAND_3C01_MASK, camera_tune_band_3c01(hz));
+    sensor->set_reg(sensor, 0x3C00, CAMERA_TUNE_BAND_3C00_MASK, camera_tune_band_3c00(hz));
+}
+
+static void autoexp_note_set(autoexp_event_t ev, uint8_t index)
+{
+    char text[sizeof autoexp_note];
+    autoexp_event_text(ev, index, text, sizeof text);
+    if (text[0] == '\0') {
+        return;
+    }
+    portENTER_CRITICAL(&timing_mux);
+    memcpy(autoexp_note, text, sizeof autoexp_note);
+    autoexp_note_fresh = true;
+    portEXIT_CRITICAL(&timing_mux);
+}
+
+/* Once a frame, on the task that decodes. */
+static void autoexp_frame(void)
+{
+    const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    AutoExpApply ap;
+    if (autoexp_knob) {
+        autoexp_knob = false;
+        const uint8_t was = autoexp.current;
+        if (autoexp_user_override(&autoexp, exposure_bias) == AUTOEXP_EV_STOP) {
+            ESP_LOGI(TAG, "auto-exposure: knob turned, off for this scan (was +%u)",
+                     (unsigned)was);
+            if (was != 0) {
+                autoexp_current(&autoexp, &ap);
+                autoexp_apply(&ap);
+            }
+        }
+        return;
+    }
+    if (autoexp_zoomed) {
+        autoexp_zoomed = false;
+        autoexp_disturbed(&autoexp, now_ms);
+    }
+    const autoexp_event_t ev = autoexp_tick(&autoexp, now_ms, stat_located, stat_decodes);
+    if (ev == AUTOEXP_EV_NONE) {
+        return;
+    }
+    autoexp_current(&autoexp, &ap);
+    autoexp_apply(&ap);
+    ESP_LOGI(TAG, "auto-exposure: %s +%u: bias %d, shutter %u lines, banding %u Hz"
+                  " | before: s:%u r:%u (%u.%u%%)",
+             ev == AUTOEXP_EV_TRY ? "try" : (ev == AUTOEXP_EV_KEEP ? "kept" : "back to"),
+             (unsigned)ap.index, (int)ap.bias,
+             CAMERA_SHUTTER_CAP_LINES > 0 ? autoexp_cap_lines(ap.shutter_mul) : 0u,
+             mains_for(ap.mains_swap),
+             (unsigned)autoexp.last_located, (unsigned)autoexp.last_decoded,
+             (unsigned)(autoexp.last_score / 10), (unsigned)(autoexp.last_score % 10));
+    autoexp_note_set(ev, ap.index);
+}
+
+/* " | ae +2 judging" on the per-second line, while a setting other than the
+   user's is on or a search runs. */
+static void autoexp_log_suffix(char *out, size_t n)
+{
+    static const char *const PHASE[] = { "", " settling", " judging", " cooling",
+                                         " done", " off" };
+    const autoexp_phase_t ph = autoexp_phase(&autoexp);
+    if (autoexp.current == 0 && (ph == AUTOEXP_IDLE || ph == AUTOEXP_STOPPED)) {
+        out[0] = '\0';
+        return;
+    }
+    snprintf(out, n, " | ae +%u%s", (unsigned)autoexp.current,
+             (unsigned)ph < sizeof PHASE / sizeof PHASE[0] ? PHASE[ph] : "");
+}
+#else
+static void autoexp_log_suffix(char *out, size_t n) { (void)n; out[0] = '\0'; }
+#endif
+
 /* Live preview to the PC viewer, off until OK on the scan screen asks. */
 static bool streaming;
 /* The centre of the frame at native resolution: 103 KB of base64, which
@@ -568,13 +715,15 @@ static void timing_log_maybe(void)
                                         10000000u / (uint64_t)dt);
     unsigned lines = 0, gain_x10 = 0;
     sensor_exposure(&lines, &gain_x10);
-    ESP_LOGI(TAG, "scan %s %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux | cpu %u",
+    char ae[24];
+    autoexp_log_suffix(ae, sizeof ae);
+    ESP_LOGI(TAG, "scan %s %u.%u fps | %s ms | s:%u r:%u | exp %u lines gain %u.%ux | cpu %u%s",
              FRAME_W == 320 ? camera_tune_zoom(zoom_level)->label
                             : (FRAME_W == 640 ? "VGA" : "SVGA"),
              (unsigned)(fps_x10 / 10), (unsigned)(fps_x10 % 10), stages,
              (unsigned)stat_located, (unsigned)stat_decodes,
              lines, gain_x10 / 10, gain_x10 % 10,
-             (unsigned)esp_rom_get_cpu_ticks_per_us());
+             (unsigned)esp_rom_get_cpu_ticks_per_us(), ae);
 #ifdef QUIRC_STAGE_TIMING
     qstage_log();
 #endif
@@ -831,6 +980,11 @@ bool camera_start(void)
     stat_frames = 0;
     stat_decodes = 0;
     stat_located = 0;
+#if CAMERA_AUTO_EXPOSURE
+    autoexp_reset(&autoexp, (uint32_t)(esp_timer_get_time() / 1000), exposure_bias);
+    autoexp_knob = autoexp_zoomed = false;
+    autoexp_note_fresh = false;
+#endif
     scan_timing_reset(&timing);
     timing_window_us = 0;
     scan_cpu_boost(true);
@@ -848,6 +1002,12 @@ void camera_stop(void)
     decode_park();
     running = false;
     streaming = false;
+#if CAMERA_AUTO_EXPOSURE
+    if (autoexp.current != 0) {
+        ESP_LOGI(TAG, "auto-exposure: scan ended at +%u; the next starts at the user's",
+                 (unsigned)autoexp.current);
+    }
+#endif
     /*
      * No software standby here, though the sensor runs warm. This board has
      * no power-down or reset pin wired, so the OV5640 stays powered through
@@ -1026,6 +1186,9 @@ static bool process_frame(char *out, size_t out_size, size_t *out_len)
     }
 
     esp_camera_fb_return(fb);
+#if CAMERA_AUTO_EXPOSURE
+    autoexp_frame();
+#endif
     return got;
 }
 
@@ -1220,6 +1383,37 @@ void camera_set_exposure_bias(int8_t level)
     if (running && sensor != NULL && sensor->set_ae_level != NULL) {
         sensor->set_ae_level(sensor, sensor_ae_level(exposure_bias));
     }
+#if CAMERA_AUTO_EXPOSURE
+    /* The user's call from here on: the decode task stops the search and
+       puts shutter and banding back if it had moved them. */
+    if (running) {
+        autoexp_knob = true;
+    }
+#endif
+}
+
+bool camera_auto_exposure_note(char *out, size_t out_size)
+{
+#if CAMERA_AUTO_EXPOSURE
+    if (out == NULL || out_size == 0) {
+        return false;
+    }
+    bool fresh;
+    char text[sizeof autoexp_note];
+    portENTER_CRITICAL(&timing_mux);
+    fresh = autoexp_note_fresh;
+    autoexp_note_fresh = false;
+    memcpy(text, autoexp_note, sizeof text);
+    portEXIT_CRITICAL(&timing_mux);
+    if (fresh) {
+        snprintf(out, out_size, "%s", text);
+    }
+    return fresh;
+#else
+    (void)out;
+    (void)out_size;
+    return false;
+#endif
 }
 
 int8_t camera_exposure_bias(void) { return exposure_bias; }
@@ -1252,6 +1446,9 @@ bool camera_next_zoom(void)
         return false;
     }
     const uint8_t next = camera_tune_zoom_next(zoom_level);
+#if CAMERA_AUTO_EXPOSURE
+    autoexp_zoomed = true;
+#endif
     if (apply_zoom(next)) {
         zoom_level = next;
         zoom_wanted = next;
@@ -1500,9 +1697,29 @@ void camera_set_exposure_bias(int8_t level)
     test_bias = (int8_t)(level < -5 ? -5 : (level > 0 ? 0 : level));
 }
 int8_t camera_exposure_bias(void) { return test_bias; }
+static char test_auto_note[24];
+void camera__set_auto_note_for_test(const char *note)
+{
+    snprintf(test_auto_note, sizeof test_auto_note, "%s", note != NULL ? note : "");
+}
+bool camera_auto_exposure_note(char *out, size_t out_size)
+{
+    if (test_auto_note[0] == '\0' || out == NULL || out_size == 0) {
+        return false;
+    }
+    snprintf(out, out_size, "%s", test_auto_note);
+    test_auto_note[0] = '\0';
+    return true;
+}
 #else
 void camera_set_exposure_bias(int8_t level) { (void)level; }
 int8_t camera_exposure_bias(void) { return 0; }
+bool camera_auto_exposure_note(char *out, size_t out_size)
+{
+    (void)out;
+    (void)out_size;
+    return false;
+}
 #endif
 #ifdef LEEK_HOST_TEST
 /* The host stand-in's zoom: the real table and cycle, and a switch for a

@@ -59,9 +59,20 @@ bool camera_streaming(void);
 /** The current mirror/flip bits. */
 uint8_t camera_orientation(void);
 
-/** Exposure bias, -5 (darkest) to 0; clamped. Default -4. Bench control. */
+/** Exposure bias, -5 (darkest) to 0; clamped. Default -4. Bench control.
+ *  A call while scanning also stops the automatic exposure search for the
+ *  rest of that scan (CAMERA_AUTO_EXPOSURE, scan-autoexp.h). */
 void camera_set_exposure_bias(int8_t level);
 int8_t camera_exposure_bias(void);
+
+/**
+ * The automatic exposure search's latest word for the Scan screen's status
+ * line ("Auto exposure +1", "Auto exposure +1 kept", "Auto exposure off"),
+ * once: true and the text when there is a new one since the last call. A
+ * fixed string of scan-autoexp.c's, never anything decoded. Always false
+ * with -DCAMERA_AUTO_EXPOSURE=0 and on a board without a camera.
+ */
+bool camera_auto_exposure_note(char *out, size_t out_size);
 
 /**
  * Digital zoom on the sensor (camera-tune.h): 1x -> 2x -> 3x -> 1x, applied
@@ -144,6 +155,8 @@ void camera__set_frame_for_test(const uint8_t *frame, uint16_t w, uint16_t h);
 void camera__set_located_for_test(uint32_t located, uint32_t decodes);
 /* Make the next camera_next_zoom() fail, as a sensor refusing the window. */
 void camera__set_zoom_fails_for_test(bool fails);
+/* The next camera_auto_exposure_note() returns this text, once. */
+void camera__set_auto_note_for_test(const char *note);
 #endif
 
 #endif /* LEEK_CAMERA_H */

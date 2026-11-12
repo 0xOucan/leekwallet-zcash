@@ -5197,6 +5197,11 @@ static uint16_t        scan_fps = 0xFFFF;   /* unknown until a second has passed
 /* A message from the decoder outranks a hint for this long. */
 #define SCAN_EVENT_MS  3000
 static int64_t         scan_event_until_ms;
+/* The automatic exposure search's word (camera_auto_exposure_note()), on
+   row 7 for SCAN_EVENT_MS, over the progress bar too: the user should see
+   why the picture just changed. A fixed string of camera.c's. */
+static char            scan_auto_text[22];
+static int64_t         scan_auto_until_ms;
 
 static void scan_color_reset(void)
 {
@@ -5208,6 +5213,8 @@ static void scan_color_reset(void)
     scan_fps_ms = -1;
     scan_fps = 0xFFFF;
     scan_event_until_ms = 0;
+    scan_auto_text[0] = '\0';
+    scan_auto_until_ms = 0;
 }
 #endif
 
@@ -5404,7 +5411,10 @@ static void scan_render_color(void)
     const uint32_t total = airgap_scan_total();
     const uint32_t left = airgap_scan_remaining();
     const char *hint = viewfinder_hint(&scan_gray_stats, scan_gray_located);
-    if (total > 0 && left > 0) {
+    if (ui_now_ms() < scan_auto_until_ms && scan_auto_text[0] != '\0') {
+        oled_set_role(OLED_ROLE_TEXT);
+        oled_draw_string_centered(7, scan_auto_text);
+    } else if (total > 0 && left > 0) {
         viewfinder_progress_line(total, left, line);
         oled_set_role(OLED_ROLE_OK);
         oled_draw_string_centered(7, line);
@@ -5520,6 +5530,10 @@ static void service_scan(void)
        arrives here is whatever the last of those produced, or nothing. */
 #if UI_COLOR_CODE
     if (color_panel()) {
+        if (camera_auto_exposure_note(scan_auto_text, sizeof scan_auto_text)) {
+            scan_auto_until_ms = ui_now_ms() + SCAN_EVENT_MS;
+            ui_invalidate();
+        }
         ViewfinderStats st;
         const uint8_t *gray = camera_preview_gray_take(&st);
         if (gray == NULL) {

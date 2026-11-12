@@ -70,11 +70,29 @@ It works, but the phone needs other settings than a laptop screen:
   across the code. With the system's anti-flicker / DC dimming setting on
   (the name depends on the maker), reads got a lot better. No app can switch
   it, so the wallets say so under the code. LCD screens (laptops, tablets)
-  do not do this.
+  do not do this. Without it, at 50–75 % brightness and exposure −4/−5, the
+  board found the code about 100 times and read it once or twice.
 - **The board's LEDs.** The power LEDs on the board and the OPTIGA module
   are wired to the supply, so firmware cannot turn them off. Their light
   reflects in a phone's glossy screen straight back into the camera. Cover
   them with black tape, or use an opaque case.
+
+**Automatic exposure** (built and host-tested, not yet tried on a board).
+When the board finds the code at least 5 times in 2 s and reads fewer than
+10 % of them, it tries five settings on top of yours, in this order: shutter
+cap ×2 (192 lines), ×2 with exposure +1, ×4 (384 lines) with +1, ×4 with +2,
+and ×4 with +1 at the other mains frequency (50 Hz). A longer shutter
+averages out more of the flashing. Each setting gets 0.7 s to settle and is
+then judged over 2 s. The board keeps the first one that reads 40 % or more,
+or else the best one, if it read at least 2 codes and beat your setting by 5
+points. If nothing beats it, the board goes back to your setting and waits
+10 s. It runs at most two searches a scan, and each search takes 14 s at
+most. Row 7 says `Auto exposure +2` while it tries and `Auto exposure +2
+kept` when it keeps one; the serial log has an `auto-exposure:` line for
+each step. Turning the knob stops the search for that scan and goes back to
+your setting. The next scan starts at your setting again. Build with
+`-DCAMERA_AUTO_EXPOSURE=0` to turn it off; it is always off in the bench
+image.
 
 These rules are in the SDK as `qr_display_hints()` (`host/leek-ur`
 `display`), with the tips wallets show (FORMATS.md, "Showing `ur:leek-pczt`

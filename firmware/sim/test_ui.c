@@ -1644,6 +1644,19 @@ static void test_colour_scan_is_a_grayscale_viewfinder(void)
     CHECK_SCREEN(fake_oled_row(7)[0] == '[' || fake_oled_row(7)[1] == '[',
                  "no progress bar: \"%s\"", fake_oled_row(7));
 
+    /* The automatic exposure search says what it did, on row 7 over the
+       progress bar, for a few seconds; then the bar is back. */
+    camera__set_auto_note_for_test("Auto exposure +1");
+    ui__service_scan_for_test();
+    ui_render();
+    CHECK_SCREEN(fake_oled_row_contains(7, "Auto exposure +1"),
+                 "no auto-exposure note: \"%s\"", fake_oled_row(7));
+    fake_clock_advance_us(3100 * 1000);
+    ui__service_scan_for_test();
+    ui_render();
+    CHECK_SCREEN(fake_oled_row_contains(7, want), "the progress bar did not come back: \"%s\"",
+                 fake_oled_row(7));
+
     /* Nothing scanned is ever on the panel. */
     CHECK_SCREEN(!fake_oled_contains("ur:") && !fake_oled_contains("UR:") &&
                  !fake_oled_contains("leek"), "scanned text reached the screen");
