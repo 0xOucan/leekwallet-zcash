@@ -8,6 +8,24 @@ are released in
 
 ## Unreleased
 
+- **Brightness is the user's on the QR page (experimental QR signing).** A
+  user test on an OLED phone (2026-11-11) found forcing 100 % was the
+  blocker: the board found the code but read it washed out. The SDK's
+  `qr_display_hints()` now has `brightness_levels` ([system, 0.6, 0.8,
+  1.0]; `None` = system) and `default_brightness` (`None`); `max_brightness`
+  stays but is always false. The phone tips say to adjust brightness on the
+  QR page when the board finds the code but does not read it (lower first
+  if it looks washed out, higher if dark). The companion on Android has a
+  *Brightness* button inline and in full screen (system → 60 % → 80 % →
+  100 %, remembered, hidden on the desktop), and `qr_screen(on, level)`
+  keeps the screen on at that level instead of 100 %.
+- **Check address over QR (experimental).** SDK: `address_check_qr(address)`
+  (the plain address to show, from an address or a `zcash:` URI) and
+  `address_check_hint()`, for the board's Main menu → Check address, which
+  says whether the address is its own, with the account and diversifier
+  index. The companion's Receive view has *Check on board (QR)* for both
+  addresses. `leek-zcash-ffi`'s README has "Verifying a receive address"
+  (USB/Bluetooth `show_address`, or QR).
 - **QR scanning on the board: 2–3x faster, and phones work (tested on the
   colour kit, [QR-BENCH.md](docs/zcash/QR-BENCH.md#signing-with-a-phone)).**
   The scan decoder keeps 64 mixed parts instead of 8 and skips one it already
@@ -22,17 +40,18 @@ are released in
 - **SDK: `qr_display_hints()`, how to show the signing QR (experimental).**
   Next to `qr_defaults()` in `leek-zcash-ffi` (Kotlin, Swift), from
   `host/leek-ur`'s `display` rules: 25 B at 350 ms from a phone and 50 B at
-  300 ms from a laptop or tablet, full brightness and the screen kept on,
+  300 ms from a laptop or tablet, the screen kept on,
   a black page with a 2-module quiet zone, error correction L, uppercase
   alphanumeric, and short tips: anti-flicker / DC dimming on OLED phones
   (PWM dimming shows as bands to the board's rolling shutter, and it
-  improved reads a lot), brightness 100 %, the board at 3x about 30 cm for
+  improved reads a lot), the board at 3x about 30 cm for
   a phone, 2x for a laptop or tablet. `qr_defaults().fragment_choices` now
   offers 25 B. `build-android.sh` takes `--out <dir>` or
   `LEEK_ANDROID_OUT`, so integrators need not write into `host/target`.
-- **Companion on Android: full brightness and the screen kept on while the
-  Sign-with-QR code shows** (and in full screen), restored after; the SDK's
-  tip under the code. The desktop is unchanged.
+- **Companion on Android: the screen kept on while the Sign-with-QR code
+  shows** (and in full screen), restored after; the SDK's tip under the
+  code. The desktop is unchanged. (It first forced full brightness; see
+  "Brightness is the user's" above.)
 - **Companion: big codes and a black full screen for phones.** A *Big codes*
   preset (25 B, QR v4), *Bigger* down to 25 B, and a black full-screen page
   with a 2-module white border and a brightness and glare hint.

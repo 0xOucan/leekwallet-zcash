@@ -61,10 +61,17 @@ It works, but the phone needs other settings than a laptop screen:
   phone about 30 cm away and push the knob to **3x**.
 - **Bigger codes.** In the app, *Big codes* (25 B, QR v4), full screen. The
   full-screen page is black, with a 2-module white border round the code.
-- **Brightness 100 %, screen kept on.** At half brightness the board ran at
-  its longest exposure with 4x gain and the picture was noisy. The Android
-  companion sets the window to full brightness and keeps the screen on while
-  the code shows, and restores both after.
+- **Brightness: the user's, screen kept on.** At half brightness the board
+  ran at its longest exposure with 4x gain and the picture was noisy, so the
+  first Android companion forced the window to 100 % while the code showed.
+  **2026-11-11, user test on an OLED phone: forcing 100 % was the blocker.**
+  The board found the code but could not read it; it looked washed out. So
+  no wallet forces it any more: the QR page opens at the system's
+  brightness and has a button that steps it (system → 60 % → 80 % → 100 %,
+  remembered). If the board finds the code but does not read it, try lower
+  first when the code looks washed out on the board, higher when it looks
+  dark. The screen is still kept on, and both are restored after. The board
+  firmware's automatic exposure now searches both ways (shorter and longer).
 - **Anti-flicker on (OLED phones).** OLED phones dim by flashing the panel
   (PWM). The board's camera has a rolling shutter, so it sees dark bands
   across the code. With the system's anti-flicker / DC dimming setting on
@@ -95,7 +102,8 @@ your setting. The next scan starts at your setting again. Build with
 image.
 
 These rules are in the SDK as `qr_display_hints()` (`host/leek-ur`
-`display`), with the tips wallets show (FORMATS.md, "Showing `ur:leek-pczt`
+`display`; `brightness_levels` and `default_brightness`, `max_brightness`
+always false), with the tips wallets show (FORMATS.md, "Showing `ur:leek-pczt`
 to the board").
 
 Tested on 2026-11-11 (Motorola edge 50 neo, the companion's debug APK): 25 B
