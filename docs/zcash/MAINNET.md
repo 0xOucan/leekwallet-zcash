@@ -15,8 +15,11 @@ about 02:20 UTC on 2026-11-06.
   what v0.1.0 lacks: "Share view key?" before the UFVK, and the refusal of a
   repeated rk (on v0.1.0 only the host's preflight stops that). **Tested on a
   board on testnet** (2026-11-10): a NU7 send over USB from `zecz`, txid
-  `8676ee562b8066b8c9fb720706551f2a57f8176066380bfd29d5edf50abd0151`, mined in block 4,606,165. Not yet: mainnet,
-  Bluetooth, SD and a shield on NU7. The crates did not change the PCZT wire
+  `8676ee562b8066b8c9fb720706551f2a57f8176066380bfd29d5edf50abd0151`, mined in block 4,606,165. Since then the whole stack has signed NU7 sends
+  on testnet over USB, Bluetooth and QR (the first QR send, both ways, from
+  `zecz`: `8f3b9264fddce48f6989396336741512e3fdafe66870826c0ceeb63725e73c7d`,
+  block 4,606,736), from Zingo, Zodl, the companion and `zecz`. Not yet:
+  mainnet, SD and a shield on NU7. The crates did not change the PCZT wire
   format: regenerating `vectors/` with them leaves all 42 existing vectors and
   `keys.json` byte-identical (with `iw_send_nu7`'s old 40-block expiry pinned).
 - **Wallet databases do not change.** `zcash_client_sqlite 0.23.0` has the same
