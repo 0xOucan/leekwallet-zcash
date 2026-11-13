@@ -19,7 +19,7 @@ official Zcash Rust libraries; they are not official Zcash tools.
 | `leek-zcash` | The LeekWallet SDK's Zcash kit: host-side preflight, filling missing derivations, the signer view, `sign_pczt` and `apply_zsig` (every signature verified, a signed PCZT out for the wallet's Keystone path), the SD-card calls (experimental), the account record, persisting a signed result with its txid, typed `LeekError` with stable codes. No transport of its own | wallet integrations: `zingo-cli` in our zingolib fork, and through `leek-zcash-ffi` | [leek-zcash](leek-zcash/README.md) |
 | `leek-zcash-ffi` | UniFFI bindings of `leek-zcash` for Kotlin and Swift: byte API, errors by category with stable codes, a foreign `FrameTransport` so the app owns USB / BLE, progress and cancel. Generated bindings committed (WASM next) | our Zodl fork and our Zingo fork (Android); iOS wallets | [leek-zcash-ffi](leek-zcash-ffi/README.md) |
 | `leek-ur` | BC-UR for the QR air gap: Bytewords, CRC-32, the fountain code, a multi-part encoder and a bounded decoder for `ur:leek-pczt` / `ur:leek-zsig`. The host twin of `firmware/src/ur*.c`, tested against the firmware's bc-ur vectors and the shared fixtures in `vectors/ur/`. `sha2` only | `zecz-cli`, the Zcash LeekWallet app | this table |
-| `leek-android` | JNI library for the Android app: the board's client over a Kotlin-owned USB or Bluetooth link, the compact signer view, applying a `.zsig` to the full PCZT | [leekwallet-zcash-android](https://github.com/0xOucan/leekwallet-zcash-android) | [leek-android](leek-android/README.md) |
+| `leek-android` | The older JNI library for the Android fork. The Zodl fork now uses `leek-zcash-ffi` instead, and nothing loads this crate | none | [leek-android](leek-android/README.md) |
 
 The Chrome extension cannot use `zecz-core` directly (tonic, files, tokio);
 its engine in [`../chrome/engine`](../chrome/engine) reuses `zsig.rs` and the
@@ -36,8 +36,8 @@ cargo test -- --ignored                # also the testnet / mainnet network test
 
 `tests/device_zdev.rs` drives `zdev` (`firmware/sim`, the firmware's real
 protocol and signer code on a PTY), so the device tests need a C compiler
-and make. The Android library is built from `../android` with
-`tools/leekwallet/build-native.sh` ([how](leek-android/README.md#build)).
+and make. The Zodl fork's Android library (`leek-zcash-ffi`) is built from `../android`
+with `tools/leekwallet/build-ffi.sh`.
 
 ## `zecz` in five commands
 
